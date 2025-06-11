@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       lib0:
-        specifier: ^0.2.98
-        version: 0.2.98
+        specifier: ^0.2.108
+        version: 0.2.108
       unstorage:
         specifier: 1.16.0
         version: 1.16.0
@@ -1422,8 +1422,8 @@ packages:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
 
-  lib0@0.2.98:
-    resolution: {integrity: sha512-XteTiNO0qEXqqweWx+b21p/fBnNHUA1NwAtJNJek1oPrewEZs2uiT4gWivHKr9GqCjDPAhchz0UQO8NwU3bBNA==}
+  lib0@0.2.108:
+    resolution: {integrity: sha512-+3eK/B0SqYoZiQu9fNk4VEc6EX8cb0Li96tPGKgugzoGj/OdRdREtuTLvUW+mtinoB2mFiJjSqOJBIaMkAGhxQ==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -3626,7 +3626,7 @@ snapshots:
       prelude-ls: 1.2.1
       type-check: 0.4.0
 
-  lib0@0.2.98:
+  lib0@0.2.108:
     dependencies:
       isomorphic.js: 0.2.5
 
@@ -4353,7 +4353,7 @@ snapshots:
 
   y-protocols@1.0.6(yjs@13.6.20):
     dependencies:
-      lib0: 0.2.98
+      lib0: 0.2.108
       yjs: 13.6.20
 
   yallist@3.1.1: {}
@@ -4364,6 +4364,6 @@ snapshots:
 
   yjs@13.6.20:
     dependencies:
-      lib0: 0.2.98
+      lib0: 0.2.108
 
   yocto-queue@0.1.0: {}
