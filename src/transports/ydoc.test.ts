@@ -1,0 +1,409 @@
+import { describe, expect, it } from "bun:test";
+import { Awareness } from "y-protocols/awareness";
+import * as Y from "yjs";
+
+import { DocMessage, encodeDocStep, Update } from "../protocol";
+import { passthrough } from "./passthrough";
+import { getSink, getSource, getTransport } from "./ydoc";
+
+describe("ydoc source", () => {
+  it("can read a doc's updates", async () => {
+    const doc = new Y.Doc();
+    doc.clientID = 200;
+    const source = getSource({
+      ydoc: doc,
+      document: "test",
+    });
+
+    doc.getText("test").insert(0, "hello");
+    doc.getText("test").insert("hello".length - 1, " world");
+
+    let count = 0;
+    await source.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          expect(chunk.context.clientId).toBe("200");
+          expect(chunk.type).toBe("doc");
+          expect(chunk.document).toBe("test");
+          if (count++ === 0) {
+            expect(chunk.update).toMatchInlineSnapshot(`
+            Uint8Array [
+              2,
+              19,
+              1,
+              1,
+              200,
+              1,
+              0,
+              4,
+              1,
+              4,
+              116,
+              101,
+              115,
+              116,
+              5,
+              104,
+              101,
+              108,
+              108,
+              111,
+              0,
+            ]
+          `);
+          } else {
+            expect(chunk.update).toMatchInlineSnapshot(`
+              Uint8Array [
+                2,
+                20,
+                1,
+                1,
+                200,
+                1,
+                5,
+                196,
+                200,
+                1,
+                3,
+                200,
+                1,
+                4,
+                6,
+                32,
+                119,
+                111,
+                114,
+                108,
+                100,
+                0,
+              ]
+            `);
+            doc.destroy();
+          }
+        },
+      }),
+    );
+  });
+
+  it("can read a doc's awareness updates", async () => {
+    const doc = new Y.Doc();
+    doc.clientID = 200;
+    const awareness = new Awareness(doc);
+    const source = getSource({
+      ydoc: doc,
+      awareness,
+      document: "test",
+    });
+
+    awareness.setLocalState({
+      test: "id-1",
+    });
+
+    awareness.destroy();
+
+    await source.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          expect(chunk.context.clientId).toBe("200");
+          expect(chunk.type).toBe("awareness");
+          expect(chunk.document).toBe("test");
+          expect(chunk.update).toMatchInlineSnapshot(`
+            Uint8Array [
+              1,
+              200,
+              1,
+              1,
+              15,
+              123,
+              34,
+              116,
+              101,
+              115,
+              116,
+              34,
+              58,
+              34,
+              105,
+              100,
+              45,
+              49,
+              34,
+              125,
+            ]
+          `);
+        },
+      }),
+    );
+  });
+});
+
+describe("ydoc sink", () => {
+  it("can write a doc's updates", async () => {
+    const doc = new Y.Doc();
+    doc.clientID = 300;
+    const sink = getSink({
+      ydoc: doc,
+      document: "test",
+    });
+    const writer = sink.writable.getWriter();
+
+    await writer.write(
+      new DocMessage(
+        "test",
+        encodeDocStep(
+          "update",
+          new Uint8Array([
+            1, 1, 200, 1, 0, 4, 1, 4, 116, 101, 115, 116, 5, 104, 101, 108, 108,
+            111, 0,
+          ]) as Update,
+        ),
+        {
+          clientId: "200",
+        },
+      ),
+    );
+
+    expect(doc.getText("test").toString()).toBe("hello");
+
+    await writer.write(
+      new DocMessage(
+        "test",
+        encodeDocStep(
+          "update",
+          new Uint8Array([
+            1, 1, 200, 1, 5, 196, 200, 1, 3, 200, 1, 4, 6, 32, 119, 111, 114,
+            108, 100, 0,
+          ]) as Update,
+        ),
+        {
+          clientId: "200",
+        },
+      ),
+    );
+
+    expect(doc.getText("test").toString()).toBe("hell worldo");
+
+    await writer.close();
+  });
+
+  // it("can write a doc's awareness updates", async () => {
+  //   const doc = new Y.Doc();
+  //   doc.clientID = 300;
+  //   const awareness = new Awareness(doc);
+  //   const sink = getSink({
+  //     ydoc: doc,
+  //     awareness,
+  //     document: "test",
+  //   });
+
+  //   const writer = sink.awareness.writable.getWriter();
+
+  //   await writer.write({
+  //     type: "awareness",
+  //     context: {
+  //       clientId: 200,
+  //     },
+  //     document: "test",
+  //     update: ,
+  //   });
+  // });
+});
+
+describe("ydoc transport", () => {
+  it("can read a doc's updates", async () => {
+    const doc = new Y.Doc();
+    doc.clientID = 300;
+    const transport = getTransport({
+      ydoc: doc,
+      document: "test",
+    });
+
+    const reader = transport.readable.getReader();
+
+    const writer = transport.writable.getWriter();
+
+    await writer.write(
+      new DocMessage(
+        "test",
+        encodeDocStep(
+          "update",
+          new Uint8Array([
+            1, 1, 200, 1, 0, 4, 1, 4, 116, 101, 115, 116, 5, 104, 101, 108, 108,
+            111, 0,
+          ]) as Update,
+        ),
+        {
+          clientId: "200",
+        },
+      ),
+    );
+
+    doc.getText("test").insert("hello".length, " world");
+    const { done, value } = await reader.read();
+    if (!value) {
+      throw new Error("No value");
+    }
+    expect(done).toBe(false);
+    expect(value.context.clientId).toBe("300");
+    expect(value.type).toBe("doc");
+    expect(value.document).toBe("test");
+    expect(value.update).toMatchInlineSnapshot(`
+      Uint8Array [
+        2,
+        17,
+        1,
+        1,
+        172,
+        2,
+        0,
+        132,
+        200,
+        1,
+        4,
+        6,
+        32,
+        119,
+        111,
+        114,
+        108,
+        100,
+        0,
+      ]
+    `);
+
+    expect(doc.getText("test").toString()).toBe("hello world");
+  });
+
+  it("can be inspected with a passthrough", async () => {
+    const doc = new Y.Doc();
+    doc.clientID = 300;
+    const transport = passthrough(
+      getTransport({
+        ydoc: doc,
+        document: "test",
+      }),
+      {
+        onRead(chunk) {
+          expect(chunk).toMatchInlineSnapshot(`
+            DocMessage {
+              "context": {
+                "clientId": "300",
+              },
+              "document": "test",
+              "type": "doc",
+              "update": Uint8Array [
+                2,
+                17,
+                1,
+                1,
+                172,
+                2,
+                0,
+                132,
+                200,
+                1,
+                4,
+                6,
+                32,
+                119,
+                111,
+                114,
+                108,
+                100,
+                0,
+              ],
+            }
+          `);
+        },
+        onWrite(chunk) {
+          expect(chunk).toMatchInlineSnapshot(`
+            DocMessage {
+              "context": {
+                "clientId": "200",
+              },
+              "document": "test",
+              "type": "doc",
+              "update": Uint8Array [
+                2,
+                19,
+                1,
+                1,
+                200,
+                1,
+                0,
+                4,
+                1,
+                4,
+                116,
+                101,
+                115,
+                116,
+                5,
+                104,
+                101,
+                108,
+                108,
+                111,
+                0,
+              ],
+            }
+          `);
+        },
+      },
+    );
+
+    const reader = transport.readable.getReader();
+
+    const writer = transport.writable.getWriter();
+
+    await writer.write(
+      new DocMessage(
+        "test",
+        encodeDocStep(
+          "update",
+          new Uint8Array([
+            1, 1, 200, 1, 0, 4, 1, 4, 116, 101, 115, 116, 5, 104, 101, 108, 108,
+            111, 0,
+          ]) as Update,
+        ),
+        {
+          clientId: "200",
+        },
+      ),
+    );
+
+    doc.getText("test").insert("hello".length, " world");
+
+    const { done, value } = await reader.read();
+    expect(done).toBe(false);
+    if (!value) {
+      throw new Error("No value");
+    }
+    expect(value.context.clientId).toBe("300");
+    expect(value.type).toBe("doc");
+    expect(value.document).toBe("test");
+    expect(value.update).toMatchInlineSnapshot(`
+      Uint8Array [
+        2,
+        17,
+        1,
+        1,
+        172,
+        2,
+        0,
+        132,
+        200,
+        1,
+        4,
+        6,
+        32,
+        119,
+        111,
+        114,
+        108,
+        100,
+        0,
+      ]
+    `);
+  });
+});
