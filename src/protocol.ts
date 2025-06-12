@@ -30,37 +30,7 @@ export type YEncodedMessage =
  *
  * Can apply to either a document or awareness update.
  */
-export type SendableMessage = {
-  /**
-   * The document name.
-   */
-  document: string;
-} & (
-  | {
-      type: "awareness";
-      payload: {
-        type: "awareness-update";
-        // TODO do we want to re-implement Awareness updates, or just pass around opaque binary?
-        update: AwarenessUpdateMessage;
-      };
-    }
-  | {
-      type: "doc";
-      payload:
-        | {
-            type: "sync-step-1";
-            payload: SyncStep1;
-          }
-        | {
-            type: "sync-step-2";
-            payload: SyncStep2;
-          }
-        | {
-            type: "update";
-            payload: UpdateStep;
-          };
-    }
-);
+export type SendableMessage = SendableAwarenessMessage | SendableDocMessage;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
@@ -90,7 +60,80 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
   }
 
   public get decoded() {
-    throw new Error("Not implemented");
+    throw new Error("Decoding awareness messages is not supported");
+  }
+
+  public get sendable() {
+    const sendable = new SendableAwarenessMessage(this.document, this.update);
+    Object.defineProperty(this, "sendable", { value: sendable });
+    return sendable;
+  }
+}
+
+export class SendableAwarenessMessage {
+  public type = "awareness" as const;
+  public document: string;
+  public payload: {
+    type: "awareness-update";
+    update: AwarenessUpdateMessage;
+  };
+
+  constructor(document: string, update: AwarenessUpdateMessage) {
+    this.document = document;
+    this.payload = {
+      type: "awareness-update",
+      update,
+    };
+  }
+
+  public get encoded() {
+    const encoded = encodeMessage(this);
+    Object.defineProperty(this, "encoded", { value: encoded });
+    return encoded;
+  }
+}
+
+export class SendableDocMessage {
+  public type = "doc" as const;
+  public document: string;
+  public payload:
+    | {
+        type: "sync-step-1";
+        payload: StateVector;
+      }
+    | {
+        type: "sync-step-2";
+        payload: Update;
+      }
+    | {
+        type: "update";
+        payload: Update;
+      };
+
+  constructor(
+    document: string,
+    payload:
+      | {
+          type: "sync-step-1";
+          payload: StateVector;
+        }
+      | {
+          type: "sync-step-2";
+          payload: Update;
+        }
+      | {
+          type: "update";
+          payload: Update;
+        },
+  ) {
+    this.document = document;
+    this.payload = payload;
+  }
+
+  public get encoded() {
+    const encoded = encodeMessage(this);
+    Object.defineProperty(this, "encoded", { value: encoded });
+    return encoded;
   }
 }
 
@@ -111,6 +154,12 @@ export class DocMessage<Context extends Record<string, unknown>> {
     // Lazy decode the update, without re-evaluating the decoder
     Object.defineProperty(this, "decoded", { value: decoded });
     return decoded;
+  }
+
+  public get sendable() {
+    const sendable = new SendableDocMessage(this.document, this.decoded);
+    Object.defineProperty(this, "sendable", { value: sendable });
+    return sendable;
   }
 }
 
@@ -232,16 +281,14 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
  */
 export function encodeSyncStep1Message(
   document: string,
-  payload: SyncStep1,
+  payload: StateVector,
 ): EncodedDocUpdateMessage<SyncStep1> {
-  return encodeMessage({
-    type: "doc",
-    document,
-    payload: {
+  return encodeMessage(
+    new SendableDocMessage(document, {
       type: "sync-step-1",
       payload,
-    },
-  }) as EncodedDocUpdateMessage<SyncStep1>;
+    }),
+  ) as EncodedDocUpdateMessage<SyncStep1>;
 }
 
 /**
@@ -249,16 +296,14 @@ export function encodeSyncStep1Message(
  */
 export function encodeSyncStep2Message(
   document: string,
-  payload: SyncStep2,
+  payload: Update,
 ): EncodedDocUpdateMessage<SyncStep2> {
-  return encodeMessage({
-    type: "doc",
-    document,
-    payload: {
+  return encodeMessage(
+    new SendableDocMessage(document, {
       type: "sync-step-2",
       payload,
-    },
-  }) as EncodedDocUpdateMessage<SyncStep2>;
+    }),
+  ) as EncodedDocUpdateMessage<SyncStep2>;
 }
 
 /**
@@ -266,16 +311,14 @@ export function encodeSyncStep2Message(
  */
 export function encodeUpdateStepMessage(
   document: string,
-  payload: UpdateStep,
+  payload: Update,
 ): EncodedDocUpdateMessage<UpdateStep> {
-  return encodeMessage({
-    type: "doc",
-    document,
-    payload: {
+  return encodeMessage(
+    new SendableDocMessage(document, {
       type: "update",
       payload,
-    },
-  }) as EncodedDocUpdateMessage<UpdateStep>;
+    }),
+  ) as EncodedDocUpdateMessage<UpdateStep>;
 }
 
 /**

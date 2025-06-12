@@ -3,25 +3,22 @@ import {
   AwarenessUpdateMessage,
   decodeUpdateMessage,
   encodeMessage,
-  SyncStep1,
-  SyncStep2,
-  UpdateStep,
+  SendableAwarenessMessage,
+  SendableDocMessage,
+  StateVector,
+  Update,
 } from "./protocol";
 
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {
     expect(
       decodeUpdateMessage(
-        encodeMessage({
-          type: "awareness",
-          document: "test",
-          payload: {
-            type: "awareness-update",
-            update: new Uint8Array([
-              0x00, 0x01, 0x02, 0x03,
-            ]) as AwarenessUpdateMessage,
-          },
-        }),
+        encodeMessage(
+          new SendableAwarenessMessage(
+            "test",
+            new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
+          ),
+        ),
       ),
     ).toMatchInlineSnapshot(`
       AwarenessMessage {
@@ -41,14 +38,12 @@ describe("can encode and decode", () => {
   it("can encode and decode a doc update (sync step 1)", () => {
     expect(
       decodeUpdateMessage(
-        encodeMessage({
-          type: "doc",
-          document: "test",
-          payload: {
+        encodeMessage(
+          new SendableDocMessage("test", {
             type: "sync-step-1",
-            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep1,
-          },
-        }),
+            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
+          }),
+        ),
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
@@ -69,14 +64,12 @@ describe("can encode and decode", () => {
   it("can encode and decode a doc update (sync step 2)", () => {
     expect(
       decodeUpdateMessage(
-        encodeMessage({
-          type: "doc",
-          document: "test",
-          payload: {
+        encodeMessage(
+          new SendableDocMessage("test", {
             type: "sync-step-2",
-            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2,
-          },
-        }),
+            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          }),
+        ),
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
@@ -97,14 +90,12 @@ describe("can encode and decode", () => {
   it("can encode and decode a doc update (update)", () => {
     expect(
       decodeUpdateMessage(
-        encodeMessage({
-          type: "doc",
-          document: "test",
-          payload: {
+        encodeMessage(
+          new SendableDocMessage("test", {
             type: "update",
-            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as UpdateStep,
-          },
-        }),
+            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          }),
+        ),
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
@@ -126,16 +117,12 @@ describe("can encode and decode", () => {
 describe("can encode", () => {
   it("awareness update", () => {
     expect(
-      encodeMessage({
-        type: "awareness",
-        document: "test",
-        payload: {
-          type: "awareness-update",
-          update: new Uint8Array([
-            0x00, 0x01, 0x02, 0x03,
-          ]) as AwarenessUpdateMessage,
-        },
-      }),
+      encodeMessage(
+        new SendableAwarenessMessage(
+          "test",
+          new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
+        ),
+      ),
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,
@@ -158,14 +145,12 @@ describe("can encode", () => {
 
   it("doc update (sync step 1)", () => {
     expect(
-      encodeMessage({
-        type: "doc",
-        document: "test",
-        payload: {
+      encodeMessage(
+        new SendableDocMessage("test", {
           type: "sync-step-1",
-          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep1,
-        },
-      }),
+          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
+        }),
+      ),
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,
@@ -189,14 +174,12 @@ describe("can encode", () => {
 
   it("doc update (sync step 2)", () => {
     expect(
-      encodeMessage({
-        type: "doc",
-        document: "test",
-        payload: {
+      encodeMessage(
+        new SendableDocMessage("test", {
           type: "sync-step-2",
-          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2,
-        },
-      }),
+          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        }),
+      ),
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,
@@ -220,14 +203,12 @@ describe("can encode", () => {
 
   it("doc update (update)", () => {
     expect(
-      encodeMessage({
-        type: "doc",
-        document: "test",
-        payload: {
+      encodeMessage(
+        new SendableDocMessage("test", {
           type: "update",
-          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as UpdateStep,
-        },
-      }),
+          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        }),
+      ),
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,

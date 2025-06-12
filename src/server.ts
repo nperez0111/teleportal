@@ -1,6 +1,8 @@
+import { uuidv4 } from "lib0/random";
 import type { ServerContext, YTransport } from "./base";
 import { Client } from "./client";
-import { Document, getDocumentKey } from "./document";
+import { Document, getDocumentId } from "./document";
+import type { ReceivedMessage } from "./protocol";
 import type { DocumentStorage } from "./storage";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -8,6 +10,33 @@ export type ServerOptions<Context extends ServerContext> = {
     context: Context;
     server: Server<Context>;
   }) => Promise<DocumentStorage>;
+  /**
+   * Check if a client has permission to access a document.
+   * @note This is called on every message sent, so it should be fast.
+   * @returns True if the client has permission, false otherwise.
+   */
+  checkPermission: (ctx: {
+    /**
+     * The context of the client.
+     */
+    context: Context;
+    /**
+     * The name of the document.
+     */
+    document: string;
+    /**
+     * The unique identifier of the document.
+     */
+    documentId: string;
+    /**
+     * The client that is trying to access the document.
+     */
+    client: Client<Context>;
+    /**
+     * The message that is being sent.
+     */
+    message: ReceivedMessage<Context>;
+  }) => Promise<boolean>;
 };
 
 export class Server<Context extends ServerContext> {
@@ -20,7 +49,7 @@ export class Server<Context extends ServerContext> {
   }
 
   public async getOrCreateDocument(name: string, context: Context) {
-    const key = getDocumentKey(name, context);
+    const key = getDocumentId(name, context);
 
     if (this.documents.has(key)) {
       return this.documents.get(key)!;
@@ -51,10 +80,11 @@ export class Server<Context extends ServerContext> {
     return doc;
   }
 
-  public async createClient(id: string, transport: YTransport<Context, any>) {
-    if (this.clients.has(id)) {
-      throw new Error(`Client with same id already exists`, { cause: { id } });
-    }
+  public async createClient(
+    transport: YTransport<Context, any>,
+    context: Omit<Context, "clientId">,
+  ) {
+    const id = uuidv4();
 
     const client = new Client<Context>({
       id,
@@ -66,6 +96,12 @@ export class Server<Context extends ServerContext> {
        */
       transport,
       server: this,
+      context: Object.assign(
+        {
+          clientId: id,
+        },
+        context,
+      ) as Context,
     });
 
     this.clients.set(id, client);

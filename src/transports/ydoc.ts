@@ -46,7 +46,7 @@ export function getSource<Context extends ClientContext>({
 
     readable: new ReadableStream({
       start(controller) {
-        onUpdate = ydoc.on("update", (update, origin) => {
+        onUpdate = ydoc.on("updateV2", (update, origin) => {
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
@@ -100,7 +100,7 @@ export function getSource<Context extends ClientContext>({
         awareness.on("destroy", onAwarenessDestroy);
       },
       cancel() {
-        ydoc.off("update", onUpdate);
+        ydoc.off("updateV2", onUpdate);
         ydoc.off("destroy", onDestroy);
         awareness.off("update", onAwarenessUpdate);
         awareness.off("destroy", onAwarenessDestroy);
@@ -159,7 +159,7 @@ export function getSink<Context extends ClientContext>({
             switch (chunk.decoded.type) {
               case "update":
               case "sync-step-2":
-                Y.applyUpdate(
+                Y.applyUpdateV2(
                   ydoc,
                   chunk.decoded.payload,
                   getSyncTransactionOrigin(ydoc),

@@ -105,7 +105,11 @@ export class UnstorageDocumentStorage implements DocumentStorage {
     return {
       update,
       get stateVector() {
-        return Y.encodeStateVectorFromUpdateV2(update) as StateVector;
+        const stateVector = Y.encodeStateVectorFromUpdateV2(
+          update,
+        ) as StateVector;
+        Object.defineProperty(this, "stateVector", { value: stateVector });
+        return stateVector;
       },
     };
   }

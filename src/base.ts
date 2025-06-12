@@ -1,8 +1,15 @@
-import type { ReceivedMessage } from "./protocol";
+import {
+  type ReceivedMessage,
+  type RawReceivedMessage,
+  type YEncodedMessage,
+  decodeUpdateMessage,
+  encodeMessage,
+  SendableMessage,
+} from "./protocol";
 
 export type ClientContext = {
   /**
-   * An identifier for the client. Assigned by the server.
+   * An identifier for the client. Assigned on the server.
    */
   clientId: string;
 };
@@ -109,3 +116,41 @@ export function sync<Context extends Record<string, unknown>>(
 ): Promise<void> {
   return Promise.all([pipe(a, b), pipe(b, a)]).then(() => undefined);
 }
+
+/**
+ * Reads an untrusted Y.js message source and decodes it into a {@link RawReceivedMessage}.
+ */
+export const getMessageReader = <Context extends Record<string, unknown>>(
+  context: Context,
+) =>
+  new TransformStream<YEncodedMessage, ReceivedMessage<Context>>({
+    transform(chunk, controller) {
+      const decoded = decodeUpdateMessage(chunk);
+      Object.assign(decoded.context, context);
+      controller.enqueue(decoded as ReceivedMessage<Context>);
+    },
+  });
+
+/**
+ * Writes a {@link SendableMessage} to a Y.js message sink.
+ */
+export const getMessageWriter = () =>
+  new TransformStream<SendableMessage, YEncodedMessage>({
+    transform(chunk, controller) {
+      controller.enqueue(encodeMessage(chunk));
+    },
+  });
+
+/**
+ * A transport which sends and receives Y.js binary messages.
+ */
+export type YBinaryTransport = {
+  /**
+   * Reads bytes
+   */
+  readable: ReadableStream<YEncodedMessage>;
+  /**
+   * Sends bytes
+   */
+  writable: WritableStream<YEncodedMessage>;
+};

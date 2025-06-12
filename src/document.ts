@@ -4,13 +4,15 @@ import {
   decodeDocStep,
   DocMessage,
   encodeDocStep,
+  encodeMessage,
+  SendableDocMessage,
   type ReceivedMessage,
   type Update,
 } from "./protocol";
 import type { Server } from "./server";
 import { DocumentStorage } from "./storage";
 
-export function getDocumentKey(name: string, context: ServerContext) {
+export function getDocumentId(name: string, context: ServerContext) {
   return context.room ? context.room + "/" + name : name;
 }
 
@@ -22,7 +24,7 @@ export class Document<Context extends ServerContext>
   implements YSink<Context, {}>
 {
   public readonly name: string;
-  public readonly clients: Set<string> = new Set();
+  private readonly clients: Set<string> = new Set();
   private hooks: DocumentHooks<Context>;
   public writable: WritableStream<ReceivedMessage<Context>>;
   private server: Server<Context>;
@@ -57,26 +59,24 @@ export class Document<Context extends ServerContext>
               });
             }
             const { update, stateVector } = await this.storage.fetch(
-              getDocumentKey(this.name, message.context),
+              getDocumentId(this.name, message.context),
             );
 
             await client.send(
-              new DocMessage(
-                this.name,
-                encodeDocStep(
-                  "sync-step-2",
-                  Y.diffUpdateV2(update, message.decoded.payload) as Update,
-                ),
-                message.context,
-              ),
+              new SendableDocMessage(this.name, {
+                type: "sync-step-2",
+                payload: Y.diffUpdateV2(
+                  update,
+                  message.decoded.payload,
+                ) as Update,
+              }),
               this,
             );
             await client.send(
-              new DocMessage(
-                this.name,
-                encodeDocStep("sync-step-1", stateVector),
-                message.context,
-              ),
+              new SendableDocMessage(this.name, {
+                type: "sync-step-1",
+                payload: stateVector,
+              }),
               this,
             );
             // No need to broadcast sync-step-1 messages, they are just for coordinating with the server
@@ -92,7 +92,7 @@ export class Document<Context extends ServerContext>
             message.decoded.type === "update"
           ) {
             await this.storage.write(
-              getDocumentKey(this.name, message.context),
+              getDocumentId(this.name, message.context),
               message.decoded.payload,
             );
           }
@@ -101,7 +101,18 @@ export class Document<Context extends ServerContext>
     });
   }
 
-  public async checkUnload() {
+  public async write(message: ReceivedMessage<Context>) {
+    const writer = this.writable.getWriter();
+    await writer.write(message);
+    writer.releaseLock();
+  }
+
+  public subscribe(clientId: string) {
+    this.clients.add(clientId);
+  }
+
+  public async unsubscribe(clientId: string) {
+    this.clients.delete(clientId);
     if (this.clients.size === 0) {
       await this.hooks.onUnload?.(this);
       await this.writable.close();
@@ -111,20 +122,20 @@ export class Document<Context extends ServerContext>
   /**
    * Broadcast a message to all subscribers of the document.
    * @param message - The message to broadcast.
-   * @param excludeClientId - The id of the client to exclude from the broadcast.
+   * @param sourceClientId - The id of the client that originated the message.
    */
   private async broadcast(
     message: ReceivedMessage<Context>,
-    excludeClientId?: string,
+    sourceClientId?: string,
   ) {
-    const origin = this.server.clients.get(excludeClientId as string) ?? this;
+    const origin = this.server.clients.get(sourceClientId as string) ?? this;
 
     await Promise.all(
       this.clients.values().map(async (clientId) => {
-        if (clientId === excludeClientId) {
+        if (clientId === sourceClientId) {
           return;
         }
-        await this.server.clients.get(clientId)?.send(message, origin);
+        await this.server.clients.get(clientId)?.send(message.sendable, origin);
       }),
     );
   }
