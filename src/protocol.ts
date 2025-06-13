@@ -150,7 +150,9 @@ export class DocMessage<Context extends Record<string, unknown>> {
   }
 
   public get decoded() {
+    console.log("decoding", this.update);
     const decoded = decodeDocStep(this.update);
+    console.log("decoded", decoded);
     // Lazy decode the update, without re-evaluating the decoder
     Object.defineProperty(this, "decoded", { value: decoded });
     return decoded;
@@ -233,7 +235,7 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
       // message type
       encoding.writeUint8(encoder, 1);
       // awareness update
-      encoding.writeUint8Array(encoder, update.payload.update);
+      encoding.writeVarUint8Array(encoder, update.payload.update);
       break;
     }
     case "doc": {
@@ -244,7 +246,7 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
           // message type
           encoding.writeUint8(encoder, 0);
           // state vector
-          encoding.writeUint8Array(encoder, update.payload.payload);
+          encoding.writeVarUint8Array(encoder, update.payload.payload);
           break;
         }
         case "update":
@@ -255,7 +257,7 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
             update.payload.type === "sync-step-2" ? 1 : 2,
           );
           // update
-          encoding.writeUint8Array(encoder, update.payload.payload);
+          encoding.writeVarUint8Array(encoder, update.payload.payload);
           break;
         }
         default: {

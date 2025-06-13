@@ -26,6 +26,7 @@ describe("can encode and decode", () => {
         "document": "test",
         "type": "awareness",
         "update": Uint8Array [
+          4,
           0,
           1,
           2,
@@ -52,6 +53,7 @@ describe("can encode and decode", () => {
         "type": "doc",
         "update": Uint8Array [
           0,
+          4,
           0,
           1,
           2,
@@ -78,6 +80,7 @@ describe("can encode and decode", () => {
         "type": "doc",
         "update": Uint8Array [
           1,
+          4,
           0,
           1,
           2,
@@ -104,6 +107,7 @@ describe("can encode and decode", () => {
         "type": "doc",
         "update": Uint8Array [
           2,
+          4,
           0,
           1,
           2,
@@ -135,6 +139,7 @@ describe("can encode", () => {
         115,
         116,
         1,
+        4,
         0,
         1,
         2,
@@ -164,6 +169,7 @@ describe("can encode", () => {
         116,
         0,
         0,
+        4,
         0,
         1,
         2,
@@ -193,6 +199,7 @@ describe("can encode", () => {
         116,
         0,
         1,
+        4,
         0,
         1,
         2,
@@ -222,6 +229,7 @@ describe("can encode", () => {
         116,
         0,
         2,
+        4,
         0,
         1,
         2,
