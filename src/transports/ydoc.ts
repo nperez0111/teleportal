@@ -62,7 +62,7 @@ export function getSource({
                 update: update as Update,
               },
               {
-                clientId: String(ydoc.clientID),
+                clientId: "local",
               },
             ),
           );
@@ -97,7 +97,7 @@ export function getSource({
                 ) as AwarenessUpdateMessage,
               },
               {
-                clientId: String(ydoc.clientID),
+                clientId: "local",
               },
             ),
           );
@@ -146,10 +146,7 @@ export function getSink({
     awareness,
     writable: new WritableStream({
       write(chunk, controller) {
-        if (
-          chunk.document !== document ||
-          chunk.context.clientId === String(ydoc.clientID)
-        ) {
+        if (chunk.document !== document || chunk.context.clientId === "local") {
           return;
         }
         if (ydoc.isDestroyed) {
@@ -219,6 +216,6 @@ export function getYDocTransport({
   }
 
   return toBinaryTransport(transport, {
-    clientId: "external",
+    clientId: "remote",
   });
 }

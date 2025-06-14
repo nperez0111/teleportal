@@ -1,5 +1,5 @@
 import { serve } from "crossws/server";
-import { createHandler } from "../src/transports/websocket";
+import { createHandler } from "../src/server/websocket";
 import { Server } from "../src/server";
 import { UnstorageDocumentStorage } from "../src/storage/unstorage";
 import { createStorage } from "unstorage";

@@ -14,11 +14,11 @@ export const getWriteDocUpdateStream = () =>
   >({
     transform(chunk, controller) {
       if (
-        chunk.decoded.type === "sync-step-2" ||
-        chunk.decoded.type === "update"
+        chunk.payload.type === "sync-step-2" ||
+        chunk.payload.type === "update"
       ) {
         const encoder = encoding.createEncoder();
-        encoding.writeVarUint8Array(encoder, chunk.decoded.payload);
+        encoding.writeVarUint8Array(encoder, chunk.payload.update);
         controller.enqueue({
           document: chunk.document,
           update: encoding.toUint8Array(encoder) as UpdateMessage,
