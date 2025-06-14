@@ -1,16 +1,16 @@
 import { compose, YSink, YSource, type YTransport } from "../base";
-import { ReceivedMessage } from "../protocol";
+import { Message } from "../protocol";
 
 /**
  * A {@link YSink} that wraps another sink and passes all updates through.
  */
-export function passthroughSink<
+export function withPassthroughSink<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
   sink: YSink<Context, AdditionalProperties>,
   options?: {
-    onWrite?: (chunk: ReceivedMessage<Context>) => void;
+    onWrite?: (chunk: Message<Context>) => void;
   },
 ): YSink<Context, AdditionalProperties> {
   const writer = sink.writable.getWriter();
@@ -32,13 +32,13 @@ export function passthroughSink<
 /**
  * A {@link YSource} that wraps another source and passes all updates through.
  */
-export function passthroughSource<
+export function withPassthroughSource<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
   source: YSource<Context, AdditionalProperties>,
   options?: {
-    onRead?: (chunk: ReceivedMessage<Context>) => void;
+    onRead?: (chunk: Message<Context>) => void;
   },
 ): YSource<Context, AdditionalProperties> {
   return {
@@ -60,29 +60,28 @@ export function passthroughSource<
  * @param transport - The transport to wrap.
  * @returns The wrapped transport.
  */
-export function passthrough<
+export function withPassthrough<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
   transport: YTransport<Context, AdditionalProperties>,
   options?: {
-    onRead?: (chunk: ReceivedMessage<Context>) => void;
-    onWrite?: (chunk: ReceivedMessage<Context>) => void;
+    onRead?: (chunk: Message<Context>) => void;
+    onWrite?: (chunk: Message<Context>) => void;
   },
 ): YTransport<Context, AdditionalProperties> {
   return compose(
-    passthroughSource(transport, options),
-    passthroughSink(transport, options),
+    withPassthroughSource(transport, options),
+    withPassthroughSink(transport, options),
   );
 }
 
 /**
  * A transport that does nothing.
  */
-export function noop<Context extends Record<string, unknown>>(): YTransport<
-  Context,
-  {}
-> {
+export function noopTransport<
+  Context extends Record<string, unknown>,
+>(): YTransport<Context, {}> {
   return {
     readable: new ReadableStream(),
     writable: new WritableStream(),

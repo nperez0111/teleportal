@@ -1,28 +1,35 @@
 import { describe, expect, it } from "bun:test";
 
-import type { YAwarenessUpdate, YDocUpdate, YTransport } from "../base";
+import type { YAwarenessUpdate, YTransport } from "../base";
 import {
   type AwarenessUpdateMessage,
   type SyncStep1,
   type SyncStep2,
   type UpdateStep,
-  type ReceivedMessage,
+  type Message,
   DocMessage,
   AwarenessMessage,
+  StateVector,
+  Update,
 } from "../protocol";
-import { noop, passthrough } from "./passthrough";
+import { noopTransport, withPassthrough } from "./passthrough";
 
 export function generateTestTransport(
   type: "doc" | "awareness",
 ): YTransport<{ test: string }, {}> {
   if (type === "doc") {
     return {
-      readable: new ReadableStream<ReceivedMessage<{ test: string }>>({
+      readable: new ReadableStream<Message<{ test: string }>>({
         async start(controller) {
           controller.enqueue(
             new DocMessage(
               "test",
-              new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep1,
+              {
+                type: "sync-step-1",
+                sv: new Uint8Array([
+                  0x00, 0x00, 0x01, 0x02, 0x03,
+                ]) as StateVector,
+              },
               { test: "id-1" },
             ),
           );
@@ -32,7 +39,12 @@ export function generateTestTransport(
           controller.enqueue(
             new DocMessage(
               "test",
-              new Uint8Array([0x01, 0x00, 0x01, 0x02, 0x03]) as SyncStep2,
+              {
+                type: "sync-step-2",
+                update: new Uint8Array([
+                  0x01, 0x00, 0x01, 0x02, 0x03,
+                ]) as Update,
+              },
               { test: "id-2" },
             ),
           );
@@ -42,7 +54,12 @@ export function generateTestTransport(
           controller.enqueue(
             new DocMessage(
               "test",
-              new Uint8Array([0x02, 0x00, 0x01, 0x02, 0x03]) as UpdateStep,
+              {
+                type: "update",
+                update: new Uint8Array([
+                  0x02, 0x00, 0x01, 0x02, 0x03,
+                ]) as Update,
+              },
               { test: "id-3" },
             ),
           );
@@ -50,19 +67,22 @@ export function generateTestTransport(
           controller.close();
         },
       }),
-      writable: new WritableStream<ReceivedMessage<{ test: string }>>(),
+      writable: new WritableStream<Message<{ test: string }>>(),
     };
   } else {
     return {
-      writable: new WritableStream<ReceivedMessage<{ test: string }>>(),
+      writable: new WritableStream<Message<{ test: string }>>(),
       readable: new ReadableStream<YAwarenessUpdate<{ test: string }>>({
         async start(controller) {
           controller.enqueue(
             new AwarenessMessage(
               "test",
-              new Uint8Array([
-                0x00, 0x01, 0x02, 0x03,
-              ]) as AwarenessUpdateMessage,
+              {
+                type: "awareness-update",
+                update: new Uint8Array([
+                  0x00, 0x01, 0x02, 0x03,
+                ]) as AwarenessUpdateMessage,
+              },
               { test: "id-1" },
             ),
           );
@@ -72,9 +92,12 @@ export function generateTestTransport(
           controller.enqueue(
             new AwarenessMessage(
               "test",
-              new Uint8Array([
-                0x00, 0x01, 0x02, 0x03,
-              ]) as AwarenessUpdateMessage,
+              {
+                type: "awareness-update",
+                update: new Uint8Array([
+                  0x00, 0x01, 0x02, 0x03,
+                ]) as AwarenessUpdateMessage,
+              },
               { test: "id-2" },
             ),
           );
@@ -84,9 +107,12 @@ export function generateTestTransport(
           controller.enqueue(
             new AwarenessMessage(
               "test",
-              new Uint8Array([
-                0x00, 0x01, 0x02, 0x03,
-              ]) as AwarenessUpdateMessage,
+              {
+                type: "awareness-update",
+                update: new Uint8Array([
+                  0x00, 0x01, 0x02, 0x03,
+                ]) as AwarenessUpdateMessage,
+              },
               { test: "id-3" },
             ),
           );
@@ -127,7 +153,7 @@ describe("transport", () => {
 
   it("can write doc", async () => {
     let count = 1;
-    const transport = passthrough(noop(), {
+    const transport = withPassthrough(noopTransport(), {
       onWrite(chunk) {
         expect(chunk.context.test).toBe(`id-${count++}`);
       },
@@ -136,7 +162,10 @@ describe("transport", () => {
     writer.write(
       new DocMessage(
         "test",
-        new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep1,
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as StateVector,
+        },
         { test: "id-1" },
       ),
     );
@@ -146,7 +175,10 @@ describe("transport", () => {
     writer.write(
       new DocMessage(
         "test",
-        new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep1,
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as StateVector,
+        },
         { test: "id-2" },
       ),
     );
@@ -156,7 +188,10 @@ describe("transport", () => {
     writer.write(
       new DocMessage(
         "test",
-        new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep1,
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as Update,
+        },
         { test: "id-3" },
       ),
     );
@@ -167,7 +202,7 @@ describe("transport", () => {
   });
   it("can write awareness", async () => {
     let count = 1;
-    const transport = passthrough(noop(), {
+    const transport = withPassthrough(noopTransport(), {
       onWrite(chunk) {
         expect(chunk.context.test).toBe(`id-${count++}`);
       },
@@ -176,9 +211,12 @@ describe("transport", () => {
     writer.write(
       new AwarenessMessage(
         "test",
-        new Uint8Array([
-          0x00, 0x00, 0x01, 0x02, 0x03,
-        ]) as AwarenessUpdateMessage,
+        {
+          type: "awareness-update",
+          update: new Uint8Array([
+            0x00, 0x00, 0x01, 0x02, 0x03,
+          ]) as AwarenessUpdateMessage,
+        },
         { test: "id-1" },
       ),
     );
@@ -188,9 +226,12 @@ describe("transport", () => {
     writer.write(
       new AwarenessMessage(
         "test",
-        new Uint8Array([
-          0x00, 0x00, 0x01, 0x02, 0x03,
-        ]) as AwarenessUpdateMessage,
+        {
+          type: "awareness-update",
+          update: new Uint8Array([
+            0x00, 0x00, 0x01, 0x02, 0x03,
+          ]) as AwarenessUpdateMessage,
+        },
         { test: "id-2" },
       ),
     );
@@ -200,9 +241,12 @@ describe("transport", () => {
     writer.write(
       new AwarenessMessage(
         "test",
-        new Uint8Array([
-          0x00, 0x00, 0x01, 0x02, 0x03,
-        ]) as AwarenessUpdateMessage,
+        {
+          type: "awareness-update",
+          update: new Uint8Array([
+            0x00, 0x00, 0x01, 0x02, 0x03,
+          ]) as AwarenessUpdateMessage,
+        },
         { test: "id-3" },
       ),
     );

@@ -48,7 +48,11 @@
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
+    "crossws": "0.4.1",
+    "db0": "0.3.2",
     "lib0": "^0.2.108",
+    "pino": "9.7.0",
+    "srvx": "0.8.0",
     "unstorage": "1.16.0",
     "y-protocols": "^1.0.6"
   },

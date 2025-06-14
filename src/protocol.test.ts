@@ -1,10 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
+  AwarenessMessage,
   AwarenessUpdateMessage,
-  decodeUpdateMessage,
-  encodeMessage,
-  SendableAwarenessMessage,
-  SendableDocMessage,
+  decodeMessage,
+  DocMessage,
   StateVector,
   Update,
 } from "./protocol";
@@ -12,107 +11,130 @@ import {
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {
     expect(
-      decodeUpdateMessage(
-        encodeMessage(
-          new SendableAwarenessMessage(
-            "test",
-            new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
-          ),
+      Object.assign(
+        decodeMessage(
+          new AwarenessMessage("test", {
+            type: "awareness-update",
+            update: new Uint8Array([
+              0x00, 0x01, 0x02, 0x03,
+            ]) as AwarenessUpdateMessage,
+          }).encoded,
         ),
+        {
+          id: "abc",
+        },
       ),
     ).toMatchInlineSnapshot(`
       AwarenessMessage {
         "context": {},
         "document": "test",
+        "id": "abc",
+        "payload": {
+          "type": "awareness-update",
+          "update": Uint8Array [
+            0,
+            1,
+            2,
+            3,
+          ],
+        },
         "type": "awareness",
-        "update": Uint8Array [
-          4,
-          0,
-          1,
-          2,
-          3,
-        ],
       }
     `);
   });
 
   it("can encode and decode a doc update (sync step 1)", () => {
     expect(
-      decodeUpdateMessage(
-        encodeMessage(
-          new SendableDocMessage("test", {
+      Object.assign(
+        decodeMessage(
+          new DocMessage("test", {
             type: "sync-step-1",
-            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
-          }),
+            sv: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
+          }).encoded,
         ),
+        {
+          id: "abc",
+        },
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
         "context": {},
         "document": "test",
+        "id": "abc",
+        "payload": {
+          "sv": Uint8Array [
+            0,
+            1,
+            2,
+            3,
+          ],
+          "type": "sync-step-1",
+        },
         "type": "doc",
-        "update": Uint8Array [
-          0,
-          4,
-          0,
-          1,
-          2,
-          3,
-        ],
       }
     `);
   });
 
   it("can encode and decode a doc update (sync step 2)", () => {
     expect(
-      decodeUpdateMessage(
-        encodeMessage(
-          new SendableDocMessage("test", {
+      Object.assign(
+        decodeMessage(
+          new DocMessage("test", {
             type: "sync-step-2",
-            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-          }),
+            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          }).encoded,
         ),
+        {
+          id: "abc",
+        },
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
         "context": {},
         "document": "test",
+        "id": "abc",
+        "payload": {
+          "type": "sync-step-2",
+          "update": Uint8Array [
+            0,
+            1,
+            2,
+            3,
+          ],
+        },
         "type": "doc",
-        "update": Uint8Array [
-          1,
-          4,
-          0,
-          1,
-          2,
-          3,
-        ],
       }
     `);
   });
 
   it("can encode and decode a doc update (update)", () => {
     expect(
-      decodeUpdateMessage(
-        encodeMessage(
-          new SendableDocMessage("test", {
+      Object.assign(
+        decodeMessage(
+          new DocMessage("test", {
             type: "update",
-            payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-          }),
+            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          }).encoded,
         ),
+        {
+          id: "abc",
+        },
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
         "context": {},
         "document": "test",
+        "id": "abc",
+        "payload": {
+          "type": "update",
+          "update": Uint8Array [
+            0,
+            1,
+            2,
+            3,
+          ],
+        },
         "type": "doc",
-        "update": Uint8Array [
-          2,
-          4,
-          0,
-          1,
-          2,
-          3,
-        ],
       }
     `);
   });
@@ -121,12 +143,12 @@ describe("can encode and decode", () => {
 describe("can encode", () => {
   it("awareness update", () => {
     expect(
-      encodeMessage(
-        new SendableAwarenessMessage(
-          "test",
-          new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
-        ),
-      ),
+      new AwarenessMessage("test", {
+        type: "awareness-update",
+        update: new Uint8Array([
+          0x00, 0x01, 0x02, 0x03,
+        ]) as AwarenessUpdateMessage,
+      }).encoded,
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,
@@ -150,12 +172,10 @@ describe("can encode", () => {
 
   it("doc update (sync step 1)", () => {
     expect(
-      encodeMessage(
-        new SendableDocMessage("test", {
-          type: "sync-step-1",
-          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
-        }),
-      ),
+      new DocMessage("test", {
+        type: "sync-step-1",
+        sv: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
+      }).encoded,
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,
@@ -180,12 +200,10 @@ describe("can encode", () => {
 
   it("doc update (sync step 2)", () => {
     expect(
-      encodeMessage(
-        new SendableDocMessage("test", {
-          type: "sync-step-2",
-          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-        }),
-      ),
+      new DocMessage("test", {
+        type: "sync-step-2",
+        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+      }).encoded,
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,
@@ -210,12 +228,10 @@ describe("can encode", () => {
 
   it("doc update (update)", () => {
     expect(
-      encodeMessage(
-        new SendableDocMessage("test", {
-          type: "update",
-          payload: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-        }),
-      ),
+      new DocMessage("test", {
+        type: "update",
+        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+      }).encoded,
     ).toMatchInlineSnapshot(`
       Uint8Array [
         89,

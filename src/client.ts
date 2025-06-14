@@ -5,8 +5,13 @@ import {
   type YBinaryTransport,
 } from "./base";
 import { getDocumentId, type Document } from "./document";
-import { type RawReceivedMessage, type SendableMessage } from "./protocol";
+import { type Message, type RawReceivedMessage } from "./protocol";
 import type { Server } from "./server";
+import pino from "pino";
+
+const logger = pino({
+  name: "client",
+});
 
 export type ClientHooks<Context extends ServerContext> = {
   onSubscribeToDocument?: (document: Document<Context>) => Promise<void> | void;
@@ -14,7 +19,7 @@ export type ClientHooks<Context extends ServerContext> = {
     document: Document<Context>,
   ) => Promise<void> | void;
   onMessage?: <Direction extends "inbound" | "outbound">(
-    message: Direction extends "inbound" ? RawReceivedMessage : SendableMessage,
+    message: Direction extends "inbound" ? RawReceivedMessage : Message,
     origin: Direction extends "inbound"
       ? Client<Context>
       : Document<Context> | Client<Context>,
@@ -56,6 +61,14 @@ export class Client<Context extends ServerContext> {
     this.sink = {
       writable: new WritableStream({
         write: async (message) => {
+          logger.trace(
+            {
+              clientId: this.id,
+              messageId: message.id,
+              documentId: getDocumentId(message.document, message.context),
+            },
+            "client received message",
+          );
           await this.hooks.onMessage?.(message, this, "inbound");
 
           const documentId = getDocumentId(message.document, message.context);
@@ -73,6 +86,13 @@ export class Client<Context extends ServerContext> {
             );
           }
 
+          logger.trace(
+            {
+              clientId: this.id,
+              documentId,
+            },
+            "client has been authorized",
+          );
           const doc = await this.server.getOrCreateDocument(
             message.document,
             message.context,
@@ -80,13 +100,30 @@ export class Client<Context extends ServerContext> {
 
           await this.subscribeToDocument(documentId);
 
+          logger.trace(
+            {
+              clientId: this.id,
+              documentId,
+            },
+            "client writing message to document",
+          );
+
           await doc.write(message);
+
+          logger.trace(
+            {
+              clientId: this.id,
+              documentId,
+            },
+            "client wrote message to document",
+          );
         },
         close: this.destroy.bind(this),
         abort: this.destroy.bind(this),
       }),
     };
 
+    logger.trace({ clientId: this.id }, "client set up");
     // Immediately start listening for messages
     this.transport.readable
       .pipeThrough(getMessageReader(this.context))
@@ -94,10 +131,12 @@ export class Client<Context extends ServerContext> {
   }
 
   public async disconnect() {
+    logger.trace({ clientId: this.id }, "client disconnecting");
     await this.sink.writable.close();
   }
 
   private async destroy() {
+    logger.trace({ clientId: this.id }, "client destroying");
     await Promise.all(
       Array.from(this.documents).map((documentId) =>
         this.unsubscribeFromDocument(documentId),
@@ -106,12 +145,17 @@ export class Client<Context extends ServerContext> {
     this.documents.clear();
     await this.hooks.onClose?.();
     this.isComplete = true;
+    logger.trace({ clientId: this.id }, "client destroyed");
   }
 
   private async subscribeToDocument(documentId: string) {
     if (this.documents.has(documentId)) {
       return;
     }
+    logger.trace(
+      { clientId: this.id, documentId },
+      "client subscribing to document",
+    );
     const document = this.server.documents.get(documentId);
     if (!document) {
       throw new Error(`Document not found to subscribe to`, {
@@ -129,6 +173,10 @@ export class Client<Context extends ServerContext> {
     if (!this.documents.has(documentId)) {
       return;
     }
+    logger.trace(
+      { clientId: this.id, documentId },
+      "client unsubscribing from document",
+    );
     const document = this.server.documents.get(documentId);
     if (!document) {
       throw new Error(`Document ${documentId} not found`);
@@ -142,18 +190,31 @@ export class Client<Context extends ServerContext> {
    * Send a message to the client.
    * @param message - The message to send.
    */
-  async send(
-    sendable: SendableMessage,
-    origin: Document<Context> | Client<Context>,
-  ) {
-    await this.hooks.onMessage?.(sendable, origin, "outbound");
+  async send(message: Message, origin: Document<Context> | Client<Context>) {
+    if (message.context.clientId === this.id) {
+      logger.trace(
+        { clientId: this.id, messageId: message.id },
+        "ignoring message sent by this client",
+      );
+      // Ignore messages sent by this client
+      return;
+    }
+    logger.trace(
+      { clientId: this.id, messageId: message.id },
+      "client sending message",
+    );
+    await this.hooks.onMessage?.(message, origin, "outbound");
 
     // Do not hold lock on the writer
     const writer = this.transport.writable.getWriter();
     try {
-      await writer.write(sendable.encoded);
+      await writer.write(message.encoded);
     } finally {
       writer.releaseLock();
     }
+    logger.trace(
+      { clientId: this.id, messageId: message.id },
+      "client sent message",
+    );
   }
 }

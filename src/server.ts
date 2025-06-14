@@ -1,9 +1,14 @@
 import { uuidv4 } from "lib0/random";
-import type { ServerContext, YTransport } from "./base";
+import type { ServerContext, YBinaryTransport, YTransport } from "./base";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
-import type { ReceivedMessage } from "./protocol";
+import type { Message } from "./protocol";
 import type { DocumentStorage } from "./storage";
+import pino from "pino";
+
+const logger = pino({
+  name: "server",
+});
 
 export type ServerOptions<Context extends ServerContext> = {
   getStorage: (ctx: {
@@ -35,7 +40,7 @@ export type ServerOptions<Context extends ServerContext> = {
     /**
      * The message that is being sent.
      */
-    message: ReceivedMessage<Context>;
+    message: Message<Context>;
   }) => Promise<boolean>;
 };
 
@@ -49,11 +54,13 @@ export class Server<Context extends ServerContext> {
   }
 
   public async getOrCreateDocument(name: string, context: Context) {
-    const key = getDocumentId(name, context);
+    const documentId = getDocumentId(name, context);
 
-    if (this.documents.has(key)) {
-      return this.documents.get(key)!;
+    if (this.documents.has(documentId)) {
+      return this.documents.get(documentId)!;
     }
+
+    logger.trace({ documentId }, "creating document");
 
     const storage = await this.options.getStorage({
       context,
@@ -70,24 +77,32 @@ export class Server<Context extends ServerContext> {
       storage,
       hooks: {
         onUnload: () => {
-          this.documents.delete(key);
+          logger.trace({ documentId }, "document unloaded");
+          this.documents.delete(documentId);
+        },
+        onStoreUpdate: async ({ documentId, update }) => {
+          logger.trace({ documentId, update }, "document store updated");
         },
       },
     });
 
-    this.documents.set(key, doc);
+    this.documents.set(documentId, doc);
+
+    logger.trace({ documentId }, "document created");
 
     return doc;
   }
 
   public async createClient(
-    transport: YTransport<Context, any>,
+    transport: YBinaryTransport,
     context: Omit<Context, "clientId">,
   ) {
-    const id = uuidv4();
+    const clientId = uuidv4();
+
+    logger.trace({ clientId }, "creating client");
 
     const client = new Client<Context>({
-      id,
+      id: clientId,
       hooks: {},
       /**
        * What is nice about this is that we can wrap the transport of a client to
@@ -98,13 +113,15 @@ export class Server<Context extends ServerContext> {
       server: this,
       context: Object.assign(
         {
-          clientId: id,
+          clientId,
         },
         context,
       ) as Context,
     });
 
-    this.clients.set(id, client);
+    this.clients.set(clientId, client);
+
+    logger.trace({ clientId }, "client created");
 
     return client;
   }

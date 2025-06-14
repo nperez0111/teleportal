@@ -1,6 +1,6 @@
 import type { YTransport } from "../base";
 import type { ClientContext } from "../base";
-import type { ReceivedMessage } from "../protocol";
+import type { Message } from "../protocol";
 
 export interface RateLimitOptions {
   /**
@@ -49,8 +49,8 @@ export class RateLimitedTransport<
   Context extends ClientContext,
   AdditionalProps extends Record<string, unknown>,
 > {
-  public readable: ReadableStream<ReceivedMessage<Context>>;
-  public writable: WritableStream<ReceivedMessage<Context>>;
+  public readable: ReadableStream<Message<Context>>;
+  public writable: WritableStream<Message<Context>>;
 
   private maxMessages: number;
   private windowMs: number;
@@ -136,11 +136,11 @@ export class RateLimitedTransport<
    * Create a rate-limited writable stream
    */
   private createRateLimitedWritable(
-    writable: WritableStream<ReceivedMessage<Context>>,
-  ): WritableStream<ReceivedMessage<Context>> {
+    writable: WritableStream<Message<Context>>,
+  ): WritableStream<Message<Context>> {
     const writer = writable.getWriter();
 
-    return new WritableStream<ReceivedMessage<Context>>({
+    return new WritableStream<Message<Context>>({
       write: async (chunk) => {
         if (!this.checkMessageSize(chunk)) {
           throw new Error("Message size limit exceeded");
@@ -161,10 +161,10 @@ export class RateLimitedTransport<
    * Create a rate-limited readable stream
    */
   private createRateLimitedReadable(
-    readable: ReadableStream<ReceivedMessage<Context>>,
-  ): ReadableStream<ReceivedMessage<Context>> {
+    readable: ReadableStream<Message<Context>>,
+  ): ReadableStream<Message<Context>> {
     return readable.pipeThrough(
-      new TransformStream<ReceivedMessage<Context>, ReceivedMessage<Context>>({
+      new TransformStream<Message<Context>, Message<Context>>({
         transform: async (chunk, controller) => {
           if (!this.checkMessageSize(chunk)) {
             throw new Error("Message size limit exceeded");

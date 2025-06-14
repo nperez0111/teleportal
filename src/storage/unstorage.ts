@@ -51,19 +51,23 @@ export class UnstorageDocumentStorage implements DocumentStorage {
   /**
    * Persist a Y.js update to storage
    */
-  async write(key: string, update: Update): Promise<void> {
+  async write(
+    key: string,
+    update: Update,
+    overwriteKeys?: boolean,
+  ): Promise<void> {
     const updateKey = key + "-update-" + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
     if (this.options.scanKeys) {
       return;
     }
     await this.lock(key, async () => {
-      const doc = await this.storage.getItem<{ keys: Set<string> }>(key);
-      if (doc) {
-        doc.keys.add(updateKey);
+      const doc = await this.storage.getItem<{ keys: string[] }>(key);
+      if (doc && Array.isArray(doc.keys) && !overwriteKeys) {
+        doc.keys = Array.from(new Set(doc.keys.concat(updateKey)));
         await this.storage.setItem(key, doc);
       } else {
-        await this.storage.setItem(key, { keys: new Set([updateKey]) });
+        await this.storage.setItem(key, { keys: [updateKey] });
       }
     });
   }
@@ -87,16 +91,25 @@ export class UnstorageDocumentStorage implements DocumentStorage {
         stateVector: getEmptyStateVector(),
       };
     }
+    if (keys.size === 1) {
+      const update = await this.storage.getItemRaw(Array.from(keys)[0]);
+      return {
+        update,
+        stateVector: Y.encodeStateVectorFromUpdateV2(update) as StateVector,
+      };
+    }
     // TODO another strategy would be to do the updates on storing instead of on reading (configurable?)
     const update = Y.mergeUpdatesV2(
       // TODO little naive, but it's ok for now
-      await Promise.all(
-        Array.from(keys).map((key) => this.storage.getItemRaw(key)),
-      ),
+      (
+        await Promise.all(
+          Array.from(keys).map((key) => this.storage.getItemRaw(key)),
+        )
+      ).filter(Boolean),
     ) as Update;
 
     // asynchronously store the update and delete the keys
-    this.write(key, update).then(() => {
+    this.write(key, update, true).then(() => {
       return Promise.all(
         Array.from(keys).map((key) => this.storage.removeItem(key)),
       );

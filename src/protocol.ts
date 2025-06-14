@@ -1,5 +1,7 @@
 import * as decoding from "lib0/decoding";
 import { encoding } from "lib0";
+import { Decoder } from "lib0/decoding";
+import { uuidv4 } from "lib0/random.js";
 
 /**
  * Binary encoding of the Yjs protocol.
@@ -24,23 +26,56 @@ export type Update = Tag<Uint8Array, "update">;
 export type AwarenessUpdateMessage = Tag<Uint8Array, "awareness-update">;
 
 /**
+ * A decoded Y.js awareness update message.
+ */
+export type DecodedAwarenessUpdateMessage = {
+  type: "awareness-update";
+  update: AwarenessUpdateMessage;
+};
+
+/**
  * A Y.js state vector.
  */
 export type StateVector = Tag<Uint8Array, "state-vector">;
+
 /**
  * A Y.js sync step 1 update as encoded by the y-protocols implementation.
  */
 export type SyncStep1 = Tag<Uint8Array, "sync-step-1">;
+
+/*
+ * A decoded Y.js sync step 1 update.
+ */
+export type DecodedSyncStep1 = {
+  type: "sync-step-1";
+  sv: StateVector;
+};
 
 /**
  * A Y.js sync step 2 update as encoded by the y-protocols implementation.
  */
 export type SyncStep2 = Tag<Uint8Array, "sync-step-2">;
 
+/*
+ * A decoded Y.js sync step 2 update.
+ */
+export type DecodedSyncStep2 = {
+  type: "sync-step-2";
+  update: Update;
+};
+
 /**
  * A Y.js update step as encoded by the y-protocols implementation.
  */
 export type UpdateStep = Tag<Uint8Array, "update-step">;
+
+/*
+ * A decoded Y.js update step.
+ */
+export type DecodedUpdateStep = {
+  type: "update";
+  update: Update;
+};
 
 /**
  * Any Y.js update which concerns a document.
@@ -55,22 +90,15 @@ export type EncodedDocUpdateMessage<T extends DocStep> = Tag<Uint8Array, T>;
 /**
  * A Y.js message which concerns a document or awareness update.
  */
-export type YEncodedMessage =
+export type BinaryMessage =
   | EncodedDocUpdateMessage<DocStep>
   | AwarenessUpdateMessage;
-
-/**
- * A Y.js message, to be sent over the wire, which will be serialized to a {@link Uint8Array} for transport.
- *
- * Can apply to either a document or awareness update.
- */
-export type SendableMessage = SendableAwarenessMessage | SendableDocMessage;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
  * Can apply to either a document or awareness update.
  */
-export type ReceivedMessage<Context extends Record<string, unknown>> =
+export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>;
 
@@ -79,7 +107,7 @@ export type ReceivedMessage<Context extends Record<string, unknown>> =
  *
  * This is an untrusted update at this point, as it has not been validated by the server for access control rights.
  */
-export type RawReceivedMessage = ReceivedMessage<{}>;
+export type RawReceivedMessage = Message<any>;
 
 /**
  * A decoded Y.js awareness update, which was deserialized from a {@link Uint8Array}.
@@ -89,75 +117,16 @@ export type RawReceivedMessage = ReceivedMessage<{}>;
 export class AwarenessMessage<Context extends Record<string, unknown>> {
   public type = "awareness" as const;
   public context: Context;
+  public id: string;
 
   constructor(
     public document: string,
-    public update: AwarenessUpdateMessage,
+    public payload: DecodedAwarenessUpdateMessage,
     context?: Context,
   ) {
+    this.id = uuidv4();
     this.context = context ?? ({} as Context);
   }
-
-  public get decoded() {
-    throw new Error("Decoding awareness messages is not supported");
-  }
-
-  public get sendable() {
-    const sendable = new SendableAwarenessMessage(this.document, this.update);
-    Object.defineProperty(this, "sendable", { value: sendable });
-    return sendable;
-  }
-}
-
-/**
- * A sendable awareness message, which can be serialized to a {@link Uint8Array}.
- */
-export class SendableAwarenessMessage {
-  public type = "awareness" as const;
-  public payload: {
-    type: "awareness-update";
-    update: AwarenessUpdateMessage;
-  };
-
-  constructor(
-    public document: string,
-    update: AwarenessUpdateMessage,
-  ) {
-    this.payload = {
-      type: "awareness-update",
-      update,
-    };
-  }
-
-  public get encoded() {
-    const encoded = encodeMessage(this);
-    Object.defineProperty(this, "encoded", { value: encoded });
-    return encoded;
-  }
-}
-
-/**
- * A sendable doc message, which can be serialized to a {@link Uint8Array}.
- */
-export class SendableDocMessage {
-  public type = "doc" as const;
-
-  constructor(
-    public document: string,
-    public payload:
-      | {
-          type: "sync-step-1";
-          payload: StateVector;
-        }
-      | {
-          type: "sync-step-2";
-          payload: Update;
-        }
-      | {
-          type: "update";
-          payload: Update;
-        },
-  ) {}
 
   public get encoded() {
     const encoded = encodeMessage(this);
@@ -174,38 +143,31 @@ export class SendableDocMessage {
 export class DocMessage<Context extends Record<string, unknown>> {
   public type = "doc" as const;
   public context: Context;
+  public id: string;
 
   constructor(
     public document: string,
-    public update: DocStep,
+    public payload: DecodedSyncStep1 | DecodedSyncStep2 | DecodedUpdateStep,
     context?: Context,
   ) {
+    this.id = uuidv4();
     this.context = context ?? ({} as Context);
   }
 
-  public get decoded() {
-    const decoded = decodeDocStep(this.update);
-    // Lazy decode the update, without re-evaluating the decoder
-    Object.defineProperty(this, "decoded", { value: decoded });
-    return decoded;
-  }
-
-  public get sendable() {
-    const sendable = new SendableDocMessage(this.document, this.decoded);
-    Object.defineProperty(this, "sendable", { value: sendable });
-    return sendable;
+  public get encoded() {
+    const encoded = encodeMessage(this);
+    Object.defineProperty(this, "encoded", { value: encoded });
+    return encoded;
   }
 }
 
 /**
- * Decode a Y.js encoded update into a {@link ReceivedMessage}.
+ * Decode a Y.js encoded update into a {@link Message}.
  *
  * @param update - The encoded update.
  * @returns The decoded update, which should be considered untrusted at this point.
  */
-export function decodeUpdateMessage(
-  update: YEncodedMessage,
-): RawReceivedMessage {
+export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
   try {
     const decoder = decoding.createDecoder(update);
     const [y, j, s] = [
@@ -226,16 +188,13 @@ export function decodeUpdateMessage(
 
     switch (targetType) {
       case 0x00: {
-        return new DocMessage(
-          documentName,
-          decoding.readTailAsUint8Array(decoder) as DocStep,
-        );
+        return new DocMessage(documentName, decodeDocStepWithDecoder(decoder));
       }
       case 0x01: {
-        return new AwarenessMessage(
-          documentName,
-          decoding.readTailAsUint8Array(decoder) as AwarenessUpdateMessage,
-        );
+        return new AwarenessMessage(documentName, {
+          type: "awareness-update",
+          update: decoding.readVarUint8Array(decoder) as AwarenessUpdateMessage,
+        });
       }
       default:
         throw new Error("Invalid target type", {
@@ -250,12 +209,12 @@ export function decodeUpdateMessage(
 }
 
 /**
- * Encode a {@link SendableMessage} into a {@link Uint8Array}.
+ * Encode a {@link Message} into a {@link Uint8Array}.
  *
  * @param update - The encoded update.
  * @returns The encoded update.
  */
-export function encodeMessage(update: SendableMessage): YEncodedMessage {
+export function encodeMessage(update: Message): BinaryMessage {
   try {
     const encoder = encoding.createEncoder();
     // Y
@@ -285,7 +244,7 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
             // message type
             encoding.writeUint8(encoder, 0);
             // state vector
-            encoding.writeVarUint8Array(encoder, update.payload.payload);
+            encoding.writeVarUint8Array(encoder, update.payload.sv);
             break;
           }
           case "update":
@@ -296,7 +255,7 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
               update.payload.type === "sync-step-2" ? 1 : 2,
             );
             // update
-            encoding.writeVarUint8Array(encoder, update.payload.payload);
+            encoding.writeVarUint8Array(encoder, update.payload.update);
             break;
           }
           default: {
@@ -314,8 +273,9 @@ export function encodeMessage(update: SendableMessage): YEncodedMessage {
       }
     }
 
-    return encoding.toUint8Array(encoder) as YEncodedMessage;
+    return encoding.toUint8Array(encoder) as BinaryMessage;
   } catch (err) {
+    console.error(err);
     throw new Error("Failed to encode message", {
       cause: { update, err },
     });
@@ -329,12 +289,10 @@ export function encodeSyncStep1Message(
   document: string,
   payload: StateVector,
 ): EncodedDocUpdateMessage<SyncStep1> {
-  return encodeMessage(
-    new SendableDocMessage(document, {
-      type: "sync-step-1",
-      payload,
-    }),
-  ) as EncodedDocUpdateMessage<SyncStep1>;
+  return new DocMessage(document, {
+    type: "sync-step-1",
+    sv: payload,
+  }).encoded as EncodedDocUpdateMessage<SyncStep1>;
 }
 
 /**
@@ -344,12 +302,10 @@ export function encodeSyncStep2Message(
   document: string,
   payload: Update,
 ): EncodedDocUpdateMessage<SyncStep2> {
-  return encodeMessage(
-    new SendableDocMessage(document, {
-      type: "sync-step-2",
-      payload,
-    }),
-  ) as EncodedDocUpdateMessage<SyncStep2>;
+  return new DocMessage(document, {
+    type: "sync-step-2",
+    update: payload,
+  }).encoded as EncodedDocUpdateMessage<SyncStep2>;
 }
 
 /**
@@ -359,12 +315,10 @@ export function encodeUpdateStepMessage(
   document: string,
   payload: Update,
 ): EncodedDocUpdateMessage<UpdateStep> {
-  return encodeMessage(
-    new SendableDocMessage(document, {
-      type: "update",
-      payload,
-    }),
-  ) as EncodedDocUpdateMessage<UpdateStep>;
+  return new DocMessage(document, {
+    type: "update",
+    update: payload,
+  }).encoded as EncodedDocUpdateMessage<UpdateStep>;
 }
 
 /**
@@ -414,48 +368,35 @@ export function encodeDocStep<
   }
 }
 
-/**
- * Decodes a doc step, this is compatible with the y-protocols implementation.
- */
-export function decodeDocStep<
+function decodeDocStepWithDecoder<
   D extends DocStep,
   E = D extends SyncStep1
-    ? {
-        type: "sync-step-1";
-        payload: StateVector;
-      }
+    ? DecodedSyncStep1
     : D extends SyncStep2
-      ? {
-          type: "sync-step-2";
-          payload: Update;
-        }
+      ? DecodedSyncStep2
       : D extends UpdateStep
-        ? {
-            type: "update";
-            payload: Update;
-          }
+        ? DecodedUpdateStep
         : never,
->(update: D): E {
+>(decoder: Decoder): E {
   try {
-    const decoder = decoding.createDecoder(update);
     const messageType = decoding.readUint8(decoder);
     switch (messageType) {
       case 0x00: {
         return {
           type: "sync-step-1",
-          payload: decoding.readVarUint8Array(decoder),
+          sv: decoding.readVarUint8Array(decoder),
         } as E;
       }
       case 0x01: {
         return {
           type: "sync-step-2",
-          payload: decoding.readVarUint8Array(decoder),
+          update: decoding.readVarUint8Array(decoder),
         } as E;
       }
       case 0x02: {
         return {
           type: "update",
-          payload: decoding.readVarUint8Array(decoder),
+          update: decoding.readVarUint8Array(decoder),
         } as E;
       }
       default: {
@@ -466,7 +407,24 @@ export function decodeDocStep<
     }
   } catch (err) {
     throw new Error("Failed to decode doc step", {
-      cause: { update, err },
+      cause: { err },
     });
   }
+}
+
+/**
+ * Decodes a doc step, this is compatible with the y-protocols implementation.
+ */
+export function decodeDocStep<
+  D extends DocStep,
+  E = D extends SyncStep1
+    ? DecodedSyncStep1
+    : D extends SyncStep2
+      ? DecodedSyncStep2
+      : D extends UpdateStep
+        ? DecodedUpdateStep
+        : never,
+>(update: D): E {
+  const decoder = decoding.createDecoder(update);
+  return decodeDocStepWithDecoder(decoder);
 }

@@ -5,14 +5,22 @@ import {
 } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { ClientContext, compose, YSink, YSource, YTransport } from "../base";
+import {
+  type ClientContext,
+  compose,
+  toBinaryTransport,
+  YBinaryTransport,
+  type YSink,
+  type YSource,
+  type YTransport,
+} from "../base";
 import {
   AwarenessMessage,
-  AwarenessUpdateMessage,
+  type AwarenessUpdateMessage,
   DocMessage,
-  encodeDocStep,
-  Update,
+  type Update,
 } from "../protocol";
+import { withLogger } from "./logger";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";
@@ -21,19 +29,15 @@ export function getSyncTransactionOrigin(ydoc: Y.Doc) {
 /**
  * Makes a {@link YSource} from a {@link Y.Doc} and a document name
  */
-export function getSource<Context extends ClientContext>({
+export function getSource({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  context = {
-    clientId: String(ydoc.clientID),
-  } as Context,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  context?: Context;
-}): YSource<Context, { ydoc: Y.Doc; awareness: Awareness }> {
+}): YSource<ClientContext, { ydoc: Y.Doc; awareness: Awareness }> {
   let onUpdate: (...args: any[]) => void;
   let onDestroy: (...args: any[]) => void;
   let onAwarenessUpdate: (...args: any[]) => void;
@@ -53,8 +57,13 @@ export function getSource<Context extends ClientContext>({
           controller.enqueue(
             new DocMessage(
               document,
-              encodeDocStep("update", update as Update),
-              context,
+              {
+                type: "update",
+                update: update as Update,
+              },
+              {
+                clientId: String(ydoc.clientID),
+              },
             ),
           );
         });
@@ -80,11 +89,16 @@ export function getSource<Context extends ClientContext>({
           controller.enqueue(
             new AwarenessMessage(
               document,
-              encodeAwarenessUpdate(
-                awareness,
-                changedClients,
-              ) as AwarenessUpdateMessage,
-              context,
+              {
+                type: "awareness-update",
+                update: encodeAwarenessUpdate(
+                  awareness,
+                  changedClients,
+                ) as AwarenessUpdateMessage,
+              },
+              {
+                clientId: String(ydoc.clientID),
+              },
             ),
           );
         };
@@ -112,20 +126,16 @@ export function getSource<Context extends ClientContext>({
 /**
  * Makes a {@link YSink} from a {@link Y.Doc} and a document name
  */
-export function getSink<Context extends ClientContext>({
+export function getSink({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  context = {
-    clientId: String(ydoc.clientID),
-  } as Context,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  context?: Context;
 }): YSink<
-  Context,
+  ClientContext,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
@@ -138,7 +148,7 @@ export function getSink<Context extends ClientContext>({
       write(chunk, controller) {
         if (
           chunk.document !== document ||
-          chunk.context.clientId === context.clientId
+          chunk.context.clientId === String(ydoc.clientID)
         ) {
           return;
         }
@@ -150,18 +160,18 @@ export function getSink<Context extends ClientContext>({
           case "awareness": {
             applyAwarenessUpdate(
               awareness,
-              chunk.update,
+              chunk.payload.update,
               getSyncTransactionOrigin(ydoc),
             );
             break;
           }
           case "doc": {
-            switch (chunk.decoded.type) {
+            switch (chunk.payload.type) {
               case "update":
               case "sync-step-2":
                 Y.applyUpdateV2(
                   ydoc,
-                  chunk.decoded.payload,
+                  chunk.payload.update,
                   getSyncTransactionOrigin(ydoc),
                 );
                 break;
@@ -176,21 +186,39 @@ export function getSink<Context extends ClientContext>({
 /**
  * Makes a {@link YTransport} from a {@link Y.Doc} and a document name
  */
-export function getTransport<Context extends ClientContext>({
+export function getTransport({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  context = {
-    clientId: String(ydoc.clientID),
-  } as Context,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  context?: Context;
-}): YTransport<Context, { ydoc: Y.Doc; awareness: Awareness }> {
+}): YTransport<ClientContext, { ydoc: Y.Doc; awareness: Awareness }> {
   return compose(
-    getSource<Context>({ ydoc, awareness, document, context }),
-    getSink<Context>({ ydoc, awareness, document }),
+    getSource({ ydoc, awareness, document }),
+    getSink({ ydoc, awareness, document }),
   );
+}
+
+export function getYDocTransport({
+  ydoc,
+  document,
+  awareness = new Awareness(ydoc),
+  debug = false,
+}: {
+  ydoc: Y.Doc;
+  document: string;
+  awareness?: Awareness;
+  debug?: boolean;
+}): YBinaryTransport<{ ydoc: Y.Doc; awareness: Awareness }> {
+  let transport = getTransport({ ydoc, document, awareness });
+
+  if (debug) {
+    transport = withLogger(transport);
+  }
+
+  return toBinaryTransport(transport, {
+    clientId: "external",
+  });
 }

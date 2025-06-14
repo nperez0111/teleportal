@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { DocMessage, encodeDocStep, Update } from "../protocol";
-import { passthrough } from "./passthrough";
+import { DocMessage, Update } from "../protocol";
+import { withPassthrough } from "./passthrough";
 import { getSink, getSource, getTransport } from "./ydoc";
 
 describe("ydoc source", () => {
@@ -26,76 +26,78 @@ describe("ydoc source", () => {
           expect(chunk.type).toBe("doc");
           expect(chunk.document).toBe("test");
           if (count++ === 0) {
-            expect(chunk.update).toMatchInlineSnapshot(`
-            Uint8Array [
-              2,
-              30,
-              0,
-              0,
-              2,
-              136,
-              3,
-              0,
-              0,
-              1,
-              4,
-              12,
-              9,
-              116,
-              101,
-              115,
-              116,
-              104,
-              101,
-              108,
-              108,
-              111,
-              4,
-              5,
-              1,
-              1,
-              0,
-              0,
-              1,
-              1,
-              0,
-              0,
-            ]
+            expect(chunk.payload).toMatchInlineSnapshot(`
+            {
+              "type": "update",
+              "update": Uint8Array [
+                0,
+                0,
+                2,
+                136,
+                3,
+                0,
+                0,
+                1,
+                4,
+                12,
+                9,
+                116,
+                101,
+                115,
+                116,
+                104,
+                101,
+                108,
+                108,
+                111,
+                4,
+                5,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1,
+                0,
+                0,
+              ],
+            }
           `);
           } else {
-            expect(chunk.update).toMatchInlineSnapshot(`
-              Uint8Array [
-                2,
-                28,
-                0,
-                0,
-                3,
-                200,
-                3,
-                1,
-                1,
-                6,
-                1,
-                8,
-                1,
-                196,
-                8,
-                6,
-                32,
-                119,
-                111,
-                114,
-                108,
-                100,
-                6,
-                0,
-                0,
-                0,
-                1,
-                1,
-                5,
-                0,
-              ]
+            expect(chunk.payload).toMatchInlineSnapshot(`
+              {
+                "type": "update",
+                "update": Uint8Array [
+                  0,
+                  0,
+                  3,
+                  200,
+                  3,
+                  1,
+                  1,
+                  6,
+                  1,
+                  8,
+                  1,
+                  196,
+                  8,
+                  6,
+                  32,
+                  119,
+                  111,
+                  114,
+                  108,
+                  100,
+                  6,
+                  0,
+                  0,
+                  0,
+                  1,
+                  1,
+                  5,
+                  0,
+                ],
+              }
             `);
             doc.destroy();
           }
@@ -126,29 +128,32 @@ describe("ydoc source", () => {
           expect(chunk.context.clientId).toBe("200");
           expect(chunk.type).toBe("awareness");
           expect(chunk.document).toBe("test");
-          expect(chunk.update).toMatchInlineSnapshot(`
-            Uint8Array [
-              1,
-              200,
-              1,
-              1,
-              15,
-              123,
-              34,
-              116,
-              101,
-              115,
-              116,
-              34,
-              58,
-              34,
-              105,
-              100,
-              45,
-              49,
-              34,
-              125,
-            ]
+          expect(chunk.payload).toMatchInlineSnapshot(`
+            {
+              "type": "awareness-update",
+              "update": Uint8Array [
+                1,
+                200,
+                1,
+                1,
+                15,
+                123,
+                34,
+                116,
+                101,
+                115,
+                116,
+                34,
+                58,
+                34,
+                105,
+                100,
+                45,
+                49,
+                34,
+                125,
+              ],
+            }
           `);
         },
       }),
@@ -169,13 +174,13 @@ describe("ydoc sink", () => {
     await writer.write(
       new DocMessage(
         "test",
-        encodeDocStep(
-          "update",
-          new Uint8Array([
+        {
+          type: "update",
+          update: new Uint8Array([
             0, 0, 2, 136, 3, 0, 0, 1, 4, 12, 9, 116, 101, 115, 116, 104, 101,
             108, 108, 111, 4, 5, 1, 1, 0, 0, 1, 1, 0, 0,
           ]) as Update,
-        ),
+        },
         {
           clientId: "200",
         },
@@ -187,13 +192,13 @@ describe("ydoc sink", () => {
     await writer.write(
       new DocMessage(
         "test",
-        encodeDocStep(
-          "update",
-          new Uint8Array([
+        {
+          type: "update",
+          update: new Uint8Array([
             0, 0, 3, 200, 3, 1, 1, 6, 1, 8, 1, 196, 8, 6, 32, 119, 111, 114,
             108, 100, 6, 0, 0, 0, 1, 1, 5, 0,
           ]) as Update,
-        ),
+        },
         {
           clientId: "200",
         },
@@ -244,13 +249,13 @@ describe("ydoc transport", () => {
     await writer.write(
       new DocMessage(
         "test",
-        encodeDocStep(
-          "update",
-          new Uint8Array([
+        {
+          type: "update",
+          update: new Uint8Array([
             0, 0, 2, 136, 3, 0, 0, 1, 4, 12, 9, 116, 101, 115, 116, 104, 101,
             108, 108, 111, 4, 5, 1, 1, 0, 0, 1, 1, 0, 0,
           ]) as Update,
-        ),
+        },
         {
           clientId: "200",
         },
@@ -266,39 +271,40 @@ describe("ydoc transport", () => {
     expect(value.context.clientId).toBe("300");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
-    expect(value.update).toMatchInlineSnapshot(`
-      Uint8Array [
-        2,
-        28,
-        0,
-        0,
-        4,
-        172,
-        4,
-        136,
-        3,
-        1,
-        8,
-        0,
-        1,
-        132,
-        8,
-        6,
-        32,
-        119,
-        111,
-        114,
-        108,
-        100,
-        6,
-        0,
-        0,
-        0,
-        1,
-        1,
-        0,
-        0,
-      ]
+    expect(value.payload).toMatchInlineSnapshot(`
+      {
+        "type": "update",
+        "update": Uint8Array [
+          0,
+          0,
+          4,
+          172,
+          4,
+          136,
+          3,
+          1,
+          8,
+          0,
+          1,
+          132,
+          8,
+          6,
+          32,
+          119,
+          111,
+          114,
+          108,
+          100,
+          6,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+        ],
+      }
     `);
 
     expect(doc.getText("test").toString()).toBe("hello world");
@@ -307,98 +313,104 @@ describe("ydoc transport", () => {
   it("can be inspected with a passthrough", async () => {
     const doc = new Y.Doc();
     doc.clientID = 300;
-    const transport = passthrough(
+    const transport = withPassthrough(
       getTransport({
         ydoc: doc,
         document: "test",
       }),
       {
         onRead(chunk) {
-          expect(chunk).toMatchInlineSnapshot(`
-            DocMessage {
-              "context": {
-                "clientId": "300",
-              },
-              "document": "test",
-              "type": "doc",
-              "update": Uint8Array [
-                2,
-                28,
-                0,
-                0,
-                4,
-                172,
-                4,
-                136,
-                3,
-                1,
-                8,
-                0,
-                1,
-                132,
-                8,
-                6,
-                32,
-                119,
-                111,
-                114,
-                108,
-                100,
-                6,
-                0,
-                0,
-                0,
-                1,
-                1,
-                0,
-                0,
-              ],
-            }
+          expect(chunk.encoded).toMatchInlineSnapshot(`
+            Uint8Array [
+              89,
+              74,
+              83,
+              1,
+              4,
+              116,
+              101,
+              115,
+              116,
+              0,
+              2,
+              28,
+              0,
+              0,
+              4,
+              172,
+              4,
+              136,
+              3,
+              1,
+              8,
+              0,
+              1,
+              132,
+              8,
+              6,
+              32,
+              119,
+              111,
+              114,
+              108,
+              100,
+              6,
+              0,
+              0,
+              0,
+              1,
+              1,
+              0,
+              0,
+            ]
           `);
         },
         onWrite(chunk) {
-          expect(chunk).toMatchInlineSnapshot(`
-            DocMessage {
-              "context": {
-                "clientId": "200",
-              },
-              "document": "test",
-              "type": "doc",
-              "update": Uint8Array [
-                2,
-                30,
-                0,
-                0,
-                2,
-                136,
-                3,
-                0,
-                0,
-                1,
-                4,
-                12,
-                9,
-                116,
-                101,
-                115,
-                116,
-                104,
-                101,
-                108,
-                108,
-                111,
-                4,
-                5,
-                1,
-                1,
-                0,
-                0,
-                1,
-                1,
-                0,
-                0,
-              ],
-            }
+          expect(chunk.encoded).toMatchInlineSnapshot(`
+            Uint8Array [
+              89,
+              74,
+              83,
+              1,
+              4,
+              116,
+              101,
+              115,
+              116,
+              0,
+              2,
+              30,
+              0,
+              0,
+              2,
+              136,
+              3,
+              0,
+              0,
+              1,
+              4,
+              12,
+              9,
+              116,
+              101,
+              115,
+              116,
+              104,
+              101,
+              108,
+              108,
+              111,
+              4,
+              5,
+              1,
+              1,
+              0,
+              0,
+              1,
+              1,
+              0,
+              0,
+            ]
           `);
         },
       },
@@ -411,13 +423,13 @@ describe("ydoc transport", () => {
     await writer.write(
       new DocMessage(
         "test",
-        encodeDocStep(
-          "update",
-          new Uint8Array([
+        {
+          type: "update",
+          update: new Uint8Array([
             0, 0, 2, 136, 3, 0, 0, 1, 4, 12, 9, 116, 101, 115, 116, 104, 101,
             108, 108, 111, 4, 5, 1, 1, 0, 0, 1, 1, 0, 0,
           ]) as Update,
-        ),
+        },
         {
           clientId: "200",
         },
@@ -434,39 +446,40 @@ describe("ydoc transport", () => {
     expect(value.context.clientId).toBe("300");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
-    expect(value.update).toMatchInlineSnapshot(`
-      Uint8Array [
-        2,
-        28,
-        0,
-        0,
-        4,
-        172,
-        4,
-        136,
-        3,
-        1,
-        8,
-        0,
-        1,
-        132,
-        8,
-        6,
-        32,
-        119,
-        111,
-        114,
-        108,
-        100,
-        6,
-        0,
-        0,
-        0,
-        1,
-        1,
-        0,
-        0,
-      ]
+    expect(value.payload).toMatchInlineSnapshot(`
+      {
+        "type": "update",
+        "update": Uint8Array [
+          0,
+          0,
+          4,
+          172,
+          4,
+          136,
+          3,
+          1,
+          8,
+          0,
+          1,
+          132,
+          8,
+          6,
+          32,
+          119,
+          111,
+          114,
+          108,
+          100,
+          6,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+        ],
+      }
     `);
   });
 });
