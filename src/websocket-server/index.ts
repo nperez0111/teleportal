@@ -61,7 +61,6 @@ export function createHandler(
           readable: transform.readable,
           writable: new WritableStream({
             write(chunk) {
-              console.log("sending chunk", chunk);
               peer.send(chunk);
             },
           }),

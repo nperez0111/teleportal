@@ -1,11 +1,6 @@
 import { ObservableV2 } from "lib0/observable.js";
-
-/**
- * TODO:
- *  - This should be based on ReadableStream and WritableStream
- *  - It can have a static method to create a Provider instance (or maybe the provider does this?)
- *  - The name could be better for client instantiation
- */
+import { BinaryMessage, YBinaryTransport } from "../lib";
+import { createMultiReader } from "../transports/utils";
 
 const messageReconnectTimeout = 30000;
 const maxBackoffTime = 2500;
@@ -31,7 +26,7 @@ export type WebsocketState =
 
 export class WebsocketClient extends ObservableV2<{
   update: (state: WebsocketState) => void;
-  message: (message: Uint8Array) => void;
+  message: (message: BinaryMessage) => void;
   close: (event: CloseEvent) => void;
   open: () => void;
 }> {
@@ -42,6 +37,12 @@ export class WebsocketClient extends ObservableV2<{
   #url: string;
   #protocols: string[];
   #state: WebsocketState = { type: "disconnected", ws: null };
+  public writable: WritableStream<BinaryMessage> = new WritableStream({
+    write: (message) => {
+      this.send(message);
+    },
+  });
+  public multiReader = createMultiReader();
   public isDestroyed = false;
 
   public get state() {
@@ -76,7 +77,7 @@ export class WebsocketClient extends ObservableV2<{
         messageReconnectTimeout < Date.now() - this.#wsLastMessageReceived
       ) {
         // No message received in a long time
-        this._closeWebSocketConnection(null);
+        this._closeWebSocketConnection();
       }
     }, messageReconnectTimeout / 10);
   }
@@ -92,7 +93,9 @@ export class WebsocketClient extends ObservableV2<{
 
       websocket.onmessage = async (event) => {
         this.#wsLastMessageReceived = Date.now();
-        this.emit("message", [new Uint8Array(event.data as ArrayBuffer)]);
+        this.emit("message", [
+          new Uint8Array(event.data as ArrayBuffer) as BinaryMessage,
+        ]);
       };
 
       websocket.onerror = (event) => {
@@ -102,10 +105,18 @@ export class WebsocketClient extends ObservableV2<{
           error: new Error("WebSocket error", { cause: event }),
         };
       };
+      const writable = new WritableStream({
+        write: (message) => {
+          const writer = this.multiReader.writable.getWriter();
+          writer.write(message);
+          writer.releaseLock();
+        },
+      });
 
       websocket.onclose = (event) => {
-        this._closeWebSocketConnection(event);
+        this._closeWebSocketConnection();
         this.emit("close", [event]);
+        writable.abort();
       };
 
       websocket.onopen = () => {
@@ -114,10 +125,28 @@ export class WebsocketClient extends ObservableV2<{
         this.state = { type: "connected", ws: websocket };
         this.emit("open", []);
       };
+
+      // TODO this is sort of awkward
+      new ReadableStream({
+        start: async (controller) => {
+          this.on("message", (message) => {
+            controller.enqueue(message);
+          });
+          await new Promise((resolve) => {
+            this.once("open", () => {
+              resolve(undefined);
+            });
+          });
+        },
+      }).pipeTo(writable);
     }
   }
 
-  private _closeWebSocketConnection(event: CloseEvent | null) {
+  public getReader() {
+    return this.multiReader.getReader();
+  }
+
+  private _closeWebSocketConnection() {
     if (this.state.ws) {
       this.state.ws.close();
       const wasConnected = this.state.type === "connected";
@@ -139,7 +168,7 @@ export class WebsocketClient extends ObservableV2<{
     }
   }
 
-  public send(data: Uint8Array) {
+  public send(data: BinaryMessage) {
     if (this.isDestroyed) {
       throw new Error("WebsocketClient is destroyed, create a new instance");
     }
@@ -162,7 +191,7 @@ export class WebsocketClient extends ObservableV2<{
     }
     this.#shouldConnect = false;
     if (this.state.ws) {
-      this._closeWebSocketConnection(null);
+      this._closeWebSocketConnection();
     }
   }
 
@@ -183,7 +212,7 @@ export class WebsocketClient extends ObservableV2<{
   public disconnect() {
     this.#shouldConnect = false;
     if (this.state.ws) {
-      this._closeWebSocketConnection(null);
+      this._closeWebSocketConnection();
     }
   }
 }
