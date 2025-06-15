@@ -1,14 +1,10 @@
 import { uuidv4 } from "lib0/random";
-import type { ServerContext, YBinaryTransport, YTransport } from "./base";
+
+import type { Message, ServerContext, YBinaryTransport } from "../lib";
+import type { DocumentStorage } from "../storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
-import type { Message } from "./protocol";
-import type { DocumentStorage } from "./storage";
-import pino from "pino";
-
-const logger = pino({
-  name: "server",
-});
+import { logger } from "./logger";
 
 export type ServerOptions<Context extends ServerContext> = {
   getStorage: (ctx: {

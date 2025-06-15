@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { DocMessage, Update } from "../protocol";
+import { DocMessage, Update } from "../lib";
 import { withPassthrough } from "./passthrough";
 import { getSink, getSource, getTransport } from "./ydoc";
 

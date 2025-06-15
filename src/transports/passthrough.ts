@@ -1,5 +1,10 @@
-import { compose, YSink, YSource, type YTransport } from "../base";
-import { Message } from "../protocol";
+import {
+  compose,
+  type Message,
+  type YSink,
+  type YSource,
+  type YTransport,
+} from "../lib";
 
 /**
  * A {@link YSink} that wraps another sink and passes all updates through.

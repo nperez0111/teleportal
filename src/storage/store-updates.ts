@@ -2,19 +2,18 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as Y from "yjs";
 
-import type { YDocUpdate } from "./base";
-import type { Tag } from "./protocol";
+import type { Message, Tag } from "../lib";
 
 export type UpdateMessage = Tag<Uint8Array, "update-message">;
 
 export const getWriteDocUpdateStream = () =>
   new TransformStream<
-    YDocUpdate<any>,
+    Message<any>,
     { document: string; update: UpdateMessage }
   >({
     transform(chunk, controller) {
       if (
-        chunk.payload.type === "sync-step-2" ||
+        (chunk.type === "doc" && chunk.payload.type === "sync-step-2") ||
         chunk.payload.type === "update"
       ) {
         const encoder = encoding.createEncoder();

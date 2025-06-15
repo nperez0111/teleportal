@@ -1,10 +1,6 @@
 import { uuidv4 } from "lib0/random.js";
 import * as Y from "yjs";
-import {
-  type BinaryMessage,
-  DocMessage,
-  type StateVector,
-} from "../src/protocol";
+import { type BinaryMessage, DocMessage, type StateVector } from "../src/lib";
 import { getYDocTransport } from "../src/transports/ydoc";
 
 const doc = new Y.Doc();

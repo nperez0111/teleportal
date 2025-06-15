@@ -1,4 +1,4 @@
-import type { StateVector, Update } from "../protocol";
+import type { StateVector, Update } from "../lib";
 
 /**
  * An empty Update for use as a placeholder.

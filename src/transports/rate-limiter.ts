@@ -1,6 +1,4 @@
-import type { YTransport } from "../base";
-import type { ClientContext } from "../base";
-import type { Message } from "../protocol";
+import type { ClientContext, Message, YTransport } from "../lib";
 
 export interface RateLimitOptions {
   /**

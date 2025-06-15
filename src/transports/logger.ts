@@ -1,10 +1,5 @@
-import type { YTransport } from "../base";
+import type { YTransport } from "../lib";
 import { withPassthrough } from "./passthrough";
-import pino from "pino";
-
-const logger = pino({
-  name: "logger",
-});
 
 /**
  * A transport that wraps another transport and logs all updates to the console.
@@ -20,7 +15,7 @@ export function withLogger<
 ): YTransport<Context, AdditionalProperties> {
   return withPassthrough(transport, {
     onWrite: (chunk) => {
-      logger.info(
+      console.info(
         {
           type: "write",
           chunk,
@@ -29,7 +24,7 @@ export function withLogger<
       );
     },
     onRead: (chunk) => {
-      logger.info(
+      console.info(
         {
           type: "read",
           chunk,

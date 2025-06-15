@@ -1,14 +1,10 @@
 import * as Y from "yjs";
 
-import type { ServerContext, YSink } from "./base";
-import { DocMessage, type Message, type Update } from "./protocol";
+import type { Message, ServerContext, Update, YSink } from "../lib";
+import { DocMessage } from "../lib";
+import type { DocumentStorage } from "../storage";
+import { logger } from "./logger";
 import type { Server } from "./server";
-import { DocumentStorage } from "./storage";
-import pino from "pino";
-
-const logger = pino({
-  name: "document",
-});
 
 export function getDocumentId(name: string, context: ServerContext) {
   return context.room ? context.room + "/" + name : name;

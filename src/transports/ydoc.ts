@@ -6,20 +6,18 @@ import {
 import * as Y from "yjs";
 
 import {
+  AwarenessMessage,
+  type AwarenessUpdateMessage,
   type ClientContext,
   compose,
+  DocMessage,
   toBinaryTransport,
-  YBinaryTransport,
+  type Update,
+  type YBinaryTransport,
   type YSink,
   type YSource,
   type YTransport,
-} from "../base";
-import {
-  AwarenessMessage,
-  type AwarenessUpdateMessage,
-  DocMessage,
-  type Update,
-} from "../protocol";
+} from "../lib";
 import { withLogger } from "./logger";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {

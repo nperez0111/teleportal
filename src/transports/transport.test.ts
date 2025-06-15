@@ -1,17 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
-import type { YAwarenessUpdate, YTransport } from "../base";
 import {
-  type AwarenessUpdateMessage,
-  type SyncStep1,
-  type SyncStep2,
-  type UpdateStep,
-  type Message,
-  DocMessage,
   AwarenessMessage,
-  StateVector,
-  Update,
-} from "../protocol";
+  DocMessage,
+  type AwarenessUpdateMessage,
+  type Message,
+  type StateVector,
+  type Update,
+  type YTransport,
+} from "../lib";
 import { noopTransport, withPassthrough } from "./passthrough";
 
 export function generateTestTransport(
@@ -72,7 +69,7 @@ export function generateTestTransport(
   } else {
     return {
       writable: new WritableStream<Message<{ test: string }>>(),
-      readable: new ReadableStream<YAwarenessUpdate<{ test: string }>>({
+      readable: new ReadableStream<Message<{ test: string }>>({
         async start(controller) {
           controller.enqueue(
             new AwarenessMessage(

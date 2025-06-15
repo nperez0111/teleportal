@@ -1,8 +1,7 @@
 import type * as crossws from "crossws";
 import { PeerContext } from "crossws";
-import { ServerContext, YBinaryTransport } from "../base";
-import { BinaryMessage } from "../protocol";
-import { Server } from "../server";
+import type { BinaryMessage, ServerContext, YBinaryTransport } from "../lib";
+import { Server } from "../server/server";
 
 declare module "crossws" {
   interface PeerContext {

@@ -1,17 +1,14 @@
-import {
-  getMessageReader,
+import type {
+  Message,
+  RawReceivedMessage,
+  ServerContext,
+  YBinaryTransport,
   YSink,
-  type ServerContext,
-  type YBinaryTransport,
-} from "./base";
+} from "../lib";
+import { getMessageReader } from "../lib";
 import { getDocumentId, type Document } from "./document";
-import { type Message, type RawReceivedMessage } from "./protocol";
+import { logger } from "./logger";
 import type { Server } from "./server";
-import pino from "pino";
-
-const logger = pino({
-  name: "client",
-});
 
 export type ClientHooks<Context extends ServerContext> = {
   onSubscribeToDocument?: (document: Document<Context>) => Promise<void> | void;

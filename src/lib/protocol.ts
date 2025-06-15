@@ -1,7 +1,6 @@
+import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
-import { encoding } from "lib0";
-import { Decoder } from "lib0/decoding";
-import { uuidv4 } from "lib0/random.js";
+import { uuidv4 } from "lib0/random";
 
 /**
  * Binary encoding of the Yjs protocol.
@@ -377,7 +376,7 @@ function decodeDocStepWithDecoder<
       : D extends UpdateStep
         ? DecodedUpdateStep
         : never,
->(decoder: Decoder): E {
+>(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
     switch (messageType) {

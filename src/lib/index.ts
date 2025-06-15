@@ -1,4 +1,5 @@
-import { type Message, type BinaryMessage, decodeMessage } from "./protocol";
+import { type BinaryMessage, decodeMessage, type Message } from "./protocol";
+export * from "./protocol";
 
 export type ClientContext = {
   /**
@@ -19,22 +20,6 @@ export type ServerContext = {
    */
   room: string;
 } & ClientContext;
-
-/**
- * A Y.js document update.
- */
-export type YDocUpdate<Context extends Record<string, unknown>> =
-  Message<Context> & {
-    type: "doc";
-  };
-
-/**
- * A Y.js awareness update.
- */
-export type YAwarenessUpdate<Context extends Record<string, unknown>> =
-  Message<Context> & {
-    type: "awareness";
-  };
 
 /**
  * A source of Y.js updates.
@@ -140,6 +125,11 @@ export type YBinaryTransport<
   writable: WritableStream<BinaryMessage>;
 } & AdditionalProperties;
 
+/**
+ * Convert a {@link YTransport} to a {@link YBinaryTransport}.
+ *
+ * This will encode all messages going in and out of the transport from {@link BinaryMessage} to {@link Message} and vice versa.
+ */
 export function toBinaryTransport<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
