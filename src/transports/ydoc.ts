@@ -45,7 +45,6 @@ export function getSource({
   return {
     ydoc,
     awareness,
-
     readable: new ReadableStream({
       start(controller) {
         onUpdate = ydoc.on("updateV2", (update, origin) => {

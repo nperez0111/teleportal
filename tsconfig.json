@@ -11,7 +11,8 @@
     "types": ["@types/bun"],
     "paths": {
       "serve-y": ["./src/index.ts"],
-    }
+    },
+    "jsx": "react-jsx"
   },
   "include": ["src", "playground"]
 }

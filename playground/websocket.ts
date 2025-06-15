@@ -1,4 +1,4 @@
-import { serve } from "crossws/server";
+import crossws from "crossws/adapters/bun";
 import { createDatabase } from "db0";
 import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
@@ -7,6 +7,7 @@ import dbDriver from "unstorage/drivers/db0";
 import { Server } from "../src/server/server";
 import { UnstorageDocumentStorage } from "../src/storage/unstorage";
 import { createHandler } from "../src/websocket-server";
+import homepage from "./index.html";
 
 const db = createDatabase(
   bunSqlite({
@@ -20,8 +21,8 @@ const storage = createStorage({
   }),
 });
 
-serve({
-  websocket: createHandler(
+const ws = crossws({
+  hooks: createHandler(
     new Server({
       getStorage: async (ctx) => {
         return new UnstorageDocumentStorage(storage, {
@@ -43,10 +44,16 @@ serve({
       },
     },
   ).hooks,
-  fetch: () => {
-    console.log("fetch");
-    return new Response("Hello, world!", {
-      headers: { "Content-Type": "text/plain" },
-    });
+});
+
+Bun.serve({
+  routes: {
+    "/": homepage,
+  },
+  websocket: ws.websocket,
+  fetch(request, server) {
+    if (request.headers.get("upgrade") === "websocket") {
+      return ws.handleUpgrade(request, server);
+    }
   },
 });

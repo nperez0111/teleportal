@@ -15,7 +15,7 @@
     "workers"
   ],
   "repository": "pi0/y-crossws",
-  "license": "MIT",
+  "license": "MPL-2.0",
   "sideEffects": false,
   "type": "module",
   "exports": {
@@ -39,7 +39,7 @@
     "lint": "eslint . && prettier -c src playground",
     "lint:fix": "automd && eslint . --fix && prettier -w src playground",
     "prepack": "pnpm build",
-    "play:bun": "PORT=3000 bun run --watch ./playground/bun.ts",
+    "play:bun": "PORT=1234 bun run --watch ./playground/websocket.ts",
     "play:cf": "wrangler dev -c ./playground/wrangler.toml --port 3000",
     "play:deno": "PORT=3000 deno run --unstable-byonm -A ./playground/deno.ts",
     "play:node": "PORT=3000 jiti ./playground/node.ts",
@@ -67,9 +67,6 @@
     "typescript": "^5.6.3",
     "unbuild": "^2.0.0",
     "yjs": "^13.6.20"
-  },
-  "peerDependencies": {
-    "yjs": "^13.5.6"
   },
   "packageManager": "pnpm@10.12.1"
 }
