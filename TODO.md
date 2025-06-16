@@ -1,4 +1,5 @@
 - Should we also put the clientId within each message to trace the origin of the message?
 - Message auth response as a message type?
 - Could the client do the compaction? Is there a way to guarantee that the client's compaction did not add any additional state?
-- Sub document support: https://github.com/toeverything/AFFiNE/blob/v0.9.0-canary.13/packages/y-provider/src/lazy-provider.ts
+- Sub document support: <https://github.com/toeverything/AFFiNE/blob/v0.9.0-canary.13/packages/y-provider/src/lazy-provider.ts>
+- token management: <https://github.com/panva/jose>

@@ -22,6 +22,8 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 * **🏎️ Performance:** This is all built on top of web-native Streams APIs, supporting control-flow, backpressure. All without actually storing the documents in-memory
 
+![matchmaker architecture](./architecture.excalidraw.png)
+
 <!-- automd:badges color=yellow -->
 
 [![npm version](https://img.shields.io/npm/v/serve-y?color=yellow)](https://npmjs.com/package/serve-y)
