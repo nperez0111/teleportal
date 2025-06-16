@@ -2,7 +2,11 @@ import * as Y from "yjs";
 
 import type { Message, ServerContext, Update, YSink } from "../lib";
 import { DocMessage } from "../lib";
-import type { DocumentStorage } from "../storage";
+import {
+  getEmptyStateVector,
+  getEmptyUpdate,
+  type DocumentStorage,
+} from "../storage";
 import { logger, type Logger } from "./logger";
 import type { Server } from "./server";
 
@@ -22,6 +26,7 @@ export type DocumentHooks<Context extends ServerContext> = {
 export class Document<Context extends ServerContext>
   implements YSink<Context, {}>
 {
+  public readonly id: string;
   public readonly name: string;
   private readonly clients: Set<string> = new Set();
   private hooks: DocumentHooks<Context>;
@@ -31,16 +36,19 @@ export class Document<Context extends ServerContext>
   private logger: Logger;
 
   constructor({
+    id,
     name,
     hooks,
     server,
     storage,
   }: {
+    id: string;
     name: string;
     hooks: DocumentHooks<Context>;
     server: Server<Context>;
     storage: DocumentStorage;
   }) {
+    this.id = id;
     this.name = name;
     this.hooks = hooks;
     this.server = server;
@@ -66,9 +74,13 @@ export class Document<Context extends ServerContext>
             });
           }
           try {
-            const { update, stateVector } = await this.storage.fetch(
+            const { update, stateVector } = (await this.storage.fetch(
               getDocumentId(this.name, message.context),
-            );
+            )) ?? {
+              // TODO we can make a hook for a fallback file to load the update from?
+              update: getEmptyUpdate(),
+              stateVector: getEmptyStateVector(),
+            };
             this.logger.trace(
               {
                 messageId: message.id,
@@ -182,6 +194,7 @@ export class Document<Context extends ServerContext>
         "document is now empty, unloading",
       );
       await this.hooks.onUnload?.(this);
+      await this.storage.unload(this.id);
       await this.writable.close();
     }
   }

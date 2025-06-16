@@ -27,10 +27,10 @@ export interface DocumentStorage {
   fetch(key: string): Promise<{
     update: Update;
     stateVector: StateVector;
-  }>;
+  } | null>;
 
   /**
-   * Destroys the underlying storage for a document.
+   * Unloads a document from storage.
    */
-  destroy(): Promise<void>;
+  unload(key: string): Promise<void>;
 }

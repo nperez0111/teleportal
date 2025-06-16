@@ -78,42 +78,12 @@ export class UnstorageDocumentStorage implements DocumentStorage {
   async fetch(key: string): Promise<{
     update: Update;
     stateVector: StateVector;
-  }> {
-    const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
-        new Set());
+  } | null> {
+    const update = await this.compact(key);
 
-    if (keys.size === 0) {
-      // TODO should we implement a fallback file to load the update from?
-      return {
-        update: getEmptyUpdate(),
-        stateVector: getEmptyStateVector(),
-      };
+    if (!update) {
+      return null;
     }
-    if (keys.size === 1) {
-      const update = await this.storage.getItemRaw(Array.from(keys)[0]);
-      return {
-        update,
-        stateVector: Y.encodeStateVectorFromUpdateV2(update) as StateVector,
-      };
-    }
-    // TODO another strategy would be to do the updates on storing instead of on reading (configurable?)
-    const update = Y.mergeUpdatesV2(
-      // TODO little naive, but it's ok for now
-      (
-        await Promise.all(
-          Array.from(keys).map((key) => this.storage.getItemRaw(key)),
-        )
-      ).filter(Boolean),
-    ) as Update;
-
-    // asynchronously store the update and delete the keys
-    this.write(key, update, true).then(() => {
-      return Promise.all(
-        Array.from(keys).map((key) => this.storage.removeItem(key)),
-      );
-    });
 
     return {
       update,
@@ -127,7 +97,46 @@ export class UnstorageDocumentStorage implements DocumentStorage {
     };
   }
 
-  async destroy(): Promise<void> {
-    await this.storage.dispose();
+  private async compact(
+    key: string,
+    asyncDeleteKeys = true,
+  ): Promise<Update | null> {
+    const keys = this.options.scanKeys
+      ? new Set(await this.storage.getKeys(key + "-update-"))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
+        new Set());
+
+    if (keys.size === 0) {
+      return null;
+    }
+    if (keys.size === 1) {
+      return await this.storage.getItemRaw(Array.from(keys)[0]);
+    }
+
+    const update = Y.mergeUpdatesV2(
+      // TODO little naive, but it's ok for now
+      (
+        await Promise.all(
+          Array.from(keys).map((key) => this.storage.getItemRaw(key)),
+        )
+      ).filter(Boolean),
+    ) as Update;
+
+    // asynchronously store the update and delete the keys
+    const promise = this.write(key, update, true).then(() => {
+      return Promise.all(
+        Array.from(keys).map((key) => this.storage.removeItem(key)),
+      );
+    });
+
+    if (asyncDeleteKeys) {
+      await promise;
+    }
+
+    return update;
+  }
+
+  async unload(key: string): Promise<void> {
+    await this.compact(key, false);
   }
 }

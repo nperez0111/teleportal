@@ -53,7 +53,7 @@ export function createHandler(
         }
       },
       open(peer) {
-        console.log("open", peer.id);
+        console.log("[peer=%s] open", peer.id);
         const transform = new TransformStream<BinaryMessage, BinaryMessage>();
 
         peer.context.writable = transform.writable;
@@ -68,19 +68,19 @@ export function createHandler(
         server.createClient(peer.context.transport, peer.context);
       },
       async message(peer, message) {
-        console.log("message", peer.id);
+        console.log("[peer=%s] message %s", peer.id, message.id);
         const buff = message.uint8Array();
         const writer = peer.context.writable.getWriter();
         await writer.write(buff as BinaryMessage);
         writer.releaseLock();
       },
       async close(peer) {
-        console.log("close", peer.id);
+        console.log("[peer=%s] close", peer.id);
         await peer.context.writable.close();
         await peer.context.transport.writable.close();
       },
       error(peer, error) {
-        console.log("error", peer.id, error);
+        console.log("[peer=%s] error", peer.id, error);
       },
     },
   };
