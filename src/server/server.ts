@@ -1,6 +1,12 @@
 import { uuidv4 } from "lib0/random";
 
-import type { Message, ServerContext, YBinaryTransport } from "../lib";
+import {
+  encodePongMessage,
+  isPingMessage,
+  type Message,
+  type ServerContext,
+  type YBinaryTransport,
+} from "../lib";
 import type { DocumentStorage } from "../storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
@@ -70,6 +76,7 @@ export class Server<Context extends ServerContext> {
     }
 
     const doc = new Document<Context>({
+      id: documentId,
       name,
       server: this,
       storage,
@@ -107,7 +114,23 @@ export class Server<Context extends ServerContext> {
        * see what actually is being read and written to the client.
        * We will also implement the binary encoding/decoding here.
        */
-      transport,
+      transport: {
+        writable: transport.writable,
+        readable: transport.readable.pipeThrough(
+          new TransformStream({
+            transform(chunk, controller) {
+              // Just filter out ping messages to avoid any unnecessary processing
+              if (isPingMessage(chunk)) {
+                const writer = transport.writable.getWriter();
+                writer.write(encodePongMessage());
+                writer.releaseLock();
+                return;
+              }
+              controller.enqueue(chunk);
+            },
+          }),
+        ),
+      },
       server: this,
       context: Object.assign(
         {

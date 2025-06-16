@@ -1,5 +1,5 @@
 import { ObservableV2 } from "lib0/observable.js";
-import type { BinaryMessage } from "../lib";
+import { encodePingMessage, isPongMessage, type BinaryMessage } from "../lib";
 import { createMultiReader } from "../transports/utils";
 
 const messageReconnectTimeout = 30000;
@@ -70,6 +70,12 @@ export class WebsocketClient extends ObservableV2<{
     if (connect) {
       this._setupWebSocket();
     }
+    // TODO make this better?
+    setInterval(() => {
+      if (this.state.type === "connected") {
+        this.send(encodePingMessage());
+      }
+    }, 10000);
 
     this.#checkInterval = setInterval(() => {
       if (
@@ -93,9 +99,13 @@ export class WebsocketClient extends ObservableV2<{
 
       websocket.onmessage = async (event) => {
         this.#wsLastMessageReceived = Date.now();
-        this.emit("message", [
-          new Uint8Array(event.data as ArrayBuffer) as BinaryMessage,
-        ]);
+        const message = new Uint8Array(
+          event.data as ArrayBuffer,
+        ) as BinaryMessage;
+        if (isPongMessage(message)) {
+          return;
+        }
+        this.emit("message", [message]);
       };
 
       websocket.onerror = (event) => {
@@ -105,18 +115,10 @@ export class WebsocketClient extends ObservableV2<{
           error: new Error("WebSocket error", { cause: event }),
         };
       };
-      const writable = new WritableStream({
-        write: (message) => {
-          const writer = this.multiReader.writable.getWriter();
-          writer.write(message);
-          writer.releaseLock();
-        },
-      });
 
       websocket.onclose = (event) => {
         this._closeWebSocketConnection();
         this.emit("close", [event]);
-        writable.abort();
       };
 
       websocket.onopen = () => {
@@ -126,19 +128,12 @@ export class WebsocketClient extends ObservableV2<{
         this.emit("open", []);
       };
 
-      // TODO this is sort of awkward
-      new ReadableStream({
-        start: async (controller) => {
-          this.on("message", (message) => {
-            controller.enqueue(message);
-          });
-          await new Promise((resolve) => {
-            this.once("open", () => {
-              resolve(undefined);
-            });
-          });
-        },
-      }).pipeTo(writable);
+      // Set up message handling
+      this.on("message", (message) => {
+        const writer = this.multiReader.writable.getWriter();
+        writer.write(message);
+        writer.releaseLock();
+      });
     }
   }
 
