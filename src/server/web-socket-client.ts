@@ -1,5 +1,5 @@
 import { ObservableV2 } from "lib0/observable.js";
-import { BinaryMessage, YBinaryTransport } from "../lib";
+import type { BinaryMessage } from "../lib";
 import { createMultiReader } from "../transports/utils";
 
 const messageReconnectTimeout = 30000;

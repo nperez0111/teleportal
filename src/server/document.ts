@@ -3,7 +3,7 @@ import * as Y from "yjs";
 import type { Message, ServerContext, Update, YSink } from "../lib";
 import { DocMessage } from "../lib";
 import type { DocumentStorage } from "../storage";
-import { logger } from "./logger";
+import { logger, type Logger } from "./logger";
 import type { Server } from "./server";
 
 export function getDocumentId(name: string, context: ServerContext) {
@@ -28,6 +28,7 @@ export class Document<Context extends ServerContext>
   public writable: WritableStream<Message<Context>>;
   private server: Server<Context>;
   private storage: DocumentStorage;
+  private logger: Logger;
 
   constructor({
     name,
@@ -44,12 +45,12 @@ export class Document<Context extends ServerContext>
     this.hooks = hooks;
     this.server = server;
     this.storage = storage;
+    this.logger = logger.child({ name: "document", documentName: this.name });
     this.writable = new WritableStream({
       write: async (message) => {
         if (message.type === "doc" && message.payload.type === "sync-step-1") {
-          logger.trace(
+          this.logger.trace(
             {
-              clientId: message.context.clientId,
               messageId: message.id,
               documentId: getDocumentId(this.name, message.context),
             },
@@ -68,9 +69,8 @@ export class Document<Context extends ServerContext>
             const { update, stateVector } = await this.storage.fetch(
               getDocumentId(this.name, message.context),
             );
-            logger.trace(
+            this.logger.trace(
               {
-                clientId: message.context.clientId,
                 messageId: message.id,
                 documentId: getDocumentId(this.name, message.context),
               },
@@ -83,9 +83,8 @@ export class Document<Context extends ServerContext>
               }),
               this,
             );
-            logger.trace(
+            this.logger.trace(
               {
-                clientId: message.context.clientId,
                 messageId: message.id,
                 documentId: getDocumentId(this.name, message.context),
               },
@@ -99,7 +98,7 @@ export class Document<Context extends ServerContext>
               this,
             );
           } catch (err) {
-            logger.error(
+            this.logger.error(
               {
                 err,
                 clientId: message.context.clientId,
@@ -126,9 +125,8 @@ export class Document<Context extends ServerContext>
             update: message.payload.update,
           });
 
-          logger.trace(
+          this.logger.trace(
             {
-              clientId: message.context.clientId,
               messageId: message.id,
               documentId: getDocumentId(this.name, message.context),
             },
@@ -144,9 +142,8 @@ export class Document<Context extends ServerContext>
   }
 
   public async write(message: Message<Context>) {
-    logger.trace(
+    this.logger.trace(
       {
-        clientId: message.context.clientId,
         messageId: message.id,
         documentId: getDocumentId(this.name, message.context),
       },
@@ -158,7 +155,7 @@ export class Document<Context extends ServerContext>
   }
 
   public subscribe(clientId: string) {
-    logger.trace(
+    this.logger.trace(
       {
         clientId,
         documentName: this.name,
@@ -169,7 +166,7 @@ export class Document<Context extends ServerContext>
   }
 
   public async unsubscribe(clientId: string) {
-    logger.trace(
+    this.logger.trace(
       {
         clientId,
         documentName: this.name,
@@ -178,7 +175,7 @@ export class Document<Context extends ServerContext>
     );
     this.clients.delete(clientId);
     if (this.clients.size === 0) {
-      logger.trace(
+      this.logger.trace(
         {
           documentName: this.name,
         },
@@ -197,7 +194,7 @@ export class Document<Context extends ServerContext>
   private async broadcast(message: Message<Context>, sourceClientId?: string) {
     const origin = this.server.clients.get(sourceClientId as string) ?? this;
 
-    logger.trace(
+    this.logger.trace(
       {
         sourceClientId,
         documentId: getDocumentId(this.name, message.context),
@@ -211,7 +208,7 @@ export class Document<Context extends ServerContext>
         if (clientId === sourceClientId) {
           return;
         }
-        logger.trace(
+        this.logger.trace(
           {
             clientId,
             documentId: getDocumentId(this.name, message.context),

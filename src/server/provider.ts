@@ -1,15 +1,11 @@
+import { ObservableV2 } from "lib0/observable.js";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { WebsocketClient } from "./web-socket-client";
-import {
-  BinaryMessage,
-  DocMessage,
-  StateVector,
-  YBinaryTransport,
-} from "../lib";
-import { getYDocTransport } from "../transports/ydoc";
+
+import { DocMessage, StateVector, YBinaryTransport } from "../lib";
 import { ReaderInstance } from "../transports/utils";
-import { ObservableV2 } from "lib0/observable.js";
+import { getYDocTransport } from "../transports/ydoc";
+import { WebsocketClient } from "./web-socket-client";
 
 export class Provider extends ObservableV2<{
   "load-subdoc": (subdoc: string) => void;

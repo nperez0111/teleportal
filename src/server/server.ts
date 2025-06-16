@@ -4,7 +4,7 @@ import type { Message, ServerContext, YBinaryTransport } from "../lib";
 import type { DocumentStorage } from "../storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
-import { logger } from "./logger";
+import { logger, type Logger } from "./logger";
 
 export type ServerOptions<Context extends ServerContext> = {
   getStorage: (ctx: {
@@ -44,9 +44,11 @@ export class Server<Context extends ServerContext> {
   public readonly clients: Map<string, Client<Context>> = new Map();
   public readonly documents: Map<string, Document<Context>> = new Map();
   public readonly options: ServerOptions<Context>;
+  private logger: Logger;
 
   constructor(options: ServerOptions<Context>) {
     this.options = options;
+    this.logger = logger.child({ name: "server" });
   }
 
   public async getOrCreateDocument(name: string, context: Context) {
@@ -56,7 +58,7 @@ export class Server<Context extends ServerContext> {
       return this.documents.get(documentId)!;
     }
 
-    logger.trace({ documentId }, "creating document");
+    this.logger.trace({ documentId }, "creating document");
 
     const storage = await this.options.getStorage({
       context,
@@ -73,18 +75,18 @@ export class Server<Context extends ServerContext> {
       storage,
       hooks: {
         onUnload: () => {
-          logger.trace({ documentId }, "document unloaded");
+          this.logger.trace({ documentId }, "document unloaded");
           this.documents.delete(documentId);
         },
         onStoreUpdate: async ({ documentId, update }) => {
-          logger.trace({ documentId, update }, "document store updated");
+          this.logger.trace({ documentId, update }, "document store updated");
         },
       },
     });
 
     this.documents.set(documentId, doc);
 
-    logger.trace({ documentId }, "document created");
+    this.logger.trace({ documentId }, "document created");
 
     return doc;
   }
@@ -95,7 +97,7 @@ export class Server<Context extends ServerContext> {
   ) {
     const clientId = uuidv4();
 
-    logger.trace({ clientId }, "creating client");
+    this.logger.trace({ clientId }, "creating client");
 
     const client = new Client<Context>({
       id: clientId,
@@ -117,7 +119,7 @@ export class Server<Context extends ServerContext> {
 
     this.clients.set(clientId, client);
 
-    logger.trace({ clientId }, "client created");
+    this.logger.trace({ clientId }, "client created");
 
     return client;
   }

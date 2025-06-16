@@ -7,7 +7,7 @@ import type {
 } from "../lib";
 import { getMessageReader } from "../lib";
 import { getDocumentId, type Document } from "./document";
-import { logger } from "./logger";
+import { logger, type Logger } from "./logger";
 import type { Server } from "./server";
 
 export type ClientHooks<Context extends ServerContext> = {
@@ -34,6 +34,7 @@ export class Client<Context extends ServerContext> {
   private readonly server: Server<Context>;
   private readonly sink: YSink<Context, {}>;
   public isComplete: boolean = false;
+  private logger: Logger;
 
   constructor({
     id,
@@ -49,6 +50,7 @@ export class Client<Context extends ServerContext> {
     context: Context;
   }) {
     this.id = id;
+    this.logger = logger.child({ name: "client", clientId: this.id });
     this.hooks = hooks;
     this.server = server;
     this.context = context;
@@ -58,9 +60,8 @@ export class Client<Context extends ServerContext> {
     this.sink = {
       writable: new WritableStream({
         write: async (message) => {
-          logger.trace(
+          this.logger.trace(
             {
-              clientId: this.id,
               messageId: message.id,
               documentId: getDocumentId(message.document, message.context),
             },
@@ -83,9 +84,8 @@ export class Client<Context extends ServerContext> {
             );
           }
 
-          logger.trace(
+          this.logger.trace(
             {
-              clientId: this.id,
               documentId,
             },
             "client has been authorized",
@@ -97,9 +97,8 @@ export class Client<Context extends ServerContext> {
 
           await this.subscribeToDocument(documentId);
 
-          logger.trace(
+          this.logger.trace(
             {
-              clientId: this.id,
               documentId,
             },
             "client writing message to document",
@@ -120,7 +119,7 @@ export class Client<Context extends ServerContext> {
       }),
     };
 
-    logger.trace({ clientId: this.id }, "client set up");
+    this.logger.trace("client set up");
     // Immediately start listening for messages
     this.transport.readable
       .pipeThrough(getMessageReader(this.context))
@@ -128,12 +127,12 @@ export class Client<Context extends ServerContext> {
   }
 
   public async disconnect() {
-    logger.trace({ clientId: this.id }, "client disconnecting");
+    this.logger.trace("client disconnecting");
     await this.sink.writable.close();
   }
 
   private async destroy() {
-    logger.trace({ clientId: this.id }, "client destroying");
+    this.logger.trace("client destroying");
     await Promise.all(
       Array.from(this.documents).map((documentId) =>
         this.unsubscribeFromDocument(documentId),
@@ -142,17 +141,14 @@ export class Client<Context extends ServerContext> {
     this.documents.clear();
     await this.hooks.onClose?.();
     this.isComplete = true;
-    logger.trace({ clientId: this.id }, "client destroyed");
+    this.logger.trace("client destroyed");
   }
 
   private async subscribeToDocument(documentId: string) {
     if (this.documents.has(documentId)) {
       return;
     }
-    logger.trace(
-      { clientId: this.id, documentId },
-      "client subscribing to document",
-    );
+    this.logger.trace({ documentId }, "client subscribing to document");
     const document = this.server.documents.get(documentId);
     if (!document) {
       throw new Error(`Document not found to subscribe to`, {
@@ -170,10 +166,7 @@ export class Client<Context extends ServerContext> {
     if (!this.documents.has(documentId)) {
       return;
     }
-    logger.trace(
-      { clientId: this.id, documentId },
-      "client unsubscribing from document",
-    );
+    this.logger.trace({ documentId }, "client unsubscribing from document");
     const document = this.server.documents.get(documentId);
     if (!document) {
       throw new Error(`Document ${documentId} not found`);
@@ -189,17 +182,14 @@ export class Client<Context extends ServerContext> {
    */
   async send(message: Message, origin: Document<Context> | Client<Context>) {
     if (message.context.clientId === this.id) {
-      logger.trace(
-        { clientId: this.id, messageId: message.id },
+      this.logger.trace(
+        { messageId: message.id },
         "ignoring message sent by this client",
       );
       // Ignore messages sent by this client
       return;
     }
-    logger.trace(
-      { clientId: this.id, messageId: message.id },
-      "client sending message",
-    );
+    this.logger.trace({ messageId: message.id }, "client sending message");
     await this.hooks.onMessage?.(message, origin, "outbound");
 
     // Do not hold lock on the writer
@@ -209,9 +199,6 @@ export class Client<Context extends ServerContext> {
     } finally {
       writer.releaseLock();
     }
-    logger.trace(
-      { clientId: this.id, messageId: message.id },
-      "client sent message",
-    );
+    this.logger.trace({ messageId: message.id }, "client sent message");
   }
 }
