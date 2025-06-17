@@ -4,6 +4,10 @@ import {
   AwarenessUpdateMessage,
   decodeMessage,
   DocMessage,
+  encodePingMessage,
+  encodePongMessage,
+  isPingMessage,
+  isPongMessage,
   StateVector,
   Update,
 } from "./protocol";
@@ -252,5 +256,43 @@ describe("can encode", () => {
         3,
       ]
     `);
+  });
+});
+
+describe("ping pong", () => {
+  it("can encode and decode a ping message", () => {
+    expect(encodePingMessage()).toMatchInlineSnapshot(`
+      Uint8Array [
+        89,
+        74,
+        83,
+        112,
+        105,
+        110,
+        103,
+      ]
+    `);
+  });
+
+  it("can encode and decode a pong message", () => {
+    expect(encodePongMessage()).toMatchInlineSnapshot(`
+      Uint8Array [
+        89,
+        74,
+        83,
+        112,
+        111,
+        103,
+        110,
+      ]
+    `);
+  });
+
+  it("can detect a ping message", () => {
+    expect(isPingMessage(encodePingMessage())).toBe(true);
+  });
+
+  it("can detect a pong message", () => {
+    expect(isPongMessage(encodePongMessage())).toBe(true);
   });
 });

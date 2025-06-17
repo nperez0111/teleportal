@@ -22,7 +22,7 @@ describe("ydoc source", () => {
     await source.readable.pipeTo(
       new WritableStream({
         write(chunk) {
-          expect(chunk.context.clientId).toBe("200");
+          expect(chunk.context.clientId).toBe("local");
           expect(chunk.type).toBe("doc");
           expect(chunk.document).toBe("test");
           if (count++ === 0) {
@@ -125,7 +125,7 @@ describe("ydoc source", () => {
     await source.readable.pipeTo(
       new WritableStream({
         write(chunk) {
-          expect(chunk.context.clientId).toBe("200");
+          expect(chunk.context.clientId).toBe("local");
           expect(chunk.type).toBe("awareness");
           expect(chunk.document).toBe("test");
           expect(chunk.payload).toMatchInlineSnapshot(`
@@ -268,7 +268,7 @@ describe("ydoc transport", () => {
       throw new Error("No value");
     }
     expect(done).toBe(false);
-    expect(value.context.clientId).toBe("300");
+    expect(value.context.clientId).toBe("local");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
     expect(value.payload).toMatchInlineSnapshot(`
@@ -443,7 +443,7 @@ describe("ydoc transport", () => {
     if (!value) {
       throw new Error("No value");
     }
-    expect(value.context.clientId).toBe("300");
+    expect(value.context.clientId).toBe("local");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
     expect(value.payload).toMatchInlineSnapshot(`
