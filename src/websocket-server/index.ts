@@ -37,7 +37,10 @@ export function createHandler(
               transport: {} as any,
               writable: {} as any,
             },
-            headers,
+            headers: {
+              "x-powered-by": "match-maker",
+              ...headers,
+            },
           };
         } catch (err) {
           if (err instanceof Response) {
