@@ -27,7 +27,7 @@ export function getSyncTransactionOrigin(ydoc: Y.Doc) {
 /**
  * Makes a {@link YSource} from a {@link Y.Doc} and a document name
  */
-export function getSource({
+export function getYDocSource({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
@@ -90,6 +90,7 @@ export function getSource({
                 type: "awareness-update",
                 update: encodeAwarenessUpdate(
                   awareness,
+                  // TODO each client should only send it's own awareness updates
                   changedClients,
                 ) as AwarenessUpdateMessage,
               },
@@ -123,7 +124,7 @@ export function getSource({
 /**
  * Makes a {@link YSink} from a {@link Y.Doc} and a document name
  */
-export function getSink({
+export function getYDocSink({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
@@ -180,7 +181,7 @@ export function getSink({
 /**
  * Makes a {@link YTransport} from a {@link Y.Doc} and a document name
  */
-export function getTransport({
+export function getYTransportFromYDoc({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
@@ -190,8 +191,8 @@ export function getTransport({
   awareness?: Awareness;
 }): YTransport<ClientContext, { ydoc: Y.Doc; awareness: Awareness }> {
   return compose(
-    getSource({ ydoc, awareness, document }),
-    getSink({ ydoc, awareness, document }),
+    getYDocSource({ ydoc, awareness, document }),
+    getYDocSink({ ydoc, awareness, document }),
   );
 }
 
@@ -206,7 +207,7 @@ export function getYDocTransport({
   awareness?: Awareness;
   debug?: boolean;
 }): YBinaryTransport<{ ydoc: Y.Doc; awareness: Awareness }> {
-  let transport = getTransport({ ydoc, document, awareness });
+  let transport = getYTransportFromYDoc({ ydoc, document, awareness });
 
   if (debug) {
     transport = withLogger(transport);

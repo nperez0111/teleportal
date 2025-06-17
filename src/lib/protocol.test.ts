@@ -6,6 +6,10 @@ import {
   DocMessage,
   encodePingMessage,
   encodePongMessage,
+  getEmptyStateVector,
+  getEmptyUpdate,
+  isEmptyStateVector,
+  isEmptyUpdate,
   isPingMessage,
   isPongMessage,
   StateVector,
@@ -294,5 +298,31 @@ describe("ping pong", () => {
 
   it("can detect a pong message", () => {
     expect(isPongMessage(encodePongMessage())).toBe(true);
+  });
+});
+
+describe("empty update", () => {
+  it("can detect an empty update", () => {
+    expect(isEmptyUpdate(getEmptyUpdate())).toBe(true);
+  });
+
+  it("can detect a non-empty update", () => {
+    expect(
+      isEmptyUpdate(new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update),
+    ).toBe(false);
+  });
+});
+
+describe("empty state vector", () => {
+  it("can detect an empty state vector", () => {
+    expect(isEmptyStateVector(getEmptyStateVector())).toBe(true);
+  });
+
+  it("can detect a non-empty state vector", () => {
+    expect(
+      isEmptyStateVector(
+        new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
+      ),
+    ).toBe(false);
   });
 });

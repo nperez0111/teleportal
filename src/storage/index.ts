@@ -1,17 +1,5 @@
 import type { StateVector, Update } from "../lib";
-
-/**
- * An empty Update for use as a placeholder.
- */
-export const getEmptyUpdate = (): Update =>
-  new Uint8Array([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]) as Update;
-
-/**
- * An empty StateVector for use as a placeholder.
- */
-export const getEmptyStateVector = (): StateVector =>
-  new Uint8Array([0]) as StateVector;
-
+export * from "./unstorage";
 /**
  * A storage interface for a document.
  */

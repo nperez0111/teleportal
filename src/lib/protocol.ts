@@ -501,3 +501,43 @@ export function encodePongMessage(): BinaryMessage {
   encoding.writeUint8(encoder, 0x6e);
   return encoding.toUint8Array(encoder) as BinaryMessage;
 }
+
+/**
+ * An empty Update for use as a placeholder.
+ */
+export const getEmptyUpdate = (): Update =>
+  new Uint8Array([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]) as Update;
+
+/**
+ * An empty StateVector for use as a placeholder.
+ */
+export const getEmptyStateVector = (): StateVector =>
+  new Uint8Array([0]) as StateVector;
+
+export function isEmptyUpdate(update: Update): boolean {
+  const empty = getEmptyUpdate();
+  for (let i = 0; i < empty.length; i++) {
+    if (update[i] !== empty[i]) {
+      return false;
+    }
+  }
+  // check if the length is the same
+  if (update.length !== empty.length) {
+    return false;
+  }
+  return true;
+}
+
+export function isEmptyStateVector(stateVector: StateVector): boolean {
+  const empty = getEmptyStateVector();
+  for (let i = 0; i < empty.length; i++) {
+    if (stateVector[i] !== empty[i]) {
+      return false;
+    }
+  }
+  // check if the length is the same
+  if (stateVector.length !== empty.length) {
+    return false;
+  }
+  return true;
+}

@@ -3,11 +3,7 @@ import type { Storage } from "unstorage";
 import * as Y from "yjs";
 
 import type { StateVector, Update } from "../lib";
-import {
-  DocumentStorage,
-  getEmptyStateVector,
-  getEmptyUpdate,
-} from "../storage";
+import { DocumentStorage } from "../storage";
 
 /**
  * A storage implementation that is backed by unstorage.

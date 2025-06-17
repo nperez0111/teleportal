@@ -4,13 +4,13 @@ import * as Y from "yjs";
 
 import { DocMessage, Update } from "../lib";
 import { withPassthrough } from "./passthrough";
-import { getSink, getSource, getTransport } from "./ydoc";
+import { getYDocSink, getYDocSource, getTransport } from "./ydoc";
 
 describe("ydoc source", () => {
   it("can read a doc's updates", async () => {
     const doc = new Y.Doc();
     doc.clientID = 200;
-    const source = getSource({
+    const source = getYDocSource({
       ydoc: doc,
       document: "test",
     });
@@ -110,7 +110,7 @@ describe("ydoc source", () => {
     const doc = new Y.Doc();
     doc.clientID = 200;
     const awareness = new Awareness(doc);
-    const source = getSource({
+    const source = getYDocSource({
       ydoc: doc,
       awareness,
       document: "test",
@@ -165,7 +165,7 @@ describe("ydoc sink", () => {
   it("can write a doc's updates", async () => {
     const doc = new Y.Doc();
     doc.clientID = 300;
-    const sink = getSink({
+    const sink = getYDocSink({
       ydoc: doc,
       document: "test",
     });

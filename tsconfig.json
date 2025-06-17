@@ -10,7 +10,7 @@
     "allowImportingTsExtensions": true,
     "types": ["@types/bun"],
     "paths": {
-      "serve-y": ["./src/index.ts"],
+      "match-maker": ["./src/index.ts"],
     },
     "jsx": "react-jsx"
   },
