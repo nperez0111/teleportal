@@ -17,9 +17,10 @@ export class Provider extends ObservableV2<{
   public document: string;
   #websocketClient: WebsocketClient;
   #readerInstance: ReaderInstance;
+  #aborter = new AbortController();
   public subdocs: Map<string, Provider> = new Map();
 
-  constructor({
+  private constructor({
     client,
     doc,
     document,
@@ -42,20 +43,27 @@ export class Provider extends ObservableV2<{
     this.#websocketClient = client;
     this.#readerInstance = this.#websocketClient.getReader();
 
-    this.transport.readable.pipeTo(
-      new WritableStream({
-        write: (message) => {
-          this.#websocketClient.send(message);
-        },
-      }),
-    );
+    this.#aborter = new AbortController();
+
+    this.transport.readable
+      .pipeTo(
+        new WritableStream({
+          write: (message) => {
+            this.#websocketClient.send(message);
+          },
+        }),
+        { signal: this.#aborter.signal },
+      )
+      .catch(() => {
+        // noop
+      });
 
     this.#readerInstance.readable.pipeTo(this.transport.writable);
 
-    if (this.#websocketClient.state.type !== "connected") {
-      this.#websocketClient.once("open", this.onConnect);
+    if (this.#websocketClient.state.type === "connected") {
+      this.beginSync();
     } else {
-      this.onConnect();
+      this.#websocketClient.once("open", this.beginSync);
     }
     this.listenToSubdocs();
   }
@@ -97,11 +105,29 @@ export class Provider extends ObservableV2<{
     });
   }
 
+  public switchDocument(document: string): Provider {
+    this.destroy({ destroyWebSocket: false });
+    const doc = new Y.Doc();
+    const awareness = new Awareness(doc);
+
+    return new Provider({
+      client: this.#websocketClient,
+      document,
+      doc,
+      awareness,
+    });
+  }
+
+  public get synced(): Promise<void> {
+    // TODO should probably also wait that we sent sync-step-1, and got back a sync-step-2
+    return this.#websocketClient.connected;
+  }
+
   public get state() {
     return this.#websocketClient.state;
   }
 
-  private onConnect() {
+  private beginSync() {
     this.#websocketClient.send(
       new DocMessage(this.document, {
         type: "sync-step-1",
@@ -118,6 +144,8 @@ export class Provider extends ObservableV2<{
     destroyWebSocket?: boolean;
   } = {}) {
     super.destroy();
+    // TODO need to figure out how to clean up properly
+    // this.#aborter.abort(new Error("Provider destroyed"));
     this.#readerInstance.unsubscribe();
     if (destroyWebSocket) {
       this.#websocketClient.destroy();
@@ -147,21 +175,7 @@ export class Provider extends ObservableV2<{
     const client = new WebsocketClient({ url });
 
     // Wait for the websocket to connect
-    await new Promise((resolve, reject) => {
-      let handled = false;
-      client.once("close", () => {
-        if (!handled) {
-          handled = true;
-          reject(new Error("WebSocket closed"));
-        }
-      });
-      client.once("open", () => {
-        if (!handled) {
-          handled = true;
-          resolve(null);
-        }
-      });
-    });
+    await client.connected;
 
     return Provider.createFromClient({ client, document, doc, awareness });
   }

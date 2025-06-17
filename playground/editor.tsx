@@ -34,13 +34,14 @@ export function Editor() {
 const EditorLoader = lazy(() =>
   Provider.create({
     url: "ws://localhost:1234/_ws",
-    document: "test-me",
+    document: "testy",
   }).then((provider) => {
     return { default: () => <Page provider={provider} /> };
   }),
 );
 
-function Page({ provider }: { provider: Provider }) {
+function Page({ provider: initialProvider }: { provider: Provider }) {
+  const [provider, setProvider] = useState(initialProvider);
   const [subdocs, setSubdocs] = useState<string[]>(() =>
     Array.from(provider.subdocs.keys()),
   );
@@ -56,10 +57,13 @@ function Page({ provider }: { provider: Provider }) {
   // Renders the editor instance using a React component.
   return (
     <div>
-      <SingleEditor provider={provider} />
-      <SubdocViewer provider={provider} />
+      <button onClick={() => setProvider(provider.switchDocument("test-this"))}>
+        Switch Document
+      </button>
+      <SingleEditor key={provider.document + "-editor"} provider={provider} />
+      <SubdocViewer key={provider.document + "-subdocs"} provider={provider} />
       {subdocs.length > 0 && (
-        <div>
+        <div key={provider.document + "-subdoc-viewer"}>
           Subdocs:
           {subdocs.map((subdoc) => (
             <div key={subdoc}>

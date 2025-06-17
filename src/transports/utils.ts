@@ -37,7 +37,6 @@ export function createMultiReader() {
 
     return {
       unsubscribe: () => {
-        transform.readable.cancel();
         const index = transports.indexOf(transform);
         if (index > -1) {
           transports.splice(index, 1);
