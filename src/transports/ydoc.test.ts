@@ -4,7 +4,7 @@ import * as Y from "yjs";
 
 import { DocMessage, Update } from "../lib";
 import { withPassthrough } from "./passthrough";
-import { getYDocSink, getYDocSource, getTransport } from "./ydoc";
+import { getYDocSink, getYDocSource, getYTransportFromYDoc } from "./ydoc";
 
 describe("ydoc source", () => {
   it("can read a doc's updates", async () => {
@@ -237,7 +237,7 @@ describe("ydoc transport", () => {
   it("can read a doc's updates", async () => {
     const doc = new Y.Doc();
     doc.clientID = 300;
-    const transport = getTransport({
+    const transport = getYTransportFromYDoc({
       ydoc: doc,
       document: "test",
     });
@@ -314,7 +314,7 @@ describe("ydoc transport", () => {
     const doc = new Y.Doc();
     doc.clientID = 300;
     const transport = withPassthrough(
-      getTransport({
+      getYTransportFromYDoc({
         ydoc: doc,
         document: "test",
       }),
