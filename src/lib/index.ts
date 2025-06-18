@@ -1,5 +1,5 @@
-import { type BinaryMessage, decodeMessage, type Message } from "./protocol";
-export * from "./protocol";
+import { type BinaryMessage, decodeMessage, type Message } from "../protocol";
+export * from "../protocol";
 
 export type ClientContext = {
   /**
@@ -138,13 +138,16 @@ export function toBinaryTransport<
   context: Context,
 ): YBinaryTransport<AdditionalProperties> {
   const reader = getMessageReader(context);
-  reader.readable.pipeTo(transport.writable);
   const writer = new TransformStream<Message, BinaryMessage>({
     transform(chunk, controller) {
       controller.enqueue(chunk.encoded);
     },
   });
-  transport.readable.pipeTo(writer.writable);
+  const binarySource: YSource<Context, any> = { readable: reader.readable };
+  const binarySink: YSink<Context, any> = { writable: writer.writable };
+  const binaryTransport = compose(binarySource, binarySink);
+
+  sync(binaryTransport, transport);
   return {
     ...transport,
     readable: writer.readable,

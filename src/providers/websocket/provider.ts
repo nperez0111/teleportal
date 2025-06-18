@@ -2,10 +2,10 @@ import { ObservableV2 } from "lib0/observable.js";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { DocMessage, StateVector, YBinaryTransport } from "../lib";
-import { ReaderInstance } from "../transports/utils";
-import { getYDocTransport } from "../transports/ydoc";
-import { WebsocketClient } from "./web-socket-client";
+import { DocMessage, type StateVector, type YBinaryTransport } from "../../lib";
+import { getYDocTransport } from "../../transports";
+import { WebsocketConnection } from "./connection-manager";
+import type { ReaderInstance } from "./utils";
 
 export class Provider extends ObservableV2<{
   "load-subdoc": (subdoc: string) => void;
@@ -15,9 +15,8 @@ export class Provider extends ObservableV2<{
   public awareness: Awareness;
   public transport: YBinaryTransport;
   public document: string;
-  #websocketClient: WebsocketClient;
-  #readerInstance: ReaderInstance;
-  #aborter = new AbortController();
+  #websocketConnection: WebsocketConnection;
+  #websocketReader: ReaderInstance;
   public subdocs: Map<string, Provider> = new Map();
 
   private constructor({
@@ -26,7 +25,7 @@ export class Provider extends ObservableV2<{
     document,
     awareness = new Awareness(doc),
   }: {
-    client: WebsocketClient;
+    client: WebsocketConnection;
     doc: Y.Doc;
     document: string;
     awareness?: Awareness;
@@ -40,38 +39,28 @@ export class Provider extends ObservableV2<{
       document,
       awareness,
     });
-    this.#websocketClient = client;
-    this.#readerInstance = this.#websocketClient.getReader();
+    this.#websocketConnection = client;
+    this.#websocketReader = this.#websocketConnection.getReader();
 
-    this.#aborter = new AbortController();
+    this.transport.readable.pipeTo(
+      new WritableStream({
+        write: (message) => {
+          this.#websocketConnection.send(message);
+        },
+      }),
+    );
+    this.#websocketReader.readable.pipeTo(this.transport.writable);
 
-    this.transport.readable
-      .pipeTo(
-        new WritableStream({
-          write: (message) => {
-            this.#websocketClient.send(message);
-          },
-        }),
-        { signal: this.#aborter.signal },
-      )
-      .catch(() => {
-        // noop
-      });
-
-    this.#readerInstance.readable.pipeTo(this.transport.writable);
-
-    if (this.#websocketClient.state.type === "connected") {
+    if (this.#websocketConnection.state.type === "connected") {
       this.beginSync();
     } else {
-      this.#websocketClient.once("open", this.beginSync);
+      this.#websocketConnection.once("open", this.beginSync);
     }
     this.listenToSubdocs();
   }
 
   private listenToSubdocs() {
     // TODO all a hack at the moment
-    console.log("doc.collectionid", this.doc.collectionid);
-    console.log(this.doc);
     this.doc.on("subdocs", ({ loaded, added, removed }) => {
       loaded.forEach((doc) => {
         const item = doc._item;
@@ -87,7 +76,7 @@ export class Provider extends ObservableV2<{
           console.log("subdoc already exists", parentSub);
         }
         const provider = new Provider({
-          client: this.#websocketClient,
+          client: this.#websocketConnection,
           doc,
           document: this.document + "/" + parentSub,
         });
@@ -111,7 +100,7 @@ export class Provider extends ObservableV2<{
     const awareness = new Awareness(doc);
 
     return new Provider({
-      client: this.#websocketClient,
+      client: this.#websocketConnection,
       document,
       doc,
       awareness,
@@ -120,15 +109,15 @@ export class Provider extends ObservableV2<{
 
   public get synced(): Promise<void> {
     // TODO should probably also wait that we sent sync-step-1, and got back a sync-step-2
-    return this.#websocketClient.connected;
+    return this.#websocketConnection.connected;
   }
 
   public get state() {
-    return this.#websocketClient.state;
+    return this.#websocketConnection.state;
   }
 
   private beginSync() {
-    this.#websocketClient.send(
+    this.#websocketConnection.send(
       new DocMessage(this.document, {
         type: "sync-step-1",
         sv: Y.encodeStateVectorFromUpdateV2(
@@ -144,11 +133,11 @@ export class Provider extends ObservableV2<{
     destroyWebSocket?: boolean;
   } = {}) {
     super.destroy();
-    // TODO need to figure out how to clean up properly
-    // this.#aborter.abort(new Error("Provider destroyed"));
-    this.#readerInstance.unsubscribe();
+    // TODO how to clean up the transport?
+    // this.transport.readable
+    this.#websocketReader.unsubscribe();
     if (destroyWebSocket) {
-      this.#websocketClient.destroy();
+      this.#websocketConnection.destroy();
     }
   }
 
@@ -172,7 +161,7 @@ export class Provider extends ObservableV2<{
     doc?: Y.Doc;
     awareness?: Awareness;
   }) {
-    const client = new WebsocketClient({ url });
+    const client = new WebsocketConnection({ url });
 
     // Wait for the websocket to connect
     await client.connected;
@@ -191,7 +180,7 @@ export class Provider extends ObservableV2<{
     doc = new Y.Doc(),
     awareness = new Awareness(doc),
   }: {
-    client: WebsocketClient;
+    client: WebsocketConnection;
     document: string;
     doc?: Y.Doc;
     awareness?: Awareness;

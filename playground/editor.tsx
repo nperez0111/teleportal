@@ -3,7 +3,7 @@ import "@blocknote/mantine/style.css";
 import { useCreateBlockNote } from "@blocknote/react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import * as Y from "yjs";
-import { Provider } from "../src/server/provider";
+import { Provider } from "../src/providers/websocket";
 
 function SingleEditor({ provider }: { provider: Provider }) {
   // Creates a new editor instance.

@@ -14,7 +14,7 @@ import {
   isPongMessage,
   StateVector,
   Update,
-} from "./protocol";
+} from ".";
 
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {

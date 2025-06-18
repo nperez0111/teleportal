@@ -6,7 +6,7 @@ import dbDriver from "unstorage/drivers/db0";
 
 import { Server } from "../src/server/server";
 import { UnstorageDocumentStorage } from "../src/storage/unstorage";
-import { createHandler } from "../src/websocket-server";
+import { getWebsocketHandlers } from "../src/websocket-server";
 import homepage from "./index.html";
 
 const db = createDatabase(
@@ -14,6 +14,7 @@ const db = createDatabase(
     name: "yjs.db",
   }),
 );
+
 const storage = createStorage({
   driver: dbDriver({
     database: db,
@@ -21,30 +22,35 @@ const storage = createStorage({
   }),
 });
 
-const ws = crossws({
-  hooks: createHandler(
-    new Server({
-      getStorage: async (ctx) => {
-        return new UnstorageDocumentStorage(storage, {
-          scanKeys: false,
-        });
-      },
-      checkPermission: async (context) => {
-        return true;
-      },
-    }),
-    {
-      onUpgrade: async () => {
-        return {
-          context: {
-            room: "test",
-            userId: "test",
-          },
-        };
-      },
-    },
-  ).hooks,
+const server = new Server({
+  getStorage: async (ctx) => {
+    return new UnstorageDocumentStorage(storage, {
+      scanKeys: false,
+    });
+  },
+  checkPermission: async (context) => {
+    return true;
+  },
 });
+
+const ws = crossws(
+  getWebsocketHandlers({
+    onUpgrade: async () => {
+      return {
+        context: {
+          room: "test",
+          userId: "test",
+        },
+      };
+    },
+    onConnect: async (ctx) => {
+      await server.createClient(ctx.transport, ctx.context, ctx.id);
+    },
+    onDisconnect: async (id) => {
+      await server.disconnectClient(id);
+    },
+  }),
+);
 
 Bun.serve({
   routes: {

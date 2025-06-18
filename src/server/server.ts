@@ -101,9 +101,8 @@ export class Server<Context extends ServerContext> {
   public async createClient(
     transport: YBinaryTransport,
     context: Omit<Context, "clientId">,
+    clientId = uuidv4(),
   ) {
-    const clientId = uuidv4();
-
     this.logger.trace({ clientId }, "creating client");
 
     const client = new Client<Context>({
@@ -145,5 +144,12 @@ export class Server<Context extends ServerContext> {
     this.logger.trace({ clientId }, "client created");
 
     return client;
+  }
+
+  public async disconnectClient(clientId: string) {
+    const client = this.clients.get(clientId);
+    if (client) {
+      await client.disconnect();
+    }
   }
 }

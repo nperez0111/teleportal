@@ -1,6 +1,10 @@
 import { ObservableV2 } from "lib0/observable.js";
-import { encodePingMessage, isPongMessage, type BinaryMessage } from "../lib";
-import { createMultiReader } from "../transports/utils";
+import {
+  encodePingMessage,
+  isPongMessage,
+  type BinaryMessage,
+} from "../../lib";
+import { createFanOutWriter } from "./utils";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;
 const MAX_BACKOFF_TIME = 2500;
@@ -28,12 +32,13 @@ export type WebsocketState =
       reconnectAttempt: number;
     };
 
-export class WebsocketClient extends ObservableV2<{
+export class WebsocketConnection extends ObservableV2<{
   update: (state: WebsocketState) => void;
   message: (message: BinaryMessage) => void;
   close: (event: CloseEvent) => void;
   open: () => void;
   error: (error: Error) => void;
+  reconnect: () => void;
 }> {
   #wsLastMessageReceived = 0;
   #shouldConnect = true;
@@ -44,13 +49,24 @@ export class WebsocketClient extends ObservableV2<{
   #protocols: string[];
   #state: WebsocketState = { type: "offline", ws: null };
   #reconnectAttempt = 0;
+  #transports: TransformStream<BinaryMessage, BinaryMessage>[] = [];
+  /**
+   * Given a single writer (the incoming websocket messages), this will fan out to all connected readers
+   */
+  #fanOutWriter = createFanOutWriter();
+  /**
+   * A writable stream to send messages over the websocket connection
+   */
   public writable: WritableStream<BinaryMessage> = new WritableStream({
     write: (message) => {
       this.send(message);
     },
   });
-  private multiReader = createMultiReader();
+  /**
+   * Whether the websocket connection has been destroyed
+   */
   public isDestroyed = false;
+
   /**
    * @returns a promise that resolves when the websocket is connected
    */
@@ -99,6 +115,10 @@ export class WebsocketClient extends ObservableV2<{
         break;
       }
       case "connected": {
+        if (this.#reconnectAttempt > 0) {
+          this.#reconnectAttempt = 0;
+          this.emit("reconnect", []);
+        }
         this.emit("open", []);
         break;
       }
@@ -181,6 +201,9 @@ export class WebsocketClient extends ObservableV2<{
           return;
         }
 
+        const writer = this.#fanOutWriter.writable.getWriter();
+        await writer.write(message);
+        writer.releaseLock();
         this.emit("message", [message]);
       };
 
@@ -203,12 +226,6 @@ export class WebsocketClient extends ObservableV2<{
         this.#wsLastMessageReceived = Date.now();
         this.state = { type: "connected", ws: websocket };
       };
-
-      this.on("message", (message) => {
-        const writer = this.multiReader.writable.getWriter();
-        writer.write(message);
-        writer.releaseLock();
-      });
     } catch (error) {
       this.state = {
         type: "error",
@@ -266,6 +283,7 @@ export class WebsocketClient extends ObservableV2<{
     if (this.isDestroyed) {
       throw new Error("WebsocketClient is destroyed, create a new instance");
     }
+    // TODO should their be queueing of unsent messages?
     if (
       this.state.type === "connected" &&
       this.state.ws.readyState === WebSocket.OPEN
@@ -301,6 +319,9 @@ export class WebsocketClient extends ObservableV2<{
     this.destroy();
   }
 
+  /**
+   * Manually connect to the websocket connection
+   */
   public connect() {
     if (this.isDestroyed) {
       throw new Error("WebsocketClient is destroyed, create a new instance");
@@ -312,7 +333,13 @@ export class WebsocketClient extends ObservableV2<{
     }
   }
 
+  /**
+   * Manually disconnect from the websocket connection
+   */
   public disconnect() {
+    if (this.isDestroyed) {
+      throw new Error("WebsocketClient is destroyed, create a new instance");
+    }
     this.#shouldConnect = false;
     if (this.#reconnectTimeout) {
       clearTimeout(this.#reconnectTimeout);
@@ -322,7 +349,10 @@ export class WebsocketClient extends ObservableV2<{
     }
   }
 
+  /**
+   * Get a new reader to read incoming messages from the websocket connection
+   */
   public getReader() {
-    return this.multiReader.getReader();
+    return this.#fanOutWriter.getReader();
   }
 }

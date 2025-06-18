@@ -1,11 +1,20 @@
-import type { BinaryMessage } from "../lib";
+import type { BinaryMessage } from "../../lib";
 
 export type ReaderInstance = {
+  /**
+   * Unsubscribe from further messages from the fan out writer
+   */
   unsubscribe: () => void;
+  /**
+   * A readable stream to read messages from the fan out writer
+   */
   readable: ReadableStream<BinaryMessage>;
 };
 
-export function createMultiReader() {
+/**
+ * Creates a writer which will fan out to all connected readers.
+ */
+export function createFanOutWriter() {
   const transports: TransformStream<BinaryMessage, BinaryMessage>[] = [];
 
   const writable = new WritableStream<BinaryMessage>({
@@ -41,6 +50,7 @@ export function createMultiReader() {
         if (index > -1) {
           transports.splice(index, 1);
         }
+        transform.writable.close();
       },
       readable: transform.readable,
     };
