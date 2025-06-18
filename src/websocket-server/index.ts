@@ -34,6 +34,7 @@ export function getWebsocketHandlers({
     transport: YBinaryTransport;
     context: ServerContext;
     id: string;
+    peer: crossws.Peer;
   }) => void | Promise<void>;
   /**
    * Called when a client has disconnected from the server.
@@ -89,10 +90,12 @@ export function getWebsocketHandlers({
             },
           }),
         };
+
         await onConnect({
           transport: peer.context.transport,
           context: peer.context,
           id: peer.id,
+          peer,
         });
       },
       async message(peer, message) {
