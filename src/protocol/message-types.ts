@@ -3,6 +3,7 @@ import { encodeMessage } from ".";
 import {
   AwarenessUpdateMessage,
   DecodedAwarenessUpdateMessage,
+  DecodedSnapshotMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
@@ -23,7 +24,8 @@ export type BinaryMessage =
  */
 export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
-  | DocMessage<Context>;
+  | DocMessage<Context>
+  | SnapshotMessage<Context>;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
@@ -70,6 +72,31 @@ export class DocMessage<Context extends Record<string, unknown>> {
   constructor(
     public document: string,
     public payload: DecodedSyncStep1 | DecodedSyncStep2 | DecodedUpdateStep,
+    context?: Context,
+  ) {
+    this.context = context ?? ({} as Context);
+  }
+
+  public get encoded() {
+    const encoded = encodeMessage(this);
+    Object.defineProperty(this, "encoded", { value: encoded });
+    return encoded;
+  }
+}
+
+/**
+ * A server control message, which was deserialized from a {@link Uint8Array}.
+ *
+ * It also supports decoding the underlying {@link DocStep} and encoding it back to a {@link SendableDocMessage}.
+ */
+export class SnapshotMessage<Context extends Record<string, unknown>> {
+  public type = "snapshot" as const;
+  public context: Context;
+  public id = uuidv4();
+
+  constructor(
+    public document: string,
+    public payload: DecodedSnapshotMessage,
     context?: Context,
   ) {
     this.context = context ?? ({} as Context);

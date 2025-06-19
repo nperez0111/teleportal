@@ -1,5 +1,10 @@
 import * as encoding from "lib0/encoding";
-import { type BinaryMessage, DocMessage, type Message } from "./message-types";
+import {
+  type BinaryMessage,
+  DocMessage,
+  type Message,
+  SnapshotMessage,
+} from "./message-types";
 import type {
   DocStep,
   EncodedDocUpdateMessage,
@@ -68,6 +73,15 @@ export function encodeMessage(update: Message): BinaryMessage {
         }
         break;
       }
+      case "snapshot": {
+        // message type
+        encoding.writeUint8(encoder, 2);
+        // snapshot message type
+        encoding.writeVarString(encoder, update.payload.payload.type);
+        // encode snapshot message payload based on type
+        encodeSnapshotPayload(encoder, update.payload.payload);
+        break;
+      }
       default: {
         throw new Error("Invalid update type", {
           cause: { update },
@@ -81,6 +95,82 @@ export function encodeMessage(update: Message): BinaryMessage {
     throw new Error("Failed to encode message", {
       cause: { update, err },
     });
+  }
+}
+
+/**
+ * Encode snapshot message payload based on the message type
+ */
+function encodeSnapshotPayload(encoder: encoding.Encoder, payload: any): void {
+  switch (payload.type) {
+    case "list-snapshots": {
+      // No additional data needed
+      break;
+    }
+    case "list-snapshots-response": {
+      encoding.writeVarUint(encoder, payload.snapshots.length);
+      for (const snapshot of payload.snapshots) {
+        encoding.writeVarUint(encoder, snapshot.id);
+        encoding.writeVarString(encoder, snapshot.name);
+        encoding.writeVarUint(encoder, snapshot.createdAt);
+        encoding.writeVarString(encoder, snapshot.userId);
+      }
+      break;
+    }
+    case "snapshot-request": {
+      encoding.writeVarString(encoder, payload.name);
+      encoding.writeVarString(encoder, payload.currentSnapshotName);
+      break;
+    }
+    case "snapshot-fetch-request": {
+      encoding.writeVarUint(encoder, payload.snapshotId);
+      break;
+    }
+    case "snapshot-fetch-response": {
+      // Encode snapshot metadata
+      encoding.writeVarUint(encoder, payload.snapshot.id);
+      encoding.writeVarString(encoder, payload.snapshot.name);
+      encoding.writeVarUint(encoder, payload.snapshot.createdAt);
+      encoding.writeVarString(encoder, payload.snapshot.userId);
+      // Encode snapshot content
+      encoding.writeVarUint8Array(encoder, payload.content);
+      break;
+    }
+    case "snapshot-revert-request": {
+      encoding.writeVarUint(encoder, payload.snapshotId);
+      break;
+    }
+    case "snapshot-revert-response": {
+      // Encode snapshot metadata
+      encoding.writeVarUint(encoder, payload.snapshot.id);
+      encoding.writeVarString(encoder, payload.snapshot.name);
+      encoding.writeVarUint(encoder, payload.snapshot.createdAt);
+      encoding.writeVarString(encoder, payload.snapshot.userId);
+      break;
+    }
+    case "snapshot-created-event": {
+      // Encode snapshot metadata
+      encoding.writeVarUint(encoder, payload.snapshot.id);
+      encoding.writeVarString(encoder, payload.snapshot.name);
+      encoding.writeVarUint(encoder, payload.snapshot.createdAt);
+      encoding.writeVarString(encoder, payload.snapshot.userId);
+      break;
+    }
+    case "snapshot-reverted-event": {
+      // Encode snapshot metadata
+      encoding.writeVarUint(encoder, payload.snapshot.id);
+      encoding.writeVarString(encoder, payload.snapshot.name);
+      encoding.writeVarUint(encoder, payload.snapshot.createdAt);
+      encoding.writeVarString(encoder, payload.snapshot.userId);
+      // Encode who performed the revert
+      encoding.writeVarString(encoder, payload.revertedBy);
+      break;
+    }
+    default: {
+      throw new Error("Invalid snapshot message type", {
+        cause: { payload },
+      });
+    }
   }
 }
 
@@ -168,4 +258,173 @@ export function encodeDocStep<
       cause: { messageType, payload, err },
     });
   }
+}
+
+/**
+ * Serialize a snapshot list request message.
+ */
+export function encodeSnapshotListMessage(document: string): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "list-snapshots",
+    payload: { type: "list-snapshots" },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot list response message.
+ */
+export function encodeSnapshotListResponseMessage(
+  document: string,
+  snapshots: Array<{
+    id: number;
+    name: string;
+    createdAt: number;
+    userId: string;
+  }>,
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "list-snapshots-response",
+    payload: {
+      type: "list-snapshots-response",
+      snapshots,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot request message.
+ */
+export function encodeSnapshotRequestMessage(
+  document: string,
+  name: string,
+  currentSnapshotName: string,
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-request",
+    payload: {
+      type: "snapshot-request",
+      name,
+      currentSnapshotName,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot fetch request message.
+ */
+export function encodeSnapshotFetchRequestMessage(
+  document: string,
+  snapshotId: number,
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-fetch-request",
+    payload: {
+      type: "snapshot-fetch-request",
+      snapshotId,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot fetch response message.
+ */
+export function encodeSnapshotFetchResponseMessage(
+  document: string,
+  snapshot: {
+    id: number;
+    name: string;
+    createdAt: number;
+    userId: string;
+  },
+  content: Uint8Array,
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-fetch-response",
+    payload: {
+      type: "snapshot-fetch-response",
+      snapshot,
+      content,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot revert request message.
+ */
+export function encodeSnapshotRevertRequestMessage(
+  document: string,
+  snapshotId: number,
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-revert-request",
+    payload: {
+      type: "snapshot-revert-request",
+      snapshotId,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot revert response message.
+ */
+export function encodeSnapshotRevertResponseMessage(
+  document: string,
+  snapshot: {
+    id: number;
+    name: string;
+    createdAt: number;
+    userId: string;
+  },
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-revert-response",
+    payload: {
+      type: "snapshot-revert-response",
+      snapshot,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot created event message.
+ */
+export function encodeSnapshotCreatedEventMessage(
+  document: string,
+  snapshot: {
+    id: number;
+    name: string;
+    createdAt: number;
+    userId: string;
+  },
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-created-event",
+    payload: {
+      type: "snapshot-created-event",
+      snapshot,
+    },
+  }).encoded;
+}
+
+/**
+ * Serialize a snapshot reverted event message.
+ */
+export function encodeSnapshotRevertedEventMessage(
+  document: string,
+  snapshot: {
+    id: number;
+    name: string;
+    createdAt: number;
+    userId: string;
+  },
+  revertedBy: string,
+): Uint8Array {
+  return new SnapshotMessage(document, {
+    type: "snapshot-reverted-event",
+    payload: {
+      type: "snapshot-reverted-event",
+      snapshot,
+      revertedBy,
+    },
+  }).encoded;
 }

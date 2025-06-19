@@ -3,6 +3,7 @@ import {
   AwarenessMessage,
   type BinaryMessage,
   DocMessage,
+  SnapshotMessage,
   type RawReceivedMessage,
 } from "./message-types";
 import type {
@@ -14,6 +15,7 @@ import type {
   SyncStep1,
   SyncStep2,
   UpdateStep,
+  SnapshotMessageType,
 } from "./types";
 
 /**
@@ -51,6 +53,16 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           update: decoding.readVarUint8Array(decoder) as AwarenessUpdateMessage,
         });
       }
+      case 0x02: {
+        const snapshotMessageType = decoding.readVarString(
+          decoder,
+        ) as SnapshotMessageType["type"];
+        const payload = decodeSnapshotPayload(decoder, snapshotMessageType);
+        return new SnapshotMessage(documentName, {
+          type: snapshotMessageType,
+          payload,
+        });
+      }
       default:
         throw new Error("Invalid target type", {
           cause: { targetType },
@@ -60,6 +72,112 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
     throw new Error("Failed to decode update message", {
       cause: { update, err },
     });
+  }
+}
+
+/**
+ * Decode snapshot message payload based on the message type
+ */
+function decodeSnapshotPayload(
+  decoder: decoding.Decoder,
+  messageType: SnapshotMessageType["type"],
+): SnapshotMessageType {
+  switch (messageType) {
+    case "list-snapshots": {
+      return { type: "list-snapshots" };
+    }
+    case "list-snapshots-response": {
+      const snapshotsCount = decoding.readVarUint(decoder);
+      const snapshots = [];
+      for (let i = 0; i < snapshotsCount; i++) {
+        snapshots.push({
+          id: decoding.readVarUint(decoder),
+          name: decoding.readVarString(decoder),
+          createdAt: decoding.readVarUint(decoder),
+          userId: decoding.readVarString(decoder),
+        });
+      }
+      return {
+        type: "list-snapshots-response",
+        snapshots,
+      };
+    }
+    case "snapshot-request": {
+      return {
+        type: "snapshot-request",
+        name: decoding.readVarString(decoder),
+        currentSnapshotName: decoding.readVarString(decoder),
+      };
+    }
+    case "snapshot-fetch-request": {
+      return {
+        type: "snapshot-fetch-request",
+        snapshotId: decoding.readVarUint(decoder),
+      };
+    }
+    case "snapshot-fetch-response": {
+      const snapshot = {
+        id: decoding.readVarUint(decoder),
+        name: decoding.readVarString(decoder),
+        createdAt: decoding.readVarUint(decoder),
+        userId: decoding.readVarString(decoder),
+      };
+      const content = decoding.readVarUint8Array(decoder);
+      return {
+        type: "snapshot-fetch-response",
+        snapshot,
+        content,
+      };
+    }
+    case "snapshot-revert-request": {
+      return {
+        type: "snapshot-revert-request",
+        snapshotId: decoding.readVarUint(decoder),
+      };
+    }
+    case "snapshot-revert-response": {
+      const snapshot = {
+        id: decoding.readVarUint(decoder),
+        name: decoding.readVarString(decoder),
+        createdAt: decoding.readVarUint(decoder),
+        userId: decoding.readVarString(decoder),
+      };
+      return {
+        type: "snapshot-revert-response",
+        snapshot,
+      };
+    }
+    case "snapshot-created-event": {
+      const snapshot = {
+        id: decoding.readVarUint(decoder),
+        name: decoding.readVarString(decoder),
+        createdAt: decoding.readVarUint(decoder),
+        userId: decoding.readVarString(decoder),
+      };
+      return {
+        type: "snapshot-created-event",
+        snapshot,
+      };
+    }
+    case "snapshot-reverted-event": {
+      const snapshot = {
+        id: decoding.readVarUint(decoder),
+        name: decoding.readVarString(decoder),
+        createdAt: decoding.readVarUint(decoder),
+        userId: decoding.readVarString(decoder),
+      };
+      const revertedBy = decoding.readVarString(decoder);
+      return {
+        type: "snapshot-reverted-event",
+        snapshot,
+        revertedBy,
+      };
+    }
+    default: {
+      throw new Error("Invalid snapshot message type", {
+        cause: { messageType },
+      });
+    }
   }
 }
 
