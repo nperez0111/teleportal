@@ -1,8 +1,4 @@
 export type Tag<T, Tag> = T & { _tag: Tag };
-/**
- * A Y.js update, always encoded as UpdateV2.
- */
-export type Update = Tag<Uint8Array, "update">;
 
 /**
  * A Y.js awareness update message, which includes the document name and the update.
@@ -18,6 +14,11 @@ export type DecodedAwarenessUpdateMessage = {
 };
 
 /**
+ * A Y.js update, always encoded as UpdateV2.
+ */
+export type Update = Tag<Uint8Array, "update">;
+
+/**
  * A Y.js state vector.
  */
 export type StateVector = Tag<Uint8Array, "state-vector">;
@@ -28,7 +29,7 @@ export type StateVector = Tag<Uint8Array, "state-vector">;
 export type SyncStep1 = Tag<Uint8Array, "sync-step-1">;
 
 /**
- * A decoded Y.js sync step 1 update.
+ * A decoded Y.js {@link SyncStep1} update
  */
 export type DecodedSyncStep1 = {
   type: "sync-step-1";
@@ -41,7 +42,7 @@ export type DecodedSyncStep1 = {
 export type SyncStep2 = Tag<Uint8Array, "sync-step-2">;
 
 /**
- * A decoded Y.js sync step 2 update.
+ * A decoded Y.js {@link SyncStep2} update
  */
 export type DecodedSyncStep2 = {
   type: "sync-step-2";
@@ -54,7 +55,7 @@ export type DecodedSyncStep2 = {
 export type UpdateStep = Tag<Uint8Array, "update-step">;
 
 /**
- * A decoded Y.js update step.
+ * A decoded Y.js {@link UpdateStep}
  */
 export type DecodedUpdateStep = {
   type: "update";
