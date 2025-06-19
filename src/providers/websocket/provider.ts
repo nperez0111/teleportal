@@ -94,8 +94,18 @@ export class Provider extends ObservableV2<{
     });
   }
 
+  /**
+   * Switch this provider to a new document, destroying this provider instance.
+   */
   public switchDocument(document: string): Provider {
     this.destroy({ destroyWebSocket: false });
+    return this.openDocument(document);
+  }
+
+  /**
+   * Create a new provider instance for a new document, without destroying this provider.
+   */
+  public openDocument(document: string): Provider {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
 
