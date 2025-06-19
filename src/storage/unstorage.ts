@@ -3,7 +3,7 @@ import type { Storage } from "unstorage";
 import * as Y from "yjs";
 
 import type { StateVector, Update } from "../lib";
-import { DocumentStorage } from "../storage";
+import { DocumentStorage } from "./document-storage";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -12,11 +12,12 @@ import { DocumentStorage } from "../storage";
  * - key-scanning for other updates (useful in a relational DB)
  * - a single key for the update and a separate key for the state vector (useful in a key-value store).
  */
-export class UnstorageDocumentStorage implements DocumentStorage {
+export class UnstorageDocumentStorage extends DocumentStorage {
   private readonly storage: Storage;
   private readonly options: { scanKeys: boolean; ttl: number };
 
   constructor(storage: Storage, options: { scanKeys?: boolean; ttl?: number }) {
+    super();
     this.storage = storage;
     this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
   }

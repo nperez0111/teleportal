@@ -7,7 +7,11 @@ import {
   type ServerContext,
   type YBinaryTransport,
 } from "../lib";
-import type { DocumentStorage } from "../storage";
+import {
+  StorageAdapter,
+  type DocumentStorage,
+  type LowLevelDocumentStorage,
+} from "../storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
 import { logger, type Logger } from "./logger";
@@ -16,7 +20,7 @@ export type ServerOptions<Context extends ServerContext> = {
   getStorage: (ctx: {
     context: Context;
     server: Server<Context>;
-  }) => Promise<DocumentStorage>;
+  }) => Promise<DocumentStorage | LowLevelDocumentStorage>;
   /**
    * Check if a client has permission to access a document.
    * @note This is called on every message sent, so it should be fast.
@@ -79,16 +83,12 @@ export class Server<Context extends ServerContext> {
       id: documentId,
       name,
       server: this,
-      storage,
       hooks: {
         onUnload: () => {
-          this.logger.trace({ documentId }, "document unloaded");
           this.documents.delete(documentId);
         },
-        onStoreUpdate: async ({ documentId, update }) => {
-          this.logger.trace({ documentId, update }, "document store updated");
-        },
       },
+      storage: StorageAdapter.fromStorage(storage),
     });
 
     this.documents.set(documentId, doc);
