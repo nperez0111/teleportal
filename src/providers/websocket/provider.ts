@@ -2,7 +2,7 @@ import { ObservableV2 } from "lib0/observable.js";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { DocMessage, type StateVector, type YBinaryTransport } from "../../lib";
+import type { YBinaryTransport } from "../../lib";
 import { getYDocTransport } from "../../transports";
 import { WebsocketConnection } from "./connection-manager";
 import type { ReaderInstance } from "./utils";
@@ -13,7 +13,9 @@ export class Provider extends ObservableV2<{
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: YBinaryTransport;
+  public transport: YBinaryTransport<{
+    synced: Promise<void>;
+  }>;
   public document: string;
   #websocketConnection: WebsocketConnection;
   #websocketReader: ReaderInstance;
@@ -21,24 +23,28 @@ export class Provider extends ObservableV2<{
 
   private constructor({
     client,
-    doc,
     document,
+    doc = new Y.Doc(),
     awareness = new Awareness(doc),
+    transport = getYDocTransport({
+      ydoc: doc,
+      document,
+      awareness,
+    }),
   }: {
     client: WebsocketConnection;
-    doc: Y.Doc;
     document: string;
+    doc?: Y.Doc;
     awareness?: Awareness;
+    transport?: YBinaryTransport<{
+      synced: Promise<void>;
+    }>;
   }) {
     super();
     this.doc = doc;
     this.awareness = awareness;
     this.document = document;
-    this.transport = getYDocTransport({
-      ydoc: doc,
-      document,
-      awareness,
-    });
+    this.transport = transport;
     this.#websocketConnection = client;
     this.#websocketReader = this.#websocketConnection.getReader();
 
@@ -51,11 +57,6 @@ export class Provider extends ObservableV2<{
     );
     this.#websocketReader.readable.pipeTo(this.transport.writable);
 
-    if (this.#websocketConnection.state.type === "connected") {
-      this.beginSync();
-    } else {
-      this.#websocketConnection.once("open", this.beginSync);
-    }
     this.listenToSubdocs();
   }
 
@@ -117,24 +118,20 @@ export class Provider extends ObservableV2<{
     });
   }
 
+  /**
+   * Resolves when both
+   *  - the underlying websocket connection is connected
+   *  - the transport is ready (i.e. we've synced the ydoc)
+   */
   public get synced(): Promise<void> {
-    // TODO should probably also wait that we sent sync-step-1, and got back a sync-step-2
-    return this.#websocketConnection.connected;
+    return Promise.all([
+      this.#websocketConnection.connected,
+      this.transport.synced,
+    ]).then(() => {});
   }
 
   public get state() {
     return this.#websocketConnection.state;
-  }
-
-  private beginSync() {
-    this.#websocketConnection.send(
-      new DocMessage(this.document, {
-        type: "sync-step-1",
-        sv: Y.encodeStateVectorFromUpdateV2(
-          Y.encodeStateAsUpdateV2(this.doc),
-        ) as StateVector,
-      }).encoded,
-    );
   }
 
   public destroy({
@@ -163,20 +160,30 @@ export class Provider extends ObservableV2<{
   static async create({
     url,
     document,
-    doc = new Y.Doc(),
-    awareness = new Awareness(doc),
+    doc,
+    awareness,
+    transport,
   }: {
     url: string;
     document: string;
     doc?: Y.Doc;
     awareness?: Awareness;
+    transport?: YBinaryTransport<{
+      synced: Promise<void>;
+    }>;
   }) {
     const client = new WebsocketConnection({ url });
 
     // Wait for the websocket to connect
     await client.connected;
 
-    return Provider.createFromClient({ client, document, doc, awareness });
+    return Provider.createFromClient({
+      client,
+      document,
+      doc,
+      awareness,
+      transport,
+    });
   }
 
   /**
@@ -187,19 +194,24 @@ export class Provider extends ObservableV2<{
   static async createFromClient({
     client,
     document,
-    doc = new Y.Doc(),
-    awareness = new Awareness(doc),
+    doc,
+    awareness,
+    transport,
   }: {
     client: WebsocketConnection;
     document: string;
     doc?: Y.Doc;
     awareness?: Awareness;
+    transport?: YBinaryTransport<{
+      synced: Promise<void>;
+    }>;
   }) {
     return new Provider({
       client,
       doc,
       document,
       awareness,
+      transport,
     });
   }
 }

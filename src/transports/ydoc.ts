@@ -11,6 +11,7 @@ import {
   type ClientContext,
   compose,
   DocMessage,
+  StateVector,
   toBinaryTransport,
   type Update,
   type YBinaryTransport,
@@ -31,11 +32,19 @@ export function getYDocSource({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
+  asClient = true,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-}): YSource<ClientContext, { ydoc: Y.Doc; awareness: Awareness }> {
+  asClient?: boolean;
+}): YSource<
+  ClientContext,
+  {
+    ydoc: Y.Doc;
+    awareness: Awareness;
+  }
+> {
   let onUpdate: (...args: any[]) => void;
   let onDestroy: (...args: any[]) => void;
   let onAwarenessUpdate: (...args: any[]) => void;
@@ -47,6 +56,17 @@ export function getYDocSource({
     awareness,
     readable: new ReadableStream({
       start(controller) {
+        if (asClient) {
+          // Only open with a sync-step-1 if we're a client
+          controller.enqueue(
+            new DocMessage(document, {
+              type: "sync-step-1",
+              sv: Y.encodeStateVectorFromUpdateV2(
+                Y.encodeStateAsUpdateV2(ydoc),
+              ) as StateVector,
+            }),
+          );
+        }
         onUpdate = ydoc.on("updateV2", (update, origin) => {
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
@@ -132,14 +152,27 @@ export function getYDocSink({
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
+  asClient?: boolean;
 }): YSink<
   ClientContext,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
+    synced: Promise<void>;
   }
 > {
+  let onSynced: (success: boolean) => void;
+
   return {
+    synced: new Promise((resolve, reject) => {
+      onSynced = (success: boolean) => {
+        if (success) {
+          resolve();
+        } else {
+          reject(new Error("YDoc cancelled"));
+        }
+      };
+    }),
     ydoc,
     awareness,
     writable: new WritableStream({
@@ -161,6 +194,8 @@ export function getYDocSink({
             break;
           }
           case "doc": {
+            onSynced(true);
+            onSynced = () => {};
             switch (chunk.payload.type) {
               case "update":
               case "sync-step-2":
@@ -174,6 +209,10 @@ export function getYDocSink({
           }
         }
       },
+      close() {
+        onSynced(false);
+        onSynced = () => {};
+      },
     }),
   };
 }
@@ -185,14 +224,23 @@ export function getYTransportFromYDoc({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
+  asClient = true,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-}): YTransport<ClientContext, { ydoc: Y.Doc; awareness: Awareness }> {
+  asClient?: boolean;
+}): YTransport<
+  ClientContext,
+  {
+    ydoc: Y.Doc;
+    awareness: Awareness;
+    synced: Promise<void>;
+  }
+> {
   return compose(
-    getYDocSource({ ydoc, awareness, document }),
-    getYDocSink({ ydoc, awareness, document }),
+    getYDocSource({ ydoc, awareness, document, asClient }),
+    getYDocSink({ ydoc, awareness, document, asClient }),
   );
 }
 
@@ -201,13 +249,24 @@ export function getYDocTransport({
   document,
   awareness = new Awareness(ydoc),
   debug = false,
+  asClient = true,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
   debug?: boolean;
-}): YBinaryTransport<{ ydoc: Y.Doc; awareness: Awareness }> {
-  let transport = getYTransportFromYDoc({ ydoc, document, awareness });
+  asClient?: boolean;
+}): YBinaryTransport<{
+  ydoc: Y.Doc;
+  awareness: Awareness;
+  synced: Promise<void>;
+}> {
+  let transport = getYTransportFromYDoc({
+    ydoc,
+    document,
+    awareness,
+    asClient,
+  });
 
   if (debug) {
     transport = withLogger(transport);
