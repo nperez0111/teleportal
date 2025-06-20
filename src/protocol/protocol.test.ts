@@ -19,24 +19,18 @@ import {
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {
     expect(
-      Object.assign(
-        decodeMessage(
-          new AwarenessMessage("test", {
-            type: "awareness-update",
-            update: new Uint8Array([
-              0x00, 0x01, 0x02, 0x03,
-            ]) as AwarenessUpdateMessage,
-          }).encoded,
-        ),
-        {
-          id: "abc",
-        },
+      decodeMessage(
+        new AwarenessMessage("test", {
+          type: "awareness-update",
+          update: new Uint8Array([
+            0x00, 0x01, 0x02, 0x03,
+          ]) as AwarenessUpdateMessage,
+        }).encoded,
       ),
     ).toMatchInlineSnapshot(`
       AwarenessMessage {
         "context": {},
         "document": "test",
-        "id": "abc",
         "payload": {
           "type": "awareness-update",
           "update": Uint8Array [
@@ -53,22 +47,16 @@ describe("can encode and decode", () => {
 
   it("can encode and decode a doc update (sync step 1)", () => {
     expect(
-      Object.assign(
-        decodeMessage(
-          new DocMessage("test", {
-            type: "sync-step-1",
-            sv: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
-          }).encoded,
-        ),
-        {
-          id: "abc",
-        },
+      decodeMessage(
+        new DocMessage("test", {
+          type: "sync-step-1",
+          sv: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
+        }).encoded,
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
         "context": {},
         "document": "test",
-        "id": "abc",
         "payload": {
           "sv": Uint8Array [
             0,
@@ -85,22 +73,16 @@ describe("can encode and decode", () => {
 
   it("can encode and decode a doc update (sync step 2)", () => {
     expect(
-      Object.assign(
-        decodeMessage(
-          new DocMessage("test", {
-            type: "sync-step-2",
-            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-          }).encoded,
-        ),
-        {
-          id: "abc",
-        },
+      decodeMessage(
+        new DocMessage("test", {
+          type: "sync-step-2",
+          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        }).encoded,
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
         "context": {},
         "document": "test",
-        "id": "abc",
         "payload": {
           "type": "sync-step-2",
           "update": Uint8Array [
@@ -117,22 +99,16 @@ describe("can encode and decode", () => {
 
   it("can encode and decode a doc update (update)", () => {
     expect(
-      Object.assign(
-        decodeMessage(
-          new DocMessage("test", {
-            type: "update",
-            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-          }).encoded,
-        ),
-        {
-          id: "abc",
-        },
+      decodeMessage(
+        new DocMessage("test", {
+          type: "update",
+          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        }).encoded,
       ),
     ).toMatchInlineSnapshot(`
       DocMessage {
         "context": {},
         "document": "test",
-        "id": "abc",
         "payload": {
           "type": "update",
           "update": Uint8Array [
@@ -145,6 +121,15 @@ describe("can encode and decode", () => {
         "type": "doc",
       }
     `);
+  });
+
+  it("get it's id", () => {
+    expect(
+      new DocMessage("test", {
+        type: "update",
+        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+      }).id,
+    ).toMatchInlineSnapshot(`"lWgeXgyDuIjrRAkyvkHr3QbOo7YoyqzUnpL2vc2i1BE="`);
   });
 });
 

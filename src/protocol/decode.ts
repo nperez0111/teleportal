@@ -43,13 +43,25 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
 
     switch (targetType) {
       case 0x00: {
-        return new DocMessage(documentName, decodeDocStepWithDecoder(decoder));
+        return new DocMessage(
+          documentName,
+          decodeDocStepWithDecoder(decoder),
+          undefined,
+          update,
+        );
       }
       case 0x01: {
-        return new AwarenessMessage(documentName, {
-          type: "awareness-update",
-          update: decoding.readVarUint8Array(decoder) as AwarenessUpdateMessage,
-        });
+        return new AwarenessMessage(
+          documentName,
+          {
+            type: "awareness-update",
+            update: decoding.readVarUint8Array(
+              decoder,
+            ) as AwarenessUpdateMessage,
+          },
+          undefined,
+          update,
+        );
       }
       default:
         throw new Error("Invalid target type", {

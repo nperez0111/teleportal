@@ -1,4 +1,4 @@
-import { uuidv4 } from "lib0/random";
+import { digest } from "lib0/hash/sha256";
 import { encodeMessage } from ".";
 import {
   AwarenessUpdateMessage,
@@ -9,6 +9,7 @@ import {
   DocStep,
   EncodedDocUpdateMessage,
 } from "./types";
+import { toBase64 } from "lib0/buffer";
 
 /**
  * A Y.js message which concerns a document or awareness update.
@@ -40,20 +41,24 @@ export type RawReceivedMessage = Message<any>;
 export class AwarenessMessage<Context extends Record<string, unknown>> {
   public type = "awareness" as const;
   public context: Context;
-  public id = uuidv4();
+  #encoded: BinaryMessage | undefined;
 
   constructor(
     public document: string,
     public payload: DecodedAwarenessUpdateMessage,
     context?: Context,
+    encoded?: BinaryMessage,
   ) {
     this.context = context ?? ({} as Context);
+    this.#encoded = encoded;
   }
 
   public get encoded() {
-    const encoded = encodeMessage(this);
-    Object.defineProperty(this, "encoded", { value: encoded });
-    return encoded;
+    return this.#encoded ?? (this.#encoded = encodeMessage(this));
+  }
+
+  public get id() {
+    return toBase64(digest(this.encoded));
   }
 }
 
@@ -65,19 +70,23 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
 export class DocMessage<Context extends Record<string, unknown>> {
   public type = "doc" as const;
   public context: Context;
-  public id = uuidv4();
+  #encoded: BinaryMessage | undefined;
 
   constructor(
     public document: string,
     public payload: DecodedSyncStep1 | DecodedSyncStep2 | DecodedUpdateStep,
     context?: Context,
+    encoded?: BinaryMessage,
   ) {
     this.context = context ?? ({} as Context);
+    this.#encoded = encoded;
   }
 
   public get encoded() {
-    const encoded = encodeMessage(this);
-    Object.defineProperty(this, "encoded", { value: encoded });
-    return encoded;
+    return this.#encoded ?? (this.#encoded = encodeMessage(this));
+  }
+
+  public get id() {
+    return toBase64(digest(this.encoded));
   }
 }
