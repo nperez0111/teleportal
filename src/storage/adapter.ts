@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 
-import type { ServerContext, Update } from "../lib";
+import type { Message, ServerContext, Update } from "../lib";
 import { DocMessage, getEmptyStateVector, getEmptyUpdate } from "../protocol";
 import { type Document } from "../server/document";
 import { logger } from "../server/logger";
@@ -26,7 +26,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
   }
 
   async onMessage<Context extends ServerContext>(
-    message: DocMessage<Context>,
+    message: Message<Context>,
     document: Document<Context>,
   ): Promise<void> {
     if (message.type === "doc" && message.payload.type === "sync-step-1") {

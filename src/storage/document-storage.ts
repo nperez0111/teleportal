@@ -1,4 +1,4 @@
-import type { DocMessage, ServerContext, StateVector, Update } from "../lib";
+import type { Message, ServerContext, StateVector, Update } from "../lib";
 import type { Document } from "../server";
 /**
  * A storage interface for a document.
@@ -22,7 +22,7 @@ export abstract class DocumentStorage {
   /**
    * Unloads a document from storage.
    */
-  abstract unload(key: string): Promise<void>;
+  abstract unload(key: string): Promise<void> | void;
 
   // /**
   //  * Creates a snapshot of a document.
@@ -92,7 +92,7 @@ export abstract class LowLevelDocumentStorage {
    * Called when a message is received for a document.
    */
   abstract onMessage<Context extends ServerContext>(
-    message: DocMessage<Context>,
+    message: Message<Context>,
     document: Document<Context>,
   ): Promise<void> | void;
 

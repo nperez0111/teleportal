@@ -49,9 +49,7 @@ export class Document<Context extends ServerContext>
     });
     this.writable = new WritableStream({
       write: async (message) => {
-        if (message.type === "doc") {
-          await this.storage.onMessage(message, this);
-        }
+        await this.storage.onMessage(message, this);
       },
     });
   }
