@@ -39,6 +39,8 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
     }
     const documentName = decoding.readVarString(decoder);
 
+    const encrypted = decoding.readUint8(decoder) === 1;
+
     const targetType = decoding.readVarUint(decoder);
 
     switch (targetType) {
@@ -47,6 +49,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           documentName,
           decodeDocStepWithDecoder(decoder),
           undefined,
+          encrypted,
           update,
         );
       }
@@ -60,6 +63,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
             ) as AwarenessUpdateMessage,
           },
           undefined,
+          encrypted,
           update,
         );
       }

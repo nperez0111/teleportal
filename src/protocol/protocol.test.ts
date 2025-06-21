@@ -31,6 +31,7 @@ describe("can encode and decode", () => {
       AwarenessMessage {
         "context": {},
         "document": "test",
+        "encrypted": false,
         "payload": {
           "type": "awareness-update",
           "update": Uint8Array [
@@ -57,6 +58,7 @@ describe("can encode and decode", () => {
       DocMessage {
         "context": {},
         "document": "test",
+        "encrypted": false,
         "payload": {
           "sv": Uint8Array [
             0,
@@ -83,6 +85,7 @@ describe("can encode and decode", () => {
       DocMessage {
         "context": {},
         "document": "test",
+        "encrypted": false,
         "payload": {
           "type": "sync-step-2",
           "update": Uint8Array [
@@ -109,6 +112,7 @@ describe("can encode and decode", () => {
       DocMessage {
         "context": {},
         "document": "test",
+        "encrypted": false,
         "payload": {
           "type": "update",
           "update": Uint8Array [
@@ -129,7 +133,7 @@ describe("can encode and decode", () => {
         type: "update",
         update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
       }).id,
-    ).toMatchInlineSnapshot(`"lWgeXgyDuIjrRAkyvkHr3QbOo7YoyqzUnpL2vc2i1BE="`);
+    ).toMatchInlineSnapshot(`"wo8phd40Cygbec6rdBODugYv9Vn4sF5pJreXrb8uYFw="`);
   });
 });
 
@@ -153,6 +157,7 @@ describe("can encode", () => {
         101,
         115,
         116,
+        0,
         1,
         4,
         0,
@@ -182,6 +187,7 @@ describe("can encode", () => {
         116,
         0,
         0,
+        0,
         4,
         0,
         1,
@@ -208,6 +214,7 @@ describe("can encode", () => {
         101,
         115,
         116,
+        0,
         0,
         1,
         4,
@@ -236,6 +243,7 @@ describe("can encode", () => {
         101,
         115,
         116,
+        0,
         0,
         2,
         4,

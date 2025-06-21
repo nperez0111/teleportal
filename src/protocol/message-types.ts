@@ -47,6 +47,7 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
     public document: string,
     public payload: DecodedAwarenessUpdateMessage,
     context?: Context,
+    public encrypted: boolean = false,
     encoded?: BinaryMessage,
   ) {
     this.context = context ?? ({} as Context);
@@ -76,6 +77,7 @@ export class DocMessage<Context extends Record<string, unknown>> {
     public document: string,
     public payload: DecodedSyncStep1 | DecodedSyncStep2 | DecodedUpdateStep,
     context?: Context,
+    public encrypted: boolean = false,
     encoded?: BinaryMessage,
   ) {
     this.context = context ?? ({} as Context);

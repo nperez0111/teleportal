@@ -30,6 +30,9 @@ export function encodeMessage(update: Message): BinaryMessage {
     // document name
     encoding.writeVarString(encoder, update.document);
 
+    // encrypted or not
+    encoding.writeUint8(encoder, update.encrypted ? 1 : 0);
+
     switch (update.type) {
       case "awareness": {
         // message type
