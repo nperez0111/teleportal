@@ -132,11 +132,15 @@ export class Client<Context extends ServerContext> {
 
   private async destroy() {
     this.logger.trace("client destroying");
-    await Promise.all(
-      Array.from(this.documents).map((documentId) =>
-        this.unsubscribeFromDocument(documentId),
-      ),
-    );
+    try {
+      await Promise.all(
+        Array.from(this.documents).map((documentId) =>
+          this.unsubscribeFromDocument(documentId),
+        ),
+      );
+    } catch (e) {
+      this.logger.error({ err: e }, "error while unsubscribing from documents");
+    }
     this.documents.clear();
     await this.hooks.onClose?.();
     this.isComplete = true;

@@ -26,48 +26,58 @@ export function getMessageDecryptor<
 >(options: { key: CryptoKey }) {
   return new TransformStream<EncryptedMessage<Context>, Message<Context>>({
     async transform(chunk, controller) {
-      if (chunk.type !== "doc") {
-        // passthrough other messages
-        controller.enqueue(chunk);
-        return;
-      }
-
-      switch (chunk.payload.type) {
-        // unused right now
-        case "sync-step-1": {
-          const { sv } = chunk.payload;
-          const decoded = decodeFauxStateVector(sv);
-          console.log("decoded", decoded);
+      try {
+        if (chunk.type !== "doc") {
+          // passthrough other messages
           controller.enqueue(chunk);
           return;
         }
-        case "sync-step-2":
-        case "update": {
-          const { update } = chunk.payload;
-          const decoded = decodeFauxUpdateList(update);
-          await Promise.all(
-            decoded.map(async ({ update }) => {
-              const decryptedUpdate = await decryptUpdate(options.key, update);
-              controller.enqueue(
-                new DocMessage(
-                  chunk.document,
-                  {
-                    type: chunk.payload.type as "sync-step-2" | "update",
-                    update: decryptedUpdate,
-                  },
-                  chunk.context,
-                  false,
-                ),
-              );
-            }),
-          );
-          return;
+
+        switch (chunk.payload.type) {
+          // unused right now
+          case "sync-step-1": {
+            const { sv } = chunk.payload;
+            const decoded = decodeFauxStateVector(sv);
+            console.log("decoded", decoded);
+            controller.enqueue(chunk);
+            return;
+          }
+          case "sync-step-2":
+          case "update": {
+            const { update } = chunk.payload;
+            const decoded = decodeFauxUpdateList(update);
+
+            await Promise.all(
+              decoded.map(async ({ update }) => {
+                const decryptedUpdate = await decryptUpdate(
+                  options.key,
+                  update,
+                );
+                controller.enqueue(
+                  new DocMessage(
+                    chunk.document,
+                    {
+                      type: chunk.payload.type as "sync-step-2" | "update",
+                      update: decryptedUpdate,
+                    },
+                    chunk.context,
+                    false,
+                  ),
+                );
+              }),
+            );
+            return;
+          }
+          default: {
+            throw new Error(
+              `Unknown message type: ${(chunk.payload as any).type}`,
+            );
+          }
         }
-        default: {
-          throw new Error(
-            `Unknown message type: ${(chunk.payload as any).type}`,
-          );
-        }
+      } catch (e) {
+        controller.error(
+          new Error("Failed to decrypt message", { cause: { err: e } }),
+        );
       }
     },
   });
@@ -78,51 +88,57 @@ export function getMessageEncryptor<
 >(options: { key: CryptoKey }) {
   return new TransformStream<Message<Context>, EncryptedMessage<Context>>({
     async transform(chunk, controller) {
-      if (chunk.type !== "doc") {
-        controller.enqueue(chunk);
-        return;
-      }
-      switch (chunk.payload.type) {
-        case "sync-step-1": {
-          // const { sv } = chunk.payload;
-          // Just ignoring the state vector for now
-          const fauxStateVector = encodeFauxStateVector({ messageId: "1" });
+      try {
+        if (chunk.type !== "doc") {
+          controller.enqueue(chunk);
+          return;
+        }
+        switch (chunk.payload.type) {
+          case "sync-step-1": {
+            // const { sv } = chunk.payload;
+            // Just ignoring the state vector for now
+            const fauxStateVector = encodeFauxStateVector({ messageId: "1" });
 
-          return controller.enqueue(
-            new DocMessage(
-              chunk.document,
-              {
-                type: chunk.payload.type,
-                sv: fauxStateVector,
-              },
-              chunk.context,
-              true,
-            ),
-          );
-        }
-        case "sync-step-2":
-        case "update": {
-          const { update } = chunk.payload;
-          const encryptedUpdate = await encryptUpdate(options.key, update);
-          const fauxUpdate = encodeFauxUpdate(encryptedUpdate);
+            return controller.enqueue(
+              new DocMessage(
+                chunk.document,
+                {
+                  type: chunk.payload.type,
+                  sv: fauxStateVector,
+                },
+                chunk.context,
+                true,
+              ),
+            );
+          }
+          case "sync-step-2":
+          case "update": {
+            const { update } = chunk.payload;
+            const encryptedUpdate = await encryptUpdate(options.key, update);
+            const fauxUpdate = encodeFauxUpdate(encryptedUpdate);
 
-          return controller.enqueue(
-            new DocMessage(
-              chunk.document,
-              {
-                type: chunk.payload.type as "sync-step-2" | "update",
-                update: fauxUpdate,
-              },
-              chunk.context,
-              true,
-            ),
-          );
+            return controller.enqueue(
+              new DocMessage(
+                chunk.document,
+                {
+                  type: chunk.payload.type as "sync-step-2" | "update",
+                  update: fauxUpdate,
+                },
+                chunk.context,
+                true,
+              ),
+            );
+          }
+          default: {
+            throw new Error(
+              `Unknown message type: ${(chunk.payload as any).type}`,
+            );
+          }
         }
-        default: {
-          throw new Error(
-            `Unknown message type: ${(chunk.payload as any).type}`,
-          );
-        }
+      } catch (e) {
+        controller.error(
+          new Error("Failed to encrypt message", { cause: { err: e } }),
+        );
       }
     },
   });

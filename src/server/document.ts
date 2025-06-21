@@ -128,7 +128,19 @@ export class Document<Context extends ServerContext>
           },
           "sending message to client",
         );
-        await this.server.clients.get(clientId)?.send(message, origin);
+        try {
+          await this.server.clients.get(clientId)?.send(message, origin);
+        } catch (e) {
+          this.logger.error(
+            {
+              err: e,
+              clientId,
+              documentId: this.id,
+              messageId: message.id,
+            },
+            "failed to send message to client",
+          );
+        }
       }),
     );
   }

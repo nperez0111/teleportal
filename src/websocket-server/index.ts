@@ -100,12 +100,17 @@ export function getWebsocketHandlers({
           }),
         };
 
-        await onConnect({
-          transport: peer.context.transport,
-          context: peer.context,
-          id: peer.id,
-          peer,
-        });
+        try {
+          await onConnect({
+            transport: peer.context.transport,
+            context: peer.context,
+            id: peer.id,
+            peer,
+          });
+        } catch (err) {
+          logger.error({ err }, "failed to connect");
+          peer.close();
+        }
       },
       async message(peer, message) {
         logger.trace({ peerId: peer.id, messageId: message.id }, "message");
@@ -115,7 +120,9 @@ export function getWebsocketHandlers({
           await writer.write(buff as BinaryMessage);
           writer.releaseLock();
         } catch (e) {
-          peer.close();
+          peer.context.writable.abort(
+            new Error("Failed to write message", { cause: { err: e } }),
+          );
         }
       },
       async close(peer) {

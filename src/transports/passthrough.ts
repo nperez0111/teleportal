@@ -21,12 +21,15 @@ export function withPassthroughSink<
   return {
     ...sink,
     writable: new WritableStream({
-      write(chunk) {
+      async write(chunk) {
         options?.onWrite?.(chunk);
 
         const writer = sink.writable.getWriter();
-        writer.write(chunk);
-        writer.releaseLock();
+        try {
+          await writer.write(chunk);
+        } finally {
+          writer.releaseLock();
+        }
       },
       close: sink.writable.close,
       abort: sink.writable.abort,

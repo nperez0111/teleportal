@@ -49,7 +49,7 @@ export class WebsocketConnection extends ObservableV2<{
   #protocols: string[];
   #state: WebsocketState = { type: "offline", ws: null };
   #reconnectAttempt = 0;
-  #transports: TransformStream<BinaryMessage, BinaryMessage>[] = [];
+  #WebSocketImpl: typeof WebSocket;
   /**
    * Given a single writer (the incoming websocket messages), this will fan out to all connected readers
    */
@@ -129,14 +129,17 @@ export class WebsocketConnection extends ObservableV2<{
     url,
     protocols = [],
     connect = true,
+    WebSocket: WebSocketImpl = WebSocket,
   }: {
     url: string;
     protocols?: string[];
     connect?: boolean;
+    WebSocket?: typeof WebSocket;
   }) {
     super();
     this.#url = url;
     this.#protocols = protocols;
+    this.#WebSocketImpl = WebSocketImpl;
 
     if (connect) {
       this.connect();
@@ -187,7 +190,7 @@ export class WebsocketConnection extends ObservableV2<{
     }
 
     try {
-      const websocket = new WebSocket(this.#url, this.#protocols);
+      const websocket = new this.#WebSocketImpl(this.#url, this.#protocols);
       websocket.binaryType = "arraybuffer";
       this.state = { type: "connecting", ws: websocket };
 
@@ -202,9 +205,26 @@ export class WebsocketConnection extends ObservableV2<{
         }
 
         const writer = this.#fanOutWriter.writable.getWriter();
-        await writer.write(message);
-        writer.releaseLock();
-        this.emit("message", [message]);
+        try {
+          await writer.write(message);
+          this.emit("message", [message]);
+        } catch (err) {
+          const error = new Error(
+            "Failed to write message to internal stream",
+            {
+              cause: err,
+            },
+          );
+          this.state = {
+            type: "error",
+            ws: websocket,
+            error,
+            reconnectAttempt: this.#reconnectAttempt,
+          };
+          this.#closeWebSocketConnection();
+        } finally {
+          writer.releaseLock();
+        }
       };
 
       websocket.onerror = (event) => {
@@ -286,9 +306,24 @@ export class WebsocketConnection extends ObservableV2<{
     // TODO should their be queueing of unsent messages?
     if (
       this.state.type === "connected" &&
-      this.state.ws.readyState === WebSocket.OPEN
+      this.state.ws.readyState === this.#WebSocketImpl.OPEN
     ) {
-      this.state.ws.send(data);
+      try {
+        this.state.ws.send(data);
+      } catch (err) {
+        const error =
+          err instanceof Error
+            ? err
+            : new Error("Failed to send message", { cause: err });
+        this.state = {
+          type: "error",
+          ws: this.state.ws,
+          error,
+          reconnectAttempt: this.#reconnectAttempt,
+        };
+        this.#closeWebSocketConnection();
+        throw error;
+      }
     }
   }
 

@@ -174,36 +174,45 @@ export function getYDocSink({
     awareness,
     writable: new WritableStream({
       write(chunk, controller) {
-        if (chunk.document !== document || chunk.context.clientId === "local") {
-          return;
-        }
-        if (ydoc.isDestroyed) {
-          controller.error(new Error("YDoc is destroyed"));
-          return;
-        }
-        switch (chunk.type) {
-          case "awareness": {
-            applyAwarenessUpdate(
-              awareness,
-              chunk.payload.update,
-              getSyncTransactionOrigin(ydoc),
-            );
-            break;
+        try {
+          if (
+            chunk.document !== document ||
+            chunk.context.clientId === "local"
+          ) {
+            return;
           }
-          case "doc": {
-            onSynced(true);
-            onSynced = () => {};
-            switch (chunk.payload.type) {
-              case "update":
-              case "sync-step-2":
-                Y.applyUpdateV2(
-                  ydoc,
-                  chunk.payload.update,
-                  getSyncTransactionOrigin(ydoc),
-                );
-                break;
+          if (ydoc.isDestroyed) {
+            controller.error(new Error("YDoc is destroyed"));
+            return;
+          }
+          switch (chunk.type) {
+            case "awareness": {
+              applyAwarenessUpdate(
+                awareness,
+                chunk.payload.update,
+                getSyncTransactionOrigin(ydoc),
+              );
+              break;
+            }
+            case "doc": {
+              onSynced(true);
+              onSynced = () => {};
+              switch (chunk.payload.type) {
+                case "update":
+                case "sync-step-2":
+                  Y.applyUpdateV2(
+                    ydoc,
+                    chunk.payload.update,
+                    getSyncTransactionOrigin(ydoc),
+                  );
+                  break;
+              }
             }
           }
+        } catch (e) {
+          onSynced(false);
+          onSynced = () => {};
+          controller.error(e);
         }
       },
       close() {

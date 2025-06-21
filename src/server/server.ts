@@ -117,12 +117,15 @@ export class Server<Context extends ServerContext> {
         writable: transport.writable,
         readable: transport.readable.pipeThrough(
           new TransformStream({
-            transform(chunk, controller) {
+            async transform(chunk, controller) {
               // Just filter out ping messages to avoid any unnecessary processing
               if (isPingMessage(chunk)) {
                 const writer = transport.writable.getWriter();
-                writer.write(encodePongMessage());
-                writer.releaseLock();
+                try {
+                  await writer.write(encodePongMessage());
+                } finally {
+                  writer.releaseLock();
+                }
                 return;
               }
               controller.enqueue(chunk);
