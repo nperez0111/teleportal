@@ -29,6 +29,17 @@ export class StorageAdapter extends LowLevelDocumentStorage {
     message: Message<Context>,
     document: Document<Context>,
   ): Promise<void> {
+    if (message.encrypted !== this.storage.encrypted) {
+      throw new Error(
+        "Message encryption and storage encryption are mismatched",
+        {
+          cause: {
+            messageEncrypted: message.encrypted,
+            storageEncrypted: this.storage.encrypted,
+          },
+        },
+      );
+    }
     if (message.type === "doc" && message.payload.type === "sync-step-1") {
       this.logger.trace(
         {

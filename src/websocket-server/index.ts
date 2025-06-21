@@ -101,15 +101,23 @@ export function getWebsocketHandlers({
       async message(peer, message) {
         logger.trace({ peerId: peer.id, messageId: message.id }, "message");
         const buff = message.uint8Array();
-        const writer = peer.context.writable.getWriter();
-        await writer.write(buff as BinaryMessage);
-        writer.releaseLock();
+        try {
+          const writer = peer.context.writable.getWriter();
+          await writer.write(buff as BinaryMessage);
+          writer.releaseLock();
+        } catch (e) {
+          peer.close();
+        }
       },
       async close(peer) {
         logger.info({ peerId: peer.id }, "close websocket connection");
         await onDisconnect(peer.id);
-        await peer.context.writable.close();
-        await peer.context.transport.writable.close();
+        if (!peer.context.writable.locked) {
+          await peer.context.writable.close();
+        }
+        if (!peer.context.transport.writable.locked) {
+          await peer.context.transport.writable.close();
+        }
       },
       async error(peer, error) {
         logger.error({ peerId: peer.id, error }, "error");

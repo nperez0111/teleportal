@@ -150,6 +150,7 @@ export class Server<Context extends ServerContext> {
     const client = this.clients.get(clientId);
     if (client) {
       await client.disconnect();
+      this.clients.delete(clientId);
     }
   }
 }

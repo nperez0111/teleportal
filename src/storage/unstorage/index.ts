@@ -2,8 +2,8 @@ import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 import * as Y from "yjs";
 
-import type { StateVector, Update } from "../lib";
-import { DocumentStorage } from "./document-storage";
+import type { StateVector, Update } from "../../lib";
+import { DocumentStorage } from "../document-storage";
 
 /**
  * A storage implementation that is backed by unstorage.

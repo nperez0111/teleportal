@@ -31,6 +31,7 @@ export class Provider extends ObservableV2<{
       document,
       awareness,
     }),
+    wrapTransport = (transport) => transport,
   }: {
     client: WebsocketConnection;
     document: string;
@@ -39,12 +40,19 @@ export class Provider extends ObservableV2<{
     transport?: YBinaryTransport<{
       synced: Promise<void>;
     }>;
+    wrapTransport?: (
+      transport: YBinaryTransport<{
+        synced: Promise<void>;
+      }>,
+    ) => YBinaryTransport<{
+      synced: Promise<void>;
+    }>;
   }) {
     super();
     this.doc = doc;
     this.awareness = awareness;
     this.document = document;
-    this.transport = transport;
+    this.transport = wrapTransport(transport);
     this.#websocketConnection = client;
     this.#websocketReader = this.#websocketConnection.getReader();
 
@@ -163,12 +171,20 @@ export class Provider extends ObservableV2<{
     doc,
     awareness,
     transport,
+    wrapTransport,
   }: {
     url: string;
     document: string;
     doc?: Y.Doc;
     awareness?: Awareness;
     transport?: YBinaryTransport<{
+      synced: Promise<void>;
+    }>;
+    wrapTransport?: (
+      transport: YBinaryTransport<{
+        synced: Promise<void>;
+      }>,
+    ) => YBinaryTransport<{
       synced: Promise<void>;
     }>;
   }) {
@@ -183,6 +199,7 @@ export class Provider extends ObservableV2<{
       doc,
       awareness,
       transport,
+      wrapTransport,
     });
   }
 
@@ -197,12 +214,20 @@ export class Provider extends ObservableV2<{
     doc,
     awareness,
     transport,
+    wrapTransport,
   }: {
     client: WebsocketConnection;
     document: string;
     doc?: Y.Doc;
     awareness?: Awareness;
     transport?: YBinaryTransport<{
+      synced: Promise<void>;
+    }>;
+    wrapTransport?: (
+      transport: YBinaryTransport<{
+        synced: Promise<void>;
+      }>,
+    ) => YBinaryTransport<{
       synced: Promise<void>;
     }>;
   }) {
@@ -212,6 +237,7 @@ export class Provider extends ObservableV2<{
       document,
       awareness,
       transport,
+      wrapTransport,
     });
   }
 }

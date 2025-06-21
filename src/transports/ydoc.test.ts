@@ -13,6 +13,7 @@ describe("ydoc source", () => {
     const source = getYDocSource({
       ydoc: doc,
       document: "test",
+      asClient: false,
     });
 
     doc.getText("test").insert(0, "hello");
@@ -114,6 +115,7 @@ describe("ydoc source", () => {
       ydoc: doc,
       awareness,
       document: "test",
+      asClient: false,
     });
 
     awareness.setLocalState({
@@ -168,6 +170,7 @@ describe("ydoc sink", () => {
     const sink = getYDocSink({
       ydoc: doc,
       document: "test",
+      asClient: false,
     });
     const writer = sink.writable.getWriter();
 
@@ -240,6 +243,7 @@ describe("ydoc transport", () => {
     const transport = getYTransportFromYDoc({
       ydoc: doc,
       document: "test",
+      asClient: false,
     });
 
     const reader = transport.readable.getReader();
@@ -317,6 +321,7 @@ describe("ydoc transport", () => {
       getYTransportFromYDoc({
         ydoc: doc,
         document: "test",
+        asClient: false,
       }),
       {
         onRead(chunk) {
@@ -331,6 +336,7 @@ describe("ydoc transport", () => {
               101,
               115,
               116,
+              0,
               0,
               2,
               28,
@@ -377,6 +383,7 @@ describe("ydoc transport", () => {
               101,
               115,
               116,
+              0,
               0,
               2,
               30,

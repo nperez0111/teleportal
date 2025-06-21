@@ -18,18 +18,18 @@ export function withPassthroughSink<
     onWrite?: (chunk: Message<Context>) => void;
   },
 ): YSink<Context, AdditionalProperties> {
-  const writer = sink.writable.getWriter();
-
   return {
     ...sink,
     writable: new WritableStream({
       write(chunk) {
         options?.onWrite?.(chunk);
+
+        const writer = sink.writable.getWriter();
         writer.write(chunk);
+        writer.releaseLock();
       },
-      close() {
-        writer.close();
-      },
+      close: sink.writable.close,
+      abort: sink.writable.abort,
     }),
   };
 }

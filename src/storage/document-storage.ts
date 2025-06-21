@@ -6,6 +6,8 @@ import type { Document } from "../server";
 export abstract class DocumentStorage {
   public readonly type = "document-storage";
 
+  public encrypted = false;
+
   /**
    * Stores an update for a document.
    */

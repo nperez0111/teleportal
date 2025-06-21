@@ -61,9 +61,13 @@ export class Document<Context extends ServerContext>
       },
       "writing message",
     );
-    const writer = this.writable.getWriter();
-    await writer.write(message);
-    writer.releaseLock();
+    try {
+      const writer = this.writable.getWriter();
+      await writer.write(message);
+      writer.releaseLock();
+    } catch (err) {
+      this.unsubscribe(message.context.clientId);
+    }
   }
 
   public subscribe(clientId: string) {
@@ -88,7 +92,9 @@ export class Document<Context extends ServerContext>
       this.logger.trace({}, "document is now empty, unloading");
       await this.hooks?.onUnload?.(this);
       await this.storage.onUnload(this);
-      await this.writable.close();
+      if (!this.writable.locked) {
+        await this.writable.close();
+      }
     }
   }
 

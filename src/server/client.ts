@@ -128,7 +128,6 @@ export class Client<Context extends ServerContext> {
 
   public async disconnect() {
     this.logger.trace("client disconnecting");
-    await this.sink.writable.close();
   }
 
   private async destroy() {

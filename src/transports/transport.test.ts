@@ -194,9 +194,8 @@ describe("transport", () => {
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-
-    writer.close();
   });
+
   it("can write awareness", async () => {
     let count = 1;
     const transport = withPassthrough(noopTransport(), {
@@ -249,7 +248,5 @@ describe("transport", () => {
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-
-    writer.close();
   });
 });
