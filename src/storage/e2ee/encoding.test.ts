@@ -14,11 +14,6 @@ import type { StateVector, Update } from "match-maker";
 import { digest } from "lib0/hash/sha256";
 import { toBase64 } from "lib0/buffer.js";
 
-// Helper function to create proper typed arrays
-function createStateVector(data: Uint8Array): StateVector {
-  return data as StateVector;
-}
-
 function createUpdate(data: Uint8Array): Update {
   return data as Update;
 }

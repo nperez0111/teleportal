@@ -17,6 +17,9 @@
   "license": "MPL-2.0",
   "sideEffects": false,
   "type": "module",
+  "workspaces": [
+    "playground"
+  ],
   "exports": {
     ".": {
       "types": "./dist/lib/index.d.mts",
@@ -61,13 +64,10 @@
     "build": "unbuild",
     "lint": "eslint . && prettier -c src playground",
     "lint:fix": "automd && eslint . --fix && prettier -w src playground",
-    "prepack": "pnpm build",
-    "play:bun": "PORT=1234 bun run --watch ./playground/websocket.ts",
-    "play:cf": "wrangler dev -c ./playground/wrangler.toml --port 3000",
-    "play:deno": "PORT=3000 deno run --unstable-byonm -A ./playground/deno.ts",
-    "play:node": "PORT=3000 jiti ./playground/node.ts",
-    "release": "pnpm test && changelogen --release && npm publish && git push --follow-tags",
-    "test": "pnpm run test:types && bun test",
+    "prepack": "bun run build",
+    "dev": "PORT=1234 bun run --watch ./playground/websocket.ts",
+    "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
+    "test": "bun run test:types && bun test",
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
@@ -89,6 +89,5 @@
     "prettier": "^3.5.3",
     "typescript": "^5.8.3",
     "unbuild": "^3.5.0"
-  },
-  "packageManager": "pnpm@10.12.1"
+  }
 }

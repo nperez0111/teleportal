@@ -9,3 +9,4 @@
 - good example of how to split up a router for yjs docs: <https://github.com/jamsocket/y-sweet/blob/main/crates/y-sweet/src/server.rs#L338C46-L338C56>
 - can do compact on dispose of a doc (since it is async, latency is not a problem)
 - a message type for saving a snapshot of a doc
+- open telemetry tracing for the server
