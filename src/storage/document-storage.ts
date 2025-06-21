@@ -1,5 +1,5 @@
-import type { Message, ServerContext, StateVector, Update } from "../lib";
-import type { Document } from "../server";
+import type { Message, ServerContext, StateVector, Update } from "match-maker";
+import type { Document } from "match-maker/server";
 /**
  * A storage interface for a document.
  */

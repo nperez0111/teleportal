@@ -1,9 +1,12 @@
 import * as Y from "yjs";
 
-import type { Message, ServerContext, Update } from "../lib";
-import { DocMessage, getEmptyStateVector, getEmptyUpdate } from "../protocol";
-import { type Document } from "../server/document";
-import { logger } from "../server/logger";
+import type { Message, ServerContext, Update } from "match-maker";
+import {
+  DocMessage,
+  getEmptyStateVector,
+  getEmptyUpdate,
+} from "match-maker/protocol";
+import { type Document, logger } from "match-maker/server";
 import {
   type DocumentStorage,
   LowLevelDocumentStorage,

@@ -10,7 +10,13 @@
     "allowImportingTsExtensions": true,
     "types": ["@types/bun"],
     "paths": {
-      "match-maker": ["./src/index.ts"],
+      "match-maker/encryption-key": ["./src/encryption-key/index.ts"],
+      "match-maker/storage": ["./src/storage/index.ts"],
+      "match-maker/transports": ["./src/transports/index.ts"],
+      "match-maker/server": ["./src/server/index.ts"],
+      "match-maker/protocol": ["./src/protocol/index.ts"],
+      "match-maker/providers": ["./src/providers/index.ts"],
+      "match-maker": ["./src/lib/index.ts"],
     },
     "jsx": "react-jsx"
   },

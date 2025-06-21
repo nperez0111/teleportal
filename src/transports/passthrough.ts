@@ -4,7 +4,7 @@ import {
   type YSink,
   type YSource,
   type YTransport,
-} from "../lib";
+} from "match-maker";
 
 /**
  * A {@link YSink} that wraps another sink and passes all updates through.

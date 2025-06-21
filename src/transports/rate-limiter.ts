@@ -1,4 +1,4 @@
-import type { ClientContext, Message, YTransport } from "../lib";
+import type { ClientContext, Message, YTransport } from "match-maker";
 
 export interface RateLimitOptions {
   /**

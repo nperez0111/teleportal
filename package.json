@@ -8,6 +8,8 @@
     "provider",
     "storage",
     "transport",
+    "protocol",
+    "e2ee",
     "runtime",
     "subdocs"
   ],
@@ -43,6 +45,10 @@
     "./server": {
       "types": "./dist/server/index.d.mts",
       "default": "./dist/server/index.mjs"
+    },
+    "./encryption-key": {
+      "types": "./dist/encryption-key/index.d.mts",
+      "default": "./dist/encryption-key/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",
@@ -61,28 +67,28 @@
     "play:deno": "PORT=3000 deno run --unstable-byonm -A ./playground/deno.ts",
     "play:node": "PORT=3000 jiti ./playground/node.ts",
     "release": "pnpm test && changelogen --release && npm publish && git push --follow-tags",
-    "test": "pnpm lint && pnpm test:types",
+    "test": "pnpm run test:types && bun test",
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
-    "crossws": "0.4.1",
-    "db0": "0.3.2",
-    "lib0": "^0.2.108",
-    "pino": "9.7.0",
-    "srvx": "0.8.0",
-    "unbuild": "3.5.0",
-    "unstorage": "1.16.0",
+    "crossws": "^0.4.1",
+    "db0": "^0.3.2",
+    "lib0": "^0.2.109",
+    "pino": "^9.7.0",
+    "srvx": "^0.8.0",
+    "unstorage": "^1.16.0",
     "y-protocols": "^1.0.6",
-    "yjs": "^13.6.20"
+    "yjs": "^13.6.27"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.15",
+    "@types/bun": "^1.2.17",
     "automd": "^0.3.12",
     "changelogen": "^0.5.7",
-    "eslint": "^9.12.0",
-    "eslint-config-unjs": "^0.4.1",
-    "prettier": "^3.3.3",
-    "typescript": "^5.6.3"
+    "eslint": "^9.29.0",
+    "eslint-config-unjs": "^0.4.2",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "unbuild": "^3.5.0"
   },
   "packageManager": "pnpm@10.12.1"
 }

@@ -3,7 +3,7 @@ import {
   encodePingMessage,
   isPongMessage,
   type BinaryMessage,
-} from "../../lib";
+} from "match-maker";
 import { createFanOutWriter } from "./utils";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;

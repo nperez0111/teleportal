@@ -2,7 +2,7 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as Y from "yjs";
 
-import type { Message, Tag } from "../lib";
+import type { Message, Tag } from "match-maker";
 
 export type UpdateMessage = Tag<Uint8Array, "update-message">;
 
@@ -33,7 +33,7 @@ export const getWriteDocUpdateStream = () =>
 export async function compactToSingleUpdate(
   updateStream: ReadableStream<UpdateMessage>,
 ): Promise<UpdateMessage> {
-  let mergedUpdates: Uint8Array<ArrayBufferLike> | null = null;
+  let mergedUpdates: Uint8Array | null = null;
 
   await updateStream.pipeTo(
     new WritableStream({

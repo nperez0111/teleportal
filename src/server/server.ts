@@ -6,12 +6,12 @@ import {
   type Message,
   type ServerContext,
   type YBinaryTransport,
-} from "../lib";
+} from "match-maker";
 import {
   StorageAdapter,
   type DocumentStorage,
   type LowLevelDocumentStorage,
-} from "../storage";
+} from "match-maker/storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
 import { logger, type Logger } from "./logger";

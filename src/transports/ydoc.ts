@@ -12,14 +12,11 @@ import {
   compose,
   DocMessage,
   StateVector,
-  toBinaryTransport,
   type Update,
-  type YBinaryTransport,
   type YSink,
   type YSource,
   type YTransport,
-} from "../lib";
-import { withLogger } from "./logger";
+} from "match-maker";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";
@@ -242,37 +239,4 @@ export function getYTransportFromYDoc({
     getYDocSource({ ydoc, awareness, document, asClient }),
     getYDocSink({ ydoc, awareness, document, asClient }),
   );
-}
-
-export function getYDocTransport({
-  ydoc,
-  document,
-  awareness = new Awareness(ydoc),
-  debug = false,
-  asClient = true,
-}: {
-  ydoc: Y.Doc;
-  document: string;
-  awareness?: Awareness;
-  debug?: boolean;
-  asClient?: boolean;
-}): YBinaryTransport<{
-  ydoc: Y.Doc;
-  awareness: Awareness;
-  synced: Promise<void>;
-}> {
-  let transport = getYTransportFromYDoc({
-    ydoc,
-    document,
-    awareness,
-    asClient,
-  });
-
-  if (debug) {
-    transport = withLogger(transport);
-  }
-
-  return toBinaryTransport(transport, {
-    clientId: "remote",
-  });
 }

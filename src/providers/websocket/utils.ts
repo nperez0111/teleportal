@@ -1,4 +1,4 @@
-import type { BinaryMessage } from "../../lib";
+import type { BinaryMessage } from "match-maker";
 
 export type ReaderInstance = {
   /**

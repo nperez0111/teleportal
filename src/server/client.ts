@@ -4,8 +4,8 @@ import type {
   ServerContext,
   YBinaryTransport,
   YSink,
-} from "../lib";
-import { getMessageReader } from "../lib";
+} from "match-maker";
+import { getMessageReader } from "match-maker";
 import { getDocumentId, type Document } from "./document";
 import { logger, type Logger } from "./logger";
 import type { Server } from "./server";

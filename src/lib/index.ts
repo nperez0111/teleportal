@@ -1,5 +1,9 @@
-import { type BinaryMessage, decodeMessage, type Message } from "../protocol";
-export * from "../protocol";
+import {
+  type BinaryMessage,
+  decodeMessage,
+  type Message,
+} from "match-maker/protocol";
+export * from "match-maker/protocol";
 
 export type ClientContext = {
   /**

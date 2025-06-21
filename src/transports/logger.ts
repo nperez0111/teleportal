@@ -1,4 +1,4 @@
-import type { YTransport } from "../lib";
+import type { YTransport } from "match-maker";
 import { withPassthrough } from "./passthrough";
 
 /**

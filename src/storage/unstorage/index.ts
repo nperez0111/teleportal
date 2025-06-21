@@ -2,7 +2,7 @@ import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 import * as Y from "yjs";
 
-import type { StateVector, Update } from "../../lib";
+import type { StateVector, Update } from "match-maker";
 import { DocumentStorage } from "../document-storage";
 
 /**

@@ -2,10 +2,38 @@ import { ObservableV2 } from "lib0/observable.js";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import type { YBinaryTransport } from "../../lib";
-import { getYDocTransport } from "../../transports";
+import {
+  toBinaryTransport,
+  type ClientContext,
+  type YBinaryTransport,
+  type YTransport,
+} from "match-maker";
+import { getYTransportFromYDoc } from "../../transports";
 import { WebsocketConnection } from "./connection-manager";
 import type { ReaderInstance } from "./utils";
+
+export type ProviderOptions = {
+  client: WebsocketConnection;
+  document: string;
+  ydoc?: Y.Doc;
+  awareness?: Awareness;
+  getTransport?: (ctx: {
+    ydoc: Y.Doc;
+    document: string;
+    awareness: Awareness;
+    getDefaultTransport(): YTransport<
+      ClientContext,
+      {
+        synced: Promise<void>;
+      }
+    >;
+  }) => YTransport<
+    ClientContext,
+    {
+      synced: Promise<void>;
+    }
+  >;
+};
 
 export class Provider extends ObservableV2<{
   "load-subdoc": (subdoc: string) => void;
@@ -24,35 +52,25 @@ export class Provider extends ObservableV2<{
   private constructor({
     client,
     document,
-    doc = new Y.Doc(),
-    awareness = new Awareness(doc),
-    transport = getYDocTransport({
-      ydoc: doc,
-      document,
-      awareness,
-    }),
-    wrapTransport = (transport) => transport,
-  }: {
-    client: WebsocketConnection;
-    document: string;
-    doc?: Y.Doc;
-    awareness?: Awareness;
-    transport?: YBinaryTransport<{
-      synced: Promise<void>;
-    }>;
-    wrapTransport?: (
-      transport: YBinaryTransport<{
-        synced: Promise<void>;
-      }>,
-    ) => YBinaryTransport<{
-      synced: Promise<void>;
-    }>;
-  }) {
+    ydoc = new Y.Doc(),
+    awareness = new Awareness(ydoc),
+    getTransport = ({ getDefaultTransport }) => getDefaultTransport(),
+  }: ProviderOptions) {
     super();
-    this.doc = doc;
+    this.doc = ydoc;
     this.awareness = awareness;
     this.document = document;
-    this.transport = wrapTransport(transport);
+    this.transport = toBinaryTransport(
+      getTransport({
+        ydoc,
+        document,
+        awareness,
+        getDefaultTransport() {
+          return getYTransportFromYDoc({ ydoc, document, awareness });
+        },
+      }),
+      { clientId: "remote" },
+    );
     this.#websocketConnection = client;
     this.#websocketReader = this.#websocketConnection.getReader();
 
@@ -86,7 +104,7 @@ export class Provider extends ObservableV2<{
         }
         const provider = new Provider({
           client: this.#websocketConnection,
-          doc,
+          ydoc: doc,
           document: this.document + "/" + parentSub,
         });
         this.subdocs.set(parentSub, provider);
@@ -121,7 +139,7 @@ export class Provider extends ObservableV2<{
     return new Provider({
       client: this.#websocketConnection,
       document,
-      doc,
+      ydoc: doc,
       awareness,
     });
   }
@@ -168,26 +186,10 @@ export class Provider extends ObservableV2<{
   static async create({
     url,
     document,
-    doc,
+    ydoc,
     awareness,
-    transport,
-    wrapTransport,
-  }: {
-    url: string;
-    document: string;
-    doc?: Y.Doc;
-    awareness?: Awareness;
-    transport?: YBinaryTransport<{
-      synced: Promise<void>;
-    }>;
-    wrapTransport?: (
-      transport: YBinaryTransport<{
-        synced: Promise<void>;
-      }>,
-    ) => YBinaryTransport<{
-      synced: Promise<void>;
-    }>;
-  }) {
+    getTransport,
+  }: { url: string } & Omit<ProviderOptions, "client">) {
     const client = new WebsocketConnection({ url });
 
     // Wait for the websocket to connect
@@ -196,10 +198,9 @@ export class Provider extends ObservableV2<{
     return Provider.createFromClient({
       client,
       document,
-      doc,
+      ydoc,
       awareness,
-      transport,
-      wrapTransport,
+      getTransport,
     });
   }
 
@@ -211,33 +212,16 @@ export class Provider extends ObservableV2<{
   static async createFromClient({
     client,
     document,
-    doc,
+    ydoc,
     awareness,
-    transport,
-    wrapTransport,
-  }: {
-    client: WebsocketConnection;
-    document: string;
-    doc?: Y.Doc;
-    awareness?: Awareness;
-    transport?: YBinaryTransport<{
-      synced: Promise<void>;
-    }>;
-    wrapTransport?: (
-      transport: YBinaryTransport<{
-        synced: Promise<void>;
-      }>,
-    ) => YBinaryTransport<{
-      synced: Promise<void>;
-    }>;
-  }) {
+    getTransport,
+  }: ProviderOptions) {
     return new Provider({
       client,
-      doc,
+      ydoc,
       document,
       awareness,
-      transport,
-      wrapTransport,
+      getTransport,
     });
   }
 }

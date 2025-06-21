@@ -8,6 +8,7 @@ import { Server } from "../src/server/server";
 import { UnstorageDocumentStorage } from "../src/storage/unstorage";
 import { getWebsocketHandlers } from "../src/websocket-server";
 import homepage from "./index.html";
+import { ZeroKnowledgeDocumentStorage } from "../src/storage/e2ee";
 
 const db = createDatabase(
   bunSqlite({
@@ -24,9 +25,10 @@ const storage = createStorage({
 
 const server = new Server({
   getStorage: async (ctx) => {
-    return new UnstorageDocumentStorage(storage, {
-      scanKeys: false,
-    });
+    // return new UnstorageDocumentStorage(storage, {
+    //   scanKeys: false,
+    // });
+    return new ZeroKnowledgeDocumentStorage(storage);
   },
   checkPermission: async (context) => {
     return true;

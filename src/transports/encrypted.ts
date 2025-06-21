@@ -1,29 +1,19 @@
-import { Awareness } from "y-protocols/awareness";
-import * as Y from "yjs";
-
-import { toBase64 } from "lib0/buffer";
-import { digest } from "lib0/hash/sha256";
+import { decryptUpdate, encryptUpdate } from "../encryption-key";
 import {
   compose,
   DocMessage,
   Message,
   sync,
-  toBinaryTransport,
-  YSink,
-  YSource,
-  YTransport,
-  type Update,
-  type YBinaryTransport,
-} from "../lib";
+  type YSink,
+  type YSource,
+  type YTransport,
+} from "match-maker";
 import {
   decodeFauxStateVector,
   decodeFauxUpdateList,
   encodeFauxStateVector,
   encodeFauxUpdate,
 } from "../storage/e2ee/encoding";
-import { UpdateEncryptionManager } from "./encryption";
-import { withLogger } from "./logger";
-import { getYTransportFromYDoc } from "./ydoc";
 
 export type EncryptedMessage<Context extends Record<string, unknown>> =
   Message<Context>;
@@ -31,10 +21,10 @@ export type EncryptedMessage<Context extends Record<string, unknown>> =
 /**
  * Reads a an encrypted message and decodes it into a {@link Message}.
  */
-export const getMessageDecryptor = <
+export function getMessageDecryptor<
   Context extends Record<string, unknown>,
->() =>
-  new TransformStream<EncryptedMessage<Context>, Message<Context>>({
+>(options: { key: CryptoKey }) {
+  return new TransformStream<EncryptedMessage<Context>, Message<Context>>({
     async transform(chunk, controller) {
       if (chunk.type !== "doc") {
         // passthrough other messages
@@ -57,8 +47,7 @@ export const getMessageDecryptor = <
           const decoded = decodeFauxUpdateList(update);
           await Promise.all(
             decoded.map(async ({ update }) => {
-              const decryptedUpdate =
-                await UpdateEncryptionManager.decryptUpdate(update);
+              const decryptedUpdate = await decryptUpdate(options.key, update);
               controller.enqueue(
                 new DocMessage(
                   chunk.document,
@@ -82,11 +71,12 @@ export const getMessageDecryptor = <
       }
     },
   });
+}
 
-export const getMessageEncryptor = <
+export function getMessageEncryptor<
   Context extends Record<string, unknown>,
->() =>
-  new TransformStream<Message<Context>, EncryptedMessage<Context>>({
+>(options: { key: CryptoKey }) {
+  return new TransformStream<Message<Context>, EncryptedMessage<Context>>({
     async transform(chunk, controller) {
       if (chunk.type !== "doc") {
         controller.enqueue(chunk);
@@ -113,8 +103,7 @@ export const getMessageEncryptor = <
         case "sync-step-2":
         case "update": {
           const { update } = chunk.payload;
-          const encryptedUpdate =
-            await UpdateEncryptionManager.encryptUpdate(update);
+          const encryptedUpdate = await encryptUpdate(options.key, update);
           const fauxUpdate = encodeFauxUpdate(encryptedUpdate);
 
           return controller.enqueue(
@@ -137,6 +126,7 @@ export const getMessageEncryptor = <
       }
     },
   });
+}
 
 /**
  * Wraps a transport in encryption, encrypting all document messages that are sent through the transport.
@@ -146,9 +136,10 @@ export function withEncryption<
   AdditionalProperties extends Record<string, unknown>,
 >(
   transport: YTransport<Context, AdditionalProperties>,
-): YTransport<Context, AdditionalProperties> {
-  const reader = getMessageDecryptor<Context>();
-  const writer = getMessageEncryptor<Context>();
+  options: { key: CryptoKey },
+): YTransport<Context, AdditionalProperties & { key: CryptoKey }> {
+  const reader = getMessageDecryptor<Context>(options);
+  const writer = getMessageEncryptor<Context>(options);
 
   const decryptedSource: YSource<Context, any> = {
     readable: reader.readable,
@@ -162,38 +153,8 @@ export function withEncryption<
 
   return {
     ...transport,
+    key: options.key,
     readable: writer.readable,
     writable: reader.writable,
   };
-}
-
-export function getEncryptedYDocTransport({
-  ydoc,
-  document,
-  awareness = new Awareness(ydoc),
-  debug = false,
-}: {
-  ydoc: Y.Doc;
-  document: string;
-  awareness?: Awareness;
-  debug?: boolean;
-}): YBinaryTransport<{
-  ydoc: Y.Doc;
-  awareness: Awareness;
-  synced: Promise<void>;
-}> {
-  let transport = getYTransportFromYDoc({
-    ydoc,
-    document,
-    awareness,
-    asClient: true,
-  });
-  if (debug) {
-    transport = withLogger(transport);
-  }
-  const encryptedTransport = withEncryption(transport);
-
-  return toBinaryTransport(encryptedTransport, {
-    clientId: "remote",
-  });
 }

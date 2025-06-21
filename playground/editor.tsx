@@ -2,10 +2,17 @@ import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import { useCreateBlockNote } from "@blocknote/react";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Awareness } from "y-protocols/awareness.js";
 import * as Y from "yjs";
-import { Provider } from "../src/providers/websocket";
+import {
+  createEncryptionKey,
+  exportEncryptionKey,
+  importEncryptionKey,
+} from "match-maker/encryption-key";
+import { websocket } from "match-maker/providers";
+import { withEncryption } from "match-maker/transports";
 
-function SingleEditor({ provider }: { provider: Provider }) {
+function SingleEditor({ provider }: { provider: websocket.Provider }) {
   // Creates a new editor instance.
   const editor = useCreateBlockNote({
     collaboration: {
@@ -31,20 +38,54 @@ export function Editor() {
 }
 
 // This is a nice pattern
-const EditorLoader = lazy(() =>
-  Provider.create({
-    url: "ws://localhost:1234/_ws",
-    document: "testy",
-  }).then((provider) => {
-    return { default: () => <Page provider={provider} /> };
-  }),
-);
+const EditorLoader = lazy(async () => {
+  // Provider.create({
+  //   url: "ws://localhost:1234/_ws",
+  //   document: "testy",
+  // }).then((provider) => {
+  //   return { default: () => <Page provider={provider} /> };
+  // }),
+  const ydoc = new Y.Doc();
+  const awareness = new Awareness(ydoc);
 
-function Page({ provider: initialProvider }: { provider: Provider }) {
+  // Get or create encryption key
+  let key: CryptoKey;
+  const storedKey = localStorage.getItem("key");
+  if (storedKey) {
+    key = await importEncryptionKey(storedKey);
+  } else {
+    key = await createEncryptionKey();
+    const exportedKey = await exportEncryptionKey(key);
+    localStorage.setItem("key", exportedKey);
+  }
+
+  return websocket.Provider.create({
+    url: "ws://localhost:1234/_ws",
+    document: "encrypted-1175045416878",
+    // document: "encrypted-1" + Date.now(),
+    ydoc,
+    awareness,
+    getTransport: ({ getDefaultTransport }) =>
+      withEncryption(getDefaultTransport(), { key }),
+  }).then((provider) => {
+    return { default: () => <Page provider={provider} encryptionKey={key} /> };
+  });
+});
+
+function Page({
+  provider: initialProvider,
+  encryptionKey: initialKey,
+}: {
+  provider: websocket.Provider;
+  encryptionKey: CryptoKey;
+}) {
   const [provider, setProvider] = useState(initialProvider);
+  const [key, setKey] = useState<CryptoKey>(initialKey);
+  const [keyString, setKeyString] = useState<string>("");
   const [subdocs, setSubdocs] = useState<string[]>(() =>
     Array.from(provider.subdocs.keys()),
   );
+
   useEffect(() => {
     const handler = provider.on("load-subdoc", (subdoc) => {
       setSubdocs(Array.from(provider.subdocs.keys()));
@@ -54,15 +95,37 @@ function Page({ provider: initialProvider }: { provider: Provider }) {
     };
   }, [provider]);
 
+  useEffect(() => {
+    // Export the current key to string for display
+    exportEncryptionKey(key).then(setKeyString);
+  }, [key]);
+
+  const handleKeyChange = async (newKeyString: string) => {
+    try {
+      const newKey = await importEncryptionKey(newKeyString);
+      setKey(newKey);
+      localStorage.setItem("key", newKeyString);
+    } catch (error) {
+      console.error("Failed to import key:", error);
+    }
+  };
+
   // Renders the editor instance using a React component.
   return (
     <div>
       <button onClick={() => setProvider(provider.switchDocument("test-this"))}>
         Switch Document
       </button>
+      Document: {provider.document}
+      <input
+        type="text"
+        value={keyString}
+        onChange={(e) => handleKeyChange(e.target.value)}
+        placeholder="Enter encryption key"
+      />
       <SingleEditor key={provider.document + "-editor"} provider={provider} />
-      <SubdocViewer key={provider.document + "-subdocs"} provider={provider} />
-      {subdocs.length > 0 && (
+      {/* <SubdocViewer key={provider.document + "-subdocs"} provider={provider} /> */}
+      {/* {subdocs.length > 0 && (
         <div key={provider.document + "-subdoc-viewer"}>
           Subdocs:
           {subdocs.map((subdoc) => (
@@ -72,11 +135,11 @@ function Page({ provider: initialProvider }: { provider: Provider }) {
             </div>
           ))}
         </div>
-      )}
+      )} */}
     </div>
   );
 }
-function SubdocViewer({ provider }: { provider: Provider }) {
+function SubdocViewer({ provider }: { provider: websocket.Provider }) {
   const [docs, setDocs] = useState(Array.from(provider.doc.getSubdocs()));
   const [newSubdocName, setNewSubdocName] = useState("");
 

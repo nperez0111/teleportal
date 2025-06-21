@@ -1,6 +1,10 @@
 import type * as crossws from "crossws";
 
-import type { BinaryMessage, ServerContext, YBinaryTransport } from "../lib";
+import type {
+  BinaryMessage,
+  ServerContext,
+  YBinaryTransport,
+} from "match-maker";
 import { logger } from "./logger";
 
 declare module "crossws" {

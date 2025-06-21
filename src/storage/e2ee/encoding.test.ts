@@ -10,7 +10,7 @@ import {
   type DecodedUpdate,
   type DecodedUpdateList,
 } from "./encoding";
-import type { StateVector, Update } from "../../lib";
+import type { StateVector, Update } from "match-maker";
 import { digest } from "lib0/hash/sha256";
 import { toBase64 } from "lib0/buffer.js";
 

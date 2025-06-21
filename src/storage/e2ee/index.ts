@@ -1,8 +1,8 @@
 import type { Storage } from "unstorage";
 
 import { LowLevelDocumentStorage } from "..";
-import { DocMessage, Message, ServerContext } from "../../lib";
-import { Document } from "../../server";
+import { DocMessage, Message, ServerContext } from "match-maker";
+import { Document } from "match-maker/server";
 import {
   appendFauxUpdateList,
   decodeFauxStateVector,
