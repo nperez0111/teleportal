@@ -89,5 +89,8 @@
     "prettier": "^3.5.3",
     "typescript": "^5.8.3",
     "unbuild": "^3.5.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

@@ -16,6 +16,7 @@
       "match-maker/server": ["./src/server/index.ts"],
       "match-maker/protocol": ["./src/protocol/index.ts"],
       "match-maker/providers": ["./src/providers/index.ts"],
+      "match-maker/websocket-server": ["./src/websocket-server/index.ts"],
       "match-maker": ["./src/lib/index.ts"],
     },
     "jsx": "react-jsx"

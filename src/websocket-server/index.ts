@@ -17,6 +17,11 @@ declare module "crossws" {
   }
 }
 
+/**
+ * This implements a websocket server based on the {@link crossws} library.
+ *
+ * By not bundling the {@link crossws} library, we can not have to install it
+ */
 export function getWebsocketHandlers({
   onUpgrade,
   onConnect,
