@@ -52,6 +52,10 @@
     "./encryption-key": {
       "types": "./dist/encryption-key/index.d.mts",
       "default": "./dist/encryption-key/index.mjs"
+    },
+    "./token": {
+      "types": "./dist/token/index.d.mts",
+      "default": "./dist/token/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",
@@ -65,7 +69,7 @@
     "lint": "eslint . && prettier -c src playground",
     "lint:fix": "automd && eslint . --fix && prettier -w src playground",
     "prepack": "bun run build",
-    "dev": "PORT=1234 bun run --watch ./playground/websocket.ts",
+    "dev": "PORT=1234 bun run --watch ./playground/bun/server.ts",
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
     "test": "bun run test:types && bun test",
     "test:types": "tsc --noEmit --skipLibCheck"
@@ -73,6 +77,7 @@
   "dependencies": {
     "crossws": "^0.4.1",
     "db0": "^0.3.2",
+    "jose": "^6.0.11",
     "lib0": "^0.2.109",
     "pino": "^9.7.0",
     "srvx": "^0.8.0",

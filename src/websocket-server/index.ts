@@ -22,7 +22,9 @@ declare module "crossws" {
  *
  * By not bundling the {@link crossws} library, we can not have to install it
  */
-export function getWebsocketHandlers({
+export function getWebsocketHandlers<
+  T extends Pick<crossws.PeerContext, "room" | "userId">,
+>({
   onUpgrade,
   onConnect,
   onDisconnect,
@@ -33,7 +35,7 @@ export function getWebsocketHandlers({
    * @note You can reject the upgrade by throwing a {@link Response} object.
    */
   onUpgrade: (request: Request) => Promise<{
-    context: Pick<crossws.PeerContext, "room" | "userId">;
+    context: T;
     headers?: Record<string, string>;
   }>;
   /**
@@ -41,7 +43,7 @@ export function getWebsocketHandlers({
    */
   onConnect: (ctx: {
     transport: YBinaryTransport;
-    context: ServerContext;
+    context: T;
     id: string;
     peer: crossws.Peer;
   }) => void | Promise<void>;
@@ -103,7 +105,7 @@ export function getWebsocketHandlers({
         try {
           await onConnect({
             transport: peer.context.transport,
-            context: peer.context,
+            context: peer.context as any,
             id: peer.id,
             peer,
           });
@@ -120,9 +122,7 @@ export function getWebsocketHandlers({
           await writer.write(buff as BinaryMessage);
           writer.releaseLock();
         } catch (e) {
-          peer.context.writable.abort(
-            new Error("Failed to write message", { cause: { err: e } }),
-          );
+          new Error("Failed to write message", { cause: { err: e } });
         }
       },
       async close(peer) {

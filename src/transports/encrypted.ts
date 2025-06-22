@@ -13,7 +13,7 @@ import {
   decodeFauxUpdateList,
   encodeFauxStateVector,
   encodeFauxUpdate,
-} from "../storage/e2ee/encoding";
+} from "../storage/encrypted/encoding";
 
 export type EncryptedMessage<Context extends Record<string, unknown>> =
   Message<Context>;

@@ -5,8 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "PORT=1234 bun run --watch ./websocket.ts"
+    "build": "bun build ./frontend/index.html --outdir ./dist"
   },
   "keywords": [],
   "author": "Nick the Sick",

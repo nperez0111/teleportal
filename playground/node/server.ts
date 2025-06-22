@@ -5,6 +5,7 @@ import sqlite from "db0/connectors/node-sqlite";
 import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
+// Use the dist build, since node doesn't resolve the source very well
 import { Server } from "../../dist/server/index.mjs";
 import { UnstorageDocumentStorage } from "../../dist/storage/index.mjs";
 import { getWebsocketHandlers } from "../../dist/websocket-server/index.mjs";

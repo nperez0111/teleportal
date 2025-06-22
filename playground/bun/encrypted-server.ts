@@ -4,11 +4,11 @@ import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
-import { Server } from "../src/server/server";
-import { UnstorageDocumentStorage } from "../src/storage/unstorage";
-import { getWebsocketHandlers } from "../src/websocket-server";
-import homepage from "./index.html";
-import { ZeroKnowledgeDocumentStorage } from "../src/storage/e2ee";
+import { Server } from "match-maker/server";
+import { getWebsocketHandlers } from "match-maker/websocket-server";
+import { EncryptedDocumentStorage } from "match-maker/storage";
+
+import homepage from "../frontend/index.html";
 
 const db = createDatabase(
   bunSqlite({
@@ -25,10 +25,7 @@ const storage = createStorage({
 
 const server = new Server({
   getStorage: async (ctx) => {
-    // return new UnstorageDocumentStorage(storage, {
-    //   scanKeys: false,
-    // });
-    return new ZeroKnowledgeDocumentStorage(storage);
+    return new EncryptedDocumentStorage(storage);
   },
   checkPermission: async (context) => {
     return true;

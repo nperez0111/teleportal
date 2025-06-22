@@ -15,7 +15,7 @@ import {
  * A storage implementation that is backed by unstorage.
  * This is a zero-knowledge storage implementation, which means that it does not inspect the contents of the documents at any point.
  */
-export class ZeroKnowledgeDocumentStorage extends LowLevelDocumentStorage {
+export class EncryptedDocumentStorage extends LowLevelDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { ttl: number };
 
@@ -107,7 +107,6 @@ export class ZeroKnowledgeDocumentStorage extends LowLevelDocumentStorage {
         document.id,
         appendFauxUpdateList(
           content,
-          // TODO do we really need to decode the updates?
           decodeFauxUpdateList(message.payload.update),
         ),
       );
