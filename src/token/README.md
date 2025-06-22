@@ -77,6 +77,77 @@ pattern: "org/project/*"
 // Matches: "org/project/doc1", "org/project/subfolder/doc2"
 ```
 
+## Document Access Builder
+
+For complex permission scenarios, you can use the `DocumentAccessBuilder` to construct `DocumentAccess[]` arrays with a fluent API:
+
+```typescript
+import { DocumentAccessBuilder } from "match-maker/token";
+
+// Basic usage
+const access = new DocumentAccessBuilder()
+  .allow("user/*", ["read", "write"])
+  .deny("private/*")
+  .build();
+
+// Using convenience methods
+const access = new DocumentAccessBuilder()
+  .readOnly("public/*")
+  .readWrite("user/*")
+  .fullAccess("admin/*")
+  .admin("super-admin/*")
+  .build();
+
+// Domain-specific methods
+const access = new DocumentAccessBuilder()
+  .ownDocuments("user-123")
+  .sharedDocuments()
+  .projectDocuments("my-project")
+  .orgDocuments("acme-corp")
+  .build();
+
+// Complex patterns with exclusions
+const access = new DocumentAccessBuilder()
+  .allowAll(["read", "write"])
+  .denyPrivate()
+  .denySecrets()
+  .ownDocuments("user-456", ["read", "write", "comment", "suggest", "admin"])
+  .projectDocuments("important-project", ["read", "write", "comment", "suggest"])
+  .admin("system/*")
+  .build();
+```
+
+### Builder Methods
+
+#### Basic Methods
+- `allow(pattern, permissions)` - Allow access with specific permissions
+- `deny(pattern)` - Deny access (exclusion pattern)
+- `build()` - Return the constructed `DocumentAccess[]`
+
+#### Permission Convenience Methods
+- `readOnly(pattern)` - Read-only access
+- `writeOnly(pattern)` - Write-only access
+- `readWrite(pattern)` - Read and write access
+- `fullAccess(pattern)` - All permissions except admin
+- `admin(pattern)` - Admin access (supersedes all other permissions)
+- `commentOnly(pattern)` - Read and comment access
+- `suggestOnly(pattern)` - Read and suggest access
+
+#### Domain-Specific Methods
+- `ownDocuments(userId, permissions?)` - User owns their documents (`userId/*`)
+- `sharedDocuments(permissions?)` - Access to shared documents (`shared/*`)
+- `projectDocuments(projectName, permissions?)` - Access to project documents (`projects/projectName/*`)
+- `orgDocuments(orgName, permissions?)` - Access to organization documents (`orgName/*`)
+
+#### Denial Convenience Methods
+- `denyPrivate()` - Deny access to private documents (`!private/*`)
+- `denySecrets()` - Deny access to secret files (`!*.secret`)
+- `denyAdmin()` - Deny access to admin documents (`!admin/*`)
+- `denyDocument(documentName)` - Deny access to specific document
+
+#### Global Access
+- `allowAll(permissions?)` - Allow access to all documents (`*`)
+
 ## Usage Examples
 
 ### 1. Create a Regular User Token

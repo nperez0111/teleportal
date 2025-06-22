@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { websocket } from "match-maker/providers";
-import { createTokenManager } from "match-maker/token";
+import { createTokenManager, DocumentAccessBuilder } from "match-maker/token";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -23,7 +23,14 @@ export function useProviderManager(
 
   useEffect(() => {
     tokenManager
-      .createToken("nick", "docs", [{ pattern: "*", permissions: ["admin"] }])
+      .createToken(
+        "nick",
+        "docs",
+        new DocumentAccessBuilder()
+          .write("Testy")
+          .readOnly("test-this")
+          .build(),
+      )
       .then((token) => {
         // Create initial provider
         return websocket.Provider.create({

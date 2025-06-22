@@ -1,6 +1,8 @@
-import { SignJWT, jwtVerify, type JWTPayload } from "jose";
+import { SignJWT, jwtVerify } from "jose";
 
-export type Permission = "read" | "write" | "comment" | "suggest" | "admin";
+export * from "./check-permission";
+
+export type Permission = "admin" | "write" | "read" | "comment" | "suggest";
 
 export type DocumentAccess = {
   /**
@@ -337,4 +339,111 @@ export function isTokenExpired(payload: TokenPayload): boolean {
     return false; // No expiration set
   }
   return Math.floor(Date.now() / 1000) > payload.exp;
+}
+
+/**
+ * Builder pattern for constructing DocumentAccess[] arrays
+ */
+export class DocumentAccessBuilder {
+  private accessList: DocumentAccess[] = [];
+
+  /**
+   * Allow access to documents matching the pattern with the given permissions
+   */
+  allow(pattern: string, permissions: Permission[]): this {
+    this.accessList.push({ pattern, permissions });
+    return this;
+  }
+
+  /**
+   * Deny access to documents matching the pattern (exclusion pattern)
+   */
+  deny(pattern: string): this {
+    this.accessList.push({
+      pattern: `!${pattern}`,
+      permissions: ["read", "write", "comment", "suggest", "admin"],
+    });
+    return this;
+  }
+
+  /**
+   * Allow all documents with the given permissions
+   */
+  allowAll(
+    permissions: Permission[] = ["read", "write", "comment", "suggest"],
+  ): this {
+    return this.allow("*", permissions);
+  }
+
+  /**
+   * Allow read-only access to documents matching the pattern
+   */
+  readOnly(pattern: string): this {
+    return this.allow(pattern, ["read"]);
+  }
+
+  /**
+   * Allow read and write access to documents matching the pattern
+   */
+  write(pattern: string): this {
+    return this.allow(pattern, ["read", "write"]);
+  }
+
+  /**
+   * Allow full access (all permissions) to documents matching the pattern
+   */
+  fullAccess(pattern: string): this {
+    return this.allow(pattern, ["read", "write", "comment", "suggest"]);
+  }
+
+  /**
+   * Allow admin access to documents matching the pattern
+   */
+  admin(pattern: string): this {
+    return this.allow(pattern, ["admin"]);
+  }
+
+  /**
+   * Allow comment access to documents matching the pattern
+   */
+  commentOnly(pattern: string): this {
+    return this.allow(pattern, ["read", "comment"]);
+  }
+
+  /**
+   * Allow suggest access to documents matching the pattern
+   */
+  suggestOnly(pattern: string): this {
+    return this.allow(pattern, ["read", "comment", "suggest"]);
+  }
+
+  /**
+   * Allow user to own all their documents (pattern: userId/*)
+   */
+  ownDocuments(
+    userId: string,
+    permissions: Permission[] = [
+      "read",
+      "write",
+      "comment",
+      "suggest",
+      "admin",
+    ],
+  ): this {
+    return this.allow(`${userId}/*`, permissions);
+  }
+
+  /**
+   * Deny access to specific document
+   */
+  denyDocument(documentName: string): this {
+    return this.deny(documentName);
+  }
+
+  /**
+   * Return the constructed DocumentAccess[] array
+   */
+  build(): DocumentAccess[] {
+    return this.accessList;
+  }
 }

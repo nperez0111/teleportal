@@ -1,5 +1,9 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import { createTokenManager, type TokenPayload } from "./index";
+import {
+  createTokenManager,
+  type TokenPayload,
+  DocumentAccessBuilder,
+} from "./index";
 
 describe("TokenManager", () => {
   let tokenManager: ReturnType<typeof createTokenManager>;
@@ -481,6 +485,111 @@ describe("TokenManager", () => {
       expect(result.valid).toBe(true);
       expect(result.payload?.iss).toBe("custom-issuer");
       expect(result.payload?.aud).toBe("match-maker");
+    });
+  });
+
+  describe("DocumentAccessBuilder", () => {
+    it("should build basic access patterns", () => {
+      const access = new DocumentAccessBuilder()
+        .allow("user/*", ["read", "write"])
+        .deny("private/*")
+        .build();
+
+      expect(access).toHaveLength(2);
+      expect(access[0]).toEqual({
+        pattern: "user/*",
+        permissions: ["read", "write"],
+      });
+      expect(access[1]).toEqual({
+        pattern: "!private/*",
+        permissions: ["read", "write", "comment", "suggest", "admin"],
+      });
+    });
+
+    it("should use convenience methods", () => {
+      const access = new DocumentAccessBuilder()
+        .readOnly("public/*")
+        .write("user/*")
+        .fullAccess("admin/*")
+        .admin("super-admin/*")
+        .build();
+
+      expect(access).toHaveLength(4);
+      expect(access[0]).toEqual({ pattern: "public/*", permissions: ["read"] });
+      expect(access[1]).toEqual({
+        pattern: "user/*",
+        permissions: ["read", "write"],
+      });
+      expect(access[2]).toEqual({
+        pattern: "admin/*",
+        permissions: ["read", "write", "comment", "suggest"],
+      });
+      expect(access[3]).toEqual({
+        pattern: "super-admin/*",
+        permissions: ["admin"],
+      });
+    });
+
+    it("should use domain-specific methods", () => {
+      const access = new DocumentAccessBuilder()
+        .ownDocuments("user-123")
+        .build();
+
+      expect(access).toHaveLength(1);
+      expect(access[0]).toEqual({
+        pattern: "user-123/*",
+        permissions: ["read", "write", "comment", "suggest", "admin"],
+      });
+    });
+
+    it("should use denial convenience methods", () => {
+      const access = new DocumentAccessBuilder()
+        .allowAll()
+        .denyDocument("config.json")
+        .build();
+
+      expect(access).toHaveLength(2);
+      expect(access[0]).toEqual({
+        pattern: "*",
+        permissions: ["read", "write", "comment", "suggest"],
+      });
+      expect(access[1]).toEqual({
+        pattern: "!config.json",
+        permissions: ["read", "write", "comment", "suggest", "admin"],
+      });
+    });
+
+    it("should work with custom permissions", () => {
+      const access = new DocumentAccessBuilder()
+        .ownDocuments("user-123", ["read", "write"])
+        .build();
+
+      expect(access).toHaveLength(1);
+      expect(access[0]).toEqual({
+        pattern: "user-123/*",
+        permissions: ["read", "write"],
+      });
+    });
+
+    it("should create complex access patterns", () => {
+      const access = new DocumentAccessBuilder()
+        .allowAll(["read", "write"])
+        .ownDocuments("user-456", [
+          "read",
+          "write",
+          "comment",
+          "suggest",
+          "admin",
+        ])
+        .admin("system/*")
+        .build();
+
+      expect(access).toHaveLength(3);
+
+      // Verify the patterns are in the expected order
+      expect(access[0].pattern).toBe("*");
+      expect(access[1].pattern).toBe("user-456/*");
+      expect(access[2].pattern).toBe("system/*");
     });
   });
 });

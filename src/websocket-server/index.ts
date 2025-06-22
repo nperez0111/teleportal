@@ -1,10 +1,8 @@
 import type * as crossws from "crossws";
 
-import type {
-  BinaryMessage,
-  ServerContext,
-  YBinaryTransport,
-} from "match-maker";
+import type { BinaryMessage, YBinaryTransport } from "match-maker";
+import type { Server } from "match-maker/server";
+import type { TokenManager } from "match-maker/token";
 import { logger } from "./logger";
 
 declare module "crossws" {
@@ -19,6 +17,7 @@ declare module "crossws" {
 
 /**
  * This implements a websocket server based on the {@link crossws} library.
+ * It is a low-level API for abstracting the websocket server implementation.
  *
  * By not bundling the {@link crossws} library, we can not have to install it
  */
@@ -142,4 +141,59 @@ export function getWebsocketHandlers<
       },
     },
   };
+}
+
+/**
+ * This is a websocket handler which implements token authentication.
+ * It is a wrapper around the {@link getWebsocketHandlers} function.
+ * You can pass `verifyToken` from the {@link TokenManager} to this function.
+ * @example
+ * ```ts
+ * import { crossws } from "crossws";
+ * import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
+ * import { createTokenManager } from "match-maker/token";
+ *
+ * const tokenManager = createTokenManager({
+ *   secret: "your-secret-key-here",
+ * });
+ *
+ * const ws = crossws(
+ *   tokenAuthenticatedWebsocketHandler({
+ *     server,
+ *     verifyToken: tokenManager.verifyToken,
+ *   }),
+ * );
+ * ```
+ */
+export function tokenAuthenticatedWebsocketHandler({
+  server,
+  verifyToken,
+}: {
+  server: Server<any>;
+  verifyToken: (token: string) => Promise<{
+    valid: boolean;
+    payload: any;
+  }>;
+}) {
+  return getWebsocketHandlers({
+    onUpgrade: async (request) => {
+      const url = new URL(request.url);
+      const token = url.searchParams.get("token");
+      const result = await verifyToken(token!);
+
+      if (!result.valid || !result.payload) {
+        throw new Response("Unauthorized", { status: 401 });
+      }
+
+      return {
+        context: result.payload,
+      };
+    },
+    onConnect: async (ctx) => {
+      await server.createClient(ctx.transport, ctx.context, ctx.id);
+    },
+    onDisconnect: async (id) => {
+      await server.disconnectClient(id);
+    },
+  });
 }
