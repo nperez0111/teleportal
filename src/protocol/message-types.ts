@@ -6,6 +6,7 @@ import {
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
+  DecodedAuthMessage,
   DocStep,
   EncodedDocUpdateMessage,
 } from "./types";
@@ -75,7 +76,11 @@ export class DocMessage<Context extends Record<string, unknown>> {
 
   constructor(
     public document: string,
-    public payload: DecodedSyncStep1 | DecodedSyncStep2 | DecodedUpdateStep,
+    public payload:
+      | DecodedSyncStep1
+      | DecodedSyncStep2
+      | DecodedUpdateStep
+      | DecodedAuthMessage,
     context?: Context,
     public encrypted: boolean = false,
     encoded?: BinaryMessage,

@@ -127,6 +127,30 @@ describe("can encode and decode", () => {
     `);
   });
 
+  it("can encode and decode a doc update (auth message)", () => {
+    expect(
+      decodeMessage(
+        new DocMessage("test", {
+          type: "auth-message",
+          permission: "denied",
+          reason: "test",
+        }).encoded,
+      ),
+    ).toMatchInlineSnapshot(`
+      DocMessage {
+        "context": {},
+        "document": "test",
+        "encrypted": false,
+        "payload": {
+          "permission": "denied",
+          "reason": "test",
+          "type": "auth-message",
+        },
+        "type": "doc",
+      }
+    `);
+  });
+
   it("get it's id", () => {
     expect(
       new DocMessage("test", {
@@ -251,6 +275,37 @@ describe("can encode", () => {
         1,
         2,
         3,
+      ]
+    `);
+  });
+
+  it("doc update (auth message)", () => {
+    expect(
+      new DocMessage("test", {
+        type: "auth-message",
+        permission: "denied",
+        reason: "test",
+      }).encoded,
+    ).toMatchInlineSnapshot(`
+      Uint8Array [
+        89,
+        74,
+        83,
+        1,
+        4,
+        116,
+        101,
+        115,
+        116,
+        0,
+        0,
+        3,
+        0,
+        4,
+        116,
+        101,
+        115,
+        116,
       ]
     `);
   });

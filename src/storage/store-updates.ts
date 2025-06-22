@@ -13,8 +13,9 @@ export const getWriteDocUpdateStream = () =>
   >({
     transform(chunk, controller) {
       if (
-        (chunk.type === "doc" && chunk.payload.type === "sync-step-2") ||
-        chunk.payload.type === "update"
+        chunk.type === "doc" &&
+        (chunk.payload.type === "sync-step-2" ||
+          chunk.payload.type === "update")
       ) {
         const encoder = encoding.createEncoder();
         encoding.writeVarUint8Array(encoder, chunk.payload.update);

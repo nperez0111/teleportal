@@ -63,7 +63,21 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeVarUint8Array(encoder, update.payload.update);
             break;
           }
+          case "auth-message": {
+            // message type
+            encoding.writeUint8(encoder, 3);
+            // permission
+            encoding.writeUint8(
+              encoder,
+              update.payload.permission === "denied" ? 0 : 1,
+            );
+            // reason
+            encoding.writeVarString(encoder, update.payload.reason);
+            break;
+          }
           default: {
+            // @ts-expect-error - this should be unreachable due to type checking
+            update.payload.type;
             throw new Error("Invalid doc.payload.type", {
               cause: { update },
             });
@@ -72,6 +86,8 @@ export function encodeMessage(update: Message): BinaryMessage {
         break;
       }
       default: {
+        // @ts-expect-error - this should be unreachable due to type checking
+        update.type;
         throw new Error("Invalid update type", {
           cause: { update },
         });
@@ -85,45 +101,6 @@ export function encodeMessage(update: Message): BinaryMessage {
       cause: { update, err },
     });
   }
-}
-
-/**
- * Serialize a sync step 1 update.
- */
-export function encodeSyncStep1Message(
-  document: string,
-  payload: StateVector,
-): EncodedDocUpdateMessage<SyncStep1> {
-  return new DocMessage(document, {
-    type: "sync-step-1",
-    sv: payload,
-  }).encoded as EncodedDocUpdateMessage<SyncStep1>;
-}
-
-/**
- * Serialize a sync step 2 update.
- */
-export function encodeSyncStep2Message(
-  document: string,
-  payload: Update,
-): EncodedDocUpdateMessage<SyncStep2> {
-  return new DocMessage(document, {
-    type: "sync-step-2",
-    update: payload,
-  }).encoded as EncodedDocUpdateMessage<SyncStep2>;
-}
-
-/**
- * Serialize an update message.
- */
-export function encodeUpdateStepMessage(
-  document: string,
-  payload: Update,
-): EncodedDocUpdateMessage<UpdateStep> {
-  return new DocMessage(document, {
-    type: "update",
-    update: payload,
-  }).encoded as EncodedDocUpdateMessage<UpdateStep>;
 }
 
 /**

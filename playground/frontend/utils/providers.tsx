@@ -34,7 +34,7 @@ export function useProviderManager(
       .then((token) => {
         // Create initial provider
         return websocket.Provider.create({
-          url: "ws://localhost:1234/?token=" + token,
+          url: `ws://localhost:1234/?token=${token}`,
           document: initialDocument,
         }).then((newProvider) => {
           setProvider(newProvider);

@@ -49,7 +49,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
 const ws = crossws(
   tokenAuthenticatedWebsocketHandler({
     server,
-    verifyToken: tokenManager.verifyToken,
+    tokenManager,
   }),
 );
 

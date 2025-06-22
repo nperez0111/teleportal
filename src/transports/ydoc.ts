@@ -206,6 +206,10 @@ export function getYDocSink({
                     getSyncTransactionOrigin(ydoc),
                   );
                   break;
+                case "auth-message": {
+                  controller.error(new Error(chunk.payload.reason));
+                  break;
+                }
               }
             }
           }

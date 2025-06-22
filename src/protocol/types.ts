@@ -63,9 +63,23 @@ export type DecodedUpdateStep = {
 };
 
 /**
+ * A Y.js update step as encoded by the y-protocols implementation.
+ */
+export type AuthMessage = Tag<Uint8Array, "auth-message">;
+
+/**
+ * A decoded Y.js auth message
+ */
+export type DecodedAuthMessage = {
+  type: "auth-message";
+  permission: "denied";
+  reason: string;
+};
+
+/**
  * Any Y.js update which concerns a document.
  */
-export type DocStep = SyncStep1 | SyncStep2 | UpdateStep;
+export type DocStep = SyncStep1 | SyncStep2 | UpdateStep | AuthMessage;
 
 /**
  * A Y.js message which concerns a document and encloses a {@link DocStep} and the document name.

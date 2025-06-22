@@ -12,6 +12,11 @@ export function checkPermissionWithTokenManager(
         case "sync-step-2":
         case "update":
           return tokenManager.hasDocumentPermission(context, document, "write");
+        case "auth-message":
+          // TODO what should we do here?
+          console.log("Got an auth message, denying it?");
+          // We shouldn't really be getting auth messages here, so we'll just deny them from being broadcasted
+          return false;
         default:
           throw new Error(
             `Unknown message type: ${(message.payload as any).type}`,

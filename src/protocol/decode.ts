@@ -6,7 +6,9 @@ import {
   type RawReceivedMessage,
 } from "./message-types";
 import type {
+  AuthMessage,
   AwarenessUpdateMessage,
+  DecodedAuthMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
@@ -87,7 +89,9 @@ function decodeDocStepWithDecoder<
       ? DecodedSyncStep2
       : D extends UpdateStep
         ? DecodedUpdateStep
-        : never,
+        : D extends AuthMessage
+          ? DecodedAuthMessage
+          : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -108,6 +112,13 @@ function decodeDocStepWithDecoder<
         return {
           type: "update",
           update: decoding.readVarUint8Array(decoder),
+        } as E;
+      }
+      case 0x03: {
+        return {
+          type: "auth-message",
+          permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
+          reason: decoding.readVarString(decoder),
         } as E;
       }
       default: {
@@ -134,7 +145,9 @@ export function decodeDocStep<
       ? DecodedSyncStep2
       : D extends UpdateStep
         ? DecodedUpdateStep
-        : never,
+        : D extends AuthMessage
+          ? DecodedAuthMessage
+          : never,
 >(update: D): E {
   const decoder = decoding.createDecoder(update);
   return decodeDocStepWithDecoder(decoder);

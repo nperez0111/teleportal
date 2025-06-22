@@ -160,26 +160,23 @@ export function getWebsocketHandlers<
  * const ws = crossws(
  *   tokenAuthenticatedWebsocketHandler({
  *     server,
- *     verifyToken: tokenManager.verifyToken,
+ *     tokenManager,
  *   }),
  * );
  * ```
  */
 export function tokenAuthenticatedWebsocketHandler({
   server,
-  verifyToken,
+  tokenManager,
 }: {
   server: Server<any>;
-  verifyToken: (token: string) => Promise<{
-    valid: boolean;
-    payload: any;
-  }>;
+  tokenManager: TokenManager;
 }) {
   return getWebsocketHandlers({
     onUpgrade: async (request) => {
       const url = new URL(request.url);
       const token = url.searchParams.get("token");
-      const result = await verifyToken(token!);
+      const result = await tokenManager.verifyToken(token!);
 
       if (!result.valid || !result.payload) {
         throw new Response("Unauthorized", { status: 401 });

@@ -68,6 +68,11 @@ export function getMessageDecryptor<
             );
             return;
           }
+          case "auth-message": {
+            // passthrough auth messages
+            controller.enqueue(chunk);
+            return;
+          }
           default: {
             throw new Error(
               `Unknown message type: ${(chunk.payload as any).type}`,
@@ -128,6 +133,11 @@ export function getMessageEncryptor<
                 true,
               ),
             );
+          }
+          case "auth-message": {
+            // passthrough auth messages
+            controller.enqueue(chunk);
+            return;
           }
           default: {
             throw new Error(

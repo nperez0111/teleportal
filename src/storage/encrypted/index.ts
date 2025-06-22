@@ -102,14 +102,16 @@ export class EncryptedDocumentStorage extends LowLevelDocumentStorage {
         return;
       }
 
-      // Decode, append, and store back the updates
-      await this.storage.setItemRaw(
-        document.id,
-        appendFauxUpdateList(
-          content,
-          decodeFauxUpdateList(message.payload.update),
-        ),
-      );
+      if (message.payload.type === "update") {
+        // Decode, append, and store back the updates
+        await this.storage.setItemRaw(
+          document.id,
+          appendFauxUpdateList(
+            content,
+            decodeFauxUpdateList(message.payload.update),
+          ),
+        );
+      }
     });
 
     // Broadcast the message to all clients

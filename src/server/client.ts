@@ -5,7 +5,7 @@ import type {
   YBinaryTransport,
   YSink,
 } from "match-maker";
-import { getMessageReader } from "match-maker";
+import { DocMessage, getMessageReader } from "match-maker";
 import { getDocumentId, type Document } from "./document";
 import { logger, type Logger } from "./logger";
 import type { Server } from "./server";
@@ -79,9 +79,16 @@ export class Client<Context extends ServerContext> {
           });
 
           if (!hasPermission) {
-            throw new Error(
-              `Client ${this.id} does not have permission to access document ${documentId}`,
+            console.log("denying access to document", documentId);
+            await this.send(
+              new DocMessage(message.document, {
+                type: "auth-message",
+                permission: "denied",
+                reason: `Insufficient permissions to access document ${message.document}`,
+              }),
+              this,
             );
+            return;
           }
 
           this.logger.trace(
