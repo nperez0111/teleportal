@@ -1,8 +1,8 @@
 import type { Storage } from "unstorage";
 
-import { LowLevelDocumentStorage } from "..";
 import { DocMessage, Message, ServerContext } from "match-maker";
 import { Document } from "match-maker/server";
+import { LowLevelDocumentStorage } from "..";
 import {
   appendFauxUpdateList,
   decodeFauxStateVector,
@@ -98,6 +98,17 @@ export class EncryptedDocumentStorage extends LowLevelDocumentStorage {
           }),
           document,
         );
+        // TODO send a sync-step-1 that tells the client to compact the document
+        // They will send a sync-step-2 with the compacted updates which we can consider a milestone
+        // await client.send(
+        //   new DocMessage(document.name, {
+        //     type: "sync-step-1",
+        //     sv: encodeFauxStateVector({
+        //       messageId: "compact",
+        //     }),
+        //   }),
+        //   document,
+        // );
         // Fetch from storage
         return;
       }

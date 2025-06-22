@@ -1,6 +1,10 @@
 import type * as crossws from "crossws";
 
-import type { BinaryMessage, YBinaryTransport } from "match-maker";
+import type {
+  BinaryMessage,
+  ServerContext,
+  YBinaryTransport,
+} from "match-maker";
 import type { Server } from "match-maker/server";
 import type { TokenManager } from "match-maker/token";
 import { logger } from "./logger";
@@ -177,11 +181,11 @@ export function getWebsocketHandlers<
  * );
  * ```
  */
-export function tokenAuthenticatedWebsocketHandler({
+export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
   server,
   tokenManager,
 }: {
-  server: Server<any>;
+  server: Server<T>;
   tokenManager: TokenManager;
 }) {
   return getWebsocketHandlers({
@@ -195,7 +199,7 @@ export function tokenAuthenticatedWebsocketHandler({
       }
 
       return {
-        context: result.payload,
+        context: result.payload as unknown as Omit<T, "clientId">,
       };
     },
     onConnect: async (ctx) => {

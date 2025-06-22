@@ -8,7 +8,10 @@ import { Server } from "match-maker/server";
 import { EncryptedDocumentStorage } from "match-maker/storage";
 import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
 
-import { createTokenManager } from "match-maker/token";
+import {
+  checkPermissionWithTokenManager,
+  createTokenManager,
+} from "match-maker/token";
 import homepage from "../frontend/index.html";
 
 const db = createDatabase(
@@ -24,19 +27,17 @@ const storage = createStorage({
   }),
 });
 
-const server = new Server({
-  getStorage: async (ctx) => {
-    return new EncryptedDocumentStorage(storage);
-  },
-  checkPermission: async (context) => {
-    return true;
-  },
-});
-
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
   expiresIn: 3600, // 1 hour
   issuer: "my-collaborative-app",
+});
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    return new EncryptedDocumentStorage(storage);
+  },
+  checkPermission: checkPermissionWithTokenManager(tokenManager),
 });
 
 const ws = crossws(

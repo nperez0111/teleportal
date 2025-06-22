@@ -8,7 +8,11 @@ import dbDriver from "unstorage/drivers/db0";
 // Use the dist build, since node doesn't resolve the source very well
 import { Server } from "../../dist/server/index.mjs";
 import { UnstorageDocumentStorage } from "../../dist/storage/index.mjs";
-import { getWebsocketHandlers } from "../../dist/websocket-server/index.mjs";
+import { tokenAuthenticatedWebsocketHandler } from "../../dist/websocket-server/index.mjs";
+import {
+  checkPermissionWithTokenManager,
+  createTokenManager,
+} from "../../dist/token/index.mjs";
 
 const db = createDatabase(
   sqlite({
@@ -23,33 +27,25 @@ const storage = createStorage({
   }),
 });
 
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here", // In production, use a strong secret
+  expiresIn: 3600, // 1 hour
+  issuer: "my-collaborative-app",
+});
+
 const serverInstance = new Server({
   getStorage: async (ctx) => {
     return new UnstorageDocumentStorage(storage, {
       scanKeys: false,
     });
   },
-  checkPermission: async (context) => {
-    return true;
-  },
+  checkPermission: checkPermissionWithTokenManager(tokenManager) as any,
 });
 
 const ws = crossws(
-  getWebsocketHandlers({
-    onUpgrade: async () => {
-      return {
-        context: {
-          room: "test",
-          userId: "test",
-        },
-      };
-    },
-    onConnect: async (ctx) => {
-      await serverInstance.createClient(ctx.transport, ctx.context, ctx.id);
-    },
-    onDisconnect: async (id) => {
-      await serverInstance.disconnectClient(id);
-    },
+  tokenAuthenticatedWebsocketHandler({
+    server: serverInstance as any,
+    tokenManager: tokenManager as any,
   }),
 );
 

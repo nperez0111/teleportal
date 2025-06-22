@@ -7,14 +7,11 @@ import dbDriver from "unstorage/drivers/db0";
 import { Server } from "match-maker/server";
 import { UnstorageDocumentStorage } from "match-maker/storage";
 import {
-  getWebsocketHandlers,
-  tokenAuthenticatedWebsocketHandler,
-} from "match-maker/websocket-server";
-import {
   checkPermissionWithTokenManager,
   createTokenManager,
   TokenPayload,
 } from "match-maker/token";
+import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
 
 import homepage from "../frontend/index.html";
 
