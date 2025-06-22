@@ -70,6 +70,7 @@
     "lint:fix": "automd && eslint . --fix && prettier -w src playground",
     "prepack": "bun run build",
     "dev": "PORT=1234 bun run --watch ./playground/bun/server.ts",
+    "dev:encrypted": "PORT=1234 bun run --watch ./playground/bun/encrypted-server.ts",
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
     "test": "bun run test:types && bun test",
     "test:types": "tsc --noEmit --skipLibCheck"

@@ -1,8 +1,6 @@
 
-- Message auth response as a message type?
 - Could the client do the compaction? Is there a way to guarantee that the client's compaction did not add any additional state?
 - Sub document support: <https://github.com/toeverything/AFFiNE/blob/v0.9.0-canary.13/packages/y-provider/src/lazy-provider.ts>
-- token management: <https://github.com/panva/jose>
 - query awareness (fetch awareness from a client (so we don't have to wait 30s))
 - better websocket connection management <https://github.com/jamsocket/y-sweet/blob/main/js-pkg/client/src/provider.ts#L580>
 - see if need check sync status? <https://github.com/jamsocket/y-sweet/blob/main/js-pkg/client/src/provider.ts#L356>

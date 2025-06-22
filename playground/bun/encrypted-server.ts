@@ -5,9 +5,10 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
 import { Server } from "match-maker/server";
-import { getWebsocketHandlers } from "match-maker/websocket-server";
 import { EncryptedDocumentStorage } from "match-maker/storage";
+import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
 
+import { createTokenManager } from "match-maker/token";
 import homepage from "../frontend/index.html";
 
 const db = createDatabase(
@@ -32,22 +33,16 @@ const server = new Server({
   },
 });
 
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here", // In production, use a strong secret
+  expiresIn: 3600, // 1 hour
+  issuer: "my-collaborative-app",
+});
+
 const ws = crossws(
-  getWebsocketHandlers({
-    onUpgrade: async () => {
-      return {
-        context: {
-          room: "test",
-          userId: "test",
-        },
-      };
-    },
-    onConnect: async (ctx) => {
-      await server.createClient(ctx.transport, ctx.context, ctx.id);
-    },
-    onDisconnect: async (id) => {
-      await server.disconnectClient(id);
-    },
+  tokenAuthenticatedWebsocketHandler({
+    server,
+    tokenManager,
   }),
 );
 

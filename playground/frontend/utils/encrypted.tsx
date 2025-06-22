@@ -3,6 +3,7 @@ import { YTransport } from "match-maker";
 import {
   exportEncryptionKey,
   importEncryptionKey,
+  createEncryptionKey,
 } from "match-maker/encryption-key";
 import { withEncryption } from "match-maker/transports";
 import { useEffect, useState } from "react";
@@ -81,6 +82,12 @@ export function useEncryptionKeyFromUrl() {
         } catch (error) {
           console.error("Failed to import key from URL:", error);
         }
+      } else {
+        const key = await createEncryptionKey();
+        const exported = await exportEncryptionKey(key);
+
+        window.location.hash = `token=${exported}`;
+        await baseKey.setKey(exported);
       }
     }
 
