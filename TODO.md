@@ -8,3 +8,5 @@
 - can do compact on dispose of a doc (since it is async, latency is not a problem)
 - a message type for saving a snapshot of a doc
 - open telemetry tracing for the server
+- For an encrypted document, the client should probably compact the document updates on connection (sync-step-2). This would cause latency on the first sync, but it would be better than picking arbitrary points to compact at. Better to have a "loading" state which is a bit slower, but more predictable.
+  - The server would probably still store the full document update, but only ever send the "milestone" updates to a client for efficiency.

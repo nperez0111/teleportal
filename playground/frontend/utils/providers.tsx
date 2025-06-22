@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { websocket } from "match-maker/providers";
 import { createTokenManager, DocumentAccessBuilder } from "match-maker/token";
+import { withEncryption } from "match-maker/transports";
+import { useEncryptionKeyFromUrl } from "./encrypted";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -15,20 +17,25 @@ export interface ProviderManager {
 }
 
 export function useProviderManager(
-  initialDocument: string = "Testy",
+  initialDocument: string = "test",
 ): ProviderManager {
+  const { key } = useEncryptionKeyFromUrl();
   const [provider, setProvider] = useState<websocket.Provider | null>(null);
   const [currentDocument, setCurrentDocument] =
     useState<string>(initialDocument);
 
   useEffect(() => {
+    if (!key) {
+      return;
+    }
     tokenManager
       .createToken(
         "nick",
         "docs",
         new DocumentAccessBuilder()
-          .write("Testy")
-          .readOnly("test-this")
+          .admin("*")
+          // .write("Testy")
+          // .readOnly("test-this")
           .build(),
       )
       .then((token) => {
@@ -36,11 +43,13 @@ export function useProviderManager(
         return websocket.Provider.create({
           url: `ws://localhost:1234/?token=${token}`,
           document: initialDocument,
+          getTransport: ({ getDefaultTransport }) =>
+            withEncryption(getDefaultTransport(), { key }),
         }).then((newProvider) => {
           setProvider(newProvider);
         });
       });
-  }, [initialDocument]);
+  }, [initialDocument, key]);
 
   const switchDocument = (documentName: string) => {
     if (provider) {
