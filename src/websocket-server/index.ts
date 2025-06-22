@@ -27,6 +27,7 @@ export function getWebsocketHandlers<
   onUpgrade,
   onConnect,
   onDisconnect,
+  onMessage,
 }: {
   /**
    * Called when a client is attempting to upgrade to a websocket connection.
@@ -40,7 +41,7 @@ export function getWebsocketHandlers<
   /**
    * Called when a client has connected to the server.
    */
-  onConnect: (ctx: {
+  onConnect?: (ctx: {
     transport: YBinaryTransport;
     context: T;
     id: string;
@@ -49,7 +50,14 @@ export function getWebsocketHandlers<
   /**
    * Called when a client has disconnected from the server.
    */
-  onDisconnect: (id: string) => void | Promise<void>;
+  onDisconnect?: (id: string) => void | Promise<void>;
+  /**
+   * Called when a client has sent a message to the server.
+   */
+  onMessage?: (ctx: {
+    message: BinaryMessage;
+    peer: crossws.Peer;
+  }) => void | Promise<void>;
 }): {
   hooks: crossws.Hooks;
 } {
@@ -102,7 +110,7 @@ export function getWebsocketHandlers<
         };
 
         try {
-          await onConnect({
+          await onConnect?.({
             transport: peer.context.transport,
             context: peer.context as any,
             id: peer.id,
@@ -117,6 +125,10 @@ export function getWebsocketHandlers<
         logger.trace({ peerId: peer.id, messageId: message.id }, "message");
         const buff = message.uint8Array();
         try {
+          await onMessage?.({
+            message: buff as BinaryMessage,
+            peer,
+          });
           const writer = peer.context.writable.getWriter();
           await writer.write(buff as BinaryMessage);
           writer.releaseLock();
@@ -126,7 +138,7 @@ export function getWebsocketHandlers<
       },
       async close(peer) {
         logger.info({ peerId: peer.id }, "close websocket connection");
-        await onDisconnect(peer.id);
+        await onDisconnect?.(peer.id);
         if (!peer.context.writable.locked) {
           await peer.context.writable.close();
         }
