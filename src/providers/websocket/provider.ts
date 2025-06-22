@@ -47,6 +47,7 @@ export class Provider extends ObservableV2<{
   public document: string;
   #websocketConnection: WebsocketConnection;
   #websocketReader: ReaderInstance;
+  #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
 
   private constructor({
@@ -60,6 +61,7 @@ export class Provider extends ObservableV2<{
     this.doc = ydoc;
     this.awareness = awareness;
     this.document = document;
+    this.#getTransport = getTransport;
     this.transport = toBinaryTransport(
       getTransport({
         ydoc,
@@ -106,6 +108,7 @@ export class Provider extends ObservableV2<{
           client: this.#websocketConnection,
           ydoc: doc,
           document: this.document + "/" + parentSub,
+          getTransport: this.#getTransport,
         });
         this.subdocs.set(parentSub, provider);
         this.emit("load-subdoc", [parentSub]);
@@ -141,6 +144,7 @@ export class Provider extends ObservableV2<{
       document,
       ydoc: doc,
       awareness,
+      getTransport: this.#getTransport,
     });
   }
 
