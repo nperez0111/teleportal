@@ -20,6 +20,10 @@
   "workspaces": [
     "playground"
   ],
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/lib/index.d.mts",
