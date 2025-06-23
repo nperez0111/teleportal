@@ -195,8 +195,6 @@ export function getYDocSink({
               break;
             }
             case "doc": {
-              onSynced(true);
-              onSynced = () => {};
               switch (chunk.payload.type) {
                 case "update":
                 case "sync-step-2":
@@ -205,6 +203,8 @@ export function getYDocSink({
                     chunk.payload.update,
                     getSyncTransactionOrigin(ydoc),
                   );
+                  onSynced(true);
+                  onSynced = () => {};
                   break;
                 case "auth-message": {
                   controller.error(new Error(chunk.payload.reason));

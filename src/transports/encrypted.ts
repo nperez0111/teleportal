@@ -4,6 +4,7 @@ import {
   DocMessage,
   Message,
   sync,
+  Update,
   type YSink,
   type YSource,
   type YTransport,
@@ -14,6 +15,7 @@ import {
   encodeFauxStateVector,
   encodeFauxUpdate,
 } from "../storage/encrypted/encoding";
+import * as Y from "yjs";
 
 export type EncryptedMessage<Context extends Record<string, unknown>> =
   Message<Context>;
@@ -47,24 +49,27 @@ export function getMessageDecryptor<
             const { update } = chunk.payload;
             const decoded = decodeFauxUpdateList(update);
 
-            await Promise.all(
+            const decryptedUpdates = await Promise.all(
               decoded.map(async ({ update }) => {
                 const decryptedUpdate = await decryptUpdate(
                   options.key,
                   update,
                 );
-                controller.enqueue(
-                  new DocMessage(
-                    chunk.document,
-                    {
-                      type: chunk.payload.type as "sync-step-2" | "update",
-                      update: decryptedUpdate,
-                    },
-                    chunk.context,
-                    false,
-                  ),
-                );
+                return decryptedUpdate;
               }),
+            );
+
+            // batches all the updates into a single update
+            controller.enqueue(
+              new DocMessage(
+                chunk.document,
+                {
+                  type: chunk.payload.type as "sync-step-2" | "update",
+                  update: Y.mergeUpdatesV2(decryptedUpdates) as Update,
+                },
+                chunk.context,
+                false,
+              ),
             );
             return;
           }
