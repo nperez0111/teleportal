@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "build": "bun build ./frontend/index.html --outdir ./dist"
+    "build": "bun build ./frontend/index.html --outdir ./dist",
+    "build:web": "#todo bun build --target=browser editor.html --outdir dist"
   },
   "keywords": [],
   "author": "Nick the Sick",
@@ -18,7 +19,9 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4",
+    "bun-plugin-tailwind": "latest"
   },
   "private": true,
   "publishConfig": {
