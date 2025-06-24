@@ -66,7 +66,9 @@
   "module": "./dist/lib/index.mjs",
   "types": "./dist/lib/index.d.mts",
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "README.md"
   ],
   "scripts": {
     "build": "unbuild",
