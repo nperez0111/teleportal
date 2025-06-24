@@ -43,8 +43,8 @@ export function useProviderManager(
         return websocket.Provider.create({
           url: `ws://localhost:1234/?token=${token}`,
           document: initialDocument,
-          getTransport: ({ getDefaultTransport }) =>
-            withEncryption(getDefaultTransport(), { key }),
+          // getTransport: ({ getDefaultTransport }) =>
+          //   withEncryption(getDefaultTransport(), { key }),
         }).then((newProvider) => {
           setProvider(newProvider);
         });

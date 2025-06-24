@@ -1,6 +1,6 @@
-## MatchMaker
+# TelePortal
 
-> MatchMaker: A storage, transport & runtime agnostic Y.js server/provider. Built on web primitives, supports subdocs, and handles everything without in-memory storage. Perfect for collaborative apps! 🚀
+> TelePortal: A storage, transport & runtime agnostic Y.js server/provider. Built on web primitives, supports subdocs, and handles everything without in-memory storage. Perfect for collaborative apps! 🚀
 
 This is a **Y.js Server & Provider** that aims to be storage, transport, and runtime agnostic.
 
@@ -14,7 +14,7 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 * **🏃 Runtime:** built on web primitives, everything should work on any JavaScript runtime, with minimal dependencies
 
-### Features
+## Features
 
 * **🌏 Ease-of-use:** We won't make you learn what a Y.Doc is, and make you store it somewhere, keep an instance of the provider, and you'll have everything you need!
 
@@ -22,12 +22,12 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 * **🏎️ Performance:** This is all built on top of web-native Streams APIs, supporting control-flow, backpressure. All without actually storing the documents in-memory
 
-![matchmaker architecture](./architecture.excalidraw.png)
+![teleportal architecture](./architecture.excalidraw.png)
 
 <!-- automd:badges color=yellow -->
 
-[![npm version](https://img.shields.io/npm/v/serve-y?color=yellow)](https://npmjs.com/package/serve-y)
-[![npm downloads](https://img.shields.io/npm/dm/serve-y?color=yellow)](https://npm.chart.dev/serve-y)
+[![npm version](https://img.shields.io/npm/v/teleportal?color=yellow)](https://npmjs.com/package/teleportal)
+[![npm downloads](https://img.shields.io/npm/dm/teleportal?color=yellow)](https://npm.chart.dev/teleportal)
 
 <!-- /automd -->
 

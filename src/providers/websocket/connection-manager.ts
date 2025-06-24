@@ -7,10 +7,59 @@ import {
 import { createFanOutWriter } from "./utils";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;
-const MAX_BACKOFF_TIME = 2500;
 const HEARTBEAT_INTERVAL = 10000;
 const INITIAL_RECONNECT_DELAY = 100;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const MAX_BACKOFF_TIME = 30000; // Increased from 2500ms to 30s for better exponential backoff
+
+/**
+ * Exponential backoff implementation inspired by websocket-ts
+ */
+class ExponentialBackoff {
+  private readonly base: number;
+  private readonly maxExponent?: number;
+  private i: number = 0;
+  private _retries: number = 0;
+
+  constructor(base: number, maxExponent?: number) {
+    if (!Number.isInteger(base) || base < 0) {
+      throw new Error("Base must be a positive integer or zero");
+    }
+    if (
+      maxExponent !== undefined &&
+      (!Number.isInteger(maxExponent) || maxExponent < 0)
+    ) {
+      throw new Error(
+        "MaxExponent must be undefined, a positive integer or zero",
+      );
+    }
+
+    this.base = base;
+    this.maxExponent = maxExponent;
+  }
+
+  get retries(): number {
+    return this._retries;
+  }
+
+  get current(): number {
+    return this.base * Math.pow(2, this.i);
+  }
+
+  next(): number {
+    this._retries++;
+    this.i =
+      this.maxExponent === undefined
+        ? this.i + 1
+        : Math.min(this.i + 1, this.maxExponent);
+    return this.current;
+  }
+
+  reset(): void {
+    this._retries = 0;
+    this.i = 0;
+  }
+}
 
 export type WebsocketState =
   | {
@@ -39,9 +88,14 @@ export class WebsocketConnection extends ObservableV2<{
   open: () => void;
   error: (error: Error) => void;
   reconnect: () => void;
+  retry: (attempt: number, delay: number) => void;
+  online: () => void;
+  offline: () => void;
 }> {
   #wsLastMessageReceived = 0;
   #shouldConnect = true;
+  #disconnected = false;
+  #isOnline = navigator.onLine ?? true;
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #checkInterval: ReturnType<typeof setInterval> | null = null;
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -50,10 +104,18 @@ export class WebsocketConnection extends ObservableV2<{
   #state: WebsocketState = { type: "offline", ws: null };
   #reconnectAttempt = 0;
   #WebSocketImpl: typeof WebSocket;
+  #backoff: ExponentialBackoff;
+  #messageBuffer: BinaryMessage[] = [];
+  #maxReconnectAttempts: number;
+  #lastConnection?: Date;
+  #onlineHandler: (() => void) | null = null;
+  #offlineHandler: (() => void) | null = null;
+
   /**
    * Given a single writer (the incoming websocket messages), this will fan out to all connected readers
    */
   #fanOutWriter = createFanOutWriter();
+
   /**
    * A writable stream to send messages over the websocket connection
    */
@@ -62,6 +124,7 @@ export class WebsocketConnection extends ObservableV2<{
       this.send(message);
     },
   });
+
   /**
    * Whether the websocket connection has been destroyed
    */
@@ -117,12 +180,35 @@ export class WebsocketConnection extends ObservableV2<{
       case "connected": {
         if (this.#reconnectAttempt > 0) {
           this.#reconnectAttempt = 0;
+          this.#backoff.reset();
           this.emit("reconnect", []);
         }
+        this.#lastConnection = new Date();
         this.emit("open", []);
         break;
       }
     }
+  }
+
+  /**
+   * Get the last connection timestamp
+   */
+  public get lastConnection(): Date | undefined {
+    return this.#lastConnection;
+  }
+
+  /**
+   * Check if the device is currently online
+   */
+  public get isOnline(): boolean {
+    return this.#isOnline;
+  }
+
+  /**
+   * Check if the connection was manually disconnected
+   */
+  public get disconnected(): boolean {
+    return this.#disconnected;
   }
 
   constructor({
@@ -130,16 +216,32 @@ export class WebsocketConnection extends ObservableV2<{
     protocols = [],
     connect = true,
     WebSocket: WebSocketImpl = WebSocket,
+    maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS,
+    initialReconnectDelay = INITIAL_RECONNECT_DELAY,
+    maxBackoffTime = MAX_BACKOFF_TIME,
   }: {
     url: string;
     protocols?: string[];
     connect?: boolean;
     WebSocket?: typeof WebSocket;
+    maxReconnectAttempts?: number;
+    initialReconnectDelay?: number;
+    maxBackoffTime?: number;
   }) {
     super();
     this.#url = url;
     this.#protocols = protocols;
     this.#WebSocketImpl = WebSocketImpl;
+
+    // Calculate max exponent for exponential backoff
+    const maxExponent = Math.floor(
+      Math.log2(maxBackoffTime / initialReconnectDelay),
+    );
+    this.#backoff = new ExponentialBackoff(initialReconnectDelay, maxExponent);
+    this.#maxReconnectAttempts = maxReconnectAttempts;
+
+    // Set up online/offline event listeners
+    this.#setupOnlineOfflineListeners();
 
     if (connect) {
       this.connect();
@@ -147,6 +249,43 @@ export class WebsocketConnection extends ObservableV2<{
 
     this.#setupHeartbeat();
     this.#setupConnectionCheck();
+  }
+
+  #setupOnlineOfflineListeners() {
+    const handleOnline = () => {
+      this.#isOnline = true;
+      this.emit("online", []);
+
+      // If we were disconnected due to being offline and should connect, try to reconnect
+      if (
+        this.#shouldConnect &&
+        !this.#disconnected &&
+        this.state.type === "offline"
+      ) {
+        this.#reconnectAttempt = 0;
+        this.#backoff.reset();
+        this._setupWebSocket();
+      }
+    };
+
+    const handleOffline = () => {
+      this.#isOnline = false;
+      this.emit("offline", []);
+
+      // Cancel any pending reconnection attempts when going offline
+      if (this.#reconnectTimeout) {
+        clearTimeout(this.#reconnectTimeout);
+        this.#reconnectTimeout = null;
+      }
+    };
+
+    // Add event listeners
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    // Store references for cleanup
+    this.#onlineHandler = handleOnline;
+    this.#offlineHandler = handleOffline;
   }
 
   #setupHeartbeat() {
@@ -186,6 +325,11 @@ export class WebsocketConnection extends ObservableV2<{
       throw new Error("WebsocketClient is destroyed, create a new instance");
     }
     if (!this.#shouldConnect) {
+      return;
+    }
+
+    // Don't attempt to connect if we're offline
+    if (!this.#isOnline) {
       return;
     }
 
@@ -245,6 +389,7 @@ export class WebsocketConnection extends ObservableV2<{
       websocket.onopen = () => {
         this.#wsLastMessageReceived = Date.now();
         this.state = { type: "connected", ws: websocket };
+        this.#sendBufferedMessages();
       };
     } catch (error) {
       this.state = {
@@ -262,17 +407,28 @@ export class WebsocketConnection extends ObservableV2<{
       clearTimeout(this.#reconnectTimeout);
     }
 
-    if (!this.#shouldConnect || this.isDestroyed) {
+    // Don't schedule reconnection if:
+    // - We shouldn't connect
+    // - We're destroyed
+    // - We're manually disconnected
+    // - We're offline
+    if (
+      !this.#shouldConnect ||
+      this.isDestroyed ||
+      this.#disconnected ||
+      !this.#isOnline
+    ) {
       return;
     }
 
-    const delay = Math.min(
-      INITIAL_RECONNECT_DELAY * Math.pow(2, this.#reconnectAttempt),
-      MAX_BACKOFF_TIME,
-    );
+    // Use exponential backoff for delay calculation
+    const delay = this.#backoff.next();
+
+    // Emit retry event with attempt info
+    this.emit("retry", [this.#reconnectAttempt + 1, delay]);
 
     this.#reconnectTimeout = setTimeout(() => {
-      if (this.#reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+      if (this.#reconnectAttempt >= this.#maxReconnectAttempts) {
         this.state = {
           type: "error",
           ws: null,
@@ -293,8 +449,18 @@ export class WebsocketConnection extends ObservableV2<{
       const wasConnected = this.state.type === "connected";
       this.state = { type: "offline", ws: null };
 
-      if (wasConnected) {
+      if (wasConnected && !this.#disconnected && this.#isOnline) {
         this.#scheduleReconnect();
+      }
+    }
+  }
+
+  #sendBufferedMessages() {
+    // Send any buffered messages when connection is established
+    while (this.#messageBuffer.length > 0) {
+      const message = this.#messageBuffer.shift();
+      if (message) {
+        this.send(message);
       }
     }
   }
@@ -303,7 +469,11 @@ export class WebsocketConnection extends ObservableV2<{
     if (this.isDestroyed) {
       throw new Error("WebsocketClient is destroyed, create a new instance");
     }
-    // TODO should their be queueing of unsent messages?
+
+    if (this.#disconnected) {
+      return; // Don't send if manually disconnected
+    }
+
     if (
       this.state.type === "connected" &&
       this.state.ws.readyState === this.#WebSocketImpl.OPEN
@@ -324,6 +494,9 @@ export class WebsocketConnection extends ObservableV2<{
         this.#closeWebSocketConnection();
         throw error;
       }
+    } else {
+      // Buffer message if not connected
+      this.#messageBuffer.push(data);
     }
   }
 
@@ -333,6 +506,14 @@ export class WebsocketConnection extends ObservableV2<{
     }
     super.destroy();
     this.isDestroyed = true;
+
+    // Clean up online/offline listeners
+    if (this.#onlineHandler) {
+      window.removeEventListener("online", this.#onlineHandler);
+    }
+    if (this.#offlineHandler) {
+      window.removeEventListener("offline", this.#offlineHandler);
+    }
 
     if (this.#heartbeatInterval) {
       clearInterval(this.#heartbeatInterval);
@@ -345,6 +526,9 @@ export class WebsocketConnection extends ObservableV2<{
     }
 
     this.#shouldConnect = false;
+    this.#disconnected = true;
+    this.#messageBuffer.length = 0; // Clear the array
+
     if (this.state.ws) {
       this.#closeWebSocketConnection();
     }
@@ -362,8 +546,10 @@ export class WebsocketConnection extends ObservableV2<{
       throw new Error("WebsocketClient is destroyed, create a new instance");
     }
     this.#shouldConnect = true;
+    this.#disconnected = false;
     this.#reconnectAttempt = 0;
-    if (this.state.type === "offline") {
+    this.#backoff.reset();
+    if (this.state.type === "offline" && this.#isOnline) {
       this._setupWebSocket();
     }
   }
@@ -376,6 +562,7 @@ export class WebsocketConnection extends ObservableV2<{
       throw new Error("WebsocketClient is destroyed, create a new instance");
     }
     this.#shouldConnect = false;
+    this.#disconnected = true;
     if (this.#reconnectTimeout) {
       clearTimeout(this.#reconnectTimeout);
     }
