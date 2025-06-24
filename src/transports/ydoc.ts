@@ -16,7 +16,7 @@ import {
   type YSink,
   type YSource,
   type YTransport,
-} from "match-maker";
+} from "teleportal";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";

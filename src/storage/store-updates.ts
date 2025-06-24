@@ -2,7 +2,7 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as Y from "yjs";
 
-import type { Message, Tag } from "match-maker";
+import type { Message, Tag } from "teleportal";
 
 export type UpdateMessage = Tag<Uint8Array, "update-message">;
 

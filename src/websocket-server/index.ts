@@ -4,9 +4,9 @@ import type {
   BinaryMessage,
   ServerContext,
   YBinaryTransport,
-} from "match-maker";
-import type { Server } from "match-maker/server";
-import type { TokenManager } from "match-maker/token";
+} from "teleportal";
+import type { Server } from "teleportal/server";
+import type { TokenManager } from "teleportal/token";
 import { logger } from "./logger";
 
 declare module "crossws" {
@@ -80,7 +80,7 @@ export function getWebsocketHandlers<
               writable: {} as any,
             },
             headers: {
-              "x-powered-by": "match-maker",
+              "x-powered-by": "teleportal",
               ...headers,
             },
           };
@@ -166,8 +166,8 @@ export function getWebsocketHandlers<
  * @example
  * ```ts
  * import { crossws } from "crossws";
- * import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
- * import { createTokenManager } from "match-maker/token";
+ * import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
+ * import { createTokenManager } from "teleportal/token";
  *
  * const tokenManager = createTokenManager({
  *   secret: "your-secret-key-here",

@@ -8,7 +8,7 @@ import {
   type StateVector,
   type Update,
   type YTransport,
-} from "match-maker";
+} from "teleportal";
 import { noopTransport, withPassthrough } from "./passthrough";
 
 export function generateTestTransport(

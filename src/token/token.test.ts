@@ -484,7 +484,7 @@ describe("TokenManager", () => {
       const result = await customTokenManager.verifyToken(token);
       expect(result.valid).toBe(true);
       expect(result.payload?.iss).toBe("custom-issuer");
-      expect(result.payload?.aud).toBe("match-maker");
+      expect(result.payload?.aud).toBe("teleportal");
     });
   });
 

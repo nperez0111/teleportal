@@ -1,5 +1,5 @@
-import type { Message, ServerContext, StateVector, Update } from "match-maker";
-import type { Document } from "match-maker/server";
+import type { Message, ServerContext, StateVector, Update } from "teleportal";
+import type { Document } from "teleportal/server";
 /**
  * A storage interface for a document.
  */

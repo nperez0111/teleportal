@@ -1,5 +1,5 @@
-import type { Message, ServerContext, YSink } from "match-maker";
-import type { LowLevelDocumentStorage } from "match-maker/storage";
+import type { Message, ServerContext, YSink } from "teleportal";
+import type { LowLevelDocumentStorage } from "teleportal/storage";
 import { logger, type Logger } from "./logger";
 import type { Server } from "./server";
 

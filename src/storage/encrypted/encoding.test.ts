@@ -10,7 +10,7 @@ import {
   type DecodedUpdate,
   type DecodedUpdateList,
 } from "./encoding";
-import type { StateVector, Update } from "match-maker";
+import type { StateVector, Update } from "teleportal";
 import { digest } from "lib0/hash/sha256";
 import { toBase64 } from "lib0/buffer.js";
 

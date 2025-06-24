@@ -1,4 +1,4 @@
-import type { YTransport } from "match-maker";
+import type { YTransport } from "teleportal";
 import { withPassthrough } from "./passthrough";
 
 /**

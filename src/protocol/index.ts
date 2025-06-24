@@ -1,5 +1,5 @@
 /**
- * Binary encoding of the match-maker protocol.
+ * Binary encoding of the teleportal protocol.
  *
  * The format (version 1) is as follows:
  * - 3 bytes: magic number "YJS" (0x59, 0x4a, 0x53)

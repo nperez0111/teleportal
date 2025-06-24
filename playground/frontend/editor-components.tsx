@@ -1,6 +1,6 @@
 import { BlockNoteView } from "@blocknote/mantine";
 import { useCreateBlockNote } from "@blocknote/react";
-import { websocket } from "match-maker/providers";
+import { websocket } from "teleportal/providers";
 import "@blocknote/mantine/style.css";
 
 interface SingleEditorProps {

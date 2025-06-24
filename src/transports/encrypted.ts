@@ -8,7 +8,7 @@ import {
   type YSink,
   type YSource,
   type YTransport,
-} from "match-maker";
+} from "teleportal";
 import {
   decodeFauxStateVector,
   decodeFauxUpdateList,

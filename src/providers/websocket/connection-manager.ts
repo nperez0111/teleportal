@@ -3,7 +3,7 @@ import {
   encodePingMessage,
   isPongMessage,
   type BinaryMessage,
-} from "match-maker";
+} from "teleportal";
 import { createFanOutWriter } from "./utils";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;

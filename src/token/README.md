@@ -10,12 +10,12 @@ This module provides a comprehensive JWT token utility for securing collaborativ
 - **Room-based access control** for multi-tenant applications
 - **Permission types**: `read`, `write`, `comment`, `suggest`, `admin`
 - **Token expiration** and validation
-- **Integration** with the match-maker websocket server
+- **Integration** with the teleportal websocket server
 
 ## Quick Start
 
 ```typescript
-import { createTokenManager } from "match-maker/token";
+import { createTokenManager } from "teleportal/token";
 
 // Create a token manager
 const tokenManager = createTokenManager({
@@ -82,7 +82,7 @@ pattern: "org/project/*"
 For complex permission scenarios, you can use the `DocumentAccessBuilder` to construct `DocumentAccess[]` arrays with a fluent API:
 
 ```typescript
-import { DocumentAccessBuilder } from "match-maker/token";
+import { DocumentAccessBuilder } from "teleportal/token";
 
 // Basic usage
 const access = new DocumentAccessBuilder()
@@ -217,9 +217,9 @@ if (result.valid && result.payload) {
 Here's how to integrate the token utility with the websocket server:
 
 ```typescript
-import { getWebsocketHandlers } from "match-maker/websocket-server";
-import { Server } from "match-maker/server";
-import { createTokenManager } from "match-maker/token";
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+import { Server } from "teleportal/server";
+import { createTokenManager } from "teleportal/token";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key",
@@ -342,7 +342,7 @@ new TokenManager(options: TokenOptions)
   exp?: number;           // Expiration time (Unix timestamp)
   iat?: number;           // Issued at time (Unix timestamp)
   iss?: string;           // Issuer
-  aud: "match-maker";           // Audience
+  aud: "teleportal";           // Audience
 }
 ```
 

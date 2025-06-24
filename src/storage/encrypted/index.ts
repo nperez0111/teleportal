@@ -1,7 +1,7 @@
 import type { Storage } from "unstorage";
 
-import { DocMessage, Message, ServerContext } from "match-maker";
-import { Document } from "match-maker/server";
+import { DocMessage, Message, ServerContext } from "teleportal";
+import { Document } from "teleportal/server";
 import { LowLevelDocumentStorage } from "..";
 import {
   appendFauxUpdateList,

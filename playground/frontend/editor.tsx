@@ -3,7 +3,7 @@ import { DocumentSwitcher } from "./document-switcher";
 import { DocumentEditor } from "./editor-components";
 import { useProviderManager } from "./utils/providers";
 import { SubdocList, SubdocViewer } from "./subdoc-manager";
-import { websocket } from "match-maker/providers";
+import { websocket } from "teleportal/providers";
 
 export function Editor() {
   return (

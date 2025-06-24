@@ -4,14 +4,14 @@ import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
-import { Server } from "match-maker/server";
-import { UnstorageDocumentStorage } from "match-maker/storage";
+import { Server } from "teleportal/server";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
   createTokenManager,
   TokenPayload,
-} from "match-maker/token";
-import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
+} from "teleportal/token";
+import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import homepage from "../frontend/index.html";
 

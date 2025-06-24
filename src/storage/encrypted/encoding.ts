@@ -1,7 +1,7 @@
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 
-import type { StateVector, Update } from "match-maker";
+import type { StateVector, Update } from "teleportal";
 import { toBase64 } from "lib0/buffer";
 import { digest } from "lib0/hash/sha256";
 

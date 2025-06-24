@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { websocket } from "match-maker/providers";
-import { createTokenManager, DocumentAccessBuilder } from "match-maker/token";
-import { withEncryption } from "match-maker/transports";
+import { websocket } from "teleportal/providers";
+import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
+import { withEncryption } from "teleportal/transports";
 import { useEncryptionKeyFromUrl } from "./encrypted";
 
 const tokenManager = createTokenManager({

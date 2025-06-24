@@ -2,8 +2,8 @@ import {
   type BinaryMessage,
   decodeMessage,
   type Message,
-} from "match-maker/protocol";
-export * from "match-maker/protocol";
+} from "teleportal/protocol";
+export * from "teleportal/protocol";
 
 export type ClientContext = {
   /**

@@ -1,4 +1,4 @@
-import type { Update } from "match-maker";
+import type { Update } from "teleportal";
 export type EncryptedUpdate = Update;
 
 /**

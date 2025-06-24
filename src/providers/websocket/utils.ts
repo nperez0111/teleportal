@@ -1,4 +1,4 @@
-import type { BinaryMessage } from "match-maker";
+import type { BinaryMessage } from "teleportal";
 
 export type ReaderInstance = {
   /**

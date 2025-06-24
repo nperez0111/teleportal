@@ -1,12 +1,12 @@
 import * as Y from "yjs";
 
-import type { Message, ServerContext, Update } from "match-maker";
+import type { Message, ServerContext, Update } from "teleportal";
 import {
   DocMessage,
   getEmptyStateVector,
   getEmptyUpdate,
-} from "match-maker/protocol";
-import { type Document, logger } from "match-maker/server";
+} from "teleportal/protocol";
+import { type Document, logger } from "teleportal/server";
 import {
   type DocumentStorage,
   LowLevelDocumentStorage,

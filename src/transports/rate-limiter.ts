@@ -1,4 +1,4 @@
-import type { ClientContext, Message, YTransport } from "match-maker";
+import type { ClientContext, Message, YTransport } from "teleportal";
 
 export interface RateLimitOptions {
   /**

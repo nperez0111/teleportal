@@ -4,14 +4,14 @@ import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
-import { Server } from "match-maker/server";
-import { EncryptedDocumentStorage } from "match-maker/storage";
-import { tokenAuthenticatedWebsocketHandler } from "match-maker/websocket-server";
+import { Server } from "teleportal/server";
+import { EncryptedDocumentStorage } from "teleportal/storage";
+import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import {
   checkPermissionWithTokenManager,
   createTokenManager,
-} from "match-maker/token";
+} from "teleportal/token";
 import homepage from "../frontend/index.html";
 
 const db = createDatabase(

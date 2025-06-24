@@ -6,12 +6,12 @@ import {
   type Message,
   type ServerContext,
   type YBinaryTransport,
-} from "match-maker";
+} from "teleportal";
 import {
   StorageAdapter,
   type DocumentStorage,
   type LowLevelDocumentStorage,
-} from "match-maker/storage";
+} from "teleportal/storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
 import { logger, type Logger } from "./logger";

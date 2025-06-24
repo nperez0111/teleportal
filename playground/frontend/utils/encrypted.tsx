@@ -1,11 +1,11 @@
 import "@blocknote/mantine/style.css";
-import { YTransport } from "match-maker";
+import { YTransport } from "teleportal";
 import {
   exportEncryptionKey,
   importEncryptionKey,
   createEncryptionKey,
-} from "match-maker/encryption-key";
-import { withEncryption } from "match-maker/transports";
+} from "teleportal/encryption-key";
+import { withEncryption } from "teleportal/transports";
 import { useEffect, useState } from "react";
 
 /**

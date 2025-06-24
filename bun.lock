@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "match-maker",
+      "name": "teleportal",
       "dependencies": {
         "crossws": "^0.4.1",
         "db0": "^0.3.2",

@@ -7,7 +7,7 @@ import {
   type ClientContext,
   type YBinaryTransport,
   type YTransport,
-} from "match-maker";
+} from "teleportal";
 import { getYTransportFromYDoc } from "../../transports";
 import { WebsocketConnection } from "./connection-manager";
 import type { ReaderInstance } from "./utils";

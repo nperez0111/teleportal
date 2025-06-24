@@ -5,7 +5,7 @@ interface DocumentSwitcherProps {
   onSwitchDocument: (documentName: string) => void;
 }
 
-const DOCUMENTS_STORAGE_KEY = "match-maker-documents";
+const DOCUMENTS_STORAGE_KEY = "teleportal-documents";
 
 export function DocumentSwitcher({
   currentDocument,

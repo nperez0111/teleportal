@@ -4,7 +4,7 @@ import {
   type YSink,
   type YSource,
   type YTransport,
-} from "match-maker";
+} from "teleportal";
 
 /**
  * A {@link YSink} that wraps another sink and passes all updates through.

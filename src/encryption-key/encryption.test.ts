@@ -6,7 +6,7 @@ import {
   encryptUpdate,
   decryptUpdate,
 } from "./index";
-import type { Update } from "match-maker";
+import type { Update } from "teleportal";
 
 // Helper function to create a proper Update type
 function createUpdate(data: Uint8Array): Update {

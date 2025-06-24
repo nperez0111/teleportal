@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as Y from "yjs";
-import { websocket } from "match-maker/providers";
+import { websocket } from "teleportal/providers";
 import { SingleEditor } from "./editor-components";
 
 interface SubdocViewerProps {

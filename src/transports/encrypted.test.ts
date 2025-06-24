@@ -8,7 +8,7 @@ import {
   toBinaryTransport,
   Update,
   YBinaryTransport,
-} from "match-maker";
+} from "teleportal";
 import { withEncryption } from "./encrypted";
 import {
   createEncryptionKey,

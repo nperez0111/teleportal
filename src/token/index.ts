@@ -58,7 +58,7 @@ export type TokenOptions = {
    */
   expiresIn?: number;
   /**
-   * Token issuer (default: "match-maker")
+   * Token issuer (default: "teleportal")
    */
   issuer?: string;
 };
@@ -107,7 +107,7 @@ export class TokenManager {
         ? new TextEncoder().encode(options.secret)
         : options.secret;
     this.expiresIn = options.expiresIn ?? 3600; // 1 hour default
-    this.issuer = options.issuer ?? "match-maker";
+    this.issuer = options.issuer ?? "teleportal";
   }
 
   /**
@@ -133,7 +133,7 @@ export class TokenManager {
       exp,
       iat: now,
       iss: options?.issuer ?? this.issuer,
-      aud: "match-maker",
+      aud: "teleportal",
     };
 
     const jwt = await new SignJWT(payload)
@@ -154,7 +154,7 @@ export class TokenManager {
     try {
       const { payload } = await jwtVerify(token, this.secret, {
         issuer: this.issuer,
-        audience: "match-maker",
+        audience: "teleportal",
       });
 
       return {

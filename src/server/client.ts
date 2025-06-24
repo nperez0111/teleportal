@@ -4,8 +4,8 @@ import type {
   ServerContext,
   YBinaryTransport,
   YSink,
-} from "match-maker";
-import { DocMessage, getMessageReader } from "match-maker";
+} from "teleportal";
+import { DocMessage, getMessageReader } from "teleportal";
 import { getDocumentId, type Document } from "./document";
 import { logger, type Logger } from "./logger";
 import type { Server } from "./server";

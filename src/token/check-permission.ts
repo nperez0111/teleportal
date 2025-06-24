@@ -1,4 +1,4 @@
-import type { ServerOptions } from "match-maker/server";
+import type { ServerOptions } from "teleportal/server";
 import type { TokenManager } from ".";
 
 export function checkPermissionWithTokenManager(
