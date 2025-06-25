@@ -86,6 +86,10 @@ export class Provider extends ObservableV2<{
     this.#websocketReader.readable.pipeTo(this.transport.writable);
 
     this.listenToSubdocs();
+
+    client.on("update", () => {
+      this.#synced = null;
+    });
   }
 
   private listenToSubdocs() {
@@ -127,37 +131,44 @@ export class Provider extends ObservableV2<{
   /**
    * Switch this provider to a new document, destroying this provider instance.
    */
-  public switchDocument(document: string): Provider {
+  public switchDocument(options: Omit<ProviderOptions, "client">): Provider {
     this.destroy({ destroyWebSocket: false });
-    return this.openDocument(document);
+    return this.openDocument(options);
   }
 
   /**
    * Create a new provider instance for a new document, without destroying this provider.
    */
-  public openDocument(document: string): Provider {
+  public openDocument(options: Omit<ProviderOptions, "client">): Provider {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
 
     return new Provider({
       client: this.#websocketConnection,
-      document,
       ydoc: doc,
       awareness,
       getTransport: this.#getTransport,
+      ...options,
     });
   }
 
+  #synced: Promise<void> | null = null;
   /**
    * Resolves when both
    *  - the underlying websocket connection is connected
    *  - the transport is ready (i.e. we've synced the ydoc)
    */
   public get synced(): Promise<void> {
-    return Promise.all([
+    if (this.#synced) {
+      return this.#synced;
+    }
+    const synced = Promise.all([
       this.#websocketConnection.connected,
       this.transport.synced,
     ]).then(() => {});
+
+    this.#synced = synced;
+    return synced;
   }
 
   public get state() {

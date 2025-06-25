@@ -50,7 +50,6 @@ export function createFanOutWriter() {
         if (index > -1) {
           transports.splice(index, 1);
         }
-        transform.writable.close();
       },
       readable: transform.readable,
     };
