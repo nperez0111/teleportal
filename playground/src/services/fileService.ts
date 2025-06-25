@@ -1,13 +1,16 @@
+import { uuidv4 } from "lib0/random.js";
+
 export interface Document {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
-  content?: string;
+  encrypted: boolean;
 }
 
 class FileService {
   private readonly STORAGE_KEY = "notion-documents";
+  private readonly CURRENT_DOC_KEY = "notion-current-document";
 
   private getDocuments(): Document[] {
     const stored = localStorage.getItem(this.STORAGE_KEY);
@@ -27,13 +30,14 @@ class FileService {
     return documents.find((doc) => doc.id === id) || null;
   }
 
-  createDocument(name: string): Document {
+  createDocument(name: string, encrypted: boolean = false): Document {
     const documents = this.getDocuments();
     const newDocument: Document = {
-      id: this.generateId(),
+      id: this.generateId(encrypted),
       name,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      encrypted,
     };
 
     documents.push(newDocument);
@@ -67,8 +71,22 @@ class FileService {
     return true;
   }
 
-  private generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  // Save the current document ID to localStorage
+  saveCurrentDocumentId(id: string | null): void {
+    if (id) {
+      localStorage.setItem(this.CURRENT_DOC_KEY, id);
+    } else {
+      localStorage.removeItem(this.CURRENT_DOC_KEY);
+    }
+  }
+
+  // Get the current document ID from localStorage
+  getCurrentDocumentId(): string | null {
+    return localStorage.getItem(this.CURRENT_DOC_KEY);
+  }
+
+  private generateId(encrypted: boolean): string {
+    return encrypted ? `encrypted-${uuidv4()}` : uuidv4();
   }
 }
 

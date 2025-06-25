@@ -5,7 +5,10 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
 import { Server } from "teleportal/server";
-import { UnstorageDocumentStorage } from "teleportal/storage";
+import {
+  EncryptedDocumentStorage,
+  UnstorageDocumentStorage,
+} from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
   createTokenManager,
@@ -13,7 +16,7 @@ import {
 } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
-import homepage from "../frontend/index.html";
+import homepage from "../src/index.html";
 
 const db = createDatabase(
   bunSqlite({
@@ -36,6 +39,11 @@ const tokenManager = createTokenManager({
 
 const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
+    if (ctx.document.includes("encrypted")) {
+      console.log("encrypted document", ctx.document);
+      return new EncryptedDocumentStorage(storage);
+    }
+    console.log("regular document", ctx.document);
     return new UnstorageDocumentStorage(storage, {
       scanKeys: false,
     });

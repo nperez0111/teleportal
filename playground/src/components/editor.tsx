@@ -2,9 +2,10 @@ import { BlockNoteView } from "@blocknote/mantine";
 import { useCreateBlockNote } from "@blocknote/react";
 import { websocket } from "teleportal/providers";
 import "@blocknote/mantine/style.css";
+import { use } from "react";
 
 interface EditorProps {
-  provider?: websocket.Provider;
+  provider: websocket.Provider;
   user?: {
     /**
      * The name of the user.
@@ -18,6 +19,7 @@ interface EditorProps {
 }
 
 export function Editor({ provider, user }: EditorProps) {
+  use(provider.synced);
   const editor = useCreateBlockNote({
     collaboration: provider
       ? {
@@ -31,7 +33,14 @@ export function Editor({ provider, user }: EditorProps) {
           provider,
         }
       : undefined,
+    domAttributes: {
+      editor: {
+        class: "flex-1 w-full",
+      },
+    },
   });
 
-  return <BlockNoteView editor={editor} />;
+  return (
+    <BlockNoteView editor={editor} className="h-full w-full flex flex-col" />
+  );
 }

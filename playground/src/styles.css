@@ -15,8 +15,10 @@
 body {
   margin: 0;
   padding: 0;
-
   font-family: var(--font-family);
+  transition:
+    background-color 0.2s ease-in-out,
+    color 0.2s ease-in-out;
 }
 
 #root {
@@ -27,4 +29,12 @@ body {
 code,
 pre {
   font-family: var(--mono-font-family);
+}
+
+/* Dark mode transitions */
+* {
+  transition:
+    background-color 0.2s ease-in-out,
+    border-color 0.2s ease-in-out,
+    color 0.2s ease-in-out;
 }

@@ -9,19 +9,44 @@ export function Shell() {
   );
 
   useEffect(() => {
-    // Load documents and select the first one if available
+    // Load documents and restore the last viewed document
     const documents = fileService.getAllDocuments();
-    if (documents.length > 0 && !currentDocumentId) {
+    if (documents.length === 0) {
+      // Create demo documents if none exist
+      createDemoDocuments();
+    }
+
+    // Try to restore the last viewed document
+    const savedDocumentId = fileService.getCurrentDocumentId();
+    if (savedDocumentId && fileService.getDocument(savedDocumentId)) {
+      setCurrentDocumentId(savedDocumentId);
+    } else if (documents.length > 0) {
+      // Fall back to the first document if the saved one doesn't exist
       setCurrentDocumentId(documents[0].id);
     }
-  }, [currentDocumentId]);
+  }, []);
+
+  const createDemoDocuments = () => {
+    const demoDocs = [
+      "Welcome to Your Workspace",
+      "Getting Started Guide",
+      "Project Ideas",
+      "Meeting Notes",
+    ];
+
+    demoDocs.forEach((name) => {
+      fileService.createDocument(name);
+    });
+  };
 
   const handleDocumentSelect = (documentId: string) => {
     setCurrentDocumentId(documentId);
+    // Save the selected document ID for persistence
+    fileService.saveCurrentDocumentId(documentId);
   };
 
   return (
-    <div className="flex h-screen bg-white">
+    <div className="flex h-screen bg-white dark:bg-gray-950">
       <Sidebar
         currentDocumentId={currentDocumentId}
         onDocumentSelect={handleDocumentSelect}
