@@ -92,10 +92,16 @@ export class WebsocketConnection extends ObservableV2<{
   online: () => void;
   offline: () => void;
 }> {
+  // Static timer functions that can be overridden for testing
+  static setTimeout = globalThis.setTimeout.bind(globalThis);
+  static setInterval = globalThis.setInterval.bind(globalThis);
+  static clearTimeout = globalThis.clearTimeout.bind(globalThis);
+  static clearInterval = globalThis.clearInterval.bind(globalThis);
+
   #wsLastMessageReceived = 0;
   #shouldConnect = true;
   #disconnected = false;
-  #isOnline = navigator.onLine ?? true;
+  #isOnline: boolean;
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #checkInterval: ReturnType<typeof setInterval> | null = null;
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -108,6 +114,7 @@ export class WebsocketConnection extends ObservableV2<{
   #messageBuffer: BinaryMessage[] = [];
   #maxReconnectAttempts: number;
   #lastConnection?: Date;
+  #eventTarget: EventTarget;
   #onlineHandler: (() => void) | null = null;
   #offlineHandler: (() => void) | null = null;
 
@@ -219,6 +226,8 @@ export class WebsocketConnection extends ObservableV2<{
     maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS,
     initialReconnectDelay = INITIAL_RECONNECT_DELAY,
     maxBackoffTime = MAX_BACKOFF_TIME,
+    eventTarget,
+    isOnline,
   }: {
     url: string;
     protocols?: string[];
@@ -227,11 +236,21 @@ export class WebsocketConnection extends ObservableV2<{
     maxReconnectAttempts?: number;
     initialReconnectDelay?: number;
     maxBackoffTime?: number;
+    eventTarget?: EventTarget;
+    isOnline?: boolean;
   }) {
     super();
     this.#url = url;
     this.#protocols = protocols;
     this.#WebSocketImpl = WebSocketImpl;
+
+    if (typeof window !== "undefined") {
+      this.#eventTarget = eventTarget ?? window;
+      this.#isOnline = isOnline ?? navigator.onLine ?? true;
+    } else {
+      this.#eventTarget = eventTarget ?? new EventTarget();
+      this.#isOnline = isOnline ?? true;
+    }
 
     // Calculate max exponent for exponential backoff
     const maxExponent = Math.floor(
@@ -262,8 +281,8 @@ export class WebsocketConnection extends ObservableV2<{
         !this.#disconnected &&
         this.state.type === "offline"
       ) {
-        this.#reconnectAttempt = 0;
         this.#backoff.reset();
+        this.#reconnectAttempt++;
         this._setupWebSocket();
       }
     };
@@ -280,8 +299,8 @@ export class WebsocketConnection extends ObservableV2<{
     };
 
     // Add event listeners
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    this.#eventTarget.addEventListener("online", handleOnline);
+    this.#eventTarget.addEventListener("offline", handleOffline);
 
     // Store references for cleanup
     this.#onlineHandler = handleOnline;
@@ -289,7 +308,7 @@ export class WebsocketConnection extends ObservableV2<{
   }
 
   #setupHeartbeat() {
-    this.#heartbeatInterval = setInterval(() => {
+    this.#heartbeatInterval = WebsocketConnection.setInterval(() => {
       if (this.state.type === "connected") {
         this.send(encodePingMessage());
       }
@@ -297,7 +316,7 @@ export class WebsocketConnection extends ObservableV2<{
   }
 
   #setupConnectionCheck() {
-    this.#checkInterval = setInterval(() => {
+    this.#checkInterval = WebsocketConnection.setInterval(() => {
       if (
         this.state.type === "connected" &&
         MESSAGE_RECONNECT_TIMEOUT < Date.now() - this.#wsLastMessageReceived
@@ -338,7 +357,7 @@ export class WebsocketConnection extends ObservableV2<{
       websocket.binaryType = "arraybuffer";
       this.state = { type: "connecting", ws: websocket };
 
-      websocket.onmessage = async (event) => {
+      websocket.addEventListener("message", async (event) => {
         this.#wsLastMessageReceived = Date.now();
         const message = new Uint8Array(
           event.data as ArrayBuffer,
@@ -369,9 +388,9 @@ export class WebsocketConnection extends ObservableV2<{
         } finally {
           writer.releaseLock();
         }
-      };
+      });
 
-      websocket.onerror = (event) => {
+      websocket.addEventListener("error", (event) => {
         const error = new Error("WebSocket error", { cause: event });
         this.state = {
           type: "error",
@@ -379,18 +398,18 @@ export class WebsocketConnection extends ObservableV2<{
           error,
           reconnectAttempt: this.#reconnectAttempt,
         };
-      };
+      });
 
-      websocket.onclose = (event) => {
+      websocket.addEventListener("close", (event) => {
         this.#closeWebSocketConnection();
         this.emit("close", [event]);
-      };
+      });
 
-      websocket.onopen = () => {
+      websocket.addEventListener("open", () => {
         this.#wsLastMessageReceived = Date.now();
         this.state = { type: "connected", ws: websocket };
         this.#sendBufferedMessages();
-      };
+      });
     } catch (error) {
       this.state = {
         type: "error",
@@ -404,7 +423,7 @@ export class WebsocketConnection extends ObservableV2<{
 
   #scheduleReconnect() {
     if (this.#reconnectTimeout) {
-      clearTimeout(this.#reconnectTimeout);
+      WebsocketConnection.clearTimeout(this.#reconnectTimeout);
     }
 
     // Don't schedule reconnection if:
@@ -427,7 +446,7 @@ export class WebsocketConnection extends ObservableV2<{
     // Emit retry event with attempt info
     this.emit("retry", [this.#reconnectAttempt + 1, delay]);
 
-    this.#reconnectTimeout = setTimeout(() => {
+    this.#reconnectTimeout = WebsocketConnection.setTimeout(() => {
       if (this.#reconnectAttempt >= this.#maxReconnectAttempts) {
         this.state = {
           type: "error",
@@ -449,7 +468,11 @@ export class WebsocketConnection extends ObservableV2<{
       const wasConnected = this.state.type === "connected";
       this.state = { type: "offline", ws: null };
 
-      if (wasConnected && !this.#disconnected && this.#isOnline) {
+      if (
+        !this.#disconnected &&
+        this.#isOnline &&
+        (wasConnected || this.#shouldConnect)
+      ) {
         this.#scheduleReconnect();
       }
     }
@@ -509,20 +532,20 @@ export class WebsocketConnection extends ObservableV2<{
 
     // Clean up online/offline listeners
     if (this.#onlineHandler) {
-      window.removeEventListener("online", this.#onlineHandler);
+      this.#eventTarget.removeEventListener("online", this.#onlineHandler);
     }
     if (this.#offlineHandler) {
-      window.removeEventListener("offline", this.#offlineHandler);
+      this.#eventTarget.removeEventListener("offline", this.#offlineHandler);
     }
 
     if (this.#heartbeatInterval) {
-      clearInterval(this.#heartbeatInterval);
+      WebsocketConnection.clearInterval(this.#heartbeatInterval);
     }
     if (this.#checkInterval) {
-      clearInterval(this.#checkInterval);
+      WebsocketConnection.clearInterval(this.#checkInterval);
     }
     if (this.#reconnectTimeout) {
-      clearTimeout(this.#reconnectTimeout);
+      WebsocketConnection.clearTimeout(this.#reconnectTimeout);
     }
 
     this.#shouldConnect = false;
