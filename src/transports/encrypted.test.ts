@@ -44,7 +44,7 @@ function getEncryptedYDocTransport({
     awareness,
     asClient: true,
   });
-  const encryptedTransport = withEncryption(transport, { key });
+  const encryptedTransport = withEncryption(transport, { key, document });
 
   return toBinaryTransport(encryptedTransport, {
     clientId: "remote",
@@ -169,7 +169,10 @@ describe("encrypted-transport", () => {
         asClient: false,
       });
 
-      const encryptedTransport = withEncryption(transport, { key: key1 });
+      const encryptedTransport = withEncryption(transport, {
+        key: key1,
+        document: "test",
+      });
 
       expect(encryptedTransport).toBeDefined();
       expect(encryptedTransport.readable).toBeDefined();
@@ -186,7 +189,10 @@ describe("encrypted-transport", () => {
         asClient: false,
       });
 
-      const encryptedTransport = withEncryption(transport, { key: key1 });
+      const encryptedTransport = withEncryption(transport, {
+        key: key1,
+        document: "test",
+      });
 
       expect(encryptedTransport).toBeDefined();
       expect(encryptedTransport.readable).toBeDefined();
