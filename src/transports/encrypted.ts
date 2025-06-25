@@ -25,10 +25,15 @@ export type EncryptedMessage<Context extends Record<string, unknown>> =
  */
 export function getMessageDecryptor<
   Context extends Record<string, unknown>,
->(options: { key: CryptoKey }) {
+>(options: { key: CryptoKey; document: string }) {
   return new TransformStream<EncryptedMessage<Context>, Message<Context>>({
     async transform(chunk, controller) {
       try {
+        if (chunk.document !== options.document) {
+          // Ignore messages for other documents
+          return;
+        }
+
         if (chunk.type !== "doc") {
           // passthrough other messages
           controller.enqueue(chunk);
@@ -38,9 +43,10 @@ export function getMessageDecryptor<
         switch (chunk.payload.type) {
           // unused right now
           case "sync-step-1": {
-            const { sv } = chunk.payload;
-            const decoded = decodeFauxStateVector(sv);
-            console.log("decoded", decoded);
+            // TODO: handle sync-step-1
+            // const { sv } = chunk.payload;
+            // const decoded = decodeFauxStateVector(sv);
+
             controller.enqueue(chunk);
             return;
           }
@@ -167,7 +173,7 @@ export function withEncryption<
   AdditionalProperties extends Record<string, unknown>,
 >(
   transport: YTransport<Context, AdditionalProperties>,
-  options: { key: CryptoKey },
+  options: { key: CryptoKey; document: string },
 ): YTransport<Context, AdditionalProperties & { key: CryptoKey }> {
   const reader = getMessageDecryptor<Context>(options);
   const writer = getMessageEncryptor<Context>(options);
