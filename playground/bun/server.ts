@@ -58,7 +58,7 @@ const ws = crossws(
   }),
 );
 
-Bun.serve({
+const instance = Bun.serve({
   routes: {
     "/": homepage,
   },
@@ -71,3 +71,5 @@ Bun.serve({
     return new Response("Not found", { status: 404 });
   },
 });
+
+console.log(`Server running on http://${instance.hostname}:${instance.port}`);

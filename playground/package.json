@@ -5,13 +5,11 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "build": "bun build ./frontend/index.html --outdir ./dist",
-    "build:web": "#todo bun build --target=browser editor.html --outdir dist"
+    "build": "bun run build.ts --target browser"
   },
   "keywords": [],
   "author": "Nick the Sick",
   "license": "MPL-2.0",
-  "packageManager": "pnpm@10.12.1",
   "dependencies": {
     "@blocknote/core": "^0.31.3",
     "@blocknote/mantine": "^0.31.3",
