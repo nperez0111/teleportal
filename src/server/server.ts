@@ -18,7 +18,21 @@ import { logger, type Logger } from "./logger";
 
 export type ServerOptions<Context extends ServerContext> = {
   getStorage: (ctx: {
+    /**
+     * The name of the document.
+     */
+    document: string;
+    /**
+     * The unique identifier of the document.
+     */
+    documentId: string;
+    /**
+     * The context of the server.
+     */
     context: Context;
+    /**
+     * The server instance.
+     */
     server: Server<Context>;
   }) => Promise<DocumentStorage | LowLevelDocumentStorage>;
   /**
@@ -71,6 +85,8 @@ export class Server<Context extends ServerContext> {
     this.logger.trace({ documentId }, "creating document");
 
     const storage = await this.options.getStorage({
+      document: name,
+      documentId,
       context,
       server: this,
     });
