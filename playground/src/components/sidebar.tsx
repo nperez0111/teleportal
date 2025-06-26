@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Document, fileService } from "../services/fileService";
 
 interface SidebarProps {
@@ -7,41 +7,21 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const documents = fileService.documents;
+  const [, forceUpdate] = useState<number>(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showCopiedTooltip, setShowCopiedTooltip] = useState<string | null>(
+    null,
+  );
 
-  useEffect(() => {
-    loadDocuments();
-    // Create demo documents if none exist
-    if (fileService.getAllDocuments().length === 0) {
-      createDemoDocuments();
-    }
-  }, []);
-
-  const loadDocuments = () => {
-    setDocuments(fileService.getAllDocuments());
-  };
-
-  const createDemoDocuments = () => {
-    const demoDocs = [
-      "Welcome to Your Workspace",
-      "Getting Started Guide",
-      "Project Ideas",
-      "Meeting Notes",
-    ];
-
-    demoDocs.forEach((name) => {
-      fileService.createDocument(name, false);
+  const createNewDocument = async (encrypted: boolean = false) => {
+    const newDoc = await fileService.createDocument({
+      name: "Untitled",
+      encrypted,
     });
-
-    loadDocuments();
-  };
-
-  const createNewDocument = (encrypted: boolean = false) => {
-    const newDoc = fileService.createDocument("Untitled", encrypted);
-    setDocuments(fileService.getAllDocuments());
+    forceUpdate((prev) => prev + 1);
     onDocumentSelect(newDoc.id);
   };
 
@@ -58,10 +38,12 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
     setEditingName(doc.name);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editingId && editingName.trim()) {
-      fileService.updateDocument(editingId, { name: editingName.trim() });
-      setDocuments(fileService.getAllDocuments());
+      await fileService.updateDocument(editingId, {
+        name: editingName.trim(),
+      });
+      forceUpdate((prev) => prev + 1);
     }
     setEditingId(null);
     setEditingName("");
@@ -72,16 +54,27 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
     setEditingName("");
   };
 
-  const deleteDocument = (id: string) => {
-    fileService.deleteDocument(id);
-    setDocuments(fileService.getAllDocuments());
+  const deleteDocument = async (id: string) => {
+    await fileService.deleteDocument(id);
+    forceUpdate((prev) => prev + 1);
     if (currentDocumentId === id) {
       // Clear the saved document ID since it was deleted
       fileService.saveCurrentDocumentId(null);
-      const remainingDocs = fileService.getAllDocuments();
+      const remainingDocs = fileService.documents;
       if (remainingDocs.length > 0) {
         onDocumentSelect(remainingDocs[0].id);
       }
+    }
+  };
+
+  const handleShare = async (doc: Document) => {
+    try {
+      const url = await fileService.shareDocumentUrl(doc.id);
+      await navigator.clipboard.writeText(url);
+      setShowCopiedTooltip(doc.id);
+      setTimeout(() => setShowCopiedTooltip(null), 2000);
+    } catch (error) {
+      console.error("Failed to copy URL:", error);
     }
   };
 
@@ -270,7 +263,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
                           <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                             {doc.name}
                           </h3>
-                          {doc.encrypted && (
+                          {Boolean(doc.encryptedKey) && (
                             <svg
                               className="w-3 h-3 text-gray-500 dark:text-gray-400"
                               fill="none"
@@ -291,6 +284,36 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
                         </p>
                       </div>
                       <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1">
+                        <div className="relative">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleShare(doc);
+                            }}
+                            className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded"
+                            title="Share document"
+                          >
+                            <svg
+                              className="w-3 h-3"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                              />
+                            </svg>
+                          </button>
+                          {showCopiedTooltip === doc.id && (
+                            <div className="absolute top-full right-0 mt-2 px-3 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-xs rounded-md shadow-lg z-10 whitespace-nowrap">
+                              URL copied to clipboard!
+                              <div className="absolute bottom-full right-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-gray-900 dark:border-b-gray-100"></div>
+                            </div>
+                          )}
+                        </div>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

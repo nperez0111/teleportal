@@ -8,17 +8,18 @@ interface DocumentEditorProps {
 }
 
 export function DocumentEditor({ documentId }: DocumentEditorProps) {
-  const [document, setDocument] = useState<Document | null>(null);
-  const { provider } = useProvider(document?.id, document?.encrypted);
+  const document = fileService.getDocument(documentId);
+  const [, forceUpdate] = useState<number>(0);
+  const { provider } = useProvider(document?.id, document?.encryptedKey);
 
   useEffect(() => {
-    if (documentId) {
-      const doc = fileService.getDocument(documentId);
-      setDocument(doc);
-    } else {
-      setDocument(null);
-    }
-  }, [documentId]);
+    const unsubscribe = fileService.on("documents", () => {
+      forceUpdate((prev) => prev + 1);
+    });
+    return () => {
+      fileService.off("documents", unsubscribe);
+    };
+  }, []);
 
   if (!documentId || !document) {
     return (
@@ -52,29 +53,44 @@ export function DocumentEditor({ documentId }: DocumentEditorProps) {
       <div className="border-b h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-              {document.name}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                {document.name}
+              </h1>
+              {Boolean(document.encryptedKey) && (
+                <svg
+                  className="w-5 h-5 text-gray-500 dark:text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8V7a4 4 0 00-8 0v4"
+                  />
+                </svg>
+              )}
+            </div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Created {new Date(document.createdAt).toLocaleDateString()} • Last
               updated {new Date(document.updatedAt).toLocaleDateString()}
             </p>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-900 px-2 py-1 rounded">
-              Document ID: {document.id.slice(-8)}
-            </span>
-          </div>
+          <div className="flex items-center space-x-2"></div>
         </div>
       </div>
 
       {/* Editor Area */}
-      <div className="flex-1 max-w-5xl mx-auto w-full overflow-hidden px-2 py-4">
-        {provider && (
-          <Suspense fallback={<div>Loading...</div>}>
-            <Editor provider={provider} key={provider.doc.clientID} />
-          </Suspense>
-        )}
+      <div className="flex-1 overflow-y-auto">
+        <div className="h-full max-w-5xl mx-auto w-full px-8 py-4">
+          {provider && (
+            <Suspense fallback={<div>Loading...</div>}>
+              <Editor provider={provider} key={provider.doc.clientID} />
+            </Suspense>
+          )}
+        </div>
       </div>
     </div>
   );

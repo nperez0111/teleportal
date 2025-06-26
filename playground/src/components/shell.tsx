@@ -9,24 +9,33 @@ export function Shell() {
   );
 
   useEffect(() => {
-    // Load documents and restore the last viewed document
-    const documents = fileService.getAllDocuments();
-    if (documents.length === 0) {
-      // Create demo documents if none exist
-      createDemoDocuments();
-    }
+    async function load() {
+      // Load documents and restore the last viewed document
+      const documents = await fileService.loadAllDocuments();
 
-    // Try to restore the last viewed document
-    const savedDocumentId = fileService.getCurrentDocumentId();
-    if (savedDocumentId && fileService.getDocument(savedDocumentId)) {
-      setCurrentDocumentId(savedDocumentId);
-    } else if (documents.length > 0) {
-      // Fall back to the first document if the saved one doesn't exist
-      setCurrentDocumentId(documents[0].id);
+      const doc = await fileService.loadDocumentFromUrl(window.location.search);
+      if (doc) {
+        setCurrentDocumentId(doc.id);
+        return;
+      }
+      if (fileService.documents.length === 0) {
+        // Create demo documents if none exist
+        createDemoDocuments();
+      }
+
+      // Try to restore the last viewed document
+      const savedDocumentId = fileService.getCurrentDocumentId();
+      if (savedDocumentId && fileService.getDocument(savedDocumentId)) {
+        setCurrentDocumentId(savedDocumentId);
+      } else if (documents.length > 0) {
+        // Fall back to the first document if the saved one doesn't exist
+        setCurrentDocumentId(documents[0].id);
+      }
     }
+    load();
   }, []);
 
-  const createDemoDocuments = () => {
+  const createDemoDocuments = async () => {
     const demoDocs = [
       "Welcome to Your Workspace",
       "Getting Started Guide",
@@ -34,9 +43,15 @@ export function Shell() {
       "Meeting Notes",
     ];
 
-    demoDocs.forEach((name) => {
-      fileService.createDocument(name);
-    });
+    const documents = await Promise.all(
+      demoDocs.map((name) =>
+        fileService.createDocument({
+          name,
+          encrypted: false,
+        }),
+      ),
+    );
+    setCurrentDocumentId(documents[0].id);
   };
 
   const handleDocumentSelect = (documentId: string) => {

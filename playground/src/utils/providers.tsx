@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { websocket } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 
-import { getEncryptedTransport, useEncryptionKeyFromUrl } from "./encrypted";
+import { getEncryptedTransport } from "./encrypted";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -12,17 +12,13 @@ const tokenManager = createTokenManager({
 
 export function useProvider(
   documentId: string | null | undefined,
-  shouldBeEncrypted: boolean = false,
+  key: CryptoKey | undefined,
 ): {
   provider: websocket.Provider | null;
 } {
-  const { key } = useEncryptionKeyFromUrl(shouldBeEncrypted);
   const [provider, setProvider] = useState<websocket.Provider | null>(null);
 
   useEffect(() => {
-    if (shouldBeEncrypted && !key) {
-      return;
-    }
     if (!documentId) {
       return;
     }
@@ -31,8 +27,8 @@ export function useProvider(
       if (p) {
         return p.switchDocument({
           document: documentId,
-          getTransport: shouldBeEncrypted
-            ? getEncryptedTransport(key!, documentId)
+          getTransport: key
+            ? getEncryptedTransport(key, documentId)
             : ({ getDefaultTransport }) => getDefaultTransport(),
         });
       }
@@ -53,8 +49,8 @@ export function useProvider(
           return websocket.Provider.create({
             url: `ws://localhost:1234/?token=${token}`,
             document: documentId,
-            getTransport: shouldBeEncrypted
-              ? getEncryptedTransport(key!, documentId)
+            getTransport: key
+              ? getEncryptedTransport(key, documentId)
               : ({ getDefaultTransport }) => getDefaultTransport(),
           }).then((newProvider) => {
             setProvider(newProvider);
@@ -66,7 +62,7 @@ export function useProvider(
     return () => {
       provider?.destroy({ destroyWebSocket: false });
     };
-  }, [documentId, key, shouldBeEncrypted]);
+  }, [documentId, key]);
 
   return {
     provider,
