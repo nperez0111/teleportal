@@ -16,7 +16,10 @@ export class UnstorageDocumentStorage extends DocumentStorage {
   private readonly storage: Storage;
   private readonly options: { scanKeys: boolean; ttl: number };
 
-  constructor(storage: Storage, options: { scanKeys?: boolean; ttl?: number }) {
+  constructor(
+    storage: Storage,
+    options?: { scanKeys?: boolean; ttl?: number },
+  ) {
     super();
     this.storage = storage;
     this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
