@@ -9,7 +9,7 @@ import {
   type Update,
   type YTransport,
 } from "teleportal";
-import { noopTransport, withPassthrough } from "./passthrough";
+import { noopTransport, withPassthrough } from ".";
 
 export function generateTestTransport(
   type: "doc" | "awareness",

@@ -3,8 +3,8 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import { DocMessage, Update } from "teleportal";
-import { withPassthrough } from "./passthrough";
-import { getYDocSink, getYDocSource, getYTransportFromYDoc } from "./ydoc";
+import { withPassthrough } from "../passthrough";
+import { getYDocSink, getYDocSource, getYTransportFromYDoc } from ".";
 
 describe("ydoc source", () => {
   it("can read a doc's updates", async () => {

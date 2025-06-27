@@ -9,13 +9,13 @@ import {
   Update,
   YBinaryTransport,
 } from "teleportal";
-import { withEncryption } from "./encrypted";
+import { withEncryption } from ".";
 import {
   createEncryptionKey,
   encryptUpdate,
   decryptUpdate,
-} from "../encryption-key";
-import { getYTransportFromYDoc } from "./ydoc";
+} from "../../encryption-key";
+import { getYTransportFromYDoc } from "../ydoc";
 
 // Helper function to create a proper Update type
 function createUpdate(data: Uint8Array): Update {

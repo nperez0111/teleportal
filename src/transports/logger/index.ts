@@ -1,5 +1,5 @@
 import type { YTransport } from "teleportal";
-import { withPassthrough } from "./passthrough";
+import { withPassthrough } from "../passthrough";
 
 /**
  * A transport that wraps another transport and logs all updates to the console.

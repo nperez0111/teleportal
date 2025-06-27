@@ -1,4 +1,4 @@
-import { decryptUpdate, encryptUpdate } from "../encryption-key";
+import { decryptUpdate, encryptUpdate } from "../../encryption-key";
 import {
   compose,
   DocMessage,
@@ -14,7 +14,7 @@ import {
   decodeFauxUpdateList,
   encodeFauxStateVector,
   encodeFauxUpdate,
-} from "../storage/encrypted/encoding";
+} from "../../storage/encrypted/encoding";
 import * as Y from "yjs";
 
 export type EncryptedMessage<Context extends Record<string, unknown>> =
