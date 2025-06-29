@@ -184,9 +184,11 @@ export function getWebsocketHandlers<
 export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
   server,
   tokenManager,
+  hooks = {},
 }: {
   server: Server<T>;
   tokenManager: TokenManager;
+  hooks?: Partial<Parameters<typeof getWebsocketHandlers>[0]>;
 }) {
   return getWebsocketHandlers({
     onUpgrade: async (request) => {
@@ -198,15 +200,21 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
         throw new Response("Unauthorized", { status: 401 });
       }
 
+      await hooks.onUpgrade?.(request);
       return {
         context: result.payload as unknown as Omit<T, "clientId">,
       };
     },
     onConnect: async (ctx) => {
+      await hooks.onConnect?.(ctx);
       await server.createClient(ctx.transport, ctx.context, ctx.id);
     },
     onDisconnect: async (id) => {
+      await hooks.onDisconnect?.(id);
       await server.disconnectClient(id);
+    },
+    onMessage: async (ctx) => {
+      await hooks.onMessage?.(ctx);
     },
   });
 }
