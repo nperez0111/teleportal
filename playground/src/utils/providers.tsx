@@ -47,7 +47,7 @@ export function useProvider(
         .then((token) => {
           // Create initial provider
           return websocket.Provider.create({
-            url: `ws://${window.location.host}/?token=${token}`,
+            url: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/?token=${token}`,
             document: documentId,
             getTransport: key
               ? getEncryptedTransport(key, documentId)
