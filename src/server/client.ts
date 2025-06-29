@@ -79,7 +79,12 @@ export class Client<Context extends ServerContext> {
           });
 
           if (!hasPermission) {
-            console.log("denying access to document", documentId);
+            this.logger.trace(
+              {
+                documentId,
+              },
+              "client is not authorized",
+            );
             await this.send(
               new DocMessage(message.document, {
                 type: "auth-message",
