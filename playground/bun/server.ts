@@ -77,14 +77,15 @@ const instance = Bun.serve({
 
     const url = new URL(request.url);
     const pathname = url.pathname;
+    const distDir = import.meta.dir + "/../dist";
 
     // Just serve the index.html file for the root path
     if (pathname === "/") {
-      return new Response(Bun.file("./dist/index.html"));
+      return new Response(Bun.file(distDir + "/index.html"));
     }
 
     // Look in the dist folder for the file
-    const filePath = `./dist${pathname}`;
+    const filePath = distDir + pathname;
     const file = Bun.file(filePath);
 
     if (await file.exists()) {

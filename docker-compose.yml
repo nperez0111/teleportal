@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  teleportal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: teleportal-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - teleportal-network
+
+  # Optional Redis service for enhanced functionality
+  # Uncomment if you want to use Redis for caching or session storage
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: teleportal-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   restart: unless-stopped
+  #   networks:
+  #     - teleportal-network
+
+networks:
+  teleportal-network:
+    driver: bridge
+# volumes:
+#   redis_data:
