@@ -7,7 +7,7 @@ import { LogLayer } from "loglayer";
 import { pino } from "pino";
 
 const p = pino({
-  level: "trace", // Enable all log levels
+  level: "info", // Enable all log levels
 });
 
 export const logger = new LogLayer({
