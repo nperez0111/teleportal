@@ -6,15 +6,13 @@ import {
   getEmptyStateVector,
   getEmptyUpdate,
 } from "teleportal/protocol";
-import { type Document, logger } from "teleportal/server";
+import { type Document } from "teleportal/server";
 import {
   type DocumentStorage,
   LowLevelDocumentStorage,
 } from "./document-storage";
 
 export class StorageAdapter extends LowLevelDocumentStorage {
-  private logger = logger.child({ name: "storage-adapter" });
-
   public static fromStorage(
     storage: DocumentStorage | LowLevelDocumentStorage,
   ) {
@@ -32,6 +30,15 @@ export class StorageAdapter extends LowLevelDocumentStorage {
     message: Message<Context>,
     document: Document<Context>,
   ): Promise<void> {
+    const logger = document.server.logger
+      .withContext({
+        name: "storage-adapter",
+      })
+      .withMetadata({
+        clientId: message.context.clientId,
+        messageId: message.id,
+        documentId: document.id,
+      });
     if (message.encrypted !== this.storage.encrypted) {
       throw new Error(
         "Message encryption and storage encryption are mismatched",
@@ -44,13 +51,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
       );
     }
     if (message.type === "doc" && message.payload.type === "sync-step-1") {
-      this.logger.trace(
-        {
-          messageId: message.id,
-          documentId: document.id,
-        },
-        "got a sync-step-1 from client",
-      );
+      logger.trace("got a sync-step-1 from client");
 
       const client = document.server.clients.get(message.context.clientId);
       if (!client) {
@@ -69,13 +70,8 @@ export class StorageAdapter extends LowLevelDocumentStorage {
           update: getEmptyUpdate(),
           stateVector: getEmptyStateVector(),
         };
-        this.logger.trace(
-          {
-            messageId: message.id,
-            documentId: document.id,
-          },
-          "sending sync-step-2",
-        );
+        logger.trace("sending sync-step-2");
+
         await client.send(
           new DocMessage(document.name, {
             type: "sync-step-2",
@@ -83,13 +79,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
           }),
           document,
         );
-        this.logger.trace(
-          {
-            messageId: message.id,
-            documentId: document.id,
-          },
-          "sending sync-step-1",
-        );
+        logger.trace("sending sync-step-1");
         await client.send(
           new DocMessage(document.name, {
             type: "sync-step-1",
@@ -98,15 +88,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
           document,
         );
       } catch (err) {
-        this.logger.error(
-          {
-            err,
-            clientId: message.context.clientId,
-            messageId: message.id,
-            documentId: document.id,
-          },
-          "failed to send sync-step-2",
-        );
+        logger.withError(err).error("failed to send sync-step-2");
       }
       // No need to broadcast sync-step-1 messages, they are just for coordinating with the server
       return;
@@ -120,13 +102,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
       (message.payload.type === "sync-step-2" ||
         message.payload.type === "update")
     ) {
-      this.logger.trace(
-        {
-          messageId: message.id,
-          documentId: document.id,
-        },
-        "writing to store",
-      );
+      logger.trace("writing to store");
       await this.storage.write(document.id, message.payload.update);
     }
   }

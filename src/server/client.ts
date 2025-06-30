@@ -7,7 +7,7 @@ import type {
 } from "teleportal";
 import { DocMessage, getMessageReader } from "teleportal";
 import { getDocumentId, type Document } from "./document";
-import { logger, type Logger } from "./logger";
+import type { Logger } from "./logger";
 import type { Server } from "./server";
 
 export type ClientHooks<Context extends ServerContext> = {
@@ -42,15 +42,17 @@ export class Client<Context extends ServerContext> {
     transport,
     server,
     context,
+    logger,
   }: {
     id: string;
     hooks: ClientHooks<Context>;
     transport: YBinaryTransport;
     server: Server<Context>;
     context: Context;
+    logger: Logger;
   }) {
     this.id = id;
-    this.logger = logger.child({ name: "client", clientId: this.id });
+    this.logger = logger.withContext({ name: "client", clientId: this.id });
     this.hooks = hooks;
     this.server = server;
     this.context = context;
@@ -60,13 +62,12 @@ export class Client<Context extends ServerContext> {
     this.sink = {
       writable: new WritableStream({
         write: async (message) => {
-          this.logger.trace(
-            {
+          this.logger
+            .withMetadata({
               messageId: message.id,
               documentId: getDocumentId(message.document, message.context),
-            },
-            "client received message",
-          );
+            })
+            .trace("client received message");
           await this.hooks.onMessage?.(message, this, "inbound");
 
           const documentId = getDocumentId(message.document, message.context);
@@ -79,12 +80,9 @@ export class Client<Context extends ServerContext> {
           });
 
           if (!hasPermission) {
-            this.logger.trace(
-              {
-                documentId,
-              },
-              "client is not authorized",
-            );
+            this.logger
+              .withMetadata({ documentId })
+              .trace("client is not authorized");
             await this.send(
               new DocMessage(message.document, {
                 type: "auth-message",
@@ -96,12 +94,9 @@ export class Client<Context extends ServerContext> {
             return;
           }
 
-          this.logger.trace(
-            {
-              documentId,
-            },
-            "client has been authorized",
-          );
+          this.logger
+            .withMetadata({ documentId })
+            .trace("client has been authorized");
           const doc = await this.server.getOrCreateDocument(
             message.document,
             message.context,
@@ -109,22 +104,18 @@ export class Client<Context extends ServerContext> {
 
           await this.subscribeToDocument(documentId);
 
-          this.logger.trace(
-            {
-              documentId,
-            },
-            "client writing message to document",
-          );
+          this.logger
+            .withMetadata({ documentId })
+            .trace("client writing message to document");
 
           await doc.write(message);
 
-          logger.trace(
-            {
+          this.logger
+            .withMetadata({
               clientId: this.id,
               documentId,
-            },
-            "client wrote message to document",
-          );
+            })
+            .trace("client wrote message to document");
         },
         close: this.destroy.bind(this),
         abort: this.destroy.bind(this),
@@ -151,7 +142,9 @@ export class Client<Context extends ServerContext> {
         ),
       );
     } catch (e) {
-      this.logger.error({ err: e }, "error while unsubscribing from documents");
+      this.logger
+        .withError(e)
+        .error("error while unsubscribing from documents");
     }
     this.documents.clear();
     await this.hooks.onClose?.();
@@ -163,7 +156,9 @@ export class Client<Context extends ServerContext> {
     if (this.documents.has(documentId)) {
       return;
     }
-    this.logger.trace({ documentId }, "client subscribing to document");
+    this.logger
+      .withMetadata({ documentId })
+      .trace("client subscribing to document");
     const document = this.server.documents.get(documentId);
     if (!document) {
       throw new Error(`Document not found to subscribe to`, {
@@ -181,7 +176,9 @@ export class Client<Context extends ServerContext> {
     if (!this.documents.has(documentId)) {
       return;
     }
-    this.logger.trace({ documentId }, "client unsubscribing from document");
+    this.logger
+      .withMetadata({ documentId })
+      .trace("client unsubscribing from document");
     const document = this.server.documents.get(documentId);
     if (!document) {
       throw new Error(`Document ${documentId} not found`);
@@ -196,15 +193,13 @@ export class Client<Context extends ServerContext> {
    * @param message - The message to send.
    */
   async send(message: Message, origin: Document<Context> | Client<Context>) {
+    const logger = this.logger.withContext({ messageId: message.id });
     if (message.context.clientId === this.id) {
-      this.logger.trace(
-        { messageId: message.id },
-        "ignoring message sent by this client",
-      );
+      logger.trace("ignoring message sent by this client");
       // Ignore messages sent by this client
       return;
     }
-    this.logger.trace({ messageId: message.id }, "client sending message");
+    logger.trace("client sending message");
     await this.hooks.onMessage?.(message, origin, "outbound");
 
     // Do not hold lock on the writer
@@ -214,6 +209,6 @@ export class Client<Context extends ServerContext> {
     } finally {
       writer.releaseLock();
     }
-    this.logger.trace({ messageId: message.id }, "client sent message");
+    logger.trace("client sent message");
   }
 }

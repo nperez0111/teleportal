@@ -14,7 +14,7 @@ import {
 } from "teleportal/storage";
 import { Client } from "./client";
 import { Document, getDocumentId } from "./document";
-import { logger, type Logger } from "./logger";
+import { type Logger } from "./logger";
 
 export type ServerOptions<Context extends ServerContext> = {
   getStorage: (ctx: {
@@ -62,17 +62,18 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     message: Message<Context>;
   }) => Promise<boolean>;
+  logger: Logger;
 };
 
 export class Server<Context extends ServerContext> {
   public readonly clients: Map<string, Client<Context>> = new Map();
   public readonly documents: Map<string, Document<Context>> = new Map();
   public readonly options: ServerOptions<Context>;
-  private logger: Logger;
+  public readonly logger: Logger;
 
   constructor(options: ServerOptions<Context>) {
     this.options = options;
-    this.logger = logger.child({ name: "server" });
+    this.logger = options.logger.withContext({ name: "server" });
   }
 
   public async getOrCreateDocument(name: string, context: Context) {
@@ -82,7 +83,7 @@ export class Server<Context extends ServerContext> {
       return this.documents.get(documentId)!;
     }
 
-    this.logger.trace({ documentId }, "creating document");
+    this.logger.withMetadata({ documentId }).trace("creating document");
 
     const storage = await this.options.getStorage({
       document: name,
@@ -105,11 +106,12 @@ export class Server<Context extends ServerContext> {
         },
       },
       storage: StorageAdapter.fromStorage(storage),
+      logger: this.logger,
     });
 
     this.documents.set(documentId, doc);
 
-    this.logger.trace({ documentId }, "document created");
+    this.logger.withMetadata({ documentId }).trace("document created");
 
     return doc;
   }
@@ -119,7 +121,7 @@ export class Server<Context extends ServerContext> {
     context: Omit<Context, "clientId">,
     clientId = uuidv4(),
   ) {
-    this.logger.trace({ clientId }, "creating client");
+    this.logger.withMetadata({ clientId }).trace("creating client");
 
     const client = new Client<Context>({
       id: clientId,
@@ -156,11 +158,12 @@ export class Server<Context extends ServerContext> {
         },
         context,
       ) as Context,
+      logger: this.logger,
     });
 
     this.clients.set(clientId, client);
 
-    this.logger.trace({ clientId }, "client created");
+    this.logger.withMetadata({ clientId }).trace("client created");
 
     return client;
   }

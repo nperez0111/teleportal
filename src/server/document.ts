@@ -1,6 +1,6 @@
 import type { Message, ServerContext, YSink } from "teleportal";
 import type { LowLevelDocumentStorage } from "teleportal/storage";
-import { logger, type Logger } from "./logger";
+import type { Logger } from "./logger";
 import type { Server } from "./server";
 
 export function getDocumentId(name: string, context: ServerContext) {
@@ -30,19 +30,21 @@ export class Document<Context extends ServerContext>
     storage,
     hooks,
     server,
+    logger,
   }: {
     id: string;
     name: string;
     storage: LowLevelDocumentStorage;
     server: Server<Context>;
     hooks?: DocumentHooks<Context>;
+    logger: Logger;
   }) {
     this.id = id;
     this.name = name;
     this.hooks = hooks;
     this.storage = storage;
     this.server = server;
-    this.logger = logger.child({
+    this.logger = logger.withContext({
       name: "document",
       documentName: this.name,
       documentId: this.id,
@@ -55,12 +57,9 @@ export class Document<Context extends ServerContext>
   }
 
   public async write(message: Message<Context>) {
-    this.logger.trace(
-      {
-        messageId: message.id,
-      },
-      "writing message",
-    );
+    this.logger
+      .withMetadata({ messageId: message.id })
+      .trace("writing message");
     try {
       const writer = this.writable.getWriter();
       await writer.write(message);
@@ -71,25 +70,19 @@ export class Document<Context extends ServerContext>
   }
 
   public subscribe(clientId: string) {
-    this.logger.trace(
-      {
-        clientId,
-      },
-      "client subscribed to document",
-    );
+    this.logger
+      .withMetadata({ clientId: clientId })
+      .trace("client subscribed to document");
     this.clients.add(clientId);
   }
 
   public async unsubscribe(clientId: string) {
-    this.logger.trace(
-      {
-        clientId,
-      },
-      "client unsubscribed from document",
-    );
+    this.logger
+      .withMetadata({ clientId: clientId })
+      .trace("client unsubscribed from document");
     this.clients.delete(clientId);
     if (this.clients.size === 0) {
-      this.logger.trace({}, "document is now empty, unloading");
+      this.logger.trace("document is now empty, unloading");
       await this.hooks?.onUnload?.(this);
       await this.storage.onUnload(this);
       if (!this.writable.locked) {
@@ -106,40 +99,36 @@ export class Document<Context extends ServerContext>
   public async broadcast(message: Message<Context>, sourceClientId?: string) {
     const origin = this.server.clients.get(sourceClientId as string) ?? this;
 
-    this.logger.trace(
-      {
-        sourceClientId,
+    this.logger
+      .withMetadata({
+        sourceClientId: sourceClientId ? sourceClientId : "",
         documentId: this.id,
         messageId: message.id,
-      },
-      "broadcasting message",
-    );
+      })
+      .trace("broadcasting message");
 
     await Promise.all(
       this.clients.values().map(async (clientId) => {
         if (clientId === sourceClientId) {
           return;
         }
-        this.logger.trace(
-          {
-            clientId,
+        this.logger
+          .withMetadata({
+            clientId: clientId,
             documentId: this.id,
             messageId: message.id,
-          },
-          "sending message to client",
-        );
+          })
+          .trace("sending message to client");
         try {
           await this.server.clients.get(clientId)?.send(message, origin);
         } catch (e) {
-          this.logger.error(
-            {
-              err: e,
-              clientId,
-              documentId: this.id,
+          this.logger
+            .withError(e)
+            .withMetadata({
+              clientId: clientId,
               messageId: message.id,
-            },
-            "failed to send message to client",
-          );
+            })
+            .error("failed to send message to client");
         }
       }),
     );

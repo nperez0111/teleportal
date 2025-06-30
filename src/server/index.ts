@@ -1,4 +1,4 @@
 export * from "./document";
 export * from "./server";
-export * from "./logger";
+export { type Logger } from "./logger";
 export * from "./client";

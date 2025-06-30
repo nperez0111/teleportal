@@ -17,6 +17,7 @@ import {
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import homepage from "../src/index.html";
+import { logger } from "../src/backend/logger";
 
 const db = createDatabase(
   bunSqlite({
@@ -46,15 +47,14 @@ const server = new Server<TokenPayload & { clientId: string }>({
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
     if (ctx.document.includes("encrypted")) {
-      console.log("encrypted document", ctx.document);
       return new EncryptedDocumentStorage(backingStorage);
     }
-    console.log("regular document", ctx.document);
     return new UnstorageDocumentStorage(backingStorage, {
       scanKeys: false,
     });
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
+  logger: logger,
 });
 
 const ws = crossws(
