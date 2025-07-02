@@ -1,6 +1,8 @@
 import {
   type BinaryMessage,
   decodeMessage,
+  encodePongMessage,
+  isPingMessage,
   type Message,
 } from "teleportal/protocol";
 export * from "teleportal/protocol";
@@ -156,5 +158,52 @@ export function toBinaryTransport<
     ...transport,
     readable: writer.readable,
     writable: reader.writable,
+  };
+}
+
+export function fromBinaryTransport<
+  Context extends Record<string, unknown>,
+  AdditionalProperties extends Record<string, unknown>,
+>(
+  transport: YBinaryTransport<AdditionalProperties>,
+  context: Context,
+): YTransport<Context, AdditionalProperties> {
+  const readable = transport.readable
+    .pipeThrough(
+      new TransformStream({
+        async transform(chunk, controller) {
+          // Just filter out ping messages to avoid any unnecessary processing
+          if (isPingMessage(chunk)) {
+            const writer = transport.writable.getWriter();
+            try {
+              await writer.write(encodePongMessage());
+            } finally {
+              writer.releaseLock();
+            }
+            return;
+          }
+          controller.enqueue(chunk);
+        },
+      }),
+    )
+    .pipeThrough(getMessageReader(context));
+
+  const writable = new WritableStream<Message>({
+    async write(chunk) {
+      const writer = transport.writable.getWriter();
+      try {
+        await writer.write(chunk.encoded);
+      } finally {
+        writer.releaseLock();
+      }
+    },
+    close: transport.writable.close,
+    abort: transport.writable.abort,
+  });
+
+  return {
+    ...transport,
+    readable,
+    writable,
   };
 }

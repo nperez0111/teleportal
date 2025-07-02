@@ -1,5 +1,4 @@
-import type { Message, ServerContext, StateVector, Update } from "teleportal";
-import type { Document } from "teleportal/server";
+import type { StateVector, Update } from "teleportal";
 /**
  * A storage interface for a document.
  */
@@ -24,7 +23,9 @@ export abstract class DocumentStorage {
   /**
    * Unloads a document from storage.
    */
-  abstract unload(key: string): Promise<void> | void;
+  unload(key: string): Promise<void> | void {
+    return;
+  }
 
   // /**
   //  * Creates a snapshot of a document.
@@ -85,23 +86,4 @@ export abstract class DocumentStorage {
   //   update: Update;
   //   stateVector: StateVector;
   // } | null>;
-}
-
-export abstract class LowLevelDocumentStorage {
-  public readonly type = "low-level-document-storage";
-
-  /**
-   * Called when a message is received for a document.
-   */
-  abstract onMessage<Context extends ServerContext>(
-    message: Message<Context>,
-    document: Document<Context>,
-  ): Promise<void> | void;
-
-  /**
-   * Called when a document is unloaded.
-   */
-  abstract onUnload<Context extends ServerContext>(
-    document: Document<Context>,
-  ): Promise<void> | void;
 }

@@ -6,33 +6,28 @@ import {
   getEmptyStateVector,
   getEmptyUpdate,
 } from "teleportal/protocol";
-import { type Document } from "teleportal/server";
-import {
-  type DocumentStorage,
-  LowLevelDocumentStorage,
-} from "./document-storage";
+import type { Document } from "teleportal/server";
+import type { DocumentStorage } from "teleportal/storage";
+import { MessageResponder } from "./types";
 
-export class StorageAdapter extends LowLevelDocumentStorage {
-  public static fromStorage(
-    storage: DocumentStorage | LowLevelDocumentStorage,
-  ) {
-    if (storage.type === "document-storage") {
-      return new StorageAdapter(storage);
-    }
-    return storage;
-  }
-
-  protected constructor(private readonly storage: DocumentStorage) {
+/**
+ * A responder that handles clear text messages.
+ */
+export class ClearTextResponder extends MessageResponder {
+  constructor(private readonly storage: DocumentStorage) {
     super();
   }
 
-  async onMessage<Context extends ServerContext>(
-    message: Message<Context>,
-    document: Document<Context>,
-  ): Promise<void> {
-    const logger = document.server.logger
+  async onMessage<Context extends ServerContext>({
+    message,
+    document,
+  }: {
+    message: Message<Context>;
+    document: Document<Context>;
+  }): Promise<void> {
+    const logger = document.logger
       .withContext({
-        name: "storage-adapter",
+        name: "clear-text-responder",
       })
       .withMetadata({
         clientId: message.context.clientId,
@@ -53,7 +48,9 @@ export class StorageAdapter extends LowLevelDocumentStorage {
     if (message.type === "doc" && message.payload.type === "sync-step-1") {
       logger.trace("got a sync-step-1 from client");
 
-      const client = document.server.clients.get(message.context.clientId);
+      const client = Array.from(document.clients.values()).find(
+        (c) => c.id === message.context.clientId,
+      );
       if (!client) {
         throw new Error(`Client not found`, {
           cause: {
@@ -73,19 +70,27 @@ export class StorageAdapter extends LowLevelDocumentStorage {
         logger.trace("sending sync-step-2");
 
         await client.send(
-          new DocMessage(document.name, {
-            type: "sync-step-2",
-            update: Y.diffUpdateV2(update, message.payload.sv) as Update,
-          }),
-          document,
+          new DocMessage(
+            document.name,
+            {
+              type: "sync-step-2",
+              update: Y.diffUpdateV2(update, message.payload.sv) as Update,
+            },
+            message.context,
+            false,
+          ),
         );
         logger.trace("sending sync-step-1");
         await client.send(
-          new DocMessage(document.name, {
-            type: "sync-step-1",
-            sv: stateVector,
-          }),
-          document,
+          new DocMessage(
+            document.name,
+            {
+              type: "sync-step-1",
+              sv: stateVector,
+            },
+            message.context,
+            false,
+          ),
         );
       } catch (err) {
         logger.withError(err).error("failed to send sync-step-2");
@@ -94,7 +99,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
       return;
     }
 
-    await document.broadcast(message, message.context.clientId);
+    await document.broadcast(message);
 
     // TODO should this be blocking? Could we be smarter about compaction in memory? Take a look at store-updates.ts
     if (
@@ -107,7 +112,7 @@ export class StorageAdapter extends LowLevelDocumentStorage {
     }
   }
 
-  async onUnload<Context extends ServerContext>(
+  async destroy<Context extends ServerContext>(
     document: Document<Context>,
   ): Promise<void> {
     await this.storage.unload(document.id);

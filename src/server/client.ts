@@ -1,214 +1,51 @@
-import type {
-  Message,
-  RawReceivedMessage,
-  ServerContext,
-  YBinaryTransport,
-  YSink,
-} from "teleportal";
-import { DocMessage, getMessageReader } from "teleportal";
-import { getDocumentId, type Document } from "./document";
+import type { Message, ServerContext, YBinaryTransport } from "teleportal";
+import { Document } from "./document";
 import type { Logger } from "./logger";
-import type { Server } from "./server";
-
-export type ClientHooks<Context extends ServerContext> = {
-  onSubscribeToDocument?: (document: Document<Context>) => Promise<void> | void;
-  onUnsubscribeFromDocument?: (
-    document: Document<Context>,
-  ) => Promise<void> | void;
-  onMessage?: <Direction extends "inbound" | "outbound">(
-    message: Direction extends "inbound" ? RawReceivedMessage : Message,
-    origin: Direction extends "inbound"
-      ? Client<Context>
-      : Document<Context> | Client<Context>,
-    direction: Direction,
-  ) => Promise<void> | void;
-  onClose?: () => Promise<void> | void;
-};
+import { uuidv4 } from "lib0/random.js";
 
 export class Client<Context extends ServerContext> {
   public readonly id: string;
-  public readonly context: Context;
-  private readonly documents: Set<string> = new Set();
-  private readonly hooks: ClientHooks<Context> = {};
-  private readonly transport: YBinaryTransport;
-  private readonly server: Server<Context>;
-  private readonly sink: YSink<Context, {}>;
-  public isComplete: boolean = false;
-  private logger: Logger;
+  public readonly documents = new Set<Document<Context>>();
+  private readonly writer: WritableStreamDefaultWriter<Message<Context>>;
+  private readonly logger: Logger;
 
   constructor({
     id,
-    hooks,
-    transport,
-    server,
-    context,
+    writable,
     logger,
   }: {
     id: string;
-    hooks: ClientHooks<Context>;
-    transport: YBinaryTransport;
-    server: Server<Context>;
-    context: Context;
+    writable: WritableStream<Message<Context>>;
     logger: Logger;
   }) {
     this.id = id;
-    this.logger = logger.withContext({ name: "client", clientId: this.id });
-    this.hooks = hooks;
-    this.server = server;
-    this.context = context;
-    // I'm not sure where the line should be drawn between the transport and the sink
-    // And whether it is the server that should be responsible for the sink or the client
-    this.transport = transport;
-    this.sink = {
-      writable: new WritableStream({
-        write: async (message) => {
-          this.logger
-            .withMetadata({
-              messageId: message.id,
-              documentId: getDocumentId(message.document, message.context),
-            })
-            .trace("client received message");
-          await this.hooks.onMessage?.(message, this, "inbound");
-
-          const documentId = getDocumentId(message.document, message.context);
-          const hasPermission = await this.server.options.checkPermission({
-            context: message.context,
-            document: message.document,
-            documentId,
-            client: this,
-            message,
-          });
-
-          if (!hasPermission) {
-            this.logger
-              .withMetadata({ documentId })
-              .trace("client is not authorized");
-            await this.send(
-              new DocMessage(message.document, {
-                type: "auth-message",
-                permission: "denied",
-                reason: `Insufficient permissions to access document ${message.document}`,
-              }),
-              this,
-            );
-            return;
-          }
-
-          this.logger
-            .withMetadata({ documentId })
-            .trace("client has been authorized");
-          const doc = await this.server.getOrCreateDocument(
-            message.document,
-            message.context,
-          );
-
-          await this.subscribeToDocument(documentId);
-
-          this.logger
-            .withMetadata({ documentId })
-            .trace("client writing message to document");
-
-          await doc.write(message);
-
-          this.logger
-            .withMetadata({
-              clientId: this.id,
-              documentId,
-            })
-            .trace("client wrote message to document");
-        },
-        close: this.destroy.bind(this),
-        abort: this.destroy.bind(this),
-      }),
-    };
-
-    this.logger.trace("client set up");
-    // Immediately start listening for messages
-    this.transport.readable
-      .pipeThrough(getMessageReader(this.context))
-      .pipeTo(this.sink.writable);
+    this.writer = writable.getWriter();
+    this.logger = logger.withContext({ name: "client", clientId: id });
   }
 
-  public async disconnect() {
-    this.logger.trace("client disconnecting");
+  public get ready() {
+    return this.writer.ready;
   }
 
-  private async destroy() {
-    this.logger.trace("client destroying");
-    try {
-      await Promise.all(
-        Array.from(this.documents).map((documentId) =>
-          this.unsubscribeFromDocument(documentId),
-        ),
-      );
-    } catch (e) {
-      this.logger
-        .withError(e)
-        .error("error while unsubscribing from documents");
+  public async send(message: Message<Context>) {
+    this.logger
+      .withMetadata({ messageId: message.id })
+      .trace("sending message");
+    await this.writer.write(message);
+    this.logger
+      .withMetadata({ messageId: message.id })
+      .trace("message sent to client");
+  }
+
+  #destroyed = false;
+
+  public async destroy() {
+    if (this.#destroyed) {
+      return;
     }
+    this.#destroyed = true;
+    this.logger.trace("disposing client");
     this.documents.clear();
-    await this.hooks.onClose?.();
-    this.isComplete = true;
-    this.logger.trace("client destroyed");
-  }
-
-  private async subscribeToDocument(documentId: string) {
-    if (this.documents.has(documentId)) {
-      return;
-    }
-    this.logger
-      .withMetadata({ documentId })
-      .trace("client subscribing to document");
-    const document = this.server.documents.get(documentId);
-    if (!document) {
-      throw new Error(`Document not found to subscribe to`, {
-        cause: {
-          documentId,
-        },
-      });
-    }
-    document.subscribe(this.id);
-    this.documents.add(documentId);
-    await this.hooks.onSubscribeToDocument?.(document);
-  }
-
-  private async unsubscribeFromDocument(documentId: string) {
-    if (!this.documents.has(documentId)) {
-      return;
-    }
-    this.logger
-      .withMetadata({ documentId })
-      .trace("client unsubscribing from document");
-    const document = this.server.documents.get(documentId);
-    if (!document) {
-      throw new Error(`Document ${documentId} not found`);
-    }
-    await this.hooks.onUnsubscribeFromDocument?.(document);
-    await document.unsubscribe(this.id);
-    this.documents.delete(documentId);
-  }
-
-  /**
-   * Send a message to the client.
-   * @param message - The message to send.
-   */
-  async send(message: Message, origin: Document<Context> | Client<Context>) {
-    const logger = this.logger.withContext({ messageId: message.id });
-    if (message.context.clientId === this.id) {
-      logger.trace("ignoring message sent by this client");
-      // Ignore messages sent by this client
-      return;
-    }
-    logger.trace("client sending message");
-    await this.hooks.onMessage?.(message, origin, "outbound");
-
-    // Do not hold lock on the writer
-    const writer = this.transport.writable.getWriter();
-    try {
-      await writer.write(message.encoded);
-    } finally {
-      writer.releaseLock();
-    }
-    logger.trace("client sent message");
+    await this.writer.releaseLock();
   }
 }

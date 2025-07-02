@@ -260,7 +260,9 @@ export class WebsocketConnection extends ObservableV2<{
     this.#maxReconnectAttempts = maxReconnectAttempts;
 
     // Set up online/offline event listeners
-    this.#setupOnlineOfflineListeners();
+    if (location.hostname !== "localhost") {
+      this.#setupOnlineOfflineListeners();
+    }
 
     if (connect) {
       this.connect();

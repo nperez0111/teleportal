@@ -107,7 +107,7 @@ export function getWebsocketHandlers<
       },
       async open(peer) {
         logger
-          .withMetadata({ peerId: peer.id })
+          .withMetadata({ clientId: peer.id })
           .info("open websocket connection");
         const transform = new TransformStream<BinaryMessage, BinaryMessage>();
 
@@ -132,14 +132,14 @@ export function getWebsocketHandlers<
         } catch (err) {
           logger
             .withError(err)
-            .withMetadata({ peerId: peer.id })
+            .withMetadata({ clientId: peer.id })
             .error("failed to connect");
           peer.close();
         }
       },
       async message(peer, message) {
         logger
-          .withMetadata({ peerId: peer.id, messageId: message.id })
+          .withMetadata({ clientId: peer.id, messageId: message.id })
           .trace("message");
         const buff = message.uint8Array();
         try {
@@ -156,7 +156,7 @@ export function getWebsocketHandlers<
       },
       async close(peer) {
         logger
-          .withMetadata({ peerId: peer.id })
+          .withMetadata({ clientId: peer.id })
           .info("close websocket connection");
         await onDisconnect?.(peer.id);
         if (!peer.context.writable.locked) {
@@ -169,7 +169,7 @@ export function getWebsocketHandlers<
       async error(peer, error) {
         logger
           .withError(error)
-          .withMetadata({ peerId: peer.id })
+          .withMetadata({ clientId: peer.id })
           .error("error");
         await peer.context.writable.abort(error);
         await peer.context.transport.writable.abort(error);
@@ -226,7 +226,11 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
     },
     onConnect: async (ctx) => {
       await hooks.onConnect?.(ctx);
-      await server.createClient(ctx.transport, ctx.context, ctx.id);
+      await server.createClient({
+        transport: ctx.transport,
+        context: ctx.context,
+        clientId: ctx.id,
+      });
     },
     onDisconnect: async (id) => {
       await hooks.onDisconnect?.(id);
