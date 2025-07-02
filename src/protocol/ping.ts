@@ -39,9 +39,9 @@ export function isPongMessage(message: BinaryMessage): boolean {
     // o
     message[4] === 0x6f &&
     // n
-    message[5] === 0x67 &&
+    message[5] === 0x6e &&
     // g
-    message[6] === 0x6e
+    message[6] === 0x67
   );
 }
 
@@ -70,7 +70,7 @@ export function encodePongMessage(): BinaryMessage {
   encoding.writeUint8(encoder, 0x53);
   encoding.writeUint8(encoder, 0x70);
   encoding.writeUint8(encoder, 0x6f);
-  encoding.writeUint8(encoder, 0x67);
   encoding.writeUint8(encoder, 0x6e);
+  encoding.writeUint8(encoder, 0x67);
   return encoding.toUint8Array(encoder) as BinaryMessage;
 }
