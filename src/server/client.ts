@@ -1,7 +1,6 @@
-import type { Message, ServerContext, YBinaryTransport } from "teleportal";
+import type { Message, ServerContext } from "teleportal";
 import { Document } from "./document";
 import type { Logger } from "./logger";
-import { uuidv4 } from "lib0/random.js";
 
 export class Client<Context extends ServerContext> {
   public readonly id: string;

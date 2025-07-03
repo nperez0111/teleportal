@@ -10,7 +10,7 @@ export class Document<Context extends ServerContext> {
   public readonly clients = new Set<Client<Context>>();
   private readonly responder: MessageResponder;
 
-  protected constructor({
+  constructor({
     name,
     id,
     logger,
@@ -86,7 +86,9 @@ export class Document<Context extends ServerContext> {
   /**
    * Get the document ID from a message.
    */
-  static getDocumentId(message: Message<ServerContext>) {
+  static getDocumentId(
+    message: Pick<Message<ServerContext>, "context" | "document">,
+  ) {
     return message.context.room
       ? message.context.room + "/" + message.document
       : message.document;

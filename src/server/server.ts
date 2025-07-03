@@ -1,3 +1,4 @@
+import { ObservableV2 } from "lib0/observable";
 import { uuidv4 } from "lib0/random";
 import {
   DocMessage,
@@ -6,11 +7,11 @@ import {
   ServerContext,
   YBinaryTransport,
 } from "teleportal";
+import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
+import { Client } from "./client";
 import { Document } from "./document";
 import { logger as defaultLogger, Logger } from "./logger";
-import { Client } from "./client";
-import type { DocumentStorage } from "teleportal/storage";
 import { ClearTextResponder, EncryptedResponder } from "./responders";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -64,16 +65,42 @@ export type ServerOptions<Context extends ServerContext> = {
   }) => Promise<boolean>;
 };
 
-export class Server<Context extends ServerContext> {
+export class Server<Context extends ServerContext> extends ObservableV2<{
+  "client-connect": (client: Client<Context>) => {};
+  "client-disconnect": (client: Client<Context>) => {};
+  "document-load": (document: Document<Context>) => {};
+  "document-unload": (document: Document<Context>) => {};
+}> {
   private clients = new Map<string, Client<Context>>();
   public logger: Logger;
   private options: ServerOptions<Context>;
 
   constructor(options: ServerOptions<Context>) {
+    super();
     this.options = options;
     this.logger = (options.logger ?? defaultLogger).withContext({
       name: "server",
     });
+  }
+
+  public getStats() {
+    const documents = this.clients.values().reduce((acc, client) => {
+      client.documents.forEach((doc) => acc.add(doc));
+      return acc;
+    }, new Set<Document<Context>>());
+
+    return {
+      numClients: this.clients.size,
+      numDocuments: documents.size,
+      clientIds: this.clients
+        .values()
+        .map((c) => c.id)
+        .toArray(),
+      documentIds: documents
+        .values()
+        .map((d) => d.id)
+        .toArray(),
+    };
   }
 
   public getDocument(documentId: string): Document<Context> | undefined {
@@ -92,8 +119,47 @@ export class Server<Context extends ServerContext> {
     return document;
   }
 
-  private async getOrCreateDocument(
-    message: Message<Context>,
+  private async createDocument({
+    document,
+    context,
+    encrypted,
+  }: Pick<Message<Context>, "document" | "context" | "encrypted">) {
+    const documentId = Document.getDocumentId({ document, context });
+
+    this.logger.withMetadata({ documentId }).trace("creating document");
+
+    const storage = await this.options.getStorage({
+      document,
+      documentId,
+      context,
+      server: this,
+    });
+
+    if (!storage) {
+      throw new Error(`Storage not found`, {
+        cause: { context, document },
+      });
+    }
+
+    const doc = new Document({
+      name: document,
+      id: documentId,
+      logger: this.logger,
+      // TODO maybe make this configurable?
+      storage: encrypted
+        ? new EncryptedResponder(storage)
+        : new ClearTextResponder(storage),
+    });
+
+    this.logger.withMetadata({ documentId }).trace("document created");
+
+    this.emit("document-load", [doc]);
+
+    return doc;
+  }
+
+  public async getOrCreateDocument(
+    message: Pick<Message<Context>, "document" | "context" | "encrypted">,
   ): Promise<Document<Context>> {
     const documentId = Document.getDocumentId(message);
     const client = this.clients.get(message.context.clientId);
@@ -103,45 +169,12 @@ export class Server<Context extends ServerContext> {
       });
     }
 
-    const existingDocument = this.getDocument(documentId);
-    if (existingDocument) {
-      // Just add it to this client's documents
-      client.documents.add(existingDocument);
-      existingDocument.clients.add(client);
+    const document =
+      this.getDocument(documentId) ?? (await this.createDocument(message));
 
-      return existingDocument;
-    }
-
-    this.logger.withMetadata({ documentId }).trace("creating document");
-
-    const storage = await this.options.getStorage({
-      document: message.document,
-      documentId,
-      context: message.context,
-      server: this,
-    });
-
-    if (!storage) {
-      throw new Error(`Storage not found`, {
-        cause: { context: message.context, document: message.document },
-      });
-    }
-
-    const document = Document.fromMessage({
-      message,
-      logger: this.logger,
-      // TODO maybe make this configurable?
-      storage: message.encrypted
-        ? new EncryptedResponder(storage)
-        : new ClearTextResponder(storage),
-    });
-
+    // Just add it to this client's documents
     client.documents.add(document);
     document.clients.add(client);
-
-    this.logger
-      .withMetadata({ documentId, clientId: client.id })
-      .trace("document created");
 
     return document;
   }
@@ -247,16 +280,21 @@ export class Server<Context extends ServerContext> {
       .pipeTo(
         new WritableStream({
           write: async (message) => {
-            this.logger
-              .withMetadata({
-                clientId,
-                context: message.context,
-                document: message.document,
-                documentId: Document.getDocumentId(message),
-              })
-              .trace("writing message to storage");
-            const document = await this.getOrCreateDocument(message);
-            await document.write(message);
+            const logger = this.logger.withContext({
+              clientId,
+              context: message.context,
+              document: message.document,
+              documentId: Document.getDocumentId(message),
+            });
+
+            try {
+              logger.trace("getting document");
+              const document = await this.getOrCreateDocument(message);
+              logger.trace("writing message to storage");
+              await document.write(message);
+            } catch (e) {
+              logger.withError(e).error("Failed to write message");
+            }
           },
         }),
       )
@@ -297,6 +335,7 @@ export class Server<Context extends ServerContext> {
       })
       .trace("client ready");
 
+    this.emit("client-connect", [client]);
     return this;
   }
 
@@ -321,10 +360,12 @@ export class Server<Context extends ServerContext> {
           .withMetadata({ documentId: document.id })
           .trace("destroying document - no remaining clients");
         // destroy document if no other clients are subscribed to it
+        this.emit("document-unload", [document]);
         await document.destroy();
       }
     }
 
+    this.emit("client-disconnect", [client]);
     await client.destroy();
     // Remove the client from the server
     this.clients.delete(clientId);
