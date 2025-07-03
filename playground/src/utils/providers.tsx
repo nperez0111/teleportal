@@ -10,6 +10,23 @@ const tokenManager = createTokenManager({
   issuer: "my-collaborative-app",
 });
 
+const websocketConnection = tokenManager
+  .createToken(
+    "nick",
+    "docs",
+    // TODO probably make token gen configurable callback
+    new DocumentAccessBuilder()
+      .admin("*")
+      // .write("Testy")
+      // .readOnly("test-this")
+      .build(),
+  )
+  .then((token) => {
+    return new websocket.WebsocketConnection({
+      url: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/?token=${token}`,
+    });
+  });
+
 export function useProvider(
   documentId: string | null | undefined,
   key: CryptoKey | undefined,
@@ -33,28 +50,19 @@ export function useProvider(
         });
       }
 
-      tokenManager
-        .createToken(
-          "nick",
-          "docs",
-          // TODO probably make token gen configurable callback
-          new DocumentAccessBuilder()
-            .admin("*")
-            // .write("Testy")
-            // .readOnly("test-this")
-            .build(),
-        )
-        .then((token) => {
+      websocketConnection
+        .then((client) => {
           // Create initial provider
           return websocket.Provider.create({
-            url: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/?token=${token}`,
+            client: client,
             document: documentId,
             getTransport: key
               ? getEncryptedTransport(key, documentId)
               : ({ getDefaultTransport }) => getDefaultTransport(),
-          }).then((newProvider) => {
-            setProvider(newProvider);
           });
+        })
+        .then((newProvider) => {
+          setProvider(newProvider);
         });
       return null;
     });

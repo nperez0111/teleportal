@@ -196,7 +196,7 @@ export class Provider extends ObservableV2<{
   /**
    * Create a new provider instance, this will always attempt a new websocket connection.
    *
-   * If you want to reuse an existing websocket connection see {@link Provider.createFromClient}
+   * If you want to reuse an existing websocket connection provide the `client` option.
    */
   static async create({
     url,
@@ -204,33 +204,15 @@ export class Provider extends ObservableV2<{
     ydoc,
     awareness,
     getTransport,
-  }: { url: string } & Omit<ProviderOptions, "client">) {
-    const client = new WebsocketConnection({ url });
-
+    client = new WebsocketConnection({ url: url! }),
+  }: (
+    | { url: string; client?: undefined }
+    | { url?: undefined; client: WebsocketConnection }
+  ) &
+    Omit<ProviderOptions, "client">) {
     // Wait for the websocket to connect
     await client.connected;
 
-    return Provider.createFromClient({
-      client,
-      document,
-      ydoc,
-      awareness,
-      getTransport,
-    });
-  }
-
-  /**
-   * Create a new provider instance, this will reuse an existing websocket connection.
-   *
-   * If you want to always create a new websocket connection see {@link Provider.create}
-   */
-  static async createFromClient({
-    client,
-    document,
-    ydoc,
-    awareness,
-    getTransport,
-  }: ProviderOptions) {
     return new Provider({
       client,
       ydoc,
