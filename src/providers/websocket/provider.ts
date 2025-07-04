@@ -3,6 +3,8 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
+  DocMessage,
+  StateVector,
   toBinaryTransport,
   type ClientContext,
   type YBinaryTransport,
@@ -87,9 +89,23 @@ export class Provider extends ObservableV2<{
 
     this.listenToSubdocs();
 
-    client.on("update", () => {
-      this.#synced = null;
-    });
+    if (client.state.type === "connected") {
+      this.init();
+    }
+    client.on("open", this.init);
+  }
+
+  private init() {
+    this.#websocketConnection.send(
+      new DocMessage(
+        this.document,
+        {
+          type: "sync-step-1",
+          sv: Y.encodeStateVector(this.doc) as StateVector,
+        },
+        { clientId: "local" },
+      ).encoded,
+    );
   }
 
   private listenToSubdocs() {
@@ -160,6 +176,7 @@ export class Provider extends ObservableV2<{
    */
   public get synced(): Promise<void> {
     if (this.#synced) {
+      // re-use the promise if the underlying connection is unchanged
       return this.#synced;
     }
     const synced = Promise.all([
@@ -168,6 +185,10 @@ export class Provider extends ObservableV2<{
     ]).then(() => {});
 
     this.#synced = synced;
+    // if the underlying connection changes, then clear out the cached promise
+    this.#websocketConnection.once("update", () => {
+      this.#synced = null;
+    });
     return synced;
   }
 
@@ -177,8 +198,10 @@ export class Provider extends ObservableV2<{
 
   public destroy({
     destroyWebSocket = true,
+    destroyDoc = true,
   }: {
     destroyWebSocket?: boolean;
+    destroyDoc?: boolean;
   } = {}) {
     super.destroy();
     // TODO how to clean up the transport?
@@ -186,6 +209,9 @@ export class Provider extends ObservableV2<{
     this.#websocketReader.unsubscribe();
     if (destroyWebSocket) {
       this.#websocketConnection.destroy();
+    }
+    if (destroyDoc) {
+      this.doc.destroy();
     }
   }
 
