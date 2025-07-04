@@ -1,8 +1,7 @@
 import * as encoding from "lib0/encoding";
-import { type BinaryMessage, DocMessage, type Message } from "./message-types";
+import { type BinaryMessage, type Message } from "./message-types";
 import type {
   DocStep,
-  EncodedDocUpdateMessage,
   StateVector,
   SyncStep1,
   SyncStep2,
@@ -35,15 +34,36 @@ export function encodeMessage(update: Message): BinaryMessage {
 
     switch (update.type) {
       case "awareness": {
-        // message type
+        // message type (doc/awareness)
         encoding.writeUint8(encoder, 1);
-        // awareness update
-        encoding.writeVarUint8Array(encoder, update.payload.update);
+
+        switch (update.payload.type) {
+          case "awareness-update": {
+            // message type
+            encoding.writeUint8(encoder, 0);
+            // awareness update
+            encoding.writeVarUint8Array(encoder, update.payload.update);
+            break;
+          }
+          case "awareness-request": {
+            // message type
+            encoding.writeUint8(encoder, 1);
+            break;
+          }
+          default: {
+            // @ts-expect-error - this should be unreachable due to type checking
+            update.payload.type;
+            throw new Error("Invalid update.payload.type", {
+              cause: { update },
+            });
+          }
+        }
         break;
       }
       case "doc": {
-        // message type
+        // message type (doc/awareness)
         encoding.writeUint8(encoder, 0);
+
         switch (update.payload.type) {
           case "sync-step-1": {
             // message type

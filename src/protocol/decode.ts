@@ -7,8 +7,12 @@ import {
 } from "./message-types";
 import type {
   AuthMessage,
+  AwarenessRequestMessage,
+  AwarenessStep,
   AwarenessUpdateMessage,
   DecodedAuthMessage,
+  DecodedAwarenessRequest,
+  DecodedAwarenessUpdateMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
@@ -58,12 +62,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
       case 0x01: {
         return new AwarenessMessage(
           documentName,
-          {
-            type: "awareness-update",
-            update: decoding.readVarUint8Array(
-              decoder,
-            ) as AwarenessUpdateMessage,
-          },
+          decodeAwarenessStepWithDecoder(decoder),
           undefined,
           encrypted,
           update,
@@ -129,6 +128,41 @@ function decodeDocStepWithDecoder<
     }
   } catch (err) {
     throw new Error("Failed to decode doc step", {
+      cause: { err },
+    });
+  }
+}
+
+function decodeAwarenessStepWithDecoder<
+  D extends AwarenessStep,
+  E = D extends AwarenessUpdateMessage
+    ? DecodedAwarenessUpdateMessage
+    : D extends AwarenessRequestMessage
+      ? DecodedAwarenessRequest
+      : never,
+>(decoder: decoding.Decoder): E {
+  try {
+    const messageType = decoding.readUint8(decoder);
+    switch (messageType) {
+      case 0x00: {
+        return {
+          type: "awareness-update",
+          update: decoding.readVarUint8Array(decoder),
+        } as E;
+      }
+      case 0x01: {
+        return {
+          type: "awareness-request",
+        } as E;
+      }
+      default: {
+        throw new Error(`Failed to decode doc update, unexpected value`, {
+          cause: { messageType },
+        });
+      }
+    }
+  } catch (err) {
+    throw new Error("Failed to decode awareness step", {
       cause: { err },
     });
   }

@@ -14,6 +14,18 @@ export type DecodedAwarenessUpdateMessage = {
 };
 
 /**
+ * A Y.js awareness update message, which includes the document name and the update.
+ */
+export type AwarenessRequestMessage = Tag<Uint8Array, "awareness-request">;
+
+/**
+ * A decoded Y.js auth message
+ */
+export type DecodedAwarenessRequest = {
+  type: "awareness-request";
+};
+
+/**
  * A Y.js update, always encoded as UpdateV2.
  */
 export type Update = Tag<Uint8Array, "update">;
@@ -80,6 +92,11 @@ export type DecodedAuthMessage = {
  * Any Y.js update which concerns a document.
  */
 export type DocStep = SyncStep1 | SyncStep2 | UpdateStep | AuthMessage;
+
+/**
+ * Any Y.js update which contains awareness updates.
+ */
+export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
 
 /**
  * A Y.js message which concerns a document and encloses a {@link DocStep} and the document name.
