@@ -95,7 +95,7 @@ export class Provider extends ObservableV2<{
     client.on("open", this.init);
   }
 
-  private init() {
+  private init = () => {
     this.#websocketConnection.send(
       new DocMessage(
         this.document,
@@ -106,7 +106,7 @@ export class Provider extends ObservableV2<{
         { clientId: "local" },
       ).encoded,
     );
-  }
+  };
 
   private listenToSubdocs() {
     // TODO all a hack at the moment
