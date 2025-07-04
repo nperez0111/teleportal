@@ -45,6 +45,7 @@ export class Provider extends ObservableV2<{
   public awareness: Awareness;
   public transport: YBinaryTransport<{
     synced: Promise<void>;
+    key?: CryptoKey;
   }>;
   public document: string;
   #websocketConnection: WebsocketConnection;
@@ -104,6 +105,7 @@ export class Provider extends ObservableV2<{
           sv: Y.encodeStateVector(this.doc) as StateVector,
         },
         { clientId: "local" },
+        Boolean(this.transport.key),
       ).encoded,
     );
   };

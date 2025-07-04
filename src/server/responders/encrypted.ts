@@ -89,10 +89,15 @@ export class EncryptedResponder extends MessageResponder {
 
         logger.trace("sending sync-step-2");
         await client.send(
-          new DocMessage(document.name, {
-            type: "sync-step-2",
-            update: encodedUpdates,
-          }),
+          new DocMessage(
+            document.name,
+            {
+              type: "sync-step-2",
+              update: encodedUpdates,
+            },
+            message.context,
+            this.storage.encrypted,
+          ),
         );
         logger.trace("sending sync-step-1");
 

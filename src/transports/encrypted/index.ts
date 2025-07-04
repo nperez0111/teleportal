@@ -35,6 +35,7 @@ export function getMessageDecryptor<
         }
 
         if (chunk.type !== "doc") {
+          chunk.encrypted = false;
           // passthrough other messages
           controller.enqueue(chunk);
           return;
@@ -106,6 +107,7 @@ export function getMessageEncryptor<
     async transform(chunk, controller) {
       try {
         if (chunk.type !== "doc") {
+          chunk.encrypted = true;
           controller.enqueue(chunk);
           return;
         }

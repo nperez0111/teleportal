@@ -13,6 +13,8 @@ export class EncryptedDocumentStorage extends DocumentStorage {
   private readonly storage: Storage;
   private readonly options: { ttl: number };
 
+  public encrypted = true;
+
   constructor(storage: Storage, options?: { ttl?: number }) {
     super();
     this.storage = storage;
