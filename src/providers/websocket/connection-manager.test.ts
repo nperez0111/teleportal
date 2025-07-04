@@ -346,6 +346,8 @@ describe("WebsocketConnection", () => {
 
   test("should go offline and reconnect when coming back online", async () => {
     timerStub.enable();
+    // Set location to enable offline detection
+    WebsocketConnection.location = { hostname: "example.com" };
     isOnline = true;
     eventTarget = new EventTarget();
 
@@ -426,6 +428,7 @@ describe("WebsocketConnection", () => {
     client = null as any;
     eventTarget = null as any;
     wsInstances = [];
+    WebsocketConnection.location = undefined;
   });
 
   test("should buffer messages when not connected and send them on connection", async () => {

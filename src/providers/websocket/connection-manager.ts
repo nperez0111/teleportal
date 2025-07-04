@@ -97,6 +97,7 @@ export class WebsocketConnection extends ObservableV2<{
   static setInterval = globalThis.setInterval.bind(globalThis);
   static clearTimeout = globalThis.clearTimeout.bind(globalThis);
   static clearInterval = globalThis.clearInterval.bind(globalThis);
+  static location: { hostname: string } | undefined = globalThis.location;
 
   #wsLastMessageReceived = 0;
   #shouldConnect = true;
@@ -260,7 +261,7 @@ export class WebsocketConnection extends ObservableV2<{
     this.#maxReconnectAttempts = maxReconnectAttempts;
 
     // Set up online/offline event listeners
-    if (location.hostname !== "localhost") {
+    if (WebsocketConnection.location?.hostname !== "localhost") {
       this.#setupOnlineOfflineListeners();
     }
 
