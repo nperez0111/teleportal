@@ -34,15 +34,12 @@ describe("can encode and decode", () => {
         "encrypted": false,
         "payload": {
           "type": "awareness-update",
-          "update": {
-            "type": "awareness-update",
-            "update": Uint8Array [
-              0,
-              1,
-              2,
-              3,
-            ],
-          },
+          "update": Uint8Array [
+            0,
+            1,
+            2,
+            3,
+          ],
         },
         "type": "awareness",
       }

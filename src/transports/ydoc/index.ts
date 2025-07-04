@@ -30,12 +30,14 @@ export function getYDocSource({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  observer,
+  observer = new ObservableV2<{
+    message: (message: Message) => void;
+  }>(),
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  observer: ObservableV2<{
+  observer?: ObservableV2<{
     message: (message: Message) => void;
   }>;
 }): YSource<
@@ -134,12 +136,14 @@ export function getYDocSink({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  observer,
+  observer = new ObservableV2<{
+    message: (message: Message) => void;
+  }>(),
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  observer: ObservableV2<{
+  observer?: ObservableV2<{
     message: (message: Message) => void;
   }>;
 }): YSink<

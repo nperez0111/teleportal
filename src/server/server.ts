@@ -90,6 +90,7 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
     }, new Set<Document<Context>>());
 
     return {
+      time: new Date().toLocaleTimeString(),
       numClients: this.clients.size,
       numDocuments: documents.size,
       clientIds: this.clients
