@@ -100,6 +100,26 @@ describe("can encode and decode", () => {
     `);
   });
 
+  it("can encode and decode a doc update (sync done)", () => {
+    expect(
+      decodeMessage(
+        new DocMessage("test", {
+          type: "sync-done",
+        }).encoded,
+      ),
+    ).toMatchInlineSnapshot(`
+      DocMessage {
+        "context": {},
+        "document": "test",
+        "encrypted": false,
+        "payload": {
+          "type": "sync-done",
+        },
+        "type": "doc",
+      }
+    `);
+  });
+
   it("can encode and decode a doc update (update)", () => {
     expect(
       decodeMessage(
@@ -247,6 +267,29 @@ describe("can encode", () => {
         1,
         2,
         3,
+      ]
+    `);
+  });
+
+  it("doc update (sync done)", () => {
+    expect(
+      new DocMessage("test", {
+        type: "sync-done",
+      }).encoded,
+    ).toMatchInlineSnapshot(`
+      Uint8Array [
+        89,
+        74,
+        83,
+        1,
+        4,
+        116,
+        101,
+        115,
+        116,
+        0,
+        0,
+        4,
       ]
     `);
   });
