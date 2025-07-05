@@ -98,6 +98,43 @@ export class MessageHandler<Context extends ServerContext> {
   }
 
   /**
+   * Send a sync-done message to a client after sync-step-2 is processed
+   */
+  private async sendSyncDone(
+    message: Message<Context>,
+    document: Document<Context>,
+    client: Client<Context>,
+    logger: Logger,
+  ): Promise<void> {
+    logger.trace("sending sync-done message to client");
+
+    const clientInDocument = Array.from(document.clients.values()).find(
+      (c) => c.id === message.context.clientId,
+    );
+    if (!clientInDocument) {
+      throw new Error(`Client not found`, {
+        cause: { clientId: message.context.clientId },
+      });
+    }
+
+    try {
+      await clientInDocument.send(
+        new DocMessage(
+          document.name,
+          {
+            type: "sync-done",
+          },
+          message.context,
+          document.encrypted,
+        ),
+      );
+      logger.trace("sync-done message sent successfully");
+    } catch (err) {
+      logger.withError(err).error("failed to send sync-done message");
+    }
+  }
+
+  /**
    * Process a message for a document
    */
   public async handleMessage(
@@ -150,6 +187,15 @@ export class MessageHandler<Context extends ServerContext> {
             case "sync-step-2":
               logger.trace("writing to store");
               await document.write(message.payload.update);
+              
+              // Send sync-done message after sync-step-2 is processed
+              if (message.payload.type === "sync-step-2") {
+                await this.sendSyncDone(message, document, client, logger);
+              }
+              return;
+            case "sync-done":
+              logger.trace("received sync-done message from client");
+              // Sync-done messages are informational from client, no action needed
               return;
             case "auth-message":
               throw new Error("auth-message not supported");
