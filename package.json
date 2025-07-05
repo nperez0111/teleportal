@@ -60,6 +60,10 @@
     "./token": {
       "types": "./dist/token/index.d.mts",
       "default": "./dist/token/index.mjs"
+    },
+    "./encryption-state-vector": {
+      "types": "./dist/encryption-state-vector/index.d.mts",
+      "default": "./dist/encryption-state-vector/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",

@@ -6,6 +6,7 @@ import {
   type Message,
 } from "teleportal/protocol";
 export * from "teleportal/protocol";
+export * from "../encryption-state-vector";
 
 export type ClientContext = {
   /**
