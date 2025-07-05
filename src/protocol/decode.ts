@@ -119,14 +119,14 @@ function decodeDocStepWithDecoder<
       }
       case 0x03: {
         return {
-          type: "auth-message",
-          permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
-          reason: decoding.readVarString(decoder),
+          type: "sync-done",
         } as E;
       }
       case 0x04: {
         return {
-          type: "sync-done",
+          type: "auth-message",
+          permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
+          reason: decoding.readVarString(decoder),
         } as E;
       }
       default: {
