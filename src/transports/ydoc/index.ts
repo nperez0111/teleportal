@@ -5,7 +5,7 @@ import {
 } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { ObservableV2 } from "lib0/observable.js";
+import { ObservableV2 } from "lib0/observable";
 import {
   AwarenessMessage,
   type AwarenessUpdateMessage,

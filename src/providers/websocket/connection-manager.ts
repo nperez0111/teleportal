@@ -1,4 +1,4 @@
-import { ObservableV2 } from "lib0/observable.js";
+import { ObservableV2 } from "lib0/observable";
 import {
   encodePingMessage,
   isPongMessage,

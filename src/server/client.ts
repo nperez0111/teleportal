@@ -1,8 +1,20 @@
+import { ObservableV2 } from "lib0/observable";
 import type { Message, ServerContext } from "teleportal";
 import { Document } from "./document";
 import type { Logger } from "./logger";
 
-export class Client<Context extends ServerContext> {
+/**
+ * The Client class represents a client connected to the server.
+ *
+ * It is responsible for sending and receiving messages to and from the client.
+ *
+ * It also provides a way to subscribe to and unsubscribe from documents.
+ */
+export class Client<Context extends ServerContext> extends ObservableV2<{
+  destroy: (client: Client<Context>) => void;
+  "document-added": (document: Document<Context>) => void;
+  "document-removed": (document: Document<Context>) => void;
+}> {
   public readonly id: string;
   public readonly documents = new Set<Document<Context>>();
   private readonly writer: WritableStreamDefaultWriter<Message<Context>>;
@@ -17,6 +29,7 @@ export class Client<Context extends ServerContext> {
     writable: WritableStream<Message<Context>>;
     logger: Logger;
   }) {
+    super();
     this.id = id;
     this.writer = writable.getWriter();
     this.logger = logger.withContext({ name: "client", clientId: id });
@@ -36,6 +49,37 @@ export class Client<Context extends ServerContext> {
       .trace("message sent to client");
   }
 
+  /**
+   * Subscribe to a document
+   */
+  public subscribeToDocument(document: Document<Context>): void {
+    this.documents.add(document);
+    document.addClient(this);
+    this.logger
+      .withMetadata({ documentId: document.id })
+      .trace("subscribed to document");
+    this.emit("document-added", [document]);
+  }
+
+  /**
+   * Unsubscribe from a document
+   */
+  public unsubscribeFromDocument(document: Document<Context>): void {
+    this.documents.delete(document);
+    document.removeClient(this);
+    this.logger
+      .withMetadata({ documentId: document.id })
+      .trace("unsubscribed from document");
+    this.emit("document-removed", [document]);
+  }
+
+  /**
+   * Get the number of documents this client is subscribed to
+   */
+  public getDocumentCount(): number {
+    return this.documents.size;
+  }
+
   #destroyed = false;
 
   public async destroy() {
@@ -44,7 +88,11 @@ export class Client<Context extends ServerContext> {
     }
     this.#destroyed = true;
     this.logger.trace("disposing client");
-    this.documents.clear();
+    for (const document of this.documents) {
+      this.unsubscribeFromDocument(document);
+    }
+    this.emit("destroy", [this]);
     await this.writer.releaseLock();
+    super.destroy();
   }
 }

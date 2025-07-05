@@ -1,18 +1,20 @@
 import { ObservableV2 } from "lib0/observable";
 import { uuidv4 } from "lib0/random";
 import {
-  DocMessage,
   fromBinaryTransport,
   Message,
   ServerContext,
   YBinaryTransport,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { Client } from "./client";
+import { ClientManager } from "./client-manager";
 import { Document } from "./document";
+import { DocumentManager } from "./document-manager";
 import { logger as defaultLogger, Logger } from "./logger";
-import { ClearTextResponder, EncryptedResponder } from "./responders";
+import { MessageHandler } from "./message-handler";
+
+import type { DocumentStorage } from "teleportal/storage";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -65,15 +67,22 @@ export type ServerOptions<Context extends ServerContext> = {
   }) => Promise<boolean>;
 };
 
+/**
+ * The Server class represents a server that can be used to manage clients and documents.
+ *
+ * It is responsible for creating, destroying, and managing clients and documents.
+ */
 export class Server<Context extends ServerContext> extends ObservableV2<{
-  "client-connect": (client: Client<Context>) => {};
-  "client-disconnect": (client: Client<Context>) => {};
+  "client-connected": (client: Client<Context>) => {};
+  "client-disconnected": (client: Client<Context>) => {};
   "document-load": (document: Document<Context>) => {};
   "document-unload": (document: Document<Context>) => {};
 }> {
-  private clients = new Map<string, Client<Context>>();
   public logger: Logger;
   private options: ServerOptions<Context>;
+  private documentManager: DocumentManager<Context>;
+  private clientManager: ClientManager<Context>;
+  private messageHandler: MessageHandler<Context>;
 
   constructor(options: ServerOptions<Context>) {
     super();
@@ -81,162 +90,76 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
     this.logger = (options.logger ?? defaultLogger).withContext({
       name: "server",
     });
+
+    // Initialize managers
+    this.documentManager = new DocumentManager({
+      logger: this.logger,
+      getStorage: async (ctx) => {
+        return await this.options.getStorage({
+          ...ctx,
+          server: this,
+        });
+      },
+    });
+
+    this.documentManager.on("document-created", (document) =>
+      this.emit("document-load", [document]),
+    );
+    this.documentManager.on("document-destroyed", (document) =>
+      this.emit("document-unload", [document]),
+    );
+
+    this.messageHandler = new MessageHandler({
+      logger: this.logger,
+      checkPermission: this.options.checkPermission,
+    });
+
+    this.clientManager = new ClientManager({ logger: this.logger });
+
+    this.clientManager.on("client-connected", (client) =>
+      this.emit("client-connected", [client]),
+    );
+    this.clientManager.on("client-disconnected", (client) =>
+      this.emit("client-disconnected", [client]),
+    );
   }
 
+  #clock = 0;
+
   public getStats() {
-    const documents = this.clients.values().reduce((acc, client) => {
-      client.documents.forEach((doc) => acc.add(doc));
-      return acc;
-    }, new Set<Document<Context>>());
+    const clientStats = this.clientManager.getStats();
+    const documentStats = this.documentManager.getStats();
 
     return {
-      time: new Date().toLocaleTimeString(),
-      numClients: this.clients.size,
-      numDocuments: documents.size,
-      clientIds: this.clients
-        .values()
-        .map((c) => c.id)
-        .toArray(),
-      documentIds: documents
-        .values()
-        .map((d) => d.id)
-        .toArray(),
+      timestamp: new Date().toISOString(),
+      clock: this.#clock++,
+      numClients: clientStats.numClients,
+      numDocuments: documentStats.numDocuments,
+      clientIds: clientStats.clientIds,
+      documentIds: documentStats.documentIds,
     };
   }
 
   public getDocument(documentId: string): Document<Context> | undefined {
-    let document: Document<Context> | undefined;
-
-    this.clients.values().some((client) =>
-      Array.from(client.documents.values()).some((d) => {
-        if (d.id === documentId) {
-          document = d;
-          return true;
-        }
-        return false;
-      }),
-    );
-
-    return document;
-  }
-
-  private async createDocument({
-    document,
-    context,
-    encrypted,
-  }: Pick<Message<Context>, "document" | "context" | "encrypted">) {
-    const documentId = Document.getDocumentId({ document, context });
-
-    this.logger.withMetadata({ documentId }).trace("creating document");
-
-    const storage = await this.options.getStorage({
-      document,
-      documentId,
-      context,
-      server: this,
-    });
-
-    if (!storage) {
-      throw new Error(`Storage not found`, {
-        cause: { context, document },
-      });
-    }
-
-    const doc = new Document({
-      name: document,
-      id: documentId,
-      logger: this.logger,
-      // TODO maybe make this configurable?
-      storage: encrypted
-        ? new EncryptedResponder(storage)
-        : new ClearTextResponder(storage),
-    });
-
-    this.logger.withMetadata({ documentId }).trace("document created");
-
-    this.emit("document-load", [doc]);
-
-    return doc;
+    return this.documentManager.getDocument(documentId);
   }
 
   public async getOrCreateDocument(
     message: Pick<Message<Context>, "document" | "context" | "encrypted">,
   ): Promise<Document<Context>> {
-    const documentId = Document.getDocumentId(message);
-    const client = this.clients.get(message.context.clientId);
+    const client = this.clientManager.getClient(message.context.clientId);
     if (!client) {
       throw new Error("Client not found", {
         cause: { clientId: message.context.clientId },
       });
     }
 
-    const document =
-      this.getDocument(documentId) ?? (await this.createDocument(message));
+    const document = await this.documentManager.getOrCreateDocument(message);
 
-    // Just add it to this client's documents
-    client.documents.add(document);
-    document.clients.add(client);
+    // Subscribe client to document
+    client.subscribeToDocument(document);
 
     return document;
-  }
-
-  /**
-   * Check if a client has permission to access a document.
-   */
-  private async checkAuthorization(
-    clientId: string,
-    message: Message<Context>,
-    type: "read" | "write",
-  ): Promise<boolean> {
-    const client = this.clients.get(clientId);
-    if (!client) {
-      throw new Error("Client not found?", { cause: { clientId } });
-    }
-
-    this.logger
-      .withMetadata({
-        clientId,
-        context: message.context,
-        document: message.document,
-        documentId: Document.getDocumentId(message),
-      })
-      .trace("checking permission to read");
-    const hasPermission = await this.options.checkPermission({
-      context: message.context,
-      document: message.document,
-      documentId: Document.getDocumentId(message),
-      message,
-      type,
-    });
-    if (hasPermission) {
-      this.logger
-        .withMetadata({
-          clientId,
-          context: message.context,
-          document: message.document,
-          documentId: Document.getDocumentId(message),
-        })
-        .trace("client is authorized");
-      return true;
-    }
-
-    this.logger
-      .withMetadata({
-        clientId,
-        context: message.context,
-        document: message.document,
-        documentId: Document.getDocumentId(message),
-      })
-      .trace("client is not authorized");
-
-    await client.send(
-      new DocMessage(message.document, {
-        type: "auth-message",
-        permission: "denied",
-        reason: `Insufficient permissions to access document ${message.document}`,
-      }),
-    );
-    return false;
   }
 
   /**
@@ -267,7 +190,10 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
         Object.assign({ clientId }, context) as Context,
       ),
       {
-        isAuthorized: this.checkAuthorization.bind(this, clientId),
+        isAuthorized: this.messageHandler.checkAuthorization.bind(
+          this.messageHandler,
+          clientId,
+        ),
       },
     );
 
@@ -291,10 +217,14 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
             try {
               logger.trace("getting document");
               const document = await this.getOrCreateDocument(message);
-              logger.trace("writing message to storage");
-              await document.write(message);
+              logger.trace("processing message");
+              await this.messageHandler.handleMessage(
+                message,
+                document,
+                client,
+              );
             } catch (e) {
-              logger.withError(e).error("Failed to write message");
+              logger.withError(e).error("Failed to process message");
             }
           },
         }),
@@ -309,10 +239,10 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
             },
           })
           .trace("client disconnected");
-        this.disconnectClient(clientId);
+        await this.disconnectClient(clientId);
       });
 
-    this.clients.set(clientId, client);
+    this.clientManager.addClient(client);
 
     this.logger
       .withMetadata({
@@ -336,39 +266,15 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
       })
       .trace("client ready");
 
-    this.emit("client-connect", [client]);
     return this;
   }
 
   public async disconnectClient(clientId: string) {
-    const client = this.clients.get(clientId);
+    await this.clientManager.removeClient(clientId);
+  }
 
-    if (!client) {
-      return;
-    }
-    this.logger.withMetadata({ clientId }).trace("disconnecting client");
-
-    // Keep a reference to the subscribed documents
-    const documents = client.documents;
-
-    for (const document of documents) {
-      // Remove the client from all of its open documents
-      document.clients.delete(client);
-
-      if (document.clients.size === 0) {
-        // If the document has no more clients, destroy it
-        this.logger
-          .withMetadata({ documentId: document.id })
-          .trace("destroying document - no remaining clients");
-        // destroy document if no other clients are subscribed to it
-        this.emit("document-unload", [document]);
-        await document.destroy();
-      }
-    }
-
-    this.emit("client-disconnect", [client]);
-    await client.destroy();
-    // Remove the client from the server
-    this.clients.delete(clientId);
+  public async destroy() {
+    await this.documentManager.destroy();
+    await this.clientManager.destroy();
   }
 }

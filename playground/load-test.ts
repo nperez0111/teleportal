@@ -25,7 +25,7 @@ await websocketClient.connected;
 
 const provider = await websocket.Provider.create({
   client: websocketClient,
-  document: "testy",
+  document: "test-load",
   getTransport({ getDefaultTransport }) {
     return withPassthrough(getDefaultTransport(), {
       onWrite() {
