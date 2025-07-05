@@ -5,6 +5,7 @@ import {
   DecodedAwarenessUpdateMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
+  DecodedSyncDone,
   DecodedUpdateStep,
   DecodedAuthMessage,
   DocStep,
@@ -80,6 +81,7 @@ export class DocMessage<Context extends Record<string, unknown>> {
     public payload:
       | DecodedSyncStep1
       | DecodedSyncStep2
+      | DecodedSyncDone
       | DecodedUpdateStep
       | DecodedAuthMessage,
     context?: Context,
