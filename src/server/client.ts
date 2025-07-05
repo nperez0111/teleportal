@@ -88,11 +88,23 @@ export class Client<Context extends ServerContext> extends ObservableV2<{
     }
     this.#destroyed = true;
     this.logger.trace("disposing client");
-    for (const document of this.documents) {
-      this.unsubscribeFromDocument(document);
+    
+    try {
+      for (const document of this.documents) {
+        this.unsubscribeFromDocument(document);
+      }
+      this.emit("destroy", [this]);
+    } finally {
+      // Ensure writer is released even if there's an error above
+      try {
+        if (this.writer.desiredSize !== null) {
+          await this.writer.releaseLock();
+        }
+      } catch (error) {
+        // Writer might already be released, log but don't throw
+        this.logger.trace("Writer already released or error releasing lock", { error });
+      }
+      super.destroy();
     }
-    this.emit("destroy", [this]);
-    await this.writer.releaseLock();
-    super.destroy();
   }
 }
