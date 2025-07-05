@@ -89,6 +89,51 @@ export type DecodedAuthMessage = {
 };
 
 /**
+ * A blob message, which can be either a blob-part or a request-blob.
+ */
+export type BlobMessage = Tag<Uint8Array, "blob-message">;
+
+/**
+ * A decoded Y.js blob message (either blob-part or request-blob).
+ */
+export type DecodedBlobMessage =
+  | DecodedBlobPartMessage
+  | DecodedRequestBlobMessage;
+
+/**
+ * A Y.js blob part message, which includes file metadata and binary data.
+ */
+export type BlobPartMessage = Tag<Uint8Array, "blob-part">;
+
+/**
+ * A decoded blob part message.
+ */
+export type DecodedBlobPartMessage = {
+  type: "blob-part";
+  segmentIndex: number;
+  totalSegments: number;
+  contentId: string;
+  name: string;
+  contentType: string;
+  data: Uint8Array;
+};
+
+/**
+ * A request blob message, which requests a file by content ID.
+ */
+export type RequestBlobMessage = Tag<Uint8Array, "request-blob">;
+
+/**
+ * A decoded request blob message.
+ */
+export type DecodedRequestBlobMessage = {
+  type: "request-blob";
+  requestId: string;
+  contentId: string;
+  name?: string;
+};
+
+/**
  * Any Y.js update which concerns a document.
  */
 export type DocStep = SyncStep1 | SyncStep2 | UpdateStep | AuthMessage;

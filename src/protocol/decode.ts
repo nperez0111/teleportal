@@ -2,6 +2,7 @@ import * as decoding from "lib0/decoding";
 import {
   AwarenessMessage,
   type BinaryMessage,
+  BlobMessage,
   DocMessage,
   type RawReceivedMessage,
 } from "./message-types";
@@ -13,6 +14,8 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedBlobPartMessage,
+  DecodedRequestBlobMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
@@ -68,6 +71,25 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           update,
         );
       }
+      case 0x02: {
+        // blob message
+        const payloadType = decoding.readUint8(decoder);
+        let payload;
+        if (payloadType === 0) {
+          payload = decodeBlobPartStepWithDecoder(decoder);
+        } else if (payloadType === 1) {
+          payload = decodeRequestBlobStepWithDecoder(decoder);
+        } else {
+          throw new Error("Invalid blob payload type");
+        }
+        return new BlobMessage(
+          documentName,
+          payload,
+          undefined,
+          encrypted,
+          update,
+        );
+      }
       default:
         throw new Error("Invalid target type", {
           cause: { targetType },
@@ -76,6 +98,53 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
   } catch (err) {
     throw new Error("Failed to decode update message", {
       cause: { update, err },
+    });
+  }
+}
+
+function decodeBlobPartStepWithDecoder(
+  decoder: decoding.Decoder,
+): DecodedBlobPartMessage {
+  try {
+    const segmentIndex = decoding.readVarUint(decoder);
+    const totalSegments = decoding.readVarUint(decoder);
+    const contentId = decoding.readVarString(decoder);
+    const name = decoding.readVarString(decoder);
+    const contentType = decoding.readVarString(decoder);
+
+    return {
+      type: "blob-part",
+      segmentIndex,
+      totalSegments,
+      contentId,
+      name,
+      contentType,
+      data: decoding.readVarUint8Array(decoder),
+    };
+  } catch (err) {
+    throw new Error("Failed to decode blob part step", {
+      cause: { err },
+    });
+  }
+}
+
+function decodeRequestBlobStepWithDecoder(
+  decoder: decoding.Decoder,
+): DecodedRequestBlobMessage {
+  try {
+    const requestId = decoding.readVarString(decoder);
+    const contentId = decoding.readVarString(decoder);
+    const name = decoding.readVarString(decoder);
+
+    return {
+      type: "request-blob",
+      requestId,
+      contentId,
+      name: name || undefined,
+    };
+  } catch (err) {
+    throw new Error("Failed to decode request blob step", {
+      cause: { err },
     });
   }
 }

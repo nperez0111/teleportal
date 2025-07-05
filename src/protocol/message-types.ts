@@ -7,6 +7,8 @@ import {
   DecodedSyncStep2,
   DecodedUpdateStep,
   DecodedAuthMessage,
+  DecodedBlobMessage,
+  BlobMessage as BlobMessageType,
   DocStep,
   EncodedDocUpdateMessage,
   DecodedAwarenessRequest,
@@ -14,19 +16,20 @@ import {
 import { toBase64 } from "lib0/buffer";
 
 /**
- * A Y.js message which concerns a document or awareness update.
+ * A Y.js message which concerns a document, awareness, or blob update.
  */
 export type BinaryMessage =
   | EncodedDocUpdateMessage<DocStep>
-  | AwarenessUpdateMessage;
+  | AwarenessUpdateMessage
+  | BlobMessageType;
 
 /**
- * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
- * Can apply to either a document or awareness update.
+ * A decoded Y.js message, which was deserialized from a {@link Uint8Array}.
  */
 export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
-  | DocMessage<Context>;
+  | DocMessage<Context>
+  | BlobMessage<Context>;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
@@ -82,6 +85,34 @@ export class DocMessage<Context extends Record<string, unknown>> {
       | DecodedSyncStep2
       | DecodedUpdateStep
       | DecodedAuthMessage,
+    context?: Context,
+    public encrypted: boolean = false,
+    encoded?: BinaryMessage,
+  ) {
+    this.context = context ?? ({} as Context);
+    this.#encoded = encoded;
+  }
+
+  public get encoded() {
+    return this.#encoded ?? (this.#encoded = encodeMessage(this));
+  }
+
+  public get id() {
+    return toBase64(digest(this.encoded));
+  }
+}
+
+/**
+ * A received blob message, which was deserialized from a {@link Uint8Array}.
+ */
+export class BlobMessage<Context extends Record<string, unknown>> {
+  public type = "blob" as const;
+  public context: Context;
+  #encoded: BinaryMessage | undefined;
+
+  constructor(
+    public document: string,
+    public payload: DecodedBlobMessage,
     context?: Context,
     public encrypted: boolean = false,
     encoded?: BinaryMessage,

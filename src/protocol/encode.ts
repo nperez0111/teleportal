@@ -33,33 +33,6 @@ export function encodeMessage(update: Message): BinaryMessage {
     encoding.writeUint8(encoder, update.encrypted ? 1 : 0);
 
     switch (update.type) {
-      case "awareness": {
-        // message type (doc/awareness)
-        encoding.writeUint8(encoder, 1);
-
-        switch (update.payload.type) {
-          case "awareness-update": {
-            // message type
-            encoding.writeUint8(encoder, 0);
-            // awareness update
-            encoding.writeVarUint8Array(encoder, update.payload.update);
-            break;
-          }
-          case "awareness-request": {
-            // message type
-            encoding.writeUint8(encoder, 1);
-            break;
-          }
-          default: {
-            // @ts-expect-error - this should be unreachable due to type checking
-            update.payload.type;
-            throw new Error("Invalid update.payload.type", {
-              cause: { update },
-            });
-          }
-        }
-        break;
-      }
       case "doc": {
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 0);
@@ -105,6 +78,64 @@ export function encodeMessage(update: Message): BinaryMessage {
         }
         break;
       }
+      case "awareness": {
+        // message type (doc/awareness)
+        encoding.writeUint8(encoder, 1);
+
+        switch (update.payload.type) {
+          case "awareness-update": {
+            // message type
+            encoding.writeUint8(encoder, 0);
+            // update
+            encoding.writeVarUint8Array(encoder, update.payload.update);
+            break;
+          }
+          case "awareness-request": {
+            // message type
+            encoding.writeUint8(encoder, 1);
+            break;
+          }
+          default: {
+            // @ts-expect-error - this should be unreachable due to type checking
+            update.payload.type;
+            throw new Error("Invalid awareness.payload.type", {
+              cause: { update },
+            });
+          }
+        }
+        break;
+      }
+      case "blob": {
+        // message type (blob)
+        encoding.writeUint8(encoder, 2);
+        // payload type
+        encoding.writeUint8(
+          encoder,
+          update.payload.type === "blob-part" ? 0 : 1,
+        );
+        if (update.payload.type === "blob-part") {
+          // segment index
+          encoding.writeVarUint(encoder, update.payload.segmentIndex);
+          // total segments
+          encoding.writeVarUint(encoder, update.payload.totalSegments);
+          // content id
+          encoding.writeVarString(encoder, update.payload.contentId);
+          // name
+          encoding.writeVarString(encoder, update.payload.name);
+          // content type
+          encoding.writeVarString(encoder, update.payload.contentType);
+          // binary data
+          encoding.writeVarUint8Array(encoder, update.payload.data);
+        } else if (update.payload.type === "request-blob") {
+          // request id
+          encoding.writeVarString(encoder, update.payload.requestId);
+          // content id
+          encoding.writeVarString(encoder, update.payload.contentId);
+          // name (optional)
+          encoding.writeVarString(encoder, update.payload.name || "");
+        }
+        break;
+      }
       default: {
         // @ts-expect-error - this should be unreachable due to type checking
         update.type;
@@ -116,7 +147,6 @@ export function encodeMessage(update: Message): BinaryMessage {
 
     return encoding.toUint8Array(encoder) as BinaryMessage;
   } catch (err) {
-    console.error(err);
     throw new Error("Failed to encode message", {
       cause: { update, err },
     });
