@@ -151,7 +151,11 @@ export function getWebsocketHandlers<
           await writer.write(buff as BinaryMessage);
           writer.releaseLock();
         } catch (e) {
-          new Error("Failed to write message", { cause: { err: e } });
+          logger
+            .withError(e)
+            .withMetadata({ clientId: peer.id, messageId: message.id })
+            .error("Failed to write message");
+          throw new Error("Failed to write message", { cause: { err: e } });
         }
       },
       async close(peer) {
@@ -213,7 +217,12 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
     onUpgrade: async (request) => {
       const url = new URL(request.url);
       const token = url.searchParams.get("token");
-      const result = await tokenManager.verifyToken(token!);
+      
+      if (!token) {
+        throw new Response("Missing token parameter", { status: 400 });
+      }
+
+      const result = await tokenManager.verifyToken(token);
 
       if (!result.valid || !result.payload) {
         throw new Response("Unauthorized", { status: 401 });
