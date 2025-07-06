@@ -2,6 +2,7 @@ import type { Message, ServerContext, Update } from "teleportal";
 import type { Logger } from "./logger";
 import type { Client } from "./client";
 import type { DocumentStorage } from "teleportal/storage";
+import type { ServerSyncTransport } from "./sync-transport";
 import { ObservableV2 } from "lib0/observable";
 
 /**
@@ -21,23 +22,32 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   public logger: Logger;
   public readonly clients = new Set<Client<Context>>();
   private readonly storage: DocumentStorage;
+  private readonly syncTransport?: ServerSyncTransport<Context>;
 
   constructor({
     name,
     id,
     logger,
     storage,
+    syncTransport,
   }: {
     name: string;
     id: string;
     logger: Logger;
     storage: DocumentStorage;
+    syncTransport?: ServerSyncTransport<Context>;
   }) {
     super();
     this.name = name;
     this.id = id;
     this.logger = logger.withContext({ name: "document", documentId: id });
     this.storage = storage;
+    this.syncTransport = syncTransport;
+    
+    // Set up server synchronization if transport is provided
+    if (this.syncTransport) {
+      this.initializeServerSync();
+    }
   }
 
   /**
@@ -62,7 +72,45 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   }
 
   /**
-   * Broadcast a message to all clients of the current document.
+   * Initialize server synchronization
+   */
+  private async initializeServerSync() {
+    if (!this.syncTransport) {
+      return;
+    }
+    
+    try {
+      await this.syncTransport.subscribe(this.id, this.handleServerSyncMessage.bind(this));
+      this.logger.trace("server sync initialized");
+    } catch (error) {
+      this.logger.withError(error).error("failed to initialize server sync");
+    }
+  }
+
+  /**
+   * Handle messages from other server instances
+   */
+  private async handleServerSyncMessage(message: Message<Context>) {
+    const logger = this.logger.withContext({
+      documentId: this.id,
+      messageId: message.id,
+    });
+
+    logger.trace("received message from server sync");
+
+    // Broadcast to local clients only (don't re-broadcast to servers)
+    for (const client of this.clients) {
+      if (client.id !== message.context.clientId) {
+        logger
+          .withMetadata({ clientId: client.id })
+          .trace("forwarding sync message to client");
+        await client.send(message);
+      }
+    }
+  }
+
+  /**
+   * Broadcast a message to all clients of the current document and other server instances.
    */
   public async broadcast(message: Message<Context>) {
     if (Document.getDocumentId(message) !== this.id) {
@@ -80,12 +128,23 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
 
     logger.trace("broadcasting message to all clients");
 
+    // Broadcast to local clients
     for (const client of this.clients) {
       if (client.id !== message.context.clientId) {
         logger
           .withMetadata({ clientId: client.id })
           .trace("writing message to client");
         await client.send(message);
+      }
+    }
+
+    // Broadcast to other server instances if sync transport is available
+    if (this.syncTransport) {
+      try {
+        logger.trace("broadcasting message to other servers");
+        await this.syncTransport.publish(this.id, message);
+      } catch (error) {
+        logger.withError(error).error("failed to broadcast message to other servers");
       }
     }
   }
@@ -182,6 +241,17 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
 
     this.emit("destroy", [this]);
     this.logger.trace("destroying document");
+    
+    // Clean up server sync transport
+    if (this.syncTransport) {
+      try {
+        await this.syncTransport.unsubscribe(this.id);
+        this.logger.trace("server sync unsubscribed");
+      } catch (error) {
+        this.logger.withError(error).error("failed to unsubscribe from server sync");
+      }
+    }
+    
     await this.storage.unload(this.id);
     this.clients.forEach((client) => client.unsubscribeFromDocument(this));
     this.clients.clear();

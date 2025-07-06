@@ -2,6 +2,7 @@ import type { Message, ServerContext } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
+import type { ServerSyncTransport } from "./sync-transport";
 import { ObservableV2 } from "lib0/observable";
 
 export type DocumentManagerOptions<Context extends ServerContext> = {
@@ -11,6 +12,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     documentId: string;
     context: Context;
   }) => Promise<DocumentStorage>;
+  syncTransport?: ServerSyncTransport<Context>;
 };
 
 /**
@@ -72,6 +74,7 @@ export class DocumentManager<
       id: documentId,
       logger: this.logger,
       storage: storage,
+      syncTransport: this.options.syncTransport,
     });
 
     doc.on("destroy", (document) => {
@@ -138,6 +141,17 @@ export class DocumentManager<
       ),
     );
     this.documents.clear();
+    
+    // Clean up sync transport
+    if (this.options.syncTransport) {
+      try {
+        await this.options.syncTransport.close();
+        this.logger.trace("server sync transport closed");
+      } catch (error) {
+        this.logger.withError(error).error("failed to close server sync transport");
+      }
+    }
+    
     this.logger.trace("document manager destroyed");
     super.destroy();
   }

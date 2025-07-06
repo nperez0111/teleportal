@@ -15,6 +15,8 @@ import { logger as defaultLogger, Logger } from "./logger";
 import { MessageHandler } from "./message-handler";
 
 import type { DocumentStorage } from "teleportal/storage";
+import type { ServerSyncTransport } from "./sync-transport";
+import { NoopSyncTransport } from "./sync-transport";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -65,6 +67,12 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     type: "read" | "write";
   }) => Promise<boolean>;
+
+  /**
+   * Optional server synchronization transport for cross-instance communication.
+   * If provided, the server will use this to synchronize updates across multiple server instances.
+   */
+  syncTransport?: ServerSyncTransport<Context>;
 };
 
 /**
@@ -100,6 +108,7 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
           server: this,
         });
       },
+      syncTransport: this.options.syncTransport,
     });
 
     this.documentManager.on("document-created", (document) =>
