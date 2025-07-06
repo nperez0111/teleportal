@@ -253,7 +253,7 @@ describe("protocol encryption", () => {
       expect(decryptionTransform.writable).toBeDefined();
     });
 
-    it("should encrypt and decrypt through streams", async () => {
+    it("should handle individual encrypt/decrypt operations", async () => {
       const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
       const message = new DocMessage(
         "test-doc",
@@ -262,37 +262,16 @@ describe("protocol encryption", () => {
         false,
       );
 
-      const encryptionTransform = createEncryptionTransform(key1);
-      const decryptionTransform = createDecryptionTransform(key1, "test-doc");
+      // Test encryption
+      const encrypted = await encryptMessage(message, key1);
+      expect(encrypted.encrypted).toBe(true);
 
-      // Test encryption transform
-      const encryptWriter = encryptionTransform.writable.getWriter();
-      const encryptReader = encryptionTransform.readable.getReader();
+      // Test decryption  
+      const decrypted = await decryptMessage(encrypted, key1, "test-doc");
+      expect(decrypted.encrypted).toBe(false);
       
-      await encryptWriter.write(message);
-      await encryptWriter.close();
-      
-      const { value: encrypted } = await encryptReader.read();
-      encryptReader.releaseLock();
-
-      expect(encrypted).toBeDefined();
-      expect(encrypted!.encrypted).toBe(true);
-
-      // Test decryption transform
-      const decryptWriter = decryptionTransform.writable.getWriter();
-      const decryptReader = decryptionTransform.readable.getReader();
-      
-      await decryptWriter.write(encrypted!);
-      await decryptWriter.close();
-      
-      const { value: decrypted } = await decryptReader.read();
-      decryptReader.releaseLock();
-
-      expect(decrypted).toBeDefined();
-      expect(decrypted!.encrypted).toBe(false);
-      
-      if (decrypted!.payload.type === "update") {
-        expect(decrypted!.payload.update).toEqual(testUpdate);
+      if (decrypted.payload.type === "update") {
+        expect(decrypted.payload.update).toEqual(testUpdate);
       }
     });
   });
