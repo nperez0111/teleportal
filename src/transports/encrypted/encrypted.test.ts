@@ -104,6 +104,47 @@ describe("encrypted-transport", () => {
     });
   });
 
+  describe("protocol-level encryption", () => {
+    it("should use protocol-level encryption in transport", async () => {
+      const doc = new Y.Doc();
+      const awareness = new Awareness(doc);
+      const transport = getYTransportFromYDoc({
+        ydoc: doc,
+        document: "test-doc",
+        awareness,
+        asClient: false,
+      });
+
+      const encryptedTransport = withEncryption(transport, {
+        key: key1,
+        document: "test-doc",
+      });
+
+      expect(encryptedTransport).toBeDefined();
+      expect(encryptedTransport.readable).toBeDefined();
+      expect(encryptedTransport.writable).toBeDefined();
+      expect(encryptedTransport.key).toBe(key1);
+    });
+
+    it("should handle messages through encrypted transport", async () => {
+      const doc = new Y.Doc();
+      const transport = getYTransportFromYDoc({
+        ydoc: doc,
+        document: "test",
+        asClient: false,
+      });
+
+      const encryptedTransport = withEncryption(transport, {
+        key: key1,
+        document: "test",
+      });
+
+      expect(encryptedTransport).toBeDefined();
+      expect(encryptedTransport.readable).toBeDefined();
+      expect(encryptedTransport.writable).toBeDefined();
+    });
+  });
+
   describe("getEncryptedYDocTransport", () => {
     it("should create an encrypted transport with binary encoding", async () => {
       const doc = new Y.Doc();
@@ -177,6 +218,7 @@ describe("encrypted-transport", () => {
       expect(encryptedTransport).toBeDefined();
       expect(encryptedTransport.readable).toBeDefined();
       expect(encryptedTransport.writable).toBeDefined();
+      expect(encryptedTransport.key).toBe(key1);
     });
 
     it("should handle awareness messages through encrypted transport", async () => {
