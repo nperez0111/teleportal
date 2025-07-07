@@ -5,6 +5,7 @@ import type {
   StateVector,
   SyncStep1,
   SyncStep2,
+  SyncDone,
   Update,
   UpdateStep,
 } from "./types";
@@ -83,9 +84,14 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeVarUint8Array(encoder, update.payload.update);
             break;
           }
-          case "auth-message": {
+          case "sync-done": {
             // message type
             encoding.writeUint8(encoder, 3);
+            break;
+          }
+          case "auth-message": {
+            // message type
+            encoding.writeUint8(encoder, 4);
             // permission
             encoding.writeUint8(
               encoder,
@@ -127,22 +133,40 @@ export function encodeMessage(update: Message): BinaryMessage {
  * Serialize a doc step, this is compatible with the y-protocols implementation.
  */
 export function encodeDocStep<
-  T extends 0 | 1 | 2 | "sync-step-1" | "sync-step-2" | "update",
+  T extends
+    | 0
+    | 1
+    | 2
+    | 3
+    | "sync-step-1"
+    | "sync-step-2"
+    | "sync-done"
+    | "update",
   S extends DocStep = T extends 0 | "sync-step-1"
     ? SyncStep1
     : T extends 1 | "sync-step-2"
       ? SyncStep2
       : T extends 2 | "update"
         ? UpdateStep
-        : never,
->(messageType: T, payload: S extends SyncStep1 ? StateVector : Update): S {
+        : T extends 3 | "sync-done"
+          ? SyncDone
+          : never,
+>(
+  messageType: T,
+  payload: S extends SyncStep1
+    ? StateVector
+    : S extends SyncDone
+      ? undefined
+      : Update,
+): S {
   try {
     const encoder = encoding.createEncoder();
-    let messageTypeNumber: 0 | 1 | 2;
+    let messageTypeNumber: 0 | 1 | 2 | 3;
     switch (messageType) {
       case 0x00:
       case 0x01:
       case 0x02:
+      case 0x03:
         messageTypeNumber = messageType;
         break;
       case "sync-step-1":
@@ -154,13 +178,18 @@ export function encodeDocStep<
       case "update":
         messageTypeNumber = 0x02;
         break;
+      case "sync-done":
+        messageTypeNumber = 0x03;
+        break;
       default:
         throw new Error("Invalid message type", {
           cause: { messageType },
         });
     }
     encoding.writeUint8(encoder, messageTypeNumber);
-    encoding.writeVarUint8Array(encoder, payload);
+    if (payload !== undefined) {
+      encoding.writeVarUint8Array(encoder, payload);
+    }
 
     return encoding.toUint8Array(encoder) as S;
   } catch (err) {

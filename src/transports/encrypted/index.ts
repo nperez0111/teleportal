@@ -80,6 +80,7 @@ export function getMessageDecryptor<
             );
             return;
           }
+          case "sync-done":
           case "auth-message": {
             // passthrough auth messages
             controller.enqueue(chunk);
@@ -147,6 +148,7 @@ export function getMessageEncryptor<
               ),
             );
           }
+          case "sync-done":
           case "auth-message": {
             // passthrough auth messages
             controller.enqueue(chunk);

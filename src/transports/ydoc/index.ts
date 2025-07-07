@@ -246,9 +246,13 @@ export function getYDocSink({
                     chunk.payload.update,
                     getSyncTransactionOrigin(ydoc),
                   );
+                  break;
+                case "sync-done": {
+                  // Only resolve synced promise when sync-done is received
                   onSynced(true);
                   onSynced = () => {};
                   break;
+                }
                 case "auth-message": {
                   controller.error(new Error(chunk.payload.reason));
                   break;

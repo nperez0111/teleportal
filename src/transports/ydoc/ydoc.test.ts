@@ -207,6 +207,22 @@ describe("ydoc sink", () => {
 
     expect(doc.getText("test").toString()).toBe("hell worldo");
 
+    // Send sync-done message to resolve the synced promise
+    await writer.write(
+      new DocMessage(
+        "test",
+        {
+          type: "sync-done",
+        },
+        {
+          clientId: "200",
+        },
+      ),
+    );
+
+    // Wait for the synced promise to resolve
+    await sink.synced;
+
     await writer.close();
   });
 
