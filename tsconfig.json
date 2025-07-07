@@ -14,6 +14,7 @@
       "teleportal/storage": ["./src/storage/index.ts"],
       "teleportal/transports": ["./src/transports/index.ts"],
       "teleportal/server": ["./src/server/index.ts"],
+      "teleportal/protocol/encryption": ["./src/protocol/encryption/index.ts"],
       "teleportal/protocol": ["./src/protocol/index.ts"],
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],

@@ -37,6 +37,10 @@
       "types": "./dist/protocol/index.d.mts",
       "default": "./dist/protocol/index.mjs"
     },
+    "./protocol/encryption": {
+      "types": "./dist/protocol/encryption/index.d.mts",
+      "default": "./dist/protocol/encryption/index.mjs"
+    },
     "./providers": {
       "types": "./dist/providers/index.d.mts",
       "default": "./dist/providers/index.mjs"

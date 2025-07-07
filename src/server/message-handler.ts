@@ -6,7 +6,7 @@ import {
   decodeFauxUpdateList,
   encodeFauxUpdateList,
   getEmptyFauxUpdateList,
-} from "../storage/encrypted/encoding";
+} from "../protocol/encryption/encoding";
 import type { Client } from "./client";
 import { Document } from "./document";
 import type { Logger } from "./logger";

@@ -1,13 +1,14 @@
+import * as Y from "yjs";
 import { decryptUpdate, encryptUpdate } from "../../encryption-key";
-import type { Update, StateVector } from "../types";
-import { DocMessage, AwarenessMessage, type Message } from "../message-types";
+import { AwarenessMessage, DocMessage, type Message } from "../message-types";
+import type { Update } from "../types";
 import {
-  decodeFauxStateVector,
   decodeFauxUpdateList,
   encodeFauxStateVector,
   encodeFauxUpdate,
-} from "../../storage/encrypted/encoding";
-import * as Y from "yjs";
+} from "./encoding";
+
+export * from "./encoding";
 
 export type EncryptedMessage<Context extends Record<string, unknown>> =
   Message<Context>;
@@ -35,7 +36,7 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
       case "sync-step-1": {
         // For sync-step-1, we create a faux state vector
         const fauxStateVector = encodeFauxStateVector({ messageId: "1" });
-        
+
         return new DocMessage(
           message.document,
           {
@@ -166,7 +167,9 @@ export async function decryptMessage<Context extends Record<string, unknown>>(
 /**
  * Creates a transform stream that encrypts messages.
  */
-export function createEncryptionTransform<Context extends Record<string, unknown>>(
+export function createEncryptionTransform<
+  Context extends Record<string, unknown>,
+>(
   key: CryptoKey,
 ): TransformStream<Message<Context>, EncryptedMessage<Context>> {
   return new TransformStream({
@@ -175,7 +178,9 @@ export function createEncryptionTransform<Context extends Record<string, unknown
         const encryptedMessage = await encryptMessage(chunk, key);
         controller.enqueue(encryptedMessage);
       } catch (error) {
-        controller.error(new Error("Failed to encrypt message", { cause: error }));
+        controller.error(
+          new Error("Failed to encrypt message", { cause: error }),
+        );
       }
     },
   });
@@ -184,7 +189,9 @@ export function createEncryptionTransform<Context extends Record<string, unknown
 /**
  * Creates a transform stream that decrypts messages.
  */
-export function createDecryptionTransform<Context extends Record<string, unknown>>(
+export function createDecryptionTransform<
+  Context extends Record<string, unknown>,
+>(
   key: CryptoKey,
   documentName: string,
 ): TransformStream<EncryptedMessage<Context>, Message<Context>> {
@@ -194,7 +201,9 @@ export function createDecryptionTransform<Context extends Record<string, unknown
         const decryptedMessage = await decryptMessage(chunk, key, documentName);
         controller.enqueue(decryptedMessage);
       } catch (error) {
-        controller.error(new Error("Failed to decrypt message", { cause: error }));
+        controller.error(
+          new Error("Failed to decrypt message", { cause: error }),
+        );
       }
     },
   });
@@ -212,11 +221,8 @@ export function isEncryptedMessage<Context extends Record<string, unknown>>(
 /**
  * Utility function to get the encryption key from a message context.
  */
-export function getEncryptionKeyFromContext<Context extends Record<string, unknown> & { key?: CryptoKey }>(
-  message: Message<Context>,
-): CryptoKey | undefined {
+export function getEncryptionKeyFromContext<
+  Context extends Record<string, unknown> & { key?: CryptoKey },
+>(message: Message<Context>): CryptoKey | undefined {
   return message.context.key;
 }
-
-// Export utilities
-export * from "./utils";
