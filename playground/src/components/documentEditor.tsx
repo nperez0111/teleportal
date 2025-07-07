@@ -23,8 +23,8 @@ export function DocumentEditor({ documentId }: DocumentEditorProps) {
 
   if (!documentId || !document) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center text-gray-500 dark:text-gray-400">
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="text-center text-gray-500 dark:text-gray-400 max-w-sm">
           <svg
             className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-600"
             fill="none"
@@ -50,16 +50,16 @@ export function DocumentEditor({ documentId }: DocumentEditorProps) {
   return (
     <div className="flex-1 flex flex-col h-full">
       {/* Document Header */}
-      <div className="border-b h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
+      <div className="border-b h-auto min-h-[60px] md:h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 md:px-6 py-3 md:py-4">
+        <div className="flex items-start md:items-center justify-between flex-col md:flex-row gap-2 md:gap-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+              <h1 className="text-lg md:text-xl font-semibold text-gray-900 dark:text-white truncate">
                 {document.name}
               </h1>
               {Boolean(document.encryptedKey) && (
                 <svg
-                  className="w-5 h-5 text-gray-500 dark:text-gray-400"
+                  className="w-4 h-4 md:w-5 md:h-5 text-gray-500 dark:text-gray-400 flex-shrink-0"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -73,20 +73,24 @@ export function DocumentEditor({ documentId }: DocumentEditorProps) {
                 </svg>
               )}
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400 mt-1">
               Created {new Date(document.createdAt).toLocaleDateString()} • Last
               updated {new Date(document.updatedAt).toLocaleDateString()}
             </p>
           </div>
-          <div className="flex items-center space-x-2"></div>
+          <div className="flex items-center space-x-2 flex-shrink-0"></div>
         </div>
       </div>
 
       {/* Editor Area */}
       <div className="flex-1 overflow-y-auto">
-        <div className="h-full max-w-5xl mx-auto w-full px-8 py-4">
+        <div className="h-full max-w-5xl mx-auto w-full px-4 md:px-6 lg:px-8 py-4 md:py-6">
           {provider && (
-            <Suspense fallback={<div>Loading...</div>}>
+            <Suspense fallback={
+              <div className="flex items-center justify-center h-32">
+                <div className="text-gray-500 dark:text-gray-400">Loading editor...</div>
+              </div>
+            }>
               <Editor provider={provider} key={provider.doc.clientID} />
             </Suspense>
           )}
