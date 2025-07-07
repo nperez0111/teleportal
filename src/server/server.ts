@@ -51,7 +51,7 @@ export type ServerOptions<Context extends ServerContext> = {
    * @note This is called on every message sent, so it should be fast.
    * @returns True if the client has permission, false otherwise.
    */
-  checkPermission: (ctx: {
+  checkPermission?: (ctx: {
     /**
      * The context of the client.
      */
@@ -127,7 +127,8 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
 
     this.messageHandler = new MessageHandler({
       logger: this.logger,
-      checkPermission: this.options.checkPermission,
+      checkPermission:
+        this.options.checkPermission ?? (() => Promise.resolve(true)),
     });
 
     this.clientManager = new ClientManager({ logger: this.logger });
