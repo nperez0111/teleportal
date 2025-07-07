@@ -1,8 +1,8 @@
-import type { Message, ServerContext, Update } from "teleportal";
+import type { Message, ServerContext, Update, YTransport } from "teleportal";
 import type { Logger } from "./logger";
 import type { Client } from "./client";
 import type { DocumentStorage } from "teleportal/storage";
-import type { ServerSyncTransport } from "./sync-transport";
+import type { ServerSyncTransportFactory } from "./server-sync";
 import { ObservableV2 } from "lib0/observable";
 
 /**
@@ -22,30 +22,31 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   public logger: Logger;
   public readonly clients = new Set<Client<Context>>();
   private readonly storage: DocumentStorage;
-  private readonly syncTransport?: ServerSyncTransport<Context>;
+  private readonly syncTransportFactory?: ServerSyncTransportFactory<Context>;
+  private syncTransport?: YTransport<Context, any>;
 
   constructor({
     name,
     id,
     logger,
     storage,
-    syncTransport,
+    syncTransportFactory,
   }: {
     name: string;
     id: string;
     logger: Logger;
     storage: DocumentStorage;
-    syncTransport?: ServerSyncTransport<Context>;
+    syncTransportFactory?: ServerSyncTransportFactory<Context>;
   }) {
     super();
     this.name = name;
     this.id = id;
     this.logger = logger.withContext({ name: "document", documentId: id });
     this.storage = storage;
-    this.syncTransport = syncTransport;
+    this.syncTransportFactory = syncTransportFactory;
     
-    // Set up server synchronization if transport is provided
-    if (this.syncTransport) {
+    // Set up server synchronization if transport factory is provided
+    if (this.syncTransportFactory) {
       this.initializeServerSync();
     }
   }
@@ -75,12 +76,25 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
    * Initialize server synchronization
    */
   private async initializeServerSync() {
-    if (!this.syncTransport) {
+    if (!this.syncTransportFactory) {
       return;
     }
     
     try {
-      await this.syncTransport.subscribe(this.id, this.handleServerSyncMessage.bind(this));
+      // Create a transport for this document
+      this.syncTransport = await this.syncTransportFactory.createTransport(this.id);
+      
+      // Set up the readable stream to handle incoming messages
+      this.syncTransport.readable
+        .pipeTo(new WritableStream({
+          write: (message) => {
+            this.handleServerSyncMessage(message);
+          }
+        }))
+        .catch((error: any) => {
+          this.logger.withError(error).error("server sync readable stream error");
+        });
+      
       this.logger.trace("server sync initialized");
     } catch (error) {
       this.logger.withError(error).error("failed to initialize server sync");
@@ -142,7 +156,12 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
     if (this.syncTransport) {
       try {
         logger.trace("broadcasting message to other servers");
-        await this.syncTransport.publish(this.id, message);
+        const writer = this.syncTransport.writable.getWriter();
+        try {
+          await writer.write(message);
+        } finally {
+          writer.releaseLock();
+        }
       } catch (error) {
         logger.withError(error).error("failed to broadcast message to other servers");
       }
@@ -245,10 +264,16 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
     // Clean up server sync transport
     if (this.syncTransport) {
       try {
-        await this.syncTransport.unsubscribe(this.id);
-        this.logger.trace("server sync unsubscribed");
+        // Close the transport streams
+        const writer = this.syncTransport.writable.getWriter();
+        try {
+          await writer.close();
+        } finally {
+          writer.releaseLock();
+        }
+        this.logger.trace("server sync transport closed");
       } catch (error) {
-        this.logger.withError(error).error("failed to unsubscribe from server sync");
+        this.logger.withError(error).error("failed to close server sync transport");
       }
     }
     

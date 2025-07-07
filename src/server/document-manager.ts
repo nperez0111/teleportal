@@ -2,7 +2,7 @@ import type { Message, ServerContext } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
-import type { ServerSyncTransport } from "./sync-transport";
+import type { ServerSyncTransportFactory } from "./server-sync";
 import { ObservableV2 } from "lib0/observable";
 
 export type DocumentManagerOptions<Context extends ServerContext> = {
@@ -12,7 +12,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     documentId: string;
     context: Context;
   }) => Promise<DocumentStorage>;
-  syncTransport?: ServerSyncTransport<Context>;
+  syncTransportFactory?: ServerSyncTransportFactory<Context>;
 };
 
 /**
@@ -74,7 +74,7 @@ export class DocumentManager<
       id: documentId,
       logger: this.logger,
       storage: storage,
-      syncTransport: this.options.syncTransport,
+      syncTransportFactory: this.options.syncTransportFactory,
     });
 
     doc.on("destroy", (document) => {
@@ -142,13 +142,13 @@ export class DocumentManager<
     );
     this.documents.clear();
     
-    // Clean up sync transport
-    if (this.options.syncTransport) {
+    // Clean up sync transport factory
+    if (this.options.syncTransportFactory) {
       try {
-        await this.options.syncTransport.close();
-        this.logger.trace("server sync transport closed");
+        await this.options.syncTransportFactory.close();
+        this.logger.trace("server sync transport factory closed");
       } catch (error) {
-        this.logger.withError(error).error("failed to close server sync transport");
+        this.logger.withError(error).error("failed to close server sync transport factory");
       }
     }
     

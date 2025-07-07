@@ -10,10 +10,8 @@ import {
 } from "teleportal";
 
 /**
- * TODO: what I'm unsure of here is how this connects to the document server
- * The thing about the document server is that it wasn't really built transport-first,
- * it sort of just has a bunch of events which it emits (which was done for simplicity)
- * so, it will likely require a re-architecture to get this to be a background sync option
+ * Redis pub/sub transport for Y.js document synchronization.
+ * This transport can be used for both client-server and server-server synchronization.
  */
 
 export function getRedisSource<Context extends Record<string, unknown>>({
