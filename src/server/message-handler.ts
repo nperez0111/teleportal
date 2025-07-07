@@ -108,9 +108,9 @@ export class MessageHandler<Context extends ServerContext> {
   ): Promise<void> {
     logger.trace("sending sync-done message to client");
 
-    const clientInDocument = Array.from(document.clients.values()).find(
-      (c) => c.id === message.context.clientId,
-    );
+    const clientInDocument = document.clients
+      .values()
+      .find((c) => c.id === message.context.clientId);
     if (!clientInDocument) {
       throw new Error(`Client not found`, {
         cause: { clientId: message.context.clientId },
@@ -130,6 +130,7 @@ export class MessageHandler<Context extends ServerContext> {
       );
       logger.trace("sync-done message sent successfully");
     } catch (err) {
+      console.log(err);
       logger.withError(err).error("failed to send sync-done message");
     }
   }
@@ -183,15 +184,13 @@ export class MessageHandler<Context extends ServerContext> {
               return;
             case "update":
               await document.broadcast(message);
-            // purposefully fall through to sync-step-2 handling
-            case "sync-step-2":
-              logger.trace("writing to store");
               await document.write(message.payload.update);
-              
-              // Send sync-done message after sync-step-2 is processed
-              if (message.payload.type === "sync-step-2") {
-                await this.sendSyncDone(message, document, client, logger);
-              }
+              return;
+            case "sync-step-2":
+              console.log("sync-step-2");
+              await document.broadcast(message);
+              await document.write(message.payload.update);
+              await this.sendSyncDone(message, document, client, logger);
               return;
             case "sync-done":
               logger.trace("received sync-done message from client");
@@ -266,6 +265,9 @@ export class MessageHandler<Context extends ServerContext> {
             document.encrypted,
           ),
         );
+      } else {
+        // since we're encrypted, we can't send a sync-step-1, so we send a sync-done
+        await this.sendSyncDone(message, document, client, logger);
       }
     } catch (err) {
       logger.withError(err).error("failed to send sync-step-2");

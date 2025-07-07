@@ -133,7 +133,15 @@ export function encodeMessage(update: Message): BinaryMessage {
  * Serialize a doc step, this is compatible with the y-protocols implementation.
  */
 export function encodeDocStep<
-  T extends 0 | 1 | 2 | 3 | "sync-step-1" | "sync-step-2" | "sync-done" | "update",
+  T extends
+    | 0
+    | 1
+    | 2
+    | 3
+    | "sync-step-1"
+    | "sync-step-2"
+    | "sync-done"
+    | "update",
   S extends DocStep = T extends 0 | "sync-step-1"
     ? SyncStep1
     : T extends 1 | "sync-step-2"
@@ -143,7 +151,14 @@ export function encodeDocStep<
         : T extends 3 | "sync-done"
           ? SyncDone
           : never,
->(messageType: T, payload?: S extends SyncStep1 ? StateVector : S extends SyncDone ? undefined : Update): S {
+>(
+  messageType: T,
+  payload: S extends SyncStep1
+    ? StateVector
+    : S extends SyncDone
+      ? undefined
+      : Update,
+): S {
   try {
     const encoder = encoding.createEncoder();
     let messageTypeNumber: 0 | 1 | 2 | 3;

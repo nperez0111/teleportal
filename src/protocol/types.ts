@@ -62,7 +62,7 @@ export type DecodedSyncStep2 = {
 };
 
 /**
- * A Y.js sync done message that indicates both sync step 1 and sync step 2 have been completed on the client.
+ * A Y.js sync done message that indicates both sync step 1 and sync step 2 have been exchanged
  */
 export type SyncDone = Tag<Uint8Array, "sync-done">;
 
@@ -103,7 +103,12 @@ export type DecodedAuthMessage = {
 /**
  * Any Y.js update which concerns a document.
  */
-export type DocStep = SyncStep1 | SyncStep2 | SyncDone | UpdateStep | AuthMessage;
+export type DocStep =
+  | SyncStep1
+  | SyncStep2
+  | SyncDone
+  | UpdateStep
+  | AuthMessage;
 
 /**
  * Any Y.js update which contains awareness updates.
