@@ -21,10 +21,10 @@ The Redis sync transport enables cross-instance server synchronization by:
 ### With Redis Synchronization
 
 ```typescript
-import { Server, createRedisServerSyncTransportFactoryFromConnectionString } from 'teleportal/server';
+import { Server, createRedisServerSyncTransportFromConnectionString } from 'teleportal/server';
 
-// Create Redis sync transport factory
-const redisSyncTransportFactory = await createRedisServerSyncTransportFactoryFromConnectionString(
+// Create Redis sync transport
+const redisSyncTransport = await createRedisServerSyncTransportFromConnectionString(
   'redis://localhost:6379',
   context, // Your server context
   logger,  // Your logger instance
@@ -43,7 +43,7 @@ const server = new Server({
     // Your permission logic
     return true;
   },
-  syncTransportFactory: redisSyncTransportFactory, // Enable cross-instance sync
+  syncTransport: redisSyncTransport, // Enable cross-instance sync
 });
 ```
 
@@ -62,7 +62,7 @@ const server = new Server({
     // Your permission logic
     return true;
   },
-  // No syncTransportFactory provided - single instance mode
+  // No syncTransport provided - single instance mode
 });
 ```
 
@@ -71,9 +71,9 @@ const server = new Server({
 ### Custom Redis Options
 
 ```typescript
-import { createRedisServerSyncTransportFactory } from 'teleportal/server';
+import { createRedisServerSyncTransport } from 'teleportal/server';
 
-const redisSyncTransportFactory = await createRedisServerSyncTransportFactory({
+const redisSyncTransport = await createRedisServerSyncTransport({
   connection: {
     host: 'localhost',
     port: 6379,
@@ -90,18 +90,21 @@ const redisSyncTransportFactory = await createRedisServerSyncTransportFactory({
 
 ### Custom Sync Transport
 
-You can implement your own sync transport factory by implementing the `ServerSyncTransportFactory` interface:
+You can implement your own sync transport by implementing the `ServerSyncTransport` interface:
 
 ```typescript
-import { ServerSyncTransportFactory, YTransport } from 'teleportal/server';
+import { ServerSyncTransport } from 'teleportal/server';
 
-class YourCustomSyncTransportFactory implements ServerSyncTransportFactory<Context> {
-  async createTransport(documentId: string): Promise<YTransport<Context, any>> {
-    // Your implementation - create a YTransport for the document
-    return {
-      readable: new ReadableStream(),
-      writable: new WritableStream(),
-    };
+class YourCustomSyncTransport implements ServerSyncTransport<Context> {
+  readable = new ReadableStream();
+  writable = new WritableStream();
+  
+  async subscribe(documentId: string): Promise<void> {
+    // Your implementation - subscribe to updates for this document
+  }
+  
+  async unsubscribe(documentId: string): Promise<void> {
+    // Your implementation - unsubscribe from updates for this document
   }
   
   async close(): Promise<void> {
@@ -112,10 +115,11 @@ class YourCustomSyncTransportFactory implements ServerSyncTransportFactory<Conte
 
 ## How It Works
 
-1. **Document Updates**: When a document receives an update on one server instance, it broadcasts the update to local clients AND writes it to the Redis YTransport
-2. **Cross-Instance Sync**: Other server instances with YTransports for the same document receive the update via Redis pub/sub
+1. **Document Updates**: When a document receives an update on one server instance, it broadcasts the update to local clients AND writes it to the shared Redis transport
+2. **Cross-Instance Sync**: Other server instances subscribed to the same document receive the update via Redis pub/sub
 3. **Local Forwarding**: Each server instance forwards the received update to its local clients
 4. **Deduplication**: Updates are not re-broadcast to the originating client to avoid loops
+5. **Efficient Connections**: A single Redis connection pair (pub/sub) is shared across all documents
 
 ## Redis Channel Structure
 

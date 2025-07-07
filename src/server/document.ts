@@ -2,7 +2,7 @@ import type { Message, ServerContext, Update, YTransport } from "teleportal";
 import type { Logger } from "./logger";
 import type { Client } from "./client";
 import type { DocumentStorage } from "teleportal/storage";
-import type { ServerSyncTransportFactory } from "./server-sync";
+import type { ServerSyncTransport } from "./server-sync";
 import { ObservableV2 } from "lib0/observable";
 
 /**
@@ -22,31 +22,30 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   public logger: Logger;
   public readonly clients = new Set<Client<Context>>();
   private readonly storage: DocumentStorage;
-  private readonly syncTransportFactory?: ServerSyncTransportFactory<Context>;
-  private syncTransport?: YTransport<Context, any>;
+  private readonly syncTransport?: ServerSyncTransport<Context>;
 
   constructor({
     name,
     id,
     logger,
     storage,
-    syncTransportFactory,
+    syncTransport,
   }: {
     name: string;
     id: string;
     logger: Logger;
     storage: DocumentStorage;
-    syncTransportFactory?: ServerSyncTransportFactory<Context>;
+    syncTransport?: ServerSyncTransport<Context>;
   }) {
     super();
     this.name = name;
     this.id = id;
     this.logger = logger.withContext({ name: "document", documentId: id });
     this.storage = storage;
-    this.syncTransportFactory = syncTransportFactory;
+    this.syncTransport = syncTransport;
     
-    // Set up server synchronization if transport factory is provided
-    if (this.syncTransportFactory) {
+    // Set up server synchronization if transport is provided
+    if (this.syncTransport) {
       this.initializeServerSync();
     }
   }
@@ -76,13 +75,13 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
    * Initialize server synchronization
    */
   private async initializeServerSync() {
-    if (!this.syncTransportFactory) {
+    if (!this.syncTransport) {
       return;
     }
     
     try {
-      // Create a transport for this document
-      this.syncTransport = await this.syncTransportFactory.createTransport(this.id);
+      // Subscribe to this document's updates
+      await this.syncTransport.subscribe(this.id);
       
       // Set up the readable stream to handle incoming messages
       this.syncTransport.readable
@@ -264,16 +263,11 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
     // Clean up server sync transport
     if (this.syncTransport) {
       try {
-        // Close the transport streams
-        const writer = this.syncTransport.writable.getWriter();
-        try {
-          await writer.close();
-        } finally {
-          writer.releaseLock();
-        }
-        this.logger.trace("server sync transport closed");
+        // Unsubscribe from this document
+        await this.syncTransport.unsubscribe(this.id);
+        this.logger.trace("server sync unsubscribed");
       } catch (error) {
-        this.logger.withError(error).error("failed to close server sync transport");
+        this.logger.withError(error).error("failed to unsubscribe from server sync");
       }
     }
     

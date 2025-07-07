@@ -2,22 +2,22 @@
 
 ## Overview
 
-Successfully implemented Redis pub/sub transport for server synchronization by reusing the existing `src/transports/pubsub` transport and adapting it to work with the server architecture using YTransport interfaces.
+Successfully implemented Redis pub/sub transport for server synchronization by extending the existing `src/transports/pubsub` transport with multi-document support and using a single shared transport approach.
 
 ## Key Features Implemented
 
-### ✅ **Reused Existing Transport**
-- Leveraged the existing `src/transports/pubsub/index.ts` transport
-- Removed the TODO comment and improved documentation
+### ✅ **Enhanced Existing Transport**
+- Extended the existing `src/transports/pubsub/index.ts` transport
+- Added multi-document support with shared Redis connections
 - Added pubsub transport to the main transports exports
 
-### ✅ **YTransport-Based Architecture**
-- Used YTransport interface instead of custom ServerSyncTransport
-- Implemented `ServerSyncTransportFactory` for creating document-specific transports
-- Dynamic import of Redis dependencies to avoid bundling when not needed
+### ✅ **Single Shared Transport Architecture**
+- Uses a single YTransport that handles multiple documents
+- Eliminated the factory pattern for simpler API
+- Single Redis connection pair (pub/sub) shared across all documents
 
 ### ✅ **Server Integration**
-- Added `syncTransportFactory` option to `ServerOptions`
+- Added `syncTransport` option to `ServerOptions`
 - Integrated with `DocumentManager` and `Document` classes
 - Proper cleanup and error handling throughout
 
@@ -44,10 +44,10 @@ Successfully implemented Redis pub/sub transport for server synchronization by r
 
 ### Basic Usage
 ```typescript
-import { Server, createRedisServerSyncTransportFactoryFromConnectionString } from 'teleportal/server';
+import { Server, createRedisServerSyncTransportFromConnectionString } from 'teleportal/server';
 
-// Create Redis sync transport factory
-const redisSyncTransportFactory = await createRedisServerSyncTransportFactoryFromConnectionString(
+// Create Redis sync transport (single shared connection)
+const redisSyncTransport = await createRedisServerSyncTransportFromConnectionString(
   'redis://localhost:6379',
   context,
   logger,
@@ -58,13 +58,13 @@ const redisSyncTransportFactory = await createRedisServerSyncTransportFactoryFro
 const server = new Server({
   getStorage: async (ctx) => { /* your storage */ },
   checkPermission: async (ctx) => { /* your permission logic */ },
-  syncTransportFactory: redisSyncTransportFactory, // Enable cross-instance sync
+  syncTransport: redisSyncTransport, // Enable cross-instance sync
 });
 ```
 
 ### Advanced Configuration
 ```typescript
-const redisSyncTransportFactory = await createRedisServerSyncTransportFactory({
+const redisSyncTransport = await createRedisServerSyncTransport({
   connection: {
     host: 'localhost',
     port: 6379,
@@ -81,17 +81,19 @@ const redisSyncTransportFactory = await createRedisServerSyncTransportFactory({
 
 ## How It Works
 
-1. **Document Updates**: When a document receives an update, it broadcasts to local clients AND writes to Redis YTransport
-2. **Cross-Instance Sync**: Other server instances with YTransports for the same document receive updates via Redis pub/sub
+1. **Document Updates**: When a document receives an update, it broadcasts to local clients AND writes to the shared Redis transport
+2. **Cross-Instance Sync**: Other server instances subscribed to the same document receive updates via Redis pub/sub
 3. **Local Forwarding**: Each server forwards received updates to its local clients
 4. **Deduplication**: Updates are not re-broadcast to the originating client
+5. **Efficient Connections**: Single Redis connection pair shared across all documents
 
 ## Architecture Benefits
 
 - **Abstracted**: Uses existing YTransport interface for consistency
 - **Extensible**: Easy to add other sync mechanisms (message queues, database triggers, etc.)
 - **Fault-tolerant**: Graceful fallbacks and error handling
-- **Performance**: Separate Redis connections for pub/sub optimization
+- **Efficient**: Single Redis connection pair shared across all documents (no connection explosion)
+- **Simple API**: Direct transport instead of factory pattern
 - **Memory efficient**: No additional in-memory storage required
 
 ## Error Handling
