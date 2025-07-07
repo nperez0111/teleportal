@@ -10,6 +10,9 @@ import {
 import type { Client } from "./client";
 import { Document } from "./document";
 import type { Logger } from "./logger";
+import type { BlobStorageManager } from "./blob-storage";
+import { BlobMessage } from "../protocol/message-types";
+import { segmentFileForUpload } from "../protocol/utils";
 
 /**
  * The MessageHandler class is responsible for handling messages from clients.
@@ -26,6 +29,7 @@ export type MessageHandlerOptions<Context extends ServerContext> = {
     message: Message<Context>;
     type: "read" | "write";
   }) => Promise<boolean>;
+  blobStorageManager?: BlobStorageManager;
 };
 
 export class MessageHandler<Context extends ServerContext> {
@@ -156,6 +160,9 @@ export class MessageHandler<Context extends ServerContext> {
             default:
               throw new Error("unknown message type");
           }
+        case "blob":
+          await this.handleBlobMessage(message, document, client, logger);
+          return;
         default:
           // Broadcast the message to all clients
           await document.broadcast(message);
@@ -165,6 +172,111 @@ export class MessageHandler<Context extends ServerContext> {
     } catch (e) {
       logger.withError(e).error("Failed to handle message");
       throw e;
+    }
+  }
+
+  /**
+   * Handle blob messages (blob-part and request-blob)
+   */
+  private async handleBlobMessage(
+    message: Message<Context>,
+    document: Document<Context>,
+    client: Client<Context>,
+    logger: Logger,
+  ): Promise<void> {
+    if (!this.options.blobStorageManager) {
+      logger.warn("blob storage manager not configured, ignoring blob message");
+      return;
+    }
+
+    if (message.type !== "blob") {
+      throw new Error("Expected blob message");
+    }
+
+    switch (message.payload.type) {
+      case "blob-part":
+        await this.handleBlobPart(message, document, client, logger);
+        break;
+      case "request-blob":
+        await this.handleRequestBlob(message, document, client, logger);
+        break;
+      default:
+        throw new Error("unknown blob payload type");
+    }
+  }
+
+  /**
+   * Handle blob-part messages
+   */
+  private async handleBlobPart(
+    message: Message<Context>,
+    document: Document<Context>,
+    client: Client<Context>,
+    logger: Logger,
+  ): Promise<void> {
+    if (message.type !== "blob" || message.payload.type !== "blob-part") {
+      throw new Error("Expected blob-part message");
+    }
+
+    logger.trace("handling blob part");
+
+    // Store the blob part
+    await this.options.blobStorageManager!.handleBlobPart(message.payload);
+
+    // Broadcast the blob part to other clients
+    await document.broadcast(message);
+  }
+
+  /**
+   * Handle request-blob messages
+   */
+  private async handleRequestBlob(
+    message: Message<Context>,
+    document: Document<Context>,
+    client: Client<Context>,
+    logger: Logger,
+  ): Promise<void> {
+    if (message.type !== "blob" || message.payload.type !== "request-blob") {
+      throw new Error("Expected request-blob message");
+    }
+
+    logger.trace("handling request blob");
+
+    // Get the blob data
+    const result = await this.options.blobStorageManager!.handleRequestBlob(
+      message.payload,
+    );
+
+    if (result.data && result.metadata) {
+      // Send the blob parts back to the requesting client
+      const segments = segmentFileForUpload(
+        result.data,
+        result.metadata.name,
+        result.metadata.contentType,
+        document.name,
+      );
+
+      for (const segment of segments) {
+        // Create a properly typed blob message
+        const blobMessage = new BlobMessage(
+          document.name,
+          segment.payload,
+          message.context,
+          message.encrypted,
+        );
+        await client.send(blobMessage);
+      }
+
+      logger
+        .withMetadata({
+          contentId: message.payload.contentId,
+          segments: segments.length,
+        })
+        .trace("sent blob parts to client");
+    } else {
+      logger
+        .withMetadata({ contentId: message.payload.contentId })
+        .trace("blob not found");
     }
   }
 

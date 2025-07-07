@@ -13,6 +13,7 @@ import { Document } from "./document";
 import { DocumentManager } from "./document-manager";
 import { logger as defaultLogger, Logger } from "./logger";
 import { MessageHandler } from "./message-handler";
+import { BlobStorageManager, InMemoryBlobStorage } from "./blob-storage";
 
 import type { DocumentStorage } from "teleportal/storage";
 
@@ -65,6 +66,35 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     type: "read" | "write";
   }) => Promise<boolean>;
+
+  /**
+   * Callback called when a complete blob is assembled.
+   * This is where you would store the file in your permanent storage.
+   */
+  onCompleteBlob?: (
+    contentId: string,
+    data: Uint8Array,
+    metadata: {
+      name: string;
+      contentType: string;
+    },
+  ) => Promise<void>;
+
+  /**
+   * Blob storage options
+   */
+  blobStorage?: {
+    /**
+     * Maximum time to keep incomplete blobs (in milliseconds)
+     * Default: 1 hour
+     */
+    maxIncompleteBlobAge?: number;
+    /**
+     * Maximum number of incomplete blobs to store
+     * Default: 1000
+     */
+    maxIncompleteBlobs?: number;
+  };
 };
 
 /**
@@ -83,12 +113,26 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
   private documentManager: DocumentManager<Context>;
   private clientManager: ClientManager<Context>;
   private messageHandler: MessageHandler<Context>;
+  private blobStorageManager: BlobStorageManager;
 
   constructor(options: ServerOptions<Context>) {
     super();
     this.options = options;
     this.logger = (options.logger ?? defaultLogger).withContext({
       name: "server",
+    });
+
+    // Initialize blob storage
+    const blobStorage = new InMemoryBlobStorage({
+      logger: this.logger,
+      maxIncompleteBlobAge: options.blobStorage?.maxIncompleteBlobAge,
+      maxIncompleteBlobs: options.blobStorage?.maxIncompleteBlobs,
+    });
+
+    this.blobStorageManager = new BlobStorageManager({
+      storage: blobStorage,
+      logger: this.logger,
+      onCompleteBlob: options.onCompleteBlob,
     });
 
     // Initialize managers
@@ -112,6 +156,7 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
     this.messageHandler = new MessageHandler({
       logger: this.logger,
       checkPermission: this.options.checkPermission,
+      blobStorageManager: this.blobStorageManager,
     });
 
     this.clientManager = new ClientManager({ logger: this.logger });
