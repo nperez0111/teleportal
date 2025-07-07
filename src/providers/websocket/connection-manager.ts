@@ -102,7 +102,7 @@ export class WebsocketConnection extends ObservableV2<{
   #wsLastMessageReceived = 0;
   #shouldConnect = true;
   #disconnected = false;
-  #isOnline: boolean;
+  #isOnline: boolean = true;
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #checkInterval: ReturnType<typeof setInterval> | null = null;
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -247,7 +247,10 @@ export class WebsocketConnection extends ObservableV2<{
 
     if (typeof window !== "undefined") {
       this.#eventTarget = eventTarget ?? window;
-      this.#isOnline = isOnline ?? navigator.onLine ?? true;
+      this.#isOnline =
+        (isOnline ?? WebsocketConnection.location?.hostname !== "localhost")
+          ? (navigator.onLine ?? true)
+          : true;
     } else {
       this.#eventTarget = eventTarget ?? new EventTarget();
       this.#isOnline = isOnline ?? true;
