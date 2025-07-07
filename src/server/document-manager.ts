@@ -1,8 +1,9 @@
+import { ObservableV2 } from "lib0/observable";
 import type { Message, ServerContext } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
-import { ObservableV2 } from "lib0/observable";
+import type { ServerSyncTransport } from "./server-sync";
 
 export type DocumentManagerOptions<Context extends ServerContext> = {
   logger: Logger;
@@ -10,7 +11,9 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     document: string;
     documentId: string;
     context: Context;
+    encrypted: boolean;
   }) => Promise<DocumentStorage>;
+  syncTransport: ServerSyncTransport<Context>;
 };
 
 /**
@@ -27,11 +30,37 @@ export class DocumentManager<
   private documents = new Map<string, Document<Context>>();
   private logger: Logger;
   private options: DocumentManagerOptions<Context>;
+  private syncTransportWriter: WritableStreamDefaultWriter<Message<Context>>;
+  private syncTransportSink = new WritableStream<Message<Context>>({
+    write: async (message) => {
+      const documentId = Document.getDocumentId(message);
+      console.log("got message ", documentId);
+      const document = this.getDocument(documentId);
+      if (document) {
+        console.log("have doc");
+        // If we have the document, broadcast the message on all clients of the document
+
+        await document.broadcast(message);
+        if (
+          message.type === "doc" &&
+          (message.payload.type === "update" ||
+            message.payload.type === "sync-step-2")
+        ) {
+          // TODO should we just use the message handler here?
+          await document.write(message.payload.update);
+        }
+      } else {
+        console.log("don't have that doc");
+      }
+    },
+  });
 
   constructor(options: DocumentManagerOptions<Context>) {
     super();
     this.options = options;
     this.logger = options.logger.withContext({ name: "document-manager" });
+    this.syncTransportWriter = this.options.syncTransport.writable.getWriter();
+    this.options.syncTransport.readable.pipeTo(this.syncTransportSink);
   }
 
   /**
@@ -59,6 +88,7 @@ export class DocumentManager<
       document,
       documentId,
       context,
+      encrypted,
     });
 
     if (!storage) {
@@ -67,7 +97,7 @@ export class DocumentManager<
       });
     }
 
-    const doc = new Document({
+    const doc = new Document<Context>({
       name: document,
       id: documentId,
       logger: this.logger,
@@ -78,10 +108,17 @@ export class DocumentManager<
       this.removeDocument(document.id);
     });
 
+    // Subscribe to this document's updates
+    await this.options.syncTransport.subscribe?.(documentId);
+
     this.documents.set(documentId, doc);
     this.logger.withMetadata({ documentId }).trace("document created");
 
     this.emit("document-created", [doc]);
+
+    doc.on("broadcast", (message) => {
+      this.syncTransportWriter.write(message);
+    });
 
     return doc;
   }
@@ -138,6 +175,12 @@ export class DocumentManager<
       ),
     );
     this.documents.clear();
+
+    await this.syncTransportSink.abort();
+    await this.syncTransportWriter.releaseLock();
+    await this.options.syncTransport.close?.();
+    this.logger.trace("server sync transport closed");
+
     this.logger.trace("document manager destroyed");
     super.destroy();
   }

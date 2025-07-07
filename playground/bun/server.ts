@@ -16,8 +16,8 @@ import {
 } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
-import homepage from "../src/index.html";
 import { logger } from "../src/backend/logger";
+import homepage from "../src/index.html";
 
 const db = createDatabase(
   bunSqlite({
@@ -42,6 +42,7 @@ const tokenManager = createTokenManager({
 
 const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
+    // return ctx.encrypted ? new EncryptedMemoryStorage() : new YDocStorage();
     // In production, use the memory storage, I don't want your files
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
@@ -55,6 +56,11 @@ const server = new Server<TokenPayload & { clientId: string }>({
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
   logger: logger,
+  // syncTransport: getRedisTransport({
+  //   redisOptions: {
+  //     path: "redis://127.0.0.1:6379",
+  //   },
+  // }),
 });
 
 const ws = crossws(

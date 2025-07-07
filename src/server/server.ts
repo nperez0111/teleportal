@@ -15,6 +15,10 @@ import { logger as defaultLogger, Logger } from "./logger";
 import { MessageHandler } from "./message-handler";
 
 import type { DocumentStorage } from "teleportal/storage";
+import {
+  ServerSyncTransport,
+  createNoopServerSyncTransport,
+} from "./server-sync";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -32,6 +36,10 @@ export type ServerOptions<Context extends ServerContext> = {
      * The context of the server.
      */
     context: Context;
+    /**
+     * Whether the document is encrypted
+     */
+    encrypted: boolean;
     /**
      * The server instance.
      */
@@ -65,6 +73,12 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     type: "read" | "write";
   }) => Promise<boolean>;
+
+  /**
+   * Optional server synchronization transport for cross-instance communication.
+   * If provided, the server will use this to synchronize updates across multiple server instances.
+   */
+  syncTransport?: ServerSyncTransport<Context>;
 };
 
 /**
@@ -100,6 +114,8 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
           server: this,
         });
       },
+      syncTransport:
+        this.options.syncTransport ?? createNoopServerSyncTransport(),
     });
 
     this.documentManager.on("document-created", (document) =>

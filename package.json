@@ -45,6 +45,10 @@
       "types": "./dist/providers/index.d.mts",
       "default": "./dist/providers/index.mjs"
     },
+    "./transports/redis": {
+      "types": "./dist/transports/redis/index.d.mts",
+      "default": "./dist/transports/redis/index.mjs"
+    },
     "./transports": {
       "types": "./dist/transports/index.d.mts",
       "default": "./dist/transports/index.mjs"

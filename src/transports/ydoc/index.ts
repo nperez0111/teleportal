@@ -288,12 +288,10 @@ export function getYTransportFromYDoc({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  asClient = true,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  asClient?: boolean;
 }): YTransport<
   ClientContext,
   {

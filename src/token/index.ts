@@ -29,7 +29,7 @@ export type TokenPayload = {
   /**
    * Document access patterns and permissions
    */
-  documentAccess: DocumentAccess[];
+  documentAccess?: DocumentAccess[];
   /**
    * Token expiration time (Unix timestamp)
    */
@@ -182,6 +182,10 @@ export class TokenManager {
     let inclusionMatched = false;
     let exclusionMatched = false;
 
+    if (!payload.documentAccess) {
+      return true;
+    }
+
     for (const access of payload.documentAccess) {
       if (access.pattern.startsWith("!")) {
         // This is an exclusion pattern - check if the document matches the pattern after the !
@@ -217,6 +221,9 @@ export class TokenManager {
     payload: TokenPayload,
     documentName: string,
   ): Permission[] {
+    if (!payload.documentAccess) {
+      return [];
+    }
     const matchingAccess = payload.documentAccess.find((access) =>
       this.matchesPattern(access.pattern, documentName),
     );

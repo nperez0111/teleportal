@@ -42,7 +42,6 @@ function getEncryptedYDocTransport({
     ydoc,
     document,
     awareness,
-    asClient: true,
   });
   const encryptedTransport = withEncryption(transport, { key, document });
 
@@ -112,7 +111,6 @@ describe("encrypted-transport", () => {
         ydoc: doc,
         document: "test-doc",
         awareness,
-        asClient: false,
       });
 
       const encryptedTransport = withEncryption(transport, {
@@ -131,7 +129,6 @@ describe("encrypted-transport", () => {
       const transport = getYTransportFromYDoc({
         ydoc: doc,
         document: "test",
-        asClient: false,
       });
 
       const encryptedTransport = withEncryption(transport, {
@@ -207,7 +204,6 @@ describe("encrypted-transport", () => {
       const transport = getYTransportFromYDoc({
         ydoc: doc,
         document: "test",
-        asClient: false,
       });
 
       const encryptedTransport = withEncryption(transport, {
@@ -228,7 +224,6 @@ describe("encrypted-transport", () => {
         ydoc: doc,
         awareness,
         document: "test",
-        asClient: false,
       });
 
       const encryptedTransport = withEncryption(transport, {

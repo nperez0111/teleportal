@@ -1,5 +1,5 @@
 import { ObservableV2 } from "lib0/observable";
-import { uuidv4 } from "lib0/random.js";
+import { uuidv4 } from "lib0/random";
 import {
   createEncryptionKey,
   exportEncryptionKey,

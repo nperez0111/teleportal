@@ -187,7 +187,6 @@ export class MessageHandler<Context extends ServerContext> {
               await document.write(message.payload.update);
               return;
             case "sync-step-2":
-              console.log("sync-step-2");
               await document.broadcast(message);
               await document.write(message.payload.update);
               await this.sendSyncDone(message, document, client, logger);

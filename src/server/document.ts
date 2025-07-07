@@ -1,8 +1,9 @@
-import type { Message, ServerContext, Update } from "teleportal";
-import type { Logger } from "./logger";
-import type { Client } from "./client";
-import type { DocumentStorage } from "teleportal/storage";
 import { ObservableV2 } from "lib0/observable";
+import type { Message, ServerContext, Update } from "teleportal";
+import type { DocumentStorage } from "teleportal/storage";
+
+import type { Client } from "./client";
+import type { Logger } from "./logger";
 
 /**
  * The Document class represents a document in the server.
@@ -15,6 +16,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   destroy: (document: Document<Context>) => void;
   "client-connected": (client: Client<Context>) => void;
   "client-disconnected": (client: Client<Context>) => void;
+  broadcast: (message: Message<Context>) => void;
 }> {
   public readonly id: string;
   public readonly name: string;
@@ -62,7 +64,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   }
 
   /**
-   * Broadcast a message to all clients of the current document.
+   * Broadcast a message to all clients of the current document and other server instances.
    */
   public async broadcast(message: Message<Context>) {
     if (Document.getDocumentId(message) !== this.id) {
@@ -88,6 +90,8 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
         await client.send(message);
       }
     }
+
+    this.emit("broadcast", [message]);
   }
 
   /**
@@ -182,6 +186,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
 
     this.emit("destroy", [this]);
     this.logger.trace("destroying document");
+
     await this.storage.unload(this.id);
     this.clients.forEach((client) => client.unsubscribeFromDocument(this));
     this.clients.clear();
