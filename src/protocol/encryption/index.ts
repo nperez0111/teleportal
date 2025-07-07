@@ -63,6 +63,7 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
           true,
         );
       }
+      case "sync-done":
       case "auth-message": {
         // Auth messages are passed through
         return new DocMessage(
@@ -144,6 +145,7 @@ export async function decryptMessage<Context extends Record<string, unknown>>(
           false,
         );
       }
+      case "sync-done":
       case "auth-message": {
         // Auth messages are passed through
         return new DocMessage(

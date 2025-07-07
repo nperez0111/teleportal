@@ -1,20 +1,14 @@
 import {
   compose,
-  DocMessage,
-  Message,
   sync,
-  Update,
   type YSink,
   type YSource,
   type YTransport,
 } from "teleportal";
 import {
-  createEncryptionTransform,
   createDecryptionTransform,
-  type EncryptedMessage,
-} from "../../protocol/encryption";
-
-export type { EncryptedMessage };
+  createEncryptionTransform,
+} from "teleportal/protocol/encryption";
 
 /**
  * Reads encrypted messages and decodes them into regular messages.
@@ -38,7 +32,6 @@ export function getMessageEncryptor<
 
 /**
  * Wraps a transport in encryption, encrypting all document messages that are sent through the transport.
- * This now uses the protocol-level encryption as a first-class feature.
  */
 export function withEncryption<
   Context extends Record<string, unknown>,
@@ -47,7 +40,10 @@ export function withEncryption<
   transport: YTransport<Context, AdditionalProperties>,
   options: { key: CryptoKey; document: string },
 ): YTransport<Context, AdditionalProperties & { key: CryptoKey }> {
-  const reader = createDecryptionTransform<Context>(options.key, options.document);
+  const reader = createDecryptionTransform<Context>(
+    options.key,
+    options.document,
+  );
   const writer = createEncryptionTransform<Context>(options.key);
 
   const decryptedSource: YSource<Context, any> = {

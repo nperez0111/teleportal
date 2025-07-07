@@ -15,10 +15,12 @@ import type {
   DecodedAwarenessUpdateMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
+  DecodedSyncDone,
   DecodedUpdateStep,
   DocStep,
   SyncStep1,
   SyncStep2,
+  SyncDone,
   UpdateStep,
 } from "./types";
 
@@ -86,11 +88,13 @@ function decodeDocStepWithDecoder<
     ? DecodedSyncStep1
     : D extends SyncStep2
       ? DecodedSyncStep2
-      : D extends UpdateStep
-        ? DecodedUpdateStep
-        : D extends AuthMessage
-          ? DecodedAuthMessage
-          : never,
+      : D extends SyncDone
+        ? DecodedSyncDone
+        : D extends UpdateStep
+          ? DecodedUpdateStep
+          : D extends AuthMessage
+            ? DecodedAuthMessage
+            : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -114,6 +118,11 @@ function decodeDocStepWithDecoder<
         } as E;
       }
       case 0x03: {
+        return {
+          type: "sync-done",
+        } as E;
+      }
+      case 0x04: {
         return {
           type: "auth-message",
           permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
@@ -177,11 +186,13 @@ export function decodeDocStep<
     ? DecodedSyncStep1
     : D extends SyncStep2
       ? DecodedSyncStep2
-      : D extends UpdateStep
-        ? DecodedUpdateStep
-        : D extends AuthMessage
-          ? DecodedAuthMessage
-          : never,
+      : D extends SyncDone
+        ? DecodedSyncDone
+        : D extends UpdateStep
+          ? DecodedUpdateStep
+          : D extends AuthMessage
+            ? DecodedAuthMessage
+            : never,
 >(update: D): E {
   const decoder = decoding.createDecoder(update);
   return decodeDocStepWithDecoder(decoder);
