@@ -81,7 +81,10 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
   /**
    * Broadcast a message to all clients of the current document and other server instances.
    */
-  public async broadcast(message: Message<Context>) {
+  public async broadcast(
+    message: Message<Context>,
+    excludeClientId = message.context.clientId,
+  ) {
     if (Document.getDocumentId(message) !== this.id) {
       throw new Error("Received message for wrong document", {
         cause: {
@@ -98,7 +101,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
     logger.trace("broadcasting message to all clients");
 
     for (const client of this.clients) {
-      if (client.id !== message.context.clientId) {
+      if (client.id !== excludeClientId) {
         logger
           .withMetadata({ clientId: client.id })
           .trace("writing message to client");
@@ -221,8 +224,6 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
         );
       }
 
-      console.log(message.encrypted, this.id);
-
       const strategy = message.encrypted
         ? new EncryptedMessageStrategy<Context>()
         : new ClearTextMessageStrategy<Context>();
@@ -282,11 +283,13 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
               }
               return;
             case "update":
-              await this.broadcast(message);
+              logger.trace("broadcasting update");
+              await this.broadcast(message, client?.id);
               await this.write(message.payload.update);
               return;
             case "sync-step-2":
-              await this.broadcast(message);
+              logger.trace("broadcasting sync-step-2");
+              await this.broadcast(message, client?.id);
               await this.write(message.payload.update);
               if (!client) {
                 throw new Error(`Client not found`, {
@@ -314,7 +317,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
           }
         default:
           // Broadcast the message to all clients
-          await this.broadcast(message);
+          await this.broadcast(message, client?.id);
       }
 
       logger.trace("message processed successfully");

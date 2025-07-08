@@ -39,15 +39,7 @@ export class DocumentManager<
         return;
       }
 
-      await document.broadcast(message);
-      if (
-        message.type === "doc" &&
-        (message.payload.type === "update" ||
-          message.payload.type === "sync-step-2")
-      ) {
-        // TODO should we just use the message handler here?
-        await document.write(message.payload.update);
-      }
+      await document.handleMessage(message);
     },
   });
 
