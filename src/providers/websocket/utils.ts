@@ -56,7 +56,7 @@ export function createFanOutWriter() {
   }
 
   return {
-    writable,
+    writer: writable.getWriter(),
     getReader,
   };
 }

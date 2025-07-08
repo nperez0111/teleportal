@@ -373,9 +373,8 @@ export class WebsocketConnection extends ObservableV2<{
           return;
         }
 
-        const writer = this.#fanOutWriter.writable.getWriter();
         try {
-          await writer.write(message);
+          await this.#fanOutWriter.writer.write(message);
           this.emit("message", [message]);
         } catch (err) {
           const error = new Error(
@@ -391,8 +390,6 @@ export class WebsocketConnection extends ObservableV2<{
             reconnectAttempt: this.#reconnectAttempt,
           };
           this.#closeWebSocketConnection();
-        } finally {
-          writer.releaseLock();
         }
       });
 
@@ -535,6 +532,8 @@ export class WebsocketConnection extends ObservableV2<{
     }
     super.destroy();
     this.isDestroyed = true;
+
+    this.#fanOutWriter.writer.close();
 
     // Clean up online/offline listeners
     if (this.#onlineHandler) {
