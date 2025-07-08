@@ -13,9 +13,9 @@ export type FauxStateVector = StateVector;
 export type FauxUpdate = Update;
 
 export function decodeFauxStateVector(
-  syncStep1: FauxStateVector,
+  sv: FauxStateVector,
 ): DecodedFauxStateVector {
-  const decoder = decoding.createDecoder(syncStep1);
+  const decoder = decoding.createDecoder(sv);
   return {
     messageId: decoding.readVarString(decoder),
   };
@@ -23,17 +23,17 @@ export function decodeFauxStateVector(
 
 /**
  * Encodes a faux state vector.
- * @param syncStep1 - The faux state vector to encode.
+ * @param sv - The faux state vector to encode.
  * @returns The encoded faux state vector.
  *
  * The format is:
  * - The messageId (varstring)
  */
 export function encodeFauxStateVector(
-  syncStep1: DecodedFauxStateVector,
+  sv: DecodedFauxStateVector,
 ): FauxStateVector {
   const encoder = encoding.createEncoder();
-  encoding.writeVarString(encoder, syncStep1.messageId);
+  encoding.writeVarString(encoder, sv.messageId);
   return encoding.toUint8Array(encoder) as FauxStateVector;
 }
 

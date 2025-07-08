@@ -34,23 +34,19 @@ export class DocumentManager<
   private syncTransportSink = new WritableStream<Message<Context>>({
     write: async (message) => {
       const documentId = Document.getDocumentId(message);
-      console.log("got message ", documentId);
       const document = this.getDocument(documentId);
-      if (document) {
-        console.log("have doc");
-        // If we have the document, broadcast the message on all clients of the document
+      if (!document) {
+        return;
+      }
 
-        await document.broadcast(message);
-        if (
-          message.type === "doc" &&
-          (message.payload.type === "update" ||
-            message.payload.type === "sync-step-2")
-        ) {
-          // TODO should we just use the message handler here?
-          await document.write(message.payload.update);
-        }
-      } else {
-        console.log("don't have that doc");
+      await document.broadcast(message);
+      if (
+        message.type === "doc" &&
+        (message.payload.type === "update" ||
+          message.payload.type === "sync-step-2")
+      ) {
+        // TODO should we just use the message handler here?
+        await document.write(message.payload.update);
       }
     },
   });

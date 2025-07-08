@@ -1,6 +1,7 @@
 import { ObservableV2 } from "lib0/observable";
 import { uuidv4 } from "lib0/random";
 import {
+  DocMessage,
   fromBinaryTransport,
   Message,
   ServerContext,
@@ -12,12 +13,11 @@ import { ClientManager } from "./client-manager";
 import { Document } from "./document";
 import { DocumentManager } from "./document-manager";
 import { logger as defaultLogger, Logger } from "./logger";
-import { MessageHandler } from "./message-handler";
 
 import type { DocumentStorage } from "teleportal/storage";
 import {
-  ServerSyncTransport,
   createNoopServerSyncTransport,
+  ServerSyncTransport,
 } from "./server-sync";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -96,7 +96,6 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
   private options: ServerOptions<Context>;
   private documentManager: DocumentManager<Context>;
   private clientManager: ClientManager<Context>;
-  private messageHandler: MessageHandler<Context>;
 
   constructor(options: ServerOptions<Context>) {
     super();
@@ -124,12 +123,6 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
     this.documentManager.on("document-destroyed", (document) =>
       this.emit("document-unload", [document]),
     );
-
-    this.messageHandler = new MessageHandler({
-      logger: this.logger,
-      checkPermission:
-        this.options.checkPermission ?? (() => Promise.resolve(true)),
-    });
 
     this.clientManager = new ClientManager({ logger: this.logger });
 
@@ -191,15 +184,15 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
     context: Omit<Context, "clientId">;
     clientId?: string;
   }): Promise<Server<Context>> {
-    this.logger
-      .withMetadata({
-        clientId,
-        context: {
-          room: context.room,
-          userId: context.userId,
-        },
-      })
-      .trace("creating client");
+    const logger = this.logger.withContext({
+      clientId,
+      context: {
+        room: context.room,
+        userId: context.userId,
+      },
+    });
+
+    logger.trace("creating client");
 
     const validatedTransport = withMessageValidator(
       fromBinaryTransport(
@@ -207,10 +200,41 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
         Object.assign({ clientId }, context) as Context,
       ),
       {
-        isAuthorized: this.messageHandler.checkAuthorization.bind(
-          this.messageHandler,
-          clientId,
-        ),
+        isAuthorized: async (message, type) => {
+          if (!this.options.checkPermission) {
+            logger.trace("no checkPermission function provided, allowing all");
+            return true;
+          }
+          logger.trace("checking permission");
+
+          const hasPermission = await this.options.checkPermission({
+            context: message.context,
+            document: message.document,
+            documentId: Document.getDocumentId(message),
+            message,
+            type,
+          });
+
+          if (!hasPermission) {
+            logger.trace("permission denied, sending auth-message");
+            await client.send(
+              new DocMessage(
+                message.document,
+                {
+                  type: "auth-message",
+                  permission: "denied",
+                  reason: `Insufficient permissions to access document ${message.document}`,
+                },
+                message.context,
+                message.encrypted,
+              ),
+            );
+            return false;
+          }
+
+          logger.trace("permission granted");
+          return true;
+        },
       },
     );
 
@@ -235,12 +259,9 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
               logger.trace("getting document");
               const document = await this.getOrCreateDocument(message);
               logger.trace("processing message");
-              await this.messageHandler.handleMessage(
-                message,
-                document,
-                client,
-              );
+              await document.handleMessage(message, client);
             } catch (e) {
+              console.error(e);
               logger.withError(e).error("Failed to process message");
             }
           },
