@@ -35,12 +35,15 @@ export function Editor({ provider, user }: EditorProps) {
       : undefined,
     domAttributes: {
       editor: {
-        class: "flex-1 w-full",
+        class: "flex-1 w-full min-h-full",
+        style: "min-height: calc(100vh - 200px);",
       },
     },
   });
 
   return (
-    <BlockNoteView editor={editor} className="h-full w-full flex flex-col" />
+    <div className="h-full w-full flex flex-col touch-manipulation">
+      <BlockNoteView editor={editor} className="h-full w-full flex flex-col" />
+    </div>
   );
 }
