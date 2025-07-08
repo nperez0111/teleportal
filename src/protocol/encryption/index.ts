@@ -91,14 +91,8 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
 export async function decryptMessage<Context extends Record<string, unknown>>(
   message: EncryptedMessage<Context>,
   key: CryptoKey,
-  documentName: string,
 ): Promise<Message<Context>> {
   try {
-    if (message.document !== documentName) {
-      // Ignore messages for other documents
-      throw new Error("Message is not for the specified document");
-    }
-
     if (message.type !== "doc") {
       // Non-doc messages (awareness) are passed through but marked as not encrypted
       return new AwarenessMessage(
@@ -200,7 +194,11 @@ export function createDecryptionTransform<
   return new TransformStream({
     async transform(chunk, controller) {
       try {
-        const decryptedMessage = await decryptMessage(chunk, key, documentName);
+        if (chunk.document !== documentName) {
+          return;
+        }
+
+        const decryptedMessage = await decryptMessage(chunk, key);
         controller.enqueue(decryptedMessage);
       } catch (error) {
         controller.error(
@@ -209,22 +207,4 @@ export function createDecryptionTransform<
       }
     },
   });
-}
-
-/**
- * Utility function to check if a message is encrypted.
- */
-export function isEncryptedMessage<Context extends Record<string, unknown>>(
-  message: Message<Context>,
-): message is EncryptedMessage<Context> {
-  return message.encrypted;
-}
-
-/**
- * Utility function to get the encryption key from a message context.
- */
-export function getEncryptionKeyFromContext<
-  Context extends Record<string, unknown> & { key?: CryptoKey },
->(message: Message<Context>): CryptoKey | undefined {
-  return message.context.key;
 }
