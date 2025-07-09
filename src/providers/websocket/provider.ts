@@ -98,7 +98,7 @@ export class Provider extends ObservableV2<{
     );
     this.#websocketReader.readable.pipeTo(this.transport.writable);
 
-    this.listenToSubdocs();
+    this.doc.on("subdocs", this.subdocListener);
 
     if (client.state.type === "connected") {
       this.init();
@@ -120,47 +120,51 @@ export class Provider extends ObservableV2<{
     );
   };
 
-  private listenToSubdocs() {
-    this.doc.on("subdocs", ({ loaded, removed }) => {
-      loaded.forEach((doc) => {
-        if (this.subdocs.has(doc.guid)) {
-          return;
-        }
-        const provider = new Provider({
-          client: this.#websocketConnection,
-          ydoc: doc,
-          awareness: this.awareness,
-          // TODO should we be prefixing with the parent document?
-          document: this.document + "/" + doc.guid,
-          getTransport: this.#getTransport,
-        });
-        this.subdocs.set(doc.guid, provider);
-        this.emit("load-subdoc", [
-          {
-            subdoc: doc,
-            provider,
-            document: this.document,
-            parentDoc: this.doc,
-          },
-        ]);
+  private subdocListener({
+    loaded,
+    removed,
+  }: {
+    loaded: Set<Y.Doc>;
+    removed: Set<Y.Doc>;
+  }) {
+    loaded.forEach((doc) => {
+      if (this.subdocs.has(doc.guid)) {
+        return;
+      }
+      const provider = new Provider({
+        client: this.#websocketConnection,
+        ydoc: doc,
+        awareness: this.awareness,
+        // TODO should we be prefixing with the parent document?
+        document: this.document + "/" + doc.guid,
+        getTransport: this.#getTransport,
       });
+      this.subdocs.set(doc.guid, provider);
+      this.emit("load-subdoc", [
+        {
+          subdoc: doc,
+          provider,
+          document: this.document,
+          parentDoc: this.doc,
+        },
+      ]);
+    });
 
-      removed.forEach((doc) => {
-        const provider = this.subdocs.get(doc.guid);
-        if (!provider) {
-          return;
-        }
-        provider.destroy({ destroyWebSocket: false });
-        this.subdocs.delete(doc.guid);
-        this.emit("unload-subdoc", [
-          {
-            subdoc: doc,
-            provider,
-            document: this.document,
-            parentDoc: this.doc,
-          },
-        ]);
-      });
+    removed.forEach((doc) => {
+      const provider = this.subdocs.get(doc.guid);
+      if (!provider) {
+        return;
+      }
+      provider.destroy({ destroyWebSocket: false });
+      this.subdocs.delete(doc.guid);
+      this.emit("unload-subdoc", [
+        {
+          subdoc: doc,
+          provider,
+          document: this.document,
+          parentDoc: this.doc,
+        },
+      ]);
     });
   }
 
@@ -223,6 +227,7 @@ export class Provider extends ObservableV2<{
     destroyWebSocket?: boolean;
     destroyDoc?: boolean;
   } = {}) {
+    this.doc.off("subdocs", this.subdocListener);
     super.destroy();
     // TODO how to clean up the transport?
     // this.transport.readable
