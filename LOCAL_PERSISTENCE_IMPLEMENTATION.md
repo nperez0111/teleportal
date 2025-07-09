@@ -1,26 +1,26 @@
-# Local Persistence Implementation for WebSocket Provider
+# Offline Persistence Implementation for WebSocket Provider
 
 ## Overview
 
-Successfully implemented local persistence support for the teleportal websocket provider using y-indexeddb, enabling offline editing capabilities as requested.
+Successfully implemented offline persistence support for the teleportal websocket provider using y-indexeddb, enabling offline editing capabilities with a clean and simplified API.
 
 ## Key Features Implemented
 
-### 1. **Local Persistence with IndexedDB**
+### 1. **Offline Persistence with IndexedDB**
 - Documents are automatically saved to IndexedDB in the browser
 - Uses y-indexeddb for reliable Yjs document persistence
 - Configurable storage prefix for multi-tenant applications
 
-### 2. **Offline Support**
-- **Immediate Document Access**: Documents load instantly from local storage without waiting for network sync
+### 2. **Offline Editing Support**
+- **Immediate Document Access**: Documents load instantly from local storage
 - **Offline Editing**: Full editing capability without internet connection
-- **Background Sync**: WebSocket connection syncs changes in background for real-time collaboration
+- **Automatic Sync**: WebSocket connection syncs changes when available
 - **Auto-Reconnect**: Changes sync automatically when connection is restored
 
-### 3. **Smart Sync Behavior**
-- If document exists locally and offline support is enabled, `provider.synced` resolves immediately
-- Background websocket sync continues for real-time updates
-- No need to wait for network connection to start editing
+### 3. **Dual Promise Architecture**
+- **`loaded`**: Resolves when document is available (from IndexedDB or network)
+- **`synced`**: Resolves when fully connected and synced with server (original behavior)
+- Clear separation between local availability and server synchronization
 
 ## API Changes
 
@@ -30,22 +30,18 @@ Successfully implemented local persistence support for the teleportal websocket 
 export type ProviderOptions = {
   // ... existing options ...
   
-  /** Enable local persistence using IndexedDB. Defaults to false. */
-  enableLocalPersistence?: boolean;
+  /** Enable offline persistence using IndexedDB. Defaults to false. */
+  enableOfflinePersistence?: boolean;
   
   /** Custom prefix for IndexedDB storage. Defaults to 'teleportal-'. */
   localPersistencePrefix?: string;
-  
-  /** Whether to report as synced immediately if document is available locally. Defaults to true. */
-  offlineSupport?: boolean;
 }
 ```
 
-### New Events
+### New Promise Properties
 
-- `local-synced`: Fired when document is loaded from IndexedDB
-- `local-sync`: Fired during local persistence operations  
-- `background-synced`: Fired when background WebSocket sync completes
+- `loaded`: Promise that resolves when document is available for editing
+- `synced`: Promise that resolves when connected and synced with server (unchanged behavior)
 
 ## Usage Examples
 
@@ -56,24 +52,29 @@ import { websocket } from 'teleportal/providers';
 const provider = await websocket.Provider.create({
   url: 'ws://localhost:1234',
   document: 'my-document',
-  enableLocalPersistence: true, // Enable local persistence
-  offlineSupport: true,         // Enable immediate offline access
+  enableOfflinePersistence: true, // Enable offline persistence
   localPersistencePrefix: 'my-app-' // Optional custom prefix
 });
 
-// Provider is immediately ready for use, even if offline
-await provider.synced; // Resolves immediately if document is available locally
+// Check when document is ready for editing
+await provider.loaded; // Resolves when document is available (local or network)
+
+// Check when fully synced with server
+await provider.synced; // Resolves when connected and synced with server
 ```
 
-### Event Handling
+### Promise Usage
 ```typescript
-// Listen for local persistence events
-provider.on('local-synced', () => {
-  console.log('Document loaded from local storage');
+// Use loaded for immediate editing capability
+provider.loaded.then(() => {
+  console.log('Document ready for editing');
+  // Can start editing immediately, even if offline
 });
 
-provider.on('background-synced', () => {
-  console.log('Background sync with server completed');
+// Use synced for server connectivity
+provider.synced.then(() => {
+  console.log('Fully synced with server');
+  // Real-time collaboration is active
 });
 ```
 
@@ -83,10 +84,10 @@ provider.on('background-synced', () => {
 
 1. **`package.json`**: Added y-indexeddb dependency
 2. **`src/providers/websocket/provider.ts`**: Core implementation
-   - Added local persistence options to ProviderOptions
+   - Added offline persistence options to ProviderOptions
    - Integrated y-indexeddb for local storage
-   - Modified synced behavior for offline support
-   - Added background sync capability
+   - Added separate `loaded` promise for local availability
+   - Kept `synced` promise behavior unchanged for server sync
    - Updated constructor, destroy, and factory methods
 
 3. **`src/types/y-indexeddb.d.ts`**: TypeScript definitions for y-indexeddb
@@ -95,17 +96,15 @@ provider.on('background-synced', () => {
 
 ### Key Behavioral Changes
 
-#### Synced Promise Behavior
-- **Without local persistence**: Waits for websocket connection + transport sync
-- **With local persistence + offline support**: 
-  - Resolves immediately if document is available locally
-  - Starts background sync for real-time updates
-  - No need to wait for network connection
+#### Promise Architecture
+- **`loaded` promise**: Resolves when document is available (from IndexedDB if enabled, or from network)
+- **`synced` promise**: Maintains original behavior - waits for websocket connection + transport sync
+- Clear separation between local availability and server connectivity
 
 #### Document Loading
 1. **First Load**: Document syncs from server and is saved to IndexedDB
 2. **Subsequent Loads**: Document loads immediately from IndexedDB
-3. **Background Sync**: WebSocket connection syncs changes in background
+3. **Parallel Sync**: WebSocket connection syncs with server in parallel
 4. **Offline Editing**: Full editing capability without internet connection
 
 ### Browser Compatibility
@@ -129,7 +128,7 @@ Located at: `playground/src/examples/offline-editor.tsx`
 ### Backward Compatibility
 ✅ **Fully backward compatible** - existing code works without changes
 
-### Enabling Local Persistence
+### Enabling Offline Persistence
 ```typescript
 // Before - basic websocket provider
 const provider = await websocket.Provider.create({
@@ -137,12 +136,16 @@ const provider = await websocket.Provider.create({
   document: 'my-document'
 });
 
-// After - with local persistence  
+// After - with offline persistence  
 const provider = await websocket.Provider.create({
   url: 'ws://localhost:1234',
   document: 'my-document',
-  enableLocalPersistence: true // Add this line
+  enableOfflinePersistence: true // Add this line
 });
+
+// Use the new loaded promise for immediate editing
+await provider.loaded; // Ready for editing (offline or online)
+await provider.synced; // Fully connected to server
 ```
 
 ## Benefits
@@ -158,6 +161,18 @@ const provider = await websocket.Provider.create({
 - ✅ Build compiles successfully
 - ✅ TypeScript types are correct
 - ✅ Backward compatibility maintained
-- ✅ New functionality accessible via API
+- ✅ Simplified API with clear promise separation
+- ✅ Removed unnecessary events and flags
+- ✅ Working React example demonstrating offline capabilities
 
-The implementation follows the y-sweet pattern referenced in the original request and provides comprehensive offline editing capabilities while maintaining full backward compatibility.
+## API Simplifications Made
+
+Based on feedback, the following simplifications were implemented:
+
+1. **Removed `offlineSupport` flag** - Always enabled when offline persistence is enabled
+2. **Renamed to `enableOfflinePersistence`** - More descriptive name
+3. **Removed events** - Eliminated `local-sync`, `local-synced`, and `background-synced` events
+4. **Dual promise architecture** - Clear separation between `loaded` (local) and `synced` (server)
+5. **Simplified behavior** - `synced` maintains original behavior, `loaded` provides immediate access
+
+The implementation provides comprehensive offline editing capabilities with a clean, intuitive API while maintaining full backward compatibility.

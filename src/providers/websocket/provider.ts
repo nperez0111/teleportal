@@ -20,12 +20,10 @@ export type ProviderOptions = {
   document: string;
   ydoc?: Y.Doc;
   awareness?: Awareness;
-  /** Enable local persistence using IndexedDB. Defaults to false. */
-  enableLocalPersistence?: boolean;
+  /** Enable offline persistence using IndexedDB. Defaults to false. */
+  enableOfflinePersistence?: boolean;
   /** Custom prefix for IndexedDB storage. Defaults to 'teleportal-'. */
   localPersistencePrefix?: string;
-  /** Whether to report as synced immediately if document is available locally. Defaults to true. */
-  offlineSupport?: boolean;
   getTransport?: (ctx: {
     ydoc: Y.Doc;
     document: string;
@@ -47,9 +45,6 @@ export type ProviderOptions = {
 export class Provider extends ObservableV2<{
   "load-subdoc": (subdoc: string) => void;
   "update-subdocs": () => void;
-  "local-synced": () => void;
-  "local-sync": () => void;
-  "background-synced": () => void;
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
@@ -65,10 +60,9 @@ export class Provider extends ObservableV2<{
   
   // Local persistence properties
   #localPersistence?: IndexeddbPersistence;
-  #enableLocalPersistence: boolean;
+  #enableOfflinePersistence: boolean;
   #localPersistencePrefix: string;
-  #offlineSupport: boolean;
-  #localSynced: boolean = false;
+  #localLoaded: boolean = false;
 
   private constructor({
     client,
@@ -76,18 +70,16 @@ export class Provider extends ObservableV2<{
     ydoc = new Y.Doc(),
     awareness = new Awareness(ydoc),
     getTransport = ({ getDefaultTransport }) => getDefaultTransport(),
-    enableLocalPersistence = false,
+    enableOfflinePersistence = false,
     localPersistencePrefix = 'teleportal-',
-    offlineSupport = true,
   }: ProviderOptions) {
     super();
     this.doc = ydoc;
     this.awareness = awareness;
     this.document = document;
     this.#getTransport = getTransport;
-    this.#enableLocalPersistence = enableLocalPersistence;
+    this.#enableOfflinePersistence = enableOfflinePersistence;
     this.#localPersistencePrefix = localPersistencePrefix;
-    this.#offlineSupport = offlineSupport;
     this.transport = toBinaryTransport(
       getTransport({
         ydoc,
@@ -111,9 +103,9 @@ export class Provider extends ObservableV2<{
     );
     this.#websocketReader.readable.pipeTo(this.transport.writable);
 
-    // Initialize local persistence if enabled
-    if (this.#enableLocalPersistence) {
-      this.initLocalPersistence();
+    // Initialize offline persistence if enabled
+    if (this.#enableOfflinePersistence) {
+      this.initOfflinePersistence();
     }
 
     this.listenToSubdocs();
@@ -124,8 +116,8 @@ export class Provider extends ObservableV2<{
     client.on("open", this.init);
   }
 
-  private initLocalPersistence() {
-    if (!this.#enableLocalPersistence || typeof window === 'undefined') {
+  private initOfflinePersistence() {
+    if (!this.#enableOfflinePersistence || typeof window === 'undefined') {
       return;
     }
 
@@ -134,19 +126,14 @@ export class Provider extends ObservableV2<{
     try {
       this.#localPersistence = new IndexeddbPersistence(persistenceKey, this.doc);
       
-      // Set up event listeners for local persistence
+      // Set up event listener for local persistence
       this.#localPersistence.on('synced', () => {
-        this.#localSynced = true;
-        this.emit('local-synced', []);
-      });
-
-      this.#localPersistence.on('sync', () => {
-        this.emit('local-sync', []);
+        this.#localLoaded = true;
       });
 
     } catch (error) {
-      console.warn('Failed to initialize local persistence:', error);
-      this.#enableLocalPersistence = false;
+      console.warn('Failed to initialize offline persistence:', error);
+      this.#enableOfflinePersistence = false;
     }
   }
 
@@ -185,9 +172,8 @@ export class Provider extends ObservableV2<{
           ydoc: doc,
           document: this.document + "/" + parentSub,
           getTransport: this.#getTransport,
-          enableLocalPersistence: this.#enableLocalPersistence,
+          enableOfflinePersistence: this.#enableOfflinePersistence,
           localPersistencePrefix: this.#localPersistencePrefix,
-          offlineSupport: this.#offlineSupport,
         });
         this.subdocs.set(parentSub, provider);
         this.emit("load-subdoc", [parentSub]);
@@ -223,40 +209,27 @@ export class Provider extends ObservableV2<{
       ydoc: doc,
       awareness,
       getTransport: this.#getTransport,
-      enableLocalPersistence: this.#enableLocalPersistence,
+      enableOfflinePersistence: this.#enableOfflinePersistence,
       localPersistencePrefix: this.#localPersistencePrefix,
-      offlineSupport: this.#offlineSupport,
       ...options,
     });
   }
 
   #synced: Promise<void> | null = null;
+  #loaded: Promise<void> | null = null;
+
   /**
-   * Resolves when both
-   *  - the underlying websocket connection is connected
-   *  - the transport is ready (i.e. we've synced the ydoc)
-   * 
-   * If local persistence is enabled and offline support is enabled,
-   * this will resolve immediately when the document is available locally,
-   * allowing for offline editing while the websocket syncs in the background.
+   * Resolves when the document is loaded (from local storage if available, or from network)
    */
-  public get synced(): Promise<void> {
-    if (this.#synced) {
-      // re-use the promise if the underlying connection is unchanged
-      return this.#synced;
+  public get loaded(): Promise<void> {
+    if (this.#loaded) {
+      return this.#loaded;
     }
 
-    // If local persistence is enabled and offline support is enabled,
-    // we can resolve immediately if the document is available locally
-    if (this.#enableLocalPersistence && this.#offlineSupport && this.#localSynced) {
-      this.#synced = Promise.resolve();
-      return this.#synced;
-    }
-
-    // If local persistence is enabled but not yet synced, wait for local sync first
-    if (this.#enableLocalPersistence && this.#offlineSupport && this.#localPersistence) {
-      const localSynced = new Promise<void>((resolve) => {
-        if (this.#localSynced) {
+    if (this.#enableOfflinePersistence && this.#localPersistence) {
+      // Wait for local persistence to load
+      const localLoaded = new Promise<void>((resolve) => {
+        if (this.#localLoaded) {
           resolve();
         } else {
           this.#localPersistence!.once('synced', () => {
@@ -264,16 +237,26 @@ export class Provider extends ObservableV2<{
           });
         }
       });
+      this.#loaded = localLoaded;
+      return this.#loaded;
+    }
 
-      this.#synced = localSynced;
-      
-      // Continue websocket sync in the background for real-time updates
-      this.startBackgroundSync();
-      
+    // If no offline persistence, loaded is same as synced
+    this.#loaded = this.synced;
+    return this.#loaded;
+  }
+
+  /**
+   * Resolves when both
+   *  - the underlying websocket connection is connected
+   *  - the transport is ready (i.e. we've synced the ydoc)
+   */
+  public get synced(): Promise<void> {
+    if (this.#synced) {
+      // re-use the promise if the underlying connection is unchanged
       return this.#synced;
     }
 
-    // Default behavior: wait for both websocket connection and transport
     const synced = Promise.all([
       this.#websocketConnection.connected,
       this.transport.synced,
@@ -285,20 +268,6 @@ export class Provider extends ObservableV2<{
       this.#synced = null;
     });
     return synced;
-  }
-
-  private startBackgroundSync() {
-    // Start websocket sync in the background for real-time updates
-    Promise.all([
-      this.#websocketConnection.connected,
-      this.transport.synced,
-    ]).then(() => {
-      // Background sync completed
-      this.emit('background-synced', []);
-    }).catch((error) => {
-      // Background sync failed, but we're still functional with local data
-      console.warn('Background sync failed:', error);
-    });
   }
 
   public get state() {
@@ -314,7 +283,7 @@ export class Provider extends ObservableV2<{
   } = {}) {
     super.destroy();
     
-    // Clean up local persistence
+    // Clean up offline persistence
     if (this.#localPersistence) {
       this.#localPersistence.destroy();
       this.#localPersistence = undefined;
@@ -346,20 +315,16 @@ export class Provider extends ObservableV2<{
     ydoc,
     awareness,
     getTransport,
-    enableLocalPersistence,
+    enableOfflinePersistence,
     localPersistencePrefix,
-    offlineSupport,
     client = new WebsocketConnection({ url: url! }),
   }: (
     | { url: string; client?: undefined }
     | { url?: undefined; client: WebsocketConnection }
   ) &
     Omit<ProviderOptions, "client">) {
-    // Wait for the websocket to connect only if local persistence is disabled
-    // or offline support is disabled
-    if (!enableLocalPersistence || !offlineSupport) {
-      await client.connected;
-    }
+    // Wait for the websocket to connect
+    await client.connected;
 
     return new Provider({
       client,
@@ -367,9 +332,8 @@ export class Provider extends ObservableV2<{
       document,
       awareness,
       getTransport,
-      enableLocalPersistence,
+      enableOfflinePersistence,
       localPersistencePrefix,
-      offlineSupport,
     });
   }
 }

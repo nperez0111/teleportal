@@ -5,8 +5,8 @@ import { websocket } from 'teleportal/providers';
 export function OfflineEditor() {
   const [provider, setProvider] = useState<websocket.Provider | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [localSynced, setLocalSynced] = useState(false);
-  const [backgroundSynced, setBackgroundSynced] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [synced, setSynced] = useState(false);
   const [content, setContent] = useState('');
 
   useEffect(() => {
@@ -29,20 +29,20 @@ export function OfflineEditor() {
         const newProvider = await websocket.Provider.create({
           url: 'ws://localhost:1234',
           document: 'offline-demo',
-          enableLocalPersistence: true,
-          offlineSupport: true,
+          enableOfflinePersistence: true,
           localPersistencePrefix: 'offline-demo-'
         });
 
-        // Set up event listeners
-        newProvider.on('local-synced', () => {
-          console.log('Document loaded from local storage');
-          setLocalSynced(true);
+        // Check when document is loaded (from local storage or network)
+        newProvider.loaded.then(() => {
+          console.log('Document loaded and ready for editing');
+          setLoaded(true);
         });
 
-        newProvider.on('background-synced', () => {
-          console.log('Background sync completed');
-          setBackgroundSynced(true);
+        // Check when fully synced with server
+        newProvider.synced.then(() => {
+          console.log('Fully synced with server');
+          setSynced(true);
         });
 
         // Set up document content sync
@@ -111,21 +111,21 @@ export function OfflineEditor() {
           <span style={{ 
             padding: '4px 8px', 
             borderRadius: '4px',
-            backgroundColor: localSynced ? '#d4edda' : '#fff3cd',
-            color: localSynced ? '#155724' : '#856404',
-            border: `1px solid ${localSynced ? '#c3e6cb' : '#ffeeba'}`
+            backgroundColor: loaded ? '#d4edda' : '#fff3cd',
+            color: loaded ? '#155724' : '#856404',
+            border: `1px solid ${loaded ? '#c3e6cb' : '#ffeeba'}`
           }}>
-            {localSynced ? '💾 Local Synced' : '⏳ Loading...'}
+            {loaded ? '💾 Document Loaded' : '⏳ Loading...'}
           </span>
           
           <span style={{ 
             padding: '4px 8px', 
             borderRadius: '4px',
-            backgroundColor: backgroundSynced ? '#d4edda' : '#fff3cd',
-            color: backgroundSynced ? '#155724' : '#856404',
-            border: `1px solid ${backgroundSynced ? '#c3e6cb' : '#ffeeba'}`
+            backgroundColor: synced ? '#d4edda' : '#fff3cd',
+            color: synced ? '#155724' : '#856404',
+            border: `1px solid ${synced ? '#c3e6cb' : '#ffeeba'}`
           }}>
-            {backgroundSynced ? '☁️ Server Synced' : '⏳ Syncing...'}
+            {synced ? '☁️ Server Synced' : '⏳ Syncing...'}
           </span>
         </div>
         
