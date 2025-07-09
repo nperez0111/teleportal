@@ -38,8 +38,18 @@ export type ProviderOptions = {
 };
 
 export class Provider extends ObservableV2<{
-  "load-subdoc": (subdoc: string) => void;
-  "update-subdocs": () => void;
+  "load-subdoc": (ctx: {
+    subdoc: Y.Doc;
+    provider: Provider;
+    document: string;
+    parentDoc: Y.Doc;
+  }) => void;
+  "unload-subdoc": (ctx: {
+    subdoc: Y.Doc;
+    provider: Provider;
+    document: string;
+    parentDoc: Y.Doc;
+  }) => void;
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
@@ -111,38 +121,46 @@ export class Provider extends ObservableV2<{
   };
 
   private listenToSubdocs() {
-    // TODO all a hack at the moment
-    this.doc.on("subdocs", ({ loaded, added, removed }) => {
+    this.doc.on("subdocs", ({ loaded, removed }) => {
       loaded.forEach((doc) => {
-        const item = doc._item;
-        if (!item) {
-          throw new Error("doc._item is undefined");
-        }
-        const parentSub = item.parentSub;
-        if (!parentSub) {
-          throw new Error("doc._item.parentSub is undefined");
-        }
-
-        if (this.subdocs.has(parentSub)) {
-          console.log("subdoc already exists", parentSub);
+        if (this.subdocs.has(doc.guid)) {
+          return;
         }
         const provider = new Provider({
           client: this.#websocketConnection,
           ydoc: doc,
-          document: this.document + "/" + parentSub,
+          awareness: this.awareness,
+          // TODO should we be prefixing with the parent document?
+          document: this.document + "/" + doc.guid,
           getTransport: this.#getTransport,
         });
-        this.subdocs.set(parentSub, provider);
-        this.emit("load-subdoc", [parentSub]);
+        this.subdocs.set(doc.guid, provider);
+        this.emit("load-subdoc", [
+          {
+            subdoc: doc,
+            provider,
+            document: this.document,
+            parentDoc: this.doc,
+          },
+        ]);
       });
-      // added.forEach((doc) => {
-      //   console.log("added", doc.collectionid);
-      //   console.log("doc", doc);
-      // });
+
       removed.forEach((doc) => {
-        console.log("removed", doc.collectionid);
+        const provider = this.subdocs.get(doc.guid);
+        if (!provider) {
+          return;
+        }
+        provider.destroy({ destroyWebSocket: false });
+        this.subdocs.delete(doc.guid);
+        this.emit("unload-subdoc", [
+          {
+            subdoc: doc,
+            provider,
+            document: this.document,
+            parentDoc: this.doc,
+          },
+        ]);
       });
-      this.emit("update-subdocs", []);
     });
   }
 
