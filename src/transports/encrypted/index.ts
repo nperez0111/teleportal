@@ -8,6 +8,7 @@ import {
 import {
   createDecryptionTransform,
   createEncryptionTransform,
+  type EncryptedClientContext,
 } from "teleportal/protocol/encryption";
 
 /**
@@ -38,13 +39,24 @@ export function withEncryption<
   AdditionalProperties extends Record<string, unknown>,
 >(
   transport: YTransport<Context, AdditionalProperties>,
-  options: { key: CryptoKey; document: string },
-): YTransport<Context, AdditionalProperties & { key: CryptoKey }> {
+  options: { 
+    key: CryptoKey; 
+    document: string;
+    encryptedClientContext?: EncryptedClientContext;
+  },
+): YTransport<Context, AdditionalProperties & { 
+  key: CryptoKey;
+  encryptedClientContext?: EncryptedClientContext;
+}> {
   const reader = createDecryptionTransform<Context>(
     options.key,
     options.document,
+    options.encryptedClientContext,
   );
-  const writer = createEncryptionTransform<Context>(options.key);
+  const writer = createEncryptionTransform<Context>(
+    options.key,
+    options.encryptedClientContext,
+  );
 
   const decryptedSource: YSource<Context, any> = {
     readable: reader.readable,
@@ -59,6 +71,7 @@ export function withEncryption<
   return {
     ...transport,
     key: options.key,
+    encryptedClientContext: options.encryptedClientContext,
     readable: writer.readable,
     writable: reader.writable,
   };

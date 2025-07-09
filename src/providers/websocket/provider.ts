@@ -10,6 +10,7 @@ import {
   type YBinaryTransport,
   type YTransport,
 } from "teleportal";
+import type { EncryptedClientContext } from "teleportal/protocol/encryption";
 import { getYTransportFromYDoc } from "../../transports";
 import { WebsocketConnection } from "./connection-manager";
 import type { ReaderInstance } from "./utils";
@@ -46,12 +47,14 @@ export class Provider extends ObservableV2<{
   public transport: YBinaryTransport<{
     synced: Promise<void>;
     key?: CryptoKey;
+    encryptedClientContext?: EncryptedClientContext;
   }>;
   public document: string;
   #websocketConnection: WebsocketConnection;
   #websocketReader: ReaderInstance;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
+  #encryptedClientContext: EncryptedClientContext;
 
   private constructor({
     client,
@@ -65,17 +68,25 @@ export class Provider extends ObservableV2<{
     this.awareness = awareness;
     this.document = document;
     this.#getTransport = getTransport;
+    this.#encryptedClientContext = { messageIds: new Set() };
+    const baseTransport = getTransport({
+      ydoc,
+      document,
+      awareness,
+      getDefaultTransport() {
+        return getYTransportFromYDoc({ ydoc, document, awareness });
+      },
+    });
+    
     this.transport = toBinaryTransport(
-      getTransport({
-        ydoc,
-        document,
-        awareness,
-        getDefaultTransport() {
-          return getYTransportFromYDoc({ ydoc, document, awareness });
-        },
-      }),
+      baseTransport,
       { clientId: "remote" },
     );
+    
+    // If the transport has encryption, store the context reference
+    if (this.transport.key) {
+      this.transport.encryptedClientContext = this.#encryptedClientContext;
+    }
     this.#websocketConnection = client;
     this.#websocketReader = this.#websocketConnection.getReader();
 
@@ -113,7 +124,7 @@ export class Provider extends ObservableV2<{
   private listenToSubdocs() {
     // TODO all a hack at the moment
     this.doc.on("subdocs", ({ loaded, added, removed }) => {
-      loaded.forEach((doc) => {
+      loaded.forEach((doc: Y.Doc) => {
         const item = doc._item;
         if (!item) {
           throw new Error("doc._item is undefined");

@@ -6,34 +6,68 @@ import { toBase64 } from "lib0/buffer";
 import { digest } from "lib0/hash/sha256";
 
 export type DecodedFauxStateVector = {
-  messageId: string;
+  messageIds: string[];
 };
 
 export type FauxStateVector = StateVector;
 export type FauxUpdate = Update;
 
+/**
+ * Converts a message ID (base64 hash) to a compact numeric representation
+ * by taking the first 8 bytes of the hash and converting to a bigint
+ */
+export function messageIdToNumber(messageId: string): bigint {
+  const buffer = new Uint8Array(8);
+  const decoded = Uint8Array.from(atob(messageId), c => c.charCodeAt(0));
+  buffer.set(decoded.slice(0, 8));
+  return new DataView(buffer.buffer).getBigUint64(0, false);
+}
+
+/**
+ * Converts a numeric representation back to a message ID
+ * Note: This is lossy and only for comparison purposes
+ */
+export function numberToMessageIdPrefix(num: bigint): string {
+  const buffer = new ArrayBuffer(8);
+  new DataView(buffer).setBigUint64(0, num, false);
+  const bytes = new Uint8Array(buffer);
+  return btoa(String.fromCharCode(...bytes));
+}
+
 export function decodeFauxStateVector(
   sv: FauxStateVector,
 ): DecodedFauxStateVector {
   const decoder = decoding.createDecoder(sv);
-  return {
-    messageId: decoding.readVarString(decoder),
-  };
+  const count = decoding.readVarUint(decoder);
+  const messageIds: string[] = [];
+  
+  for (let i = 0; i < count; i++) {
+    messageIds.push(decoding.readVarString(decoder));
+  }
+  
+  return { messageIds };
 }
 
 /**
- * Encodes a faux state vector.
+ * Encodes a faux state vector with multiple message IDs.
  * @param sv - The faux state vector to encode.
  * @returns The encoded faux state vector.
  *
  * The format is:
- * - The messageId (varstring)
+ * - The number of message IDs (varuint)
+ * - For each message ID:
+ *   - The messageId (varstring)
  */
 export function encodeFauxStateVector(
   sv: DecodedFauxStateVector,
 ): FauxStateVector {
   const encoder = encoding.createEncoder();
-  encoding.writeVarString(encoder, sv.messageId);
+  encoding.writeVarUint(encoder, sv.messageIds.length);
+  
+  for (const messageId of sv.messageIds) {
+    encoding.writeVarString(encoder, messageId);
+  }
+  
   return encoding.toUint8Array(encoder) as FauxStateVector;
 }
 

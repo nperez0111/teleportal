@@ -20,15 +20,50 @@ function createUpdate(data: Uint8Array): Update {
 
 describe("e2e encoding", () => {
   describe("State Vector Encoding/Decoding", () => {
-    it("should encode and decode a state vector correctly", () => {
+    it("should encode and decode a state vector with single message ID", () => {
       const original: DecodedFauxStateVector = {
-        messageId: "test-message-123",
+        messageIds: ["test-message-123"],
       };
 
       const encoded = encodeFauxStateVector(original);
       const decoded = decodeFauxStateVector(encoded);
 
       expect(decoded).toEqual(original);
+    });
+
+    it("should encode and decode a state vector with multiple message IDs", () => {
+      const original: DecodedFauxStateVector = {
+        messageIds: ["msg-1", "msg-2", "msg-3", "msg-4"],
+      };
+
+      const encoded = encodeFauxStateVector(original);
+      const decoded = decodeFauxStateVector(encoded);
+
+      expect(decoded).toEqual(original);
+    });
+
+    it("should encode and decode an empty state vector", () => {
+      const original: DecodedFauxStateVector = {
+        messageIds: [],
+      };
+
+      const encoded = encodeFauxStateVector(original);
+      const decoded = decodeFauxStateVector(encoded);
+
+      expect(decoded).toEqual(original);
+    });
+
+    it("should handle large number of message IDs", () => {
+      const messageIds = Array.from({ length: 1000 }, (_, i) => `msg-${i}`);
+      const original: DecodedFauxStateVector = {
+        messageIds,
+      };
+
+      const encoded = encodeFauxStateVector(original);
+      const decoded = decodeFauxStateVector(encoded);
+
+      expect(decoded).toEqual(original);
+      expect(decoded.messageIds.length).toBe(1000);
     });
   });
 
@@ -304,7 +339,10 @@ describe("e2e encoding", () => {
 
     it("should maintain consistency for state vectors through multiple cycles", () => {
       const original: DecodedFauxStateVector = {
-        messageId: toBase64(digest(new Uint8Array([1, 2, 3, 4, 5]))),
+        messageIds: [
+          toBase64(digest(new Uint8Array([1, 2, 3, 4, 5]))),
+          toBase64(digest(new Uint8Array([6, 7, 8, 9, 10]))),
+        ],
       };
 
       // Multiple encode/decode cycles
@@ -353,6 +391,158 @@ describe("e2e encoding", () => {
 
       expect(decoded).toEqual(manyUpdates);
       expect(decoded.length).toBe(100);
+    });
+  });
+
+  describe("Sync Step 1 Integration", () => {
+    it("should compute correct diff when client has some messages", () => {
+      // Simulate server state with 5 messages
+      const serverUpdates: DecodedUpdateList = [
+        {
+          messageId: "msg-1",
+          update: createUpdate(new Uint8Array([1])),
+        },
+        {
+          messageId: "msg-2", 
+          update: createUpdate(new Uint8Array([2])),
+        },
+        {
+          messageId: "msg-3",
+          update: createUpdate(new Uint8Array([3])),
+        },
+        {
+          messageId: "msg-4",
+          update: createUpdate(new Uint8Array([4])),
+        },
+        {
+          messageId: "msg-5",
+          update: createUpdate(new Uint8Array([5])),
+        },
+      ];
+
+      // Client has messages 1, 2, and 4 (missing 3 and 5)
+      const clientMessageIds = ["msg-1", "msg-2", "msg-4"];
+      const clientStateVector: DecodedFauxStateVector = {
+        messageIds: clientMessageIds,
+      };
+
+      // Simulate server computing diff
+      const clientMessageIdSet = new Set(clientStateVector.messageIds);
+      const expectedDiff = serverUpdates.filter(
+        (update) => !clientMessageIdSet.has(update.messageId)
+      );
+
+      // Should return messages 3 and 5
+      expect(expectedDiff).toEqual([
+        {
+          messageId: "msg-3",
+          update: createUpdate(new Uint8Array([3])),
+        },
+        {
+          messageId: "msg-5", 
+          update: createUpdate(new Uint8Array([5])),
+        },
+      ]);
+      expect(expectedDiff.length).toBe(2);
+    });
+
+    it("should return all messages when client has none", () => {
+      const serverUpdates: DecodedUpdateList = [
+        {
+          messageId: "msg-1",
+          update: createUpdate(new Uint8Array([1])),
+        },
+        {
+          messageId: "msg-2",
+          update: createUpdate(new Uint8Array([2])),
+        },
+      ];
+
+      // Client has no messages
+      const clientStateVector: DecodedFauxStateVector = {
+        messageIds: [],
+      };
+
+      const clientMessageIdSet = new Set(clientStateVector.messageIds);
+      const expectedDiff = serverUpdates.filter(
+        (update) => !clientMessageIdSet.has(update.messageId)
+      );
+
+      // Should return all messages
+      expect(expectedDiff).toEqual(serverUpdates);
+      expect(expectedDiff.length).toBe(2);
+    });
+
+    it("should return no messages when client has all", () => {
+      const serverUpdates: DecodedUpdateList = [
+        {
+          messageId: "msg-1",
+          update: createUpdate(new Uint8Array([1])),
+        },
+        {
+          messageId: "msg-2",
+          update: createUpdate(new Uint8Array([2])),
+        },
+      ];
+
+      // Client has all messages
+      const clientStateVector: DecodedFauxStateVector = {
+        messageIds: ["msg-1", "msg-2"],
+      };
+
+      const clientMessageIdSet = new Set(clientStateVector.messageIds);
+      const expectedDiff = serverUpdates.filter(
+        (update) => !clientMessageIdSet.has(update.messageId)
+      );
+
+      // Should return no messages
+      expect(expectedDiff).toEqual([]);
+      expect(expectedDiff.length).toBe(0);
+    });
+
+    it("should handle client having extra message IDs gracefully", () => {
+      const serverUpdates: DecodedUpdateList = [
+        {
+          messageId: "msg-1",
+          update: createUpdate(new Uint8Array([1])),
+        },
+        {
+          messageId: "msg-2",
+          update: createUpdate(new Uint8Array([2])),
+        },
+      ];
+
+      // Client claims to have messages that don't exist on server
+      const clientStateVector: DecodedFauxStateVector = {
+        messageIds: ["msg-1", "msg-2", "msg-nonexistent", "msg-future"],
+      };
+
+      const clientMessageIdSet = new Set(clientStateVector.messageIds);
+      const expectedDiff = serverUpdates.filter(
+        (update) => !clientMessageIdSet.has(update.messageId)
+      );
+
+      // Should return no messages (client has all that exist)
+      expect(expectedDiff).toEqual([]);
+      expect(expectedDiff.length).toBe(0);
+    });
+
+    it("should handle round-trip sync step 1 encoding", () => {
+      // Client state vector with multiple message IDs
+      const clientMessageIds = ["msg-1", "msg-3", "msg-5"];
+      const clientStateVector: DecodedFauxStateVector = {
+        messageIds: clientMessageIds,
+      };
+
+      // Encode state vector (as client would send to server)
+      const encodedStateVector = encodeFauxStateVector(clientStateVector);
+
+      // Decode on server side
+      const decodedOnServer = decodeFauxStateVector(encodedStateVector);
+
+      // Should match original
+      expect(decodedOnServer).toEqual(clientStateVector);
+      expect(decodedOnServer.messageIds).toEqual(clientMessageIds);
     });
   });
 });

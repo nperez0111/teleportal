@@ -38,11 +38,18 @@ export class EncryptedMemoryStorage extends DocumentStorage {
       EncryptedMemoryStorage.docs.set(key, getEmptyFauxUpdateList());
     }
     const update = EncryptedMemoryStorage.docs.get(key)!;
+    const updates = decodeFauxUpdateList(update);
+
+    // Create a faux state vector with the latest message ID
+    // For encrypted documents, the state vector represents all message IDs
+    const latestMessageId = updates.length > 0 
+      ? updates[updates.length - 1].messageId 
+      : "";
 
     return {
       update,
       stateVector: encodeFauxStateVector({
-        messageId: "implement",
+        messageIds: latestMessageId ? [latestMessageId] : [],
       }),
     };
   }

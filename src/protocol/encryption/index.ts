@@ -13,6 +13,11 @@ export * from "./encoding";
 export type EncryptedMessage<Context extends Record<string, unknown>> =
   Message<Context>;
 
+export interface EncryptedClientContext {
+  /** Set of message IDs that this client has received */
+  messageIds?: Set<string>;
+}
+
 /**
  * Encrypts a message using the provided encryption key.
  * This is a first-class protocol feature that handles encryption at the protocol level.
@@ -20,6 +25,7 @@ export type EncryptedMessage<Context extends Record<string, unknown>> =
 export async function encryptMessage<Context extends Record<string, unknown>>(
   message: Message<Context>,
   key: CryptoKey,
+  clientContext?: EncryptedClientContext,
 ): Promise<EncryptedMessage<Context>> {
   try {
     if (message.type !== "doc") {
@@ -34,8 +40,12 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
 
     switch (message.payload.type) {
       case "sync-step-1": {
-        // For sync-step-1, we create a faux state vector
-        const fauxStateVector = encodeFauxStateVector({ messageId: "1" });
+        // For sync-step-1, create a faux state vector with all message IDs the client has
+        const messageIds = clientContext?.messageIds 
+          ? Array.from(clientContext.messageIds)
+          : [];
+        
+        const fauxStateVector = encodeFauxStateVector({ messageIds });
 
         return new DocMessage(
           message.document,
@@ -91,6 +101,7 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
 export async function decryptMessage<Context extends Record<string, unknown>>(
   message: EncryptedMessage<Context>,
   key: CryptoKey,
+  clientContext?: EncryptedClientContext,
 ): Promise<Message<Context>> {
   try {
     if (message.type !== "doc") {
@@ -120,8 +131,14 @@ export async function decryptMessage<Context extends Record<string, unknown>>(
         const decoded = decodeFauxUpdateList(update);
 
         const decryptedUpdates = await Promise.all(
-          decoded.map(async ({ update }) => {
+          decoded.map(async ({ update, messageId }) => {
             const decryptedUpdate = await decryptUpdate(key, update);
+            
+            // Track that we've received this message ID
+            if (clientContext?.messageIds) {
+              clientContext.messageIds.add(messageId);
+            }
+            
             return decryptedUpdate;
           }),
         );
@@ -167,11 +184,12 @@ export function createEncryptionTransform<
   Context extends Record<string, unknown>,
 >(
   key: CryptoKey,
+  clientContext?: EncryptedClientContext,
 ): TransformStream<Message<Context>, EncryptedMessage<Context>> {
   return new TransformStream({
     async transform(chunk, controller) {
       try {
-        const encryptedMessage = await encryptMessage(chunk, key);
+        const encryptedMessage = await encryptMessage(chunk, key, clientContext);
         controller.enqueue(encryptedMessage);
       } catch (error) {
         controller.error(
@@ -190,6 +208,7 @@ export function createDecryptionTransform<
 >(
   key: CryptoKey,
   documentName: string,
+  clientContext?: EncryptedClientContext,
 ): TransformStream<EncryptedMessage<Context>, Message<Context>> {
   return new TransformStream({
     async transform(chunk, controller) {
@@ -198,7 +217,7 @@ export function createDecryptionTransform<
           return;
         }
 
-        const decryptedMessage = await decryptMessage(chunk, key);
+        const decryptedMessage = await decryptMessage(chunk, key, clientContext);
         controller.enqueue(decryptedMessage);
       } catch (error) {
         controller.error(
