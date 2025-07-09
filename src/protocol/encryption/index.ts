@@ -6,6 +6,8 @@ import {
   decodeFauxUpdateList,
   encodeFauxStateVector,
   encodeFauxUpdate,
+  messageIdToString,
+  stringToMessageId,
 } from "./encoding";
 
 export * from "./encoding";
@@ -14,7 +16,7 @@ export type EncryptedMessage<Context extends Record<string, unknown>> =
   Message<Context>;
 
 export interface EncryptedClientContext {
-  /** Set of message IDs that this client has received */
+  /** Set of message ID strings (hex representations) that this client has received */
   messageIds?: Set<string>;
 }
 
@@ -42,7 +44,7 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
       case "sync-step-1": {
         // For sync-step-1, create a faux state vector with all message IDs the client has
         const messageIds = clientContext?.messageIds 
-          ? Array.from(clientContext.messageIds)
+          ? Array.from(clientContext.messageIds).map(stringToMessageId)
           : [];
         
         const fauxStateVector = encodeFauxStateVector({ messageIds });
@@ -136,7 +138,7 @@ export async function decryptMessage<Context extends Record<string, unknown>>(
             
             // Track that we've received this message ID
             if (clientContext?.messageIds) {
-              clientContext.messageIds.add(messageId);
+              clientContext.messageIds.add(messageIdToString(messageId));
             }
             
             return decryptedUpdate;

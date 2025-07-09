@@ -44,7 +44,7 @@ export class EncryptedMemoryStorage extends DocumentStorage {
     // For encrypted documents, the state vector represents all message IDs
     const latestMessageId = updates.length > 0 
       ? updates[updates.length - 1].messageId 
-      : "";
+      : null;
 
     return {
       update,

@@ -16,6 +16,7 @@ import {
   decodeFauxUpdateList,
   encodeFauxUpdateList,
   getEmptyFauxUpdateList,
+  messageIdToString,
 } from "../protocol/encryption/encoding";
 import type { Client } from "./client";
 import type { Logger } from "./logger";
@@ -407,11 +408,15 @@ class EncryptedMessageStrategy<Context extends ServerContext>
 
     const fauxStateVector = decodeFauxStateVector(message.payload.sv);
     const allUpdates = decodeFauxUpdateList(update);
-    const clientMessageIds = new Set(fauxStateVector.messageIds);
+    
+    // Convert Uint8Array message IDs to strings for Set operations
+    const clientMessageIds = new Set(
+      fauxStateVector.messageIds.map(messageIdToString)
+    );
 
     // Find updates that the client doesn't have
     const sendUpdates = allUpdates.filter(
-      (update) => !clientMessageIds.has(update.messageId)
+      (update) => !clientMessageIds.has(messageIdToString(update.messageId))
     );
 
     document.logger
