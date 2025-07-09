@@ -247,3 +247,101 @@ The enhanced connection manager is backward compatible with the following improv
 - **Enhanced Behavior**: Automatic message buffering, smart network handling, and improved reconnection logic
 
 Existing code will continue to work without changes, but can be enhanced by using the new features.
+
+# WebSocket Provider with Local Persistence
+
+The WebSocket provider now supports local persistence using IndexedDB, enabling offline editing capabilities.
+
+## Features
+
+- **Local Persistence**: Documents are automatically saved to IndexedDB in the browser
+- **Offline Support**: Edit documents even when offline, with automatic sync when connection is restored
+- **Background Sync**: WebSocket sync continues in the background for real-time collaboration
+- **Immediate Availability**: Documents load instantly from local storage without waiting for network sync
+
+## Usage
+
+### Basic Setup with Local Persistence
+
+```typescript
+import { Provider } from 'teleportal/providers';
+
+const provider = await Provider.create({
+  url: 'ws://localhost:1234',
+  document: 'my-document',
+  enableLocalPersistence: true,
+  offlineSupport: true,
+  localPersistencePrefix: 'my-app-' // optional, defaults to 'teleportal-'
+});
+
+// The provider is immediately ready for use, even if offline
+await provider.synced; // Resolves immediately if document is available locally
+
+// Listen for local persistence events
+provider.on('local-synced', () => {
+  console.log('Document loaded from local storage');
+});
+
+provider.on('background-synced', () => {
+  console.log('Background sync with server completed');
+});
+```
+
+### Configuration Options
+
+- `enableLocalPersistence` (boolean, default: false): Enable IndexedDB persistence
+- `localPersistencePrefix` (string, default: 'teleportal-'): Prefix for IndexedDB storage keys
+- `offlineSupport` (boolean, default: true): Whether to report as synced immediately when document is available locally
+
+### Offline Behavior
+
+When `enableLocalPersistence` and `offlineSupport` are enabled:
+
+1. **First Load**: Document syncs from server and is saved to IndexedDB
+2. **Subsequent Loads**: Document loads immediately from IndexedDB
+3. **Background Sync**: WebSocket connection syncs changes in background
+4. **Offline Editing**: Full editing capability without internet connection
+5. **Auto-Reconnect**: Changes sync automatically when connection is restored
+
+### Events
+
+- `local-synced`: Fired when document is loaded from IndexedDB
+- `local-sync`: Fired during local persistence operations
+- `background-synced`: Fired when background WebSocket sync completes
+
+### Browser Compatibility
+
+Local persistence requires IndexedDB support, which is available in all modern browsers:
+- Chrome 24+
+- Firefox 16+
+- Safari 10+
+- Edge 12+
+
+### Storage Management
+
+Documents are stored with keys in the format: `{prefix}{document-name}`
+
+To clear local storage:
+```typescript
+// This will clear all data for the document
+await provider.destroy();
+```
+
+## Migration from Basic WebSocket Provider
+
+Existing code will continue to work without changes. To enable local persistence, simply add the new options:
+
+```typescript
+// Before
+const provider = await Provider.create({
+  url: 'ws://localhost:1234',
+  document: 'my-document'
+});
+
+// After - with local persistence
+const provider = await Provider.create({
+  url: 'ws://localhost:1234',
+  document: 'my-document',
+  enableLocalPersistence: true // Add this line
+});
+```
