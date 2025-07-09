@@ -19,7 +19,7 @@ interface EditorProps {
 }
 
 export function Editor({ provider, user }: EditorProps) {
-  use(provider.synced);
+  use(provider.loaded);
   const editor = useCreateBlockNote({
     collaboration: provider
       ? {

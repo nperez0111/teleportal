@@ -1,6 +1,7 @@
 import { ObservableV2 } from "lib0/observable";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
+import { IndexeddbPersistence } from "y-indexeddb";
 
 import {
   DocMessage,
@@ -19,6 +20,10 @@ export type ProviderOptions = {
   document: string;
   ydoc?: Y.Doc;
   awareness?: Awareness;
+  /** Enable offline persistence using IndexedDB. Defaults to true. */
+  enableOfflinePersistence?: boolean;
+  /** Custom prefix for IndexedDB storage. Defaults to 'teleportal-'. */
+  indexedDBPrefix?: string;
   getTransport?: (ctx: {
     ydoc: Y.Doc;
     document: string;
@@ -63,18 +68,28 @@ export class Provider extends ObservableV2<{
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
 
+  // Local persistence properties
+  #localPersistence?: IndexeddbPersistence;
+  #enableOfflinePersistence: boolean;
+  #indexedDBPrefix: string;
+  #localLoaded: boolean = false;
+
   private constructor({
     client,
     document,
     ydoc = new Y.Doc(),
     awareness = new Awareness(ydoc),
     getTransport = ({ getDefaultTransport }) => getDefaultTransport(),
+    enableOfflinePersistence = true,
+    indexedDBPrefix = "teleportal-",
   }: ProviderOptions) {
     super();
     this.doc = ydoc;
     this.awareness = awareness;
     this.document = document;
     this.#getTransport = getTransport;
+    this.#enableOfflinePersistence = enableOfflinePersistence;
+    this.#indexedDBPrefix = indexedDBPrefix;
     this.transport = toBinaryTransport(
       getTransport({
         ydoc,
@@ -100,10 +115,38 @@ export class Provider extends ObservableV2<{
 
     this.doc.on("subdocs", this.subdocListener);
 
+    // Initialize offline persistence if enabled
+    if (this.#enableOfflinePersistence) {
+      this.initOfflinePersistence();
+    }
+
     if (client.state.type === "connected") {
       this.init();
     }
     client.on("open", this.init);
+  }
+
+  private initOfflinePersistence() {
+    if (!this.#enableOfflinePersistence || typeof window === "undefined") {
+      return;
+    }
+
+    const persistenceKey = `${this.#indexedDBPrefix}${this.document}`;
+
+    try {
+      this.#localPersistence = new IndexeddbPersistence(
+        persistenceKey,
+        this.doc,
+      );
+
+      // Set up event listener for local persistence
+      this.#localPersistence.on("synced", () => {
+        this.#localLoaded = true;
+      });
+    } catch (error) {
+      console.warn("Failed to initialize offline persistence:", error);
+      this.#enableOfflinePersistence = false;
+    }
   }
 
   private init = () => {
@@ -131,15 +174,15 @@ export class Provider extends ObservableV2<{
       if (this.subdocs.has(doc.guid)) {
         return;
       }
-      const provider = new Provider({
-        client: this.#websocketConnection,
+      const provider = this.openDocument({
+        document: this.document + "/" + doc.guid,
         ydoc: doc,
         awareness: this.awareness,
-        // TODO should we be prefixing with the parent document?
-        document: this.document + "/" + doc.guid,
         getTransport: this.#getTransport,
       });
+
       this.subdocs.set(doc.guid, provider);
+
       this.emit("load-subdoc", [
         {
           subdoc: doc,
@@ -188,11 +231,43 @@ export class Provider extends ObservableV2<{
       ydoc: doc,
       awareness,
       getTransport: this.#getTransport,
+      enableOfflinePersistence: this.#enableOfflinePersistence,
+      indexedDBPrefix: this.#indexedDBPrefix,
       ...options,
     });
   }
 
   #synced: Promise<void> | null = null;
+  #loaded: Promise<void> | null = null;
+
+  /**
+   * Resolves when the document is loaded (from local storage if available, or from network)
+   */
+  public get loaded(): Promise<void> {
+    if (this.#loaded) {
+      return this.#loaded;
+    }
+
+    if (this.#enableOfflinePersistence && this.#localPersistence) {
+      // Wait for local persistence to load
+      const localLoaded = new Promise<void>((resolve) => {
+        if (this.#localLoaded) {
+          resolve();
+        } else {
+          this.#localPersistence!.once("synced", () => {
+            resolve();
+          });
+        }
+      });
+      this.#loaded = localLoaded;
+      return this.#loaded;
+    }
+
+    // If no offline persistence, loaded is same as synced
+    this.#loaded = this.synced;
+    return this.#loaded;
+  }
+
   /**
    * Resolves when both
    *  - the underlying websocket connection is connected
@@ -203,6 +278,7 @@ export class Provider extends ObservableV2<{
       // re-use the promise if the underlying connection is unchanged
       return this.#synced;
     }
+
     const synced = Promise.all([
       this.#websocketConnection.connected,
       this.transport.synced,
@@ -229,6 +305,13 @@ export class Provider extends ObservableV2<{
   } = {}) {
     this.doc.off("subdocs", this.subdocListener);
     super.destroy();
+
+    // Clean up offline persistence
+    if (this.#localPersistence) {
+      this.#localPersistence.destroy();
+      this.#localPersistence = undefined;
+    }
+
     // TODO how to clean up the transport?
     // this.transport.readable
     this.#websocketReader.unsubscribe();
@@ -255,6 +338,8 @@ export class Provider extends ObservableV2<{
     ydoc,
     awareness,
     getTransport,
+    enableOfflinePersistence,
+    indexedDBPrefix: indexedDBPrefix,
     client = new WebsocketConnection({ url: url! }),
   }: (
     | { url: string; client?: undefined }
@@ -270,6 +355,8 @@ export class Provider extends ObservableV2<{
       document,
       awareness,
       getTransport,
+      enableOfflinePersistence,
+      indexedDBPrefix: indexedDBPrefix,
     });
   }
 }

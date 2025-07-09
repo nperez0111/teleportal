@@ -17,8 +17,8 @@ export type Document = {
 class FileService extends ObservableV2<{
   documents: (documents: Document[]) => void;
 }> {
-  private readonly STORAGE_KEY = "notion-documents";
-  private readonly CURRENT_DOC_KEY = "notion-current-document";
+  private readonly STORAGE_KEY = "teleportal-documents";
+  private readonly CURRENT_DOC_KEY = "teleportal-current-document";
   public documents: Document[] = [];
 
   constructor() {
