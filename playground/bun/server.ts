@@ -71,6 +71,9 @@ const ws = crossws(
 );
 
 const instance = Bun.serve({
+  development: {
+    // hmr: false,
+  },
   routes: {
     // In development, serve the homepage
     "/": Bun.env.NODE_ENV === "production" ? undefined : homepage,
