@@ -8,12 +8,11 @@ import {
   encodeFauxStateVector,
   encodeFauxUpdateList,
   getEmptyFauxUpdateList,
-  messageIdToString,
-  stringToMessageId,
   type DecodedFauxStateVector,
   type DecodedUpdate,
   type DecodedUpdateList,
 } from "./encoding";
+import { toBase64 } from "lib0/buffer";
 
 function createUpdate(data: Uint8Array): Update {
   return data as Update;
@@ -66,8 +65,8 @@ describe("e2e encoding", () => {
     });
 
     it("should handle large number of message IDs", () => {
-      const messageIds = Array.from({ length: 1000 }, (_, i) => 
-        createMessageId(new Uint8Array([i % 256]))
+      const messageIds = Array.from({ length: 1000 }, (_, i) =>
+        createMessageId(new Uint8Array([i % 256])),
       );
       const original: DecodedFauxStateVector = {
         messageIds,
@@ -120,7 +119,7 @@ describe("e2e encoding", () => {
       const updateData1 = new Uint8Array([1, 2, 3]);
       const updateData2 = new Uint8Array([4, 5, 6]);
       const updateData3 = new Uint8Array([7, 8, 9]);
-      
+
       const original: DecodedUpdateList = [
         {
           messageId: createMessageId(updateData1),
@@ -183,7 +182,7 @@ describe("e2e encoding", () => {
       const update1 = new Uint8Array([1]);
       const update2 = new Uint8Array([1, 2, 3, 4, 5]);
       const update3 = new Uint8Array(100);
-      
+
       const original: DecodedUpdateList = [
         {
           messageId: createMessageId(update1),
@@ -214,7 +213,7 @@ describe("e2e encoding", () => {
       const empty = getEmptyFauxUpdateList();
       const updateData1 = new Uint8Array([1, 2, 3]);
       const updateData2 = new Uint8Array([4, 5, 6]);
-      
+
       const newUpdates: DecodedUpdate[] = [
         {
           messageId: createMessageId(updateData1),
@@ -238,7 +237,7 @@ describe("e2e encoding", () => {
       const existingData2 = new Uint8Array([4, 5, 6]);
       const newData1 = new Uint8Array([7, 8, 9]);
       const newData2 = new Uint8Array([10, 11, 12]);
-      
+
       const existing: DecodedUpdateList = [
         {
           messageId: createMessageId(existingData1),
@@ -274,7 +273,7 @@ describe("e2e encoding", () => {
     it("should handle prepending to single item list", () => {
       const existingData = new Uint8Array([1]);
       const newData = new Uint8Array([2]);
-      
+
       const existing: DecodedUpdateList = [
         {
           messageId: createMessageId(existingData),
@@ -321,7 +320,7 @@ describe("e2e encoding", () => {
       const newData1 = new Uint8Array([2]);
       const newData2 = new Uint8Array([3]);
       const newData3 = new Uint8Array([4]);
-      
+
       const existing: DecodedUpdateList = [
         {
           messageId: createMessageId(existingData),
@@ -359,7 +358,7 @@ describe("e2e encoding", () => {
     it("should maintain consistency through multiple encode/decode cycles", () => {
       const updateData1 = new Uint8Array([1, 2, 3, 4, 5]);
       const updateData2 = new Uint8Array([6, 7, 8, 9, 10]);
-      
+
       const original: DecodedUpdateList = [
         {
           messageId: createMessageId(updateData1),
@@ -447,7 +446,7 @@ describe("e2e encoding", () => {
       const msgData3 = new Uint8Array([3]);
       const msgData4 = new Uint8Array([4]);
       const msgData5 = new Uint8Array([5]);
-      
+
       // Simulate server state with 5 messages
       const serverUpdates: DecodedUpdateList = [
         {
@@ -455,7 +454,7 @@ describe("e2e encoding", () => {
           update: createUpdate(msgData1),
         },
         {
-          messageId: createMessageId(msgData2), 
+          messageId: createMessageId(msgData2),
           update: createUpdate(msgData2),
         },
         {
@@ -484,10 +483,10 @@ describe("e2e encoding", () => {
 
       // Simulate server computing diff (convert to strings for Set operations)
       const clientMessageIdSet = new Set(
-        clientStateVector.messageIds.map(messageIdToString)
+        clientStateVector.messageIds.map(toBase64),
       );
       const expectedDiff = serverUpdates.filter(
-        (update) => !clientMessageIdSet.has(messageIdToString(update.messageId))
+        (update) => !clientMessageIdSet.has(toBase64(update.messageId)),
       );
 
       // Should return messages 3 and 5
@@ -497,7 +496,7 @@ describe("e2e encoding", () => {
           update: createUpdate(msgData3),
         },
         {
-          messageId: createMessageId(msgData5), 
+          messageId: createMessageId(msgData5),
           update: createUpdate(msgData5),
         },
       ]);
@@ -507,7 +506,7 @@ describe("e2e encoding", () => {
     it("should return all messages when client has none", () => {
       const msgData1 = new Uint8Array([1]);
       const msgData2 = new Uint8Array([2]);
-      
+
       const serverUpdates: DecodedUpdateList = [
         {
           messageId: createMessageId(msgData1),
@@ -525,10 +524,10 @@ describe("e2e encoding", () => {
       };
 
       const clientMessageIdSet = new Set(
-        clientStateVector.messageIds.map(messageIdToString)
+        clientStateVector.messageIds.map(toBase64),
       );
       const expectedDiff = serverUpdates.filter(
-        (update) => !clientMessageIdSet.has(messageIdToString(update.messageId))
+        (update) => !clientMessageIdSet.has(toBase64(update.messageId)),
       );
 
       // Should return all messages
@@ -539,7 +538,7 @@ describe("e2e encoding", () => {
     it("should return no messages when client has all", () => {
       const msgData1 = new Uint8Array([1]);
       const msgData2 = new Uint8Array([2]);
-      
+
       const serverUpdates: DecodedUpdateList = [
         {
           messageId: createMessageId(msgData1),
@@ -557,10 +556,10 @@ describe("e2e encoding", () => {
       };
 
       const clientMessageIdSet = new Set(
-        clientStateVector.messageIds.map(messageIdToString)
+        clientStateVector.messageIds.map(toBase64),
       );
       const expectedDiff = serverUpdates.filter(
-        (update) => !clientMessageIdSet.has(messageIdToString(update.messageId))
+        (update) => !clientMessageIdSet.has(toBase64(update.messageId)),
       );
 
       // Should return no messages
@@ -573,7 +572,7 @@ describe("e2e encoding", () => {
       const msgData2 = new Uint8Array([2]);
       const extraData1 = new Uint8Array([99]);
       const extraData2 = new Uint8Array([100]);
-      
+
       const serverUpdates: DecodedUpdateList = [
         {
           messageId: createMessageId(msgData1),
@@ -588,18 +587,18 @@ describe("e2e encoding", () => {
       // Client claims to have messages that don't exist on server
       const clientStateVector: DecodedFauxStateVector = {
         messageIds: [
-          createMessageId(msgData1), 
-          createMessageId(msgData2), 
-          createMessageId(extraData1), 
-          createMessageId(extraData2)
+          createMessageId(msgData1),
+          createMessageId(msgData2),
+          createMessageId(extraData1),
+          createMessageId(extraData2),
         ],
       };
 
       const clientMessageIdSet = new Set(
-        clientStateVector.messageIds.map(messageIdToString)
+        clientStateVector.messageIds.map(toBase64),
       );
       const expectedDiff = serverUpdates.filter(
-        (update) => !clientMessageIdSet.has(messageIdToString(update.messageId))
+        (update) => !clientMessageIdSet.has(toBase64(update.messageId)),
       );
 
       // Should return no messages (client has all that exist)

@@ -6,9 +6,8 @@ import {
   decodeFauxUpdateList,
   encodeFauxStateVector,
   encodeFauxUpdate,
-  messageIdToString,
-  stringToMessageId,
 } from "./encoding";
+import { fromBase64, toBase64 } from "lib0/buffer";
 
 export * from "./encoding";
 
@@ -43,10 +42,10 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
     switch (message.payload.type) {
       case "sync-step-1": {
         // For sync-step-1, create a faux state vector with all message IDs the client has
-        const messageIds = clientContext?.messageIds 
-          ? Array.from(clientContext.messageIds).map(stringToMessageId)
+        const messageIds = clientContext?.messageIds
+          ? Array.from(clientContext.messageIds).map(fromBase64)
           : [];
-        
+
         const fauxStateVector = encodeFauxStateVector({ messageIds });
 
         return new DocMessage(
@@ -135,12 +134,12 @@ export async function decryptMessage<Context extends Record<string, unknown>>(
         const decryptedUpdates = await Promise.all(
           decoded.map(async ({ update, messageId }) => {
             const decryptedUpdate = await decryptUpdate(key, update);
-            
+
             // Track that we've received this message ID
             if (clientContext?.messageIds) {
-              clientContext.messageIds.add(messageIdToString(messageId));
+              clientContext.messageIds.add(toBase64(messageId));
             }
-            
+
             return decryptedUpdate;
           }),
         );
@@ -191,7 +190,11 @@ export function createEncryptionTransform<
   return new TransformStream({
     async transform(chunk, controller) {
       try {
-        const encryptedMessage = await encryptMessage(chunk, key, clientContext);
+        const encryptedMessage = await encryptMessage(
+          chunk,
+          key,
+          clientContext,
+        );
         controller.enqueue(encryptedMessage);
       } catch (error) {
         controller.error(
@@ -219,7 +222,11 @@ export function createDecryptionTransform<
           return;
         }
 
-        const decryptedMessage = await decryptMessage(chunk, key, clientContext);
+        const decryptedMessage = await decryptMessage(
+          chunk,
+          key,
+          clientContext,
+        );
         controller.enqueue(decryptedMessage);
       } catch (error) {
         controller.error(

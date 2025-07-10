@@ -3,6 +3,7 @@ import * as encoding from "lib0/encoding";
 
 import type { StateVector, Update } from "teleportal";
 import { digest } from "lib0/hash/sha256";
+import { fromBase64, toBase64 } from "lib0/buffer.js";
 
 export type DecodedFauxStateVector = {
   messageIds: Uint8Array[];
@@ -12,41 +13,17 @@ export type FauxStateVector = StateVector;
 export type FauxUpdate = Update;
 
 /**
- * Converts a message ID (Uint8Array hash) to a compact numeric representation
- * by taking the first 8 bytes and converting to a bigint
- */
-export function messageIdToNumber(messageId: Uint8Array): bigint {
-  const buffer = new Uint8Array(8);
-  buffer.set(messageId.slice(0, 8));
-  return new DataView(buffer.buffer).getBigUint64(0, false);
-}
-
-/**
- * Converts a numeric representation back to a message ID prefix
- * Note: This is lossy and only for comparison purposes
- */
-export function numberToMessageIdPrefix(num: bigint): Uint8Array {
-  const buffer = new ArrayBuffer(8);
-  new DataView(buffer).setBigUint64(0, num, false);
-  return new Uint8Array(buffer);
-}
-
-/**
  * Converts Uint8Array to string for use in Set/Map operations
  */
 export function messageIdToString(messageId: Uint8Array): string {
-  return Array.from(messageId).map(b => b.toString(16).padStart(2, '0')).join('');
+  return toBase64(messageId);
 }
 
 /**
  * Converts hex string back to Uint8Array
  */
 export function stringToMessageId(str: string): Uint8Array {
-  const bytes = new Uint8Array(str.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(str.substr(i * 2, 2), 16);
-  }
-  return bytes;
+  return fromBase64(str);
 }
 
 export function decodeFauxStateVector(
@@ -55,34 +32,36 @@ export function decodeFauxStateVector(
   const decoder = decoding.createDecoder(sv);
   const count = decoding.readVarUint(decoder);
   const messageIds: Uint8Array[] = [];
-  
+
   for (let i = 0; i < count; i++) {
-    messageIds.push(decoding.readVarUint8Array(decoder));
+    // Read exactly 32 bytes for SHA256 hash
+    messageIds.push(decoding.readUint8Array(decoder, 32));
   }
-  
+
   return { messageIds };
 }
 
 /**
- * Encodes a faux state vector with multiple message IDs as Uint8Arrays.
+ * Encodes a faux state vector with multiple message IDs as fixed-size Uint8Arrays.
  * @param sv - The faux state vector to encode.
  * @returns The encoded faux state vector.
  *
  * The format is:
  * - The number of message IDs (varuint)
  * - For each message ID:
- *   - The messageId (varuint8array)
+ *   - The messageId (32 bytes) - fixed-size SHA256 hash
  */
 export function encodeFauxStateVector(
   sv: DecodedFauxStateVector,
 ): FauxStateVector {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, sv.messageIds.length);
-  
+
   for (const messageId of sv.messageIds) {
-    encoding.writeVarUint8Array(encoder, messageId);
+    // Write exactly 32 bytes for SHA256 hash
+    encoding.writeUint8Array(encoder, messageId);
   }
-  
+
   return encoding.toUint8Array(encoder) as FauxStateVector;
 }
 
@@ -100,14 +79,15 @@ export function getEmptyFauxUpdateList(): FauxUpdate {
  * The format is:
  * - The number of updates
  * - For each update:
- *   - The messageId (varuint8array) - the raw sha256 hash
+ *   - The messageId (32 bytes) - fixed-size SHA256 hash
  *   - The update (varuint8array) - the encrypted update
  */
 export function encodeFauxUpdateList(list: DecodedUpdateList): FauxUpdate {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, list.length);
   for (const update of list) {
-    encoding.writeVarUint8Array(encoder, update.messageId);
+    // Write exactly 32 bytes for SHA256 hash
+    encoding.writeUint8Array(encoder, update.messageId);
     encoding.writeVarUint8Array(encoder, update.update);
   }
   return encoding.toUint8Array(encoder) as FauxUpdate;
@@ -127,7 +107,8 @@ export function appendFauxUpdateList(
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, count + updates.length);
   for (const update of updates) {
-    encoding.writeVarUint8Array(encoder, update.messageId);
+    // Write exactly 32 bytes for SHA256 hash
+    encoding.writeUint8Array(encoder, update.messageId);
     encoding.writeVarUint8Array(encoder, update.update);
   }
   encoding.writeUint8Array(encoder, decoding.readTailAsUint8Array(decoder));
@@ -156,15 +137,16 @@ export function decodeFauxUpdateList(list: FauxUpdate): DecodedUpdateList {
   const count = decoding.readVarUint(decoder);
   const updates: DecodedUpdate[] = [];
   for (let i = 0; i < count; i++) {
-    const messageId = decoding.readVarUint8Array(decoder);
+    // Read exactly 32 bytes for SHA256 hash
+    const messageId = decoding.readUint8Array(decoder, 32);
     const update = decoding.readVarUint8Array(decoder) as FauxUpdate;
-    
+
     // Verify messageId matches update hash
     const expectedMessageId = digest(update);
     if (!arraysEqual(messageId, expectedMessageId)) {
       throw new Error("Invalid message, messageId does not match update");
     }
-    
+
     updates.push({ messageId, update });
   }
   return updates;
