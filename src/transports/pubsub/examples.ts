@@ -1,4 +1,4 @@
-import { Observable } from "teleportal";
+import { BinaryMessage, Observable } from "teleportal";
 import { Document } from "teleportal/server";
 import {
   PubSubBackend,
@@ -11,9 +11,9 @@ import {
  * This is a mock implementation - you would replace this with actual Redis client calls
  */
 export class MockRedisBackend implements PubSubBackend {
-  private subscribers = new Map<string, Set<(message: Uint8Array) => void>>();
+  private subscribers = new Map<string, Set<(message: BinaryMessage) => void>>();
 
-  async publish(topic: string, message: Uint8Array): Promise<void> {
+  async publish(topic: string, message: BinaryMessage): Promise<void> {
     // In real implementation: await redisClient.publish(topic, Buffer.from(message));
     console.log(`Publishing to Redis topic: ${topic}`);
     const callbacks = this.subscribers.get(topic);
@@ -26,7 +26,7 @@ export class MockRedisBackend implements PubSubBackend {
 
   async subscribe(
     topic: string,
-    callback: (message: Uint8Array) => void,
+    callback: (message: BinaryMessage) => void,
   ): Promise<() => Promise<void>> {
     // In real implementation: await redisClient.subscribe(topic);
     console.log(`Subscribing to Redis topic: ${topic}`);
@@ -60,7 +60,7 @@ export class MockRedisBackend implements PubSubBackend {
  */
 export class MockWebSocketBackend implements PubSubBackend {
   private ws: WebSocket | null = null;
-  private messageHandlers = new Map<string, (message: Uint8Array) => void>();
+  private messageHandlers = new Map<string, (message: BinaryMessage) => void>();
   private url: string;
 
   constructor(url: string) {
@@ -82,7 +82,7 @@ export class MockWebSocketBackend implements PubSubBackend {
             const data = JSON.parse(event.data);
             const handler = this.messageHandlers.get(data.topic);
             if (handler) {
-              handler(new Uint8Array(data.message));
+              handler(new Uint8Array(data.message) as BinaryMessage);
             }
           } catch (error) {
             console.error("Error parsing WebSocket message:", error);
@@ -92,7 +92,7 @@ export class MockWebSocketBackend implements PubSubBackend {
     }
   }
 
-  async publish(topic: string, message: Uint8Array): Promise<void> {
+  async publish(topic: string, message: BinaryMessage): Promise<void> {
     await this.ensureConnection();
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
@@ -105,7 +105,7 @@ export class MockWebSocketBackend implements PubSubBackend {
 
   async subscribe(
     topic: string,
-    callback: (message: Uint8Array) => void,
+    callback: (message: BinaryMessage) => void,
   ): Promise<() => Promise<void>> {
     await this.ensureConnection();
     
@@ -151,8 +151,7 @@ export function createInMemoryPubSubTransport() {
   return getPubSubTransport({
     backend,
     topicResolver: (message) => Document.getDocumentId(message),
-    observer,
-    onError: (error) => console.error("PubSub Error:", error),
+    observer
   });
 }
 
@@ -170,7 +169,6 @@ export function createRedisPubSubTransport() {
     backend,
     topicResolver: (message) => `doc:${Document.getDocumentId(message)}`,
     observer,
-    onError: (error) => console.error("Redis PubSub Error:", error),
   });
 }
 
@@ -188,7 +186,6 @@ export function createWebSocketPubSubTransport(wsUrl: string) {
     backend,
     topicResolver: (message) => `ws:${Document.getDocumentId(message)}`,
     observer,
-    onError: (error) => console.error("WebSocket PubSub Error:", error),
   });
 }
 
@@ -203,7 +200,7 @@ export class CustomMessageQueueBackend implements PubSubBackend {
     // this.messageQueue = new YourMessageQueueClient(messageQueueConfig);
   }
 
-  async publish(topic: string, message: Uint8Array): Promise<void> {
+  async publish(topic: string, message: BinaryMessage): Promise<void> {
     // Implement publishing to your message queue
     // await this.messageQueue.publish(topic, message);
     throw new Error("Implement with your actual message queue");
@@ -211,7 +208,7 @@ export class CustomMessageQueueBackend implements PubSubBackend {
 
   async subscribe(
     topic: string,
-    callback: (message: Uint8Array) => void,
+    callback: (message: BinaryMessage) => void,
   ): Promise<() => Promise<void>> {
     // Implement subscription to your message queue
     // const subscription = await this.messageQueue.subscribe(topic, callback);
