@@ -157,7 +157,7 @@ export function getYDocSink({
   let onSynced: (success: boolean) => void;
 
   return {
-    synced: new Promise((resolve, reject) => {
+    synced: new Promise<void>((resolve, reject) => {
       onSynced = (success: boolean) => {
         if (success) {
           resolve();
@@ -210,9 +210,24 @@ export function getYDocSink({
                   );
                   break;
                 }
+                case "awareness-query": {
+                  // Respond with all current awareness information
+                  observer.call(
+                    "message",
+                    new AwarenessMessage(
+                      document,
+                      {
+                        type: "awareness-update",
+                        update: encodeAwarenessUpdate(awareness, Array.from(awareness.getStates().keys())) as AwarenessUpdateMessage,
+                      },
+                      {
+                        clientId: "local",
+                      },
+                    ),
+                  );
+                  break;
+                }
                 default: {
-                  // @ts-expect-error - this should be unreachable due to type checking
-                  chunk.payload.type;
                   throw new Error("Invalid chunk.payload.type", {
                     cause: { chunk },
                   });
@@ -260,8 +275,6 @@ export function getYDocSink({
                   break;
                 }
                 default: {
-                  // @ts-expect-error - this should be unreachable due to type checking
-                  chunk.payload.type;
                   throw new Error("Invalid chunk.payload.type", {
                     cause: { chunk },
                   });

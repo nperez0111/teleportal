@@ -11,6 +11,7 @@ import {
   DocStep,
   EncodedDocUpdateMessage,
   DecodedAwarenessRequest,
+  DecodedAwarenessQuery,
 } from "./types";
 import { toBase64 } from "lib0/buffer";
 
@@ -48,7 +49,7 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
 
   constructor(
     public document: string,
-    public payload: DecodedAwarenessUpdateMessage | DecodedAwarenessRequest,
+    public payload: DecodedAwarenessUpdateMessage | DecodedAwarenessRequest | DecodedAwarenessQuery,
     context?: Context,
     public encrypted: boolean = false,
     encoded?: BinaryMessage,

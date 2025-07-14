@@ -10,9 +10,11 @@ import type {
   AwarenessRequestMessage,
   AwarenessStep,
   AwarenessUpdateMessage,
+  AwarenessQueryMessage,
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedAwarenessQuery,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedSyncDone,
@@ -148,7 +150,9 @@ function decodeAwarenessStepWithDecoder<
     ? DecodedAwarenessUpdateMessage
     : D extends AwarenessRequestMessage
       ? DecodedAwarenessRequest
-      : never,
+      : D extends AwarenessQueryMessage
+        ? DecodedAwarenessQuery
+        : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -162,6 +166,11 @@ function decodeAwarenessStepWithDecoder<
       case 0x01: {
         return {
           type: "awareness-request",
+        } as E;
+      }
+      case 0x02: {
+        return {
+          type: "awareness-query",
         } as E;
       }
       default: {

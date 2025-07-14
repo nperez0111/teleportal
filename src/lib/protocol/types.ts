@@ -26,6 +26,18 @@ export type DecodedAwarenessRequest = {
 };
 
 /**
+ * A Y.js awareness query message, which requests all current awareness information.
+ */
+export type AwarenessQueryMessage = Tag<Uint8Array, "awareness-query">;
+
+/**
+ * A decoded Y.js awareness query message
+ */
+export type DecodedAwarenessQuery = {
+  type: "awareness-query";
+};
+
+/**
  * A Y.js update, always encoded as UpdateV2.
  */
 export type Update = Tag<Uint8Array, "update">;
@@ -113,7 +125,7 @@ export type DocStep =
 /**
  * Any Y.js update which contains awareness updates.
  */
-export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
+export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage | AwarenessQueryMessage;
 
 /**
  * A Y.js message which concerns a document and encloses a {@link DocStep} and the document name.

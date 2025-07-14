@@ -51,6 +51,11 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeUint8(encoder, 1);
             break;
           }
+          case "awareness-query": {
+            // message type
+            encoding.writeUint8(encoder, 2);
+            break;
+          }
           default: {
             // @ts-expect-error - this should be unreachable due to type checking
             update.payload.type;
