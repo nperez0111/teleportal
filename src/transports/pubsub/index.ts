@@ -41,9 +41,11 @@ export interface PubSubBackend {
 export function getPubSubSink<Context extends ServerContext>({
   backend,
   topicResolver,
+  onError,
 }: {
   backend: PubSubBackend;
   topicResolver: (message: Message<Context>) => string;
+  onError?: (error: Error) => void;
 }): Sink<Context, { backend: PubSubBackend }> {
   return {
     backend,
@@ -69,6 +71,7 @@ export function getPubSubSource<Context extends ServerContext>({
   context,
   backend,
   observer,
+  onError,
 }: {
   context?: Context;
   backend: PubSubBackend;
@@ -76,6 +79,7 @@ export function getPubSubSource<Context extends ServerContext>({
     subscribe: (topic: string) => void;
     unsubscribe: (topic: string) => void;
   }>;
+  onError?: (error: Error) => void;
 }): Source<
   Context,
   {
@@ -118,11 +122,14 @@ export function getPubSubSource<Context extends ServerContext>({
       async cancel() {
         observer.destroy();
         // Unsubscribe from all topics
-        for (const [topic, unsubscribe] of subscribedTopics) {
-          try {
-            await unsubscribe();
-          } catch (error) {
-            console.error(`Error unsubscribing from topic ${topic}:`, error);
+        for (const topic of Array.from(subscribedTopics.keys())) {
+          const unsubscribe = subscribedTopics.get(topic);
+          if (unsubscribe) {
+            try {
+              await unsubscribe();
+            } catch (error) {
+              console.error(`Error unsubscribing from topic ${topic}:`, error);
+            }
           }
         }
         subscribedTopics.clear();
@@ -143,12 +150,12 @@ export function getPubSubSource<Context extends ServerContext>({
  * Simple in-memory pub/sub backend implementation for testing/development
  */
 export class InMemoryPubSubBackend implements PubSubBackend {
-  private subscribers = new Map<string, Set<(message: BinaryMessage) => void>>();
+  private subscribers = new Map<string, Set<(message: Uint8Array) => void>>();
 
-  async publish(topic: string, message: BinaryMessage): Promise<void> {
+  async publish(topic: string, message: Uint8Array): Promise<void> {
     const callbacks = this.subscribers.get(topic);
     if (callbacks) {
-      for (const callback of callbacks) {
+      for (const callback of Array.from(callbacks)) {
         try {
           callback(message);
         } catch (error) {
@@ -191,6 +198,7 @@ export function getPubSubTransport<Context extends ServerContext>({
   backend,
   topicResolver,
   observer,
+  onError,
 }: {
   context?: Context;
   backend: PubSubBackend;
@@ -199,16 +207,19 @@ export function getPubSubTransport<Context extends ServerContext>({
     subscribe: (topic: string) => void;
     unsubscribe: (topic: string) => void;
   }>;
+  onError?: (error: Error) => void;
 }) {
   const source = getPubSubSource({
     context,
     backend,
     observer,
+    onError,
   });
   
   const sink = getPubSubSink({
     backend,
     topicResolver,
+    onError,
   });
 
   return {
