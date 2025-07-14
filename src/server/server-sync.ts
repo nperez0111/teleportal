@@ -1,9 +1,9 @@
-import type { ServerContext, YTransport } from "teleportal";
+import type { ServerContext, Transport } from "teleportal";
 
 /**
  * Interface for server sync transport that can handle multiple documents
  */
-export type ServerSyncTransport<Context extends ServerContext> = YTransport<
+export type ServerSyncTransport<Context extends ServerContext> = Transport<
   Context,
   {
     /**

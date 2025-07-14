@@ -1,12 +1,5 @@
 import { ObservableV2 } from "lib0/observable";
-import { uuidv4 } from "lib0/random";
-import {
-  DocMessage,
-  fromBinaryTransport,
-  Message,
-  ServerContext,
-  YBinaryTransport,
-} from "teleportal";
+import { DocMessage, Message, ServerContext, Transport } from "teleportal";
 import { withMessageValidator } from "teleportal/transports";
 import { Client } from "./client";
 import { ClientManager } from "./client-manager";
@@ -87,10 +80,10 @@ export type ServerOptions<Context extends ServerContext> = {
  * It is responsible for creating, destroying, and managing clients and documents.
  */
 export class Server<Context extends ServerContext> extends ObservableV2<{
-  "client-connected": (client: Client<Context>) => {};
-  "client-disconnected": (client: Client<Context>) => {};
-  "document-load": (document: Document<Context>) => {};
-  "document-unload": (document: Document<Context>) => {};
+  "client-connected": (client: Client<Context>) => void;
+  "client-disconnected": (client: Client<Context>) => void;
+  "document-load": (document: Document<Context>) => void;
+  "document-unload": (document: Document<Context>) => void;
 }> {
   public logger: Logger;
   private options: ServerOptions<Context>;
@@ -106,7 +99,7 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
 
     // Initialize managers
     this.documentManager = new DocumentManager({
-      logger: this.logger,
+      logger: this.logger.child(),
       getStorage: async (ctx) => {
         return await this.options.getStorage({
           ...ctx,
@@ -124,7 +117,7 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
       this.emit("document-unload", [document]),
     );
 
-    this.clientManager = new ClientManager({ logger: this.logger });
+    this.clientManager = new ClientManager({ logger: this.logger.child() });
 
     this.clientManager.on("client-connected", (client) =>
       this.emit("client-connected", [client]),
@@ -177,71 +170,59 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
    */
   public async createClient({
     transport,
-    context,
-    clientId = uuidv4(),
+    id: clientId,
   }: {
-    transport: YBinaryTransport;
-    context: Omit<Context, "clientId">;
-    clientId?: string;
-  }): Promise<Server<Context>> {
+    transport: Transport<Context>;
+    id: string;
+  }): Promise<Client<Context>> {
     const logger = this.logger.withContext({
-      clientId,
-      context: {
-        room: context.room,
-        userId: context.userId,
-      },
+      clientId: clientId,
     });
 
     logger.trace("creating client");
 
-    const validatedTransport = withMessageValidator(
-      fromBinaryTransport(
-        transport,
-        Object.assign({ clientId }, context) as Context,
-      ),
-      {
-        isAuthorized: async (message, type) => {
-          if (!this.options.checkPermission) {
-            logger.trace("no checkPermission function provided, allowing all");
-            return true;
-          }
-          logger.trace("checking permission");
-
-          const hasPermission = await this.options.checkPermission({
-            context: message.context,
-            document: message.document,
-            documentId: Document.getDocumentId(message),
-            message,
-            type,
-          });
-
-          if (!hasPermission) {
-            logger.trace("permission denied, sending auth-message");
-            await client.send(
-              new DocMessage(
-                message.document,
-                {
-                  type: "auth-message",
-                  permission: "denied",
-                  reason: `Insufficient permissions to access document ${message.document}`,
-                },
-                message.context,
-                message.encrypted,
-              ),
-            );
-            return false;
-          }
-
-          logger.trace("permission granted");
+    const validatedTransport = withMessageValidator(transport, {
+      isAuthorized: async (message, type) => {
+        if (!this.options.checkPermission) {
+          logger.trace("no checkPermission function provided, allowing all");
           return true;
-        },
+        }
+        logger.trace("checking permission");
+
+        const hasPermission = await this.options.checkPermission({
+          context: message.context,
+          document: message.document,
+          documentId: Document.getDocumentId(message),
+          message,
+          type,
+        });
+
+        if (!hasPermission) {
+          logger.trace("permission denied, sending auth-message");
+          await client.send(
+            new DocMessage(
+              message.document,
+              {
+                type: "auth-message",
+                permission: "denied",
+                reason: `Insufficient permissions to access document ${message.document}`,
+              },
+              message.context,
+              message.encrypted,
+            ),
+          );
+          return false;
+        }
+
+        logger.trace("permission granted");
+        return true;
       },
-    );
+    });
 
     const client = new Client({
       writable: validatedTransport.writable,
       id: clientId,
-      logger: this.logger,
+      logger: this.logger.child(),
     });
 
     validatedTransport.readable
@@ -268,43 +249,19 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
         }),
       )
       .finally(async () => {
-        this.logger
-          .withMetadata({
-            clientId,
-            context: {
-              room: context.room,
-              userId: context.userId,
-            },
-          })
-          .trace("client disconnected");
+        logger.trace("client disconnected");
         await this.disconnectClient(clientId);
       });
 
     this.clientManager.addClient(client);
 
-    this.logger
-      .withMetadata({
-        clientId,
-        context: {
-          room: context.room,
-          userId: context.userId,
-        },
-      })
-      .trace("client created");
+    logger.trace("client created");
 
     await client.ready;
 
-    this.logger
-      .withMetadata({
-        clientId,
-        context: {
-          room: context.room,
-          userId: context.userId,
-        },
-      })
-      .trace("client ready");
+    logger.trace("client ready");
 
-    return this;
+    return client;
   }
 
   public async disconnectClient(clientId: string) {

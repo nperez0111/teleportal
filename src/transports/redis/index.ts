@@ -4,14 +4,14 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import {
   BinaryMessage,
-  compose,
   decodeMessage,
   Message,
   ServerContext,
-  YSink,
-  YSource,
-  YTransport,
+  Sink,
+  Source,
+  Transport,
 } from "teleportal";
+import { compose } from "teleportal/transports";
 import { Document } from "teleportal/server";
 
 function encode(message: Message, instanceId: string) {
@@ -52,7 +52,7 @@ export function getRedisSource<Context extends ServerContext>({
   };
   keyPrefix?: string;
   instanceId: string;
-}): YSource<
+}): Source<
   Context,
   {
     sourceRedisClient: Redis;
@@ -131,7 +131,7 @@ export function getRedisSink<Context extends ServerContext>({
   };
   keyPrefix?: string;
   instanceId: string;
-}): YSink<Context, { sinkRedisClient: Redis }> {
+}): Sink<Context, { sinkRedisClient: Redis }> {
   const redis = new Redis(redisOptions.path, redisOptions.options ?? {});
   return {
     sinkRedisClient: redis,
@@ -178,7 +178,7 @@ export function getRedisTransport<Context extends ServerContext>({
   };
   keyPrefix?: string;
   instanceId?: string;
-}): YTransport<
+}): Transport<
   Context,
   {
     sourceRedisClient: Redis;

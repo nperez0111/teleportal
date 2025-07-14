@@ -10,21 +10,21 @@ import {
   AwarenessMessage,
   type AwarenessUpdateMessage,
   type ClientContext,
-  compose,
   DocMessage,
   Message,
   type Update,
-  type YSink,
-  type YSource,
-  type YTransport,
+  type Sink,
+  type Source,
+  type Transport,
 } from "teleportal";
+import { compose } from "teleportal/transports";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";
 }
 
 /**
- * Makes a {@link YSource} from a {@link Y.Doc} and a document name
+ * Makes a {@link Source} from a {@link Y.Doc} and a document name
  */
 export function getYDocSource({
   ydoc,
@@ -40,7 +40,7 @@ export function getYDocSource({
   observer?: ObservableV2<{
     message: (message: Message) => void;
   }>;
-}): YSource<
+}): Source<
   ClientContext,
   {
     ydoc: Y.Doc;
@@ -130,7 +130,7 @@ export function getYDocSource({
 }
 
 /**
- * Makes a {@link YSink} from a {@link Y.Doc} and a document name
+ * Makes a {@link Sink} from a {@link Y.Doc} and a document name
  */
 export function getYDocSink({
   ydoc,
@@ -146,7 +146,7 @@ export function getYDocSink({
   observer?: ObservableV2<{
     message: (message: Message) => void;
   }>;
-}): YSink<
+}): Sink<
   ClientContext,
   {
     ydoc: Y.Doc;
@@ -282,7 +282,7 @@ export function getYDocSink({
 }
 
 /**
- * Makes a {@link YTransport} from a {@link Y.Doc} and a document name
+ * Makes a {@link Transport} from a {@link Y.Doc} and a document name
  */
 export function getYTransportFromYDoc({
   ydoc,
@@ -292,7 +292,7 @@ export function getYTransportFromYDoc({
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-}): YTransport<
+}): Transport<
   ClientContext,
   {
     ydoc: Y.Doc;

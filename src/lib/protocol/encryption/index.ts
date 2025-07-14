@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import { decryptUpdate, encryptUpdate } from "../../encryption-key";
+import { decryptUpdate, encryptUpdate } from "../../../encryption-key";
 import { AwarenessMessage, DocMessage, type Message } from "../message-types";
 import type { Update } from "../types";
 import {

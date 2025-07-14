@@ -88,7 +88,7 @@ export class DocumentManager<
     const doc = new Document<Context>({
       name: document,
       id: documentId,
-      logger: this.logger,
+      logger: this.logger.child(),
       storage: storage,
     });
 

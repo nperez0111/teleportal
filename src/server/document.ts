@@ -16,7 +16,7 @@ import {
   decodeFauxUpdateList,
   encodeFauxUpdateList,
   getEmptyFauxUpdateList,
-} from "../protocol/encryption/encoding";
+} from "teleportal/protocol/encryption";
 import type { Client } from "./client";
 import type { Logger } from "./logger";
 
@@ -103,7 +103,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
     for (const client of this.clients) {
       if (client.id !== excludeClientId) {
         logger
-          .withMetadata({ clientId: client.id })
+          .withMetadata({ targetClientId: client.id })
           .trace("writing message to client");
         await client.send(message);
       }

@@ -1,26 +1,26 @@
 import {
-  compose,
   type Message,
-  type YSink,
-  type YSource,
-  type YTransport,
+  type Sink,
+  type Source,
+  type Transport,
 } from "teleportal";
+import { compose } from "teleportal/transports";
 
 /**
- * A {@link YSink} that wraps another sink and passes all updates through, only allowing messages that are authorized.
+ * A {@link Sink} that wraps another sink and passes all updates through, only allowing messages that are authorized.
  */
 export function withMessageValidatorSink<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  sink: YSink<Context, AdditionalProperties>,
+  sink: Sink<Context, AdditionalProperties>,
   options?: {
     isAuthorized?: (
       chunk: Message<Context>,
       type: "read" | "write",
     ) => Promise<boolean>;
   },
-): YSink<Context, AdditionalProperties> {
+): Sink<Context, AdditionalProperties> {
   return {
     ...sink,
     writable: new WritableStream({
@@ -43,20 +43,20 @@ export function withMessageValidatorSink<
 }
 
 /**
- * A {@link YSource} that wraps another source and passes all updates through, only allowing messages that are authorized.
+ * A {@link Source} that wraps another source and passes all updates through, only allowing messages that are authorized.
  */
 export function withMessageValidatorSource<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  source: YSource<Context, AdditionalProperties>,
+  source: Source<Context, AdditionalProperties>,
   options?: {
     isAuthorized?: (
       chunk: Message<Context>,
       type: "read" | "write",
     ) => Promise<boolean>;
   },
-): YSource<Context, AdditionalProperties> {
+): Source<Context, AdditionalProperties> {
   return {
     ...source,
     readable: source.readable.pipeThrough(
@@ -83,14 +83,14 @@ export function withMessageValidator<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  transport: YTransport<Context, AdditionalProperties>,
+  transport: Transport<Context, AdditionalProperties>,
   options?: {
     isAuthorized?: (
       chunk: Message<Context>,
       type: "read" | "write",
     ) => Promise<boolean>;
   },
-): YTransport<Context, AdditionalProperties> {
+): Transport<Context, AdditionalProperties> {
   return compose(
     withMessageValidatorSource(transport, options),
     withMessageValidatorSink(transport, options),

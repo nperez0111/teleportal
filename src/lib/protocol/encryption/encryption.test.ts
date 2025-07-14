@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import { DocMessage, AwarenessMessage } from "../message-types";
-import { createEncryptionKey } from "../../encryption-key";
+import { createEncryptionKey } from "../../../encryption-key";
 import {
   encryptMessage,
   decryptMessage,

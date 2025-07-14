@@ -1,4 +1,4 @@
-import type { ClientContext, Message, YTransport } from "teleportal";
+import type { ClientContext, Message, Transport } from "teleportal";
 
 export interface RateLimitOptions {
   /**
@@ -58,7 +58,7 @@ export class RateLimitedTransport<
   private bucket: TokenBucket;
 
   constructor(
-    transport: YTransport<Context, AdditionalProps>,
+    transport: Transport<Context, AdditionalProps>,
     options: RateLimitOptions,
   ) {
     this.maxMessages = options.maxMessages;
@@ -186,9 +186,9 @@ export function withRateLimit<
   Context extends ClientContext,
   AdditionalProps extends Record<string, unknown>,
 >(
-  transport: YTransport<Context, AdditionalProps>,
+  transport: Transport<Context, AdditionalProps>,
   options: RateLimitOptions,
-): YTransport<Context, AdditionalProps> {
+): Transport<Context, AdditionalProps> {
   const rateLimited = new RateLimitedTransport(transport, options);
 
   return {

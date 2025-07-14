@@ -40,13 +40,20 @@ export class Client<Context extends ServerContext> extends ObservableV2<{
   }
 
   public async send(message: Message<Context>) {
-    this.logger
-      .withMetadata({ messageId: message.id })
-      .trace("sending message");
-    await this.writer.write(message);
-    this.logger
-      .withMetadata({ messageId: message.id })
-      .trace("message sent to client");
+    try {
+      this.logger
+        .withMetadata({ messageId: message.id })
+        .trace("sending message");
+      await this.writer.write(message);
+      this.logger
+        .withMetadata({ messageId: message.id })
+        .trace("message sent to client");
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .error("Failed to send message, tearing down client");
+      await this.destroy();
+    }
   }
 
   /**
@@ -91,8 +98,19 @@ export class Client<Context extends ServerContext> extends ObservableV2<{
     for (const document of this.documents) {
       this.unsubscribeFromDocument(document);
     }
+    try {
+      await this.writer.releaseLock();
+    } catch (e) {
+      this.logger.withError(e).error("Failed to release lock, aborting client");
+      try {
+        await this.writer.abort();
+      } catch (e) {
+        this.logger
+          .withError(e)
+          .error("Failed to abort client, ignoring error");
+      }
+    }
     this.emit("destroy", [this]);
-    await this.writer.releaseLock();
     super.destroy();
   }
 }

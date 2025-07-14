@@ -6,11 +6,11 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import {
   DocMessage,
   StateVector,
-  toBinaryTransport,
   type ClientContext,
-  type YBinaryTransport,
-  type YTransport,
+  type BinaryTransport,
+  type Transport,
 } from "teleportal";
+import { toBinaryTransport } from "../../transports/utils";
 import { getYTransportFromYDoc } from "../../transports";
 import { WebsocketConnection } from "./connection-manager";
 import type { ReaderInstance } from "./utils";
@@ -28,13 +28,13 @@ export type ProviderOptions = {
     ydoc: Y.Doc;
     document: string;
     awareness: Awareness;
-    getDefaultTransport(): YTransport<
+    getDefaultTransport(): Transport<
       ClientContext,
       {
         synced: Promise<void>;
       }
     >;
-  }) => YTransport<
+  }) => Transport<
     ClientContext,
     {
       synced: Promise<void>;
@@ -58,7 +58,7 @@ export class Provider extends ObservableV2<{
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: YBinaryTransport<{
+  public transport: BinaryTransport<{
     synced: Promise<void>;
     key?: CryptoKey;
   }>;

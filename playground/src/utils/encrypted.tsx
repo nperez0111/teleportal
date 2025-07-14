@@ -1,4 +1,4 @@
-import { YTransport } from "teleportal";
+import { Transport } from "teleportal";
 import {
   exportEncryptionKey,
   importEncryptionKey,
@@ -15,7 +15,7 @@ export function getEncryptedTransport(key: CryptoKey, document: string) {
   return ({
     getDefaultTransport,
   }: {
-    getDefaultTransport: () => YTransport<any, any>;
+    getDefaultTransport: () => Transport<any, { synced: Promise<void> }>;
   }) => withEncryption(getDefaultTransport(), { key, document });
 }
 
