@@ -34,12 +34,12 @@
       "default": "./dist/storage/index.mjs"
     },
     "./protocol": {
-      "types": "./dist/protocol/index.d.mts",
-      "default": "./dist/protocol/index.mjs"
+      "types": "./dist/lib/protocol/index.d.mts",
+      "default": "./dist/lib/protocol/index.mjs"
     },
     "./protocol/encryption": {
-      "types": "./dist/protocol/encryption/index.d.mts",
-      "default": "./dist/protocol/encryption/index.mjs"
+      "types": "./dist/lib/protocol/encryption/index.d.mts",
+      "default": "./dist/lib/protocol/encryption/index.mjs"
     },
     "./providers": {
       "types": "./dist/providers/index.d.mts",
