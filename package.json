@@ -33,6 +33,10 @@
       "types": "./dist/storage/index.d.mts",
       "default": "./dist/storage/index.mjs"
     },
+    "./http": {
+      "types": "./dist/http/index.d.mts",
+      "default": "./dist/http/index.mjs"
+    },
     "./protocol": {
       "types": "./dist/lib/protocol/index.d.mts",
       "default": "./dist/lib/protocol/index.mjs"
