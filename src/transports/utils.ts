@@ -13,7 +13,6 @@ import {
 /**
  * Compose a {@link Source} and {@link Sink} into a {@link Transport}.
  */
-
 export function compose<
   Context extends Record<string, unknown>,
   SourceAdditionalProperties extends Record<string, unknown>,
@@ -28,29 +27,31 @@ export function compose<
     readable: source.readable,
     writable: sink.writable,
   };
-} /**
+}
+
+/**
  * Pipe the updates from a {@link Source} to a {@link Sink}.
  */
-
 export function pipe<Context extends Record<string, unknown>>(
   source: Source<Context>,
   sink: Sink<Context>,
 ): Promise<void> {
   return source.readable.pipeTo(sink.writable);
-} /**
+}
+
+/**
  * Sync two {@link Transport}s.
  */
-
 export function sync<Context extends Record<string, unknown>>(
   a: Transport<Context>,
   b: Transport<Context>,
 ): Promise<void> {
   return Promise.all([pipe(a, b), pipe(b, a)]).then(() => undefined);
 }
+
 /**
  * Reads an untrusted {@link BinaryMessage} and decodes it into a {@link Message}.
  */
-
 export const getMessageReader = <Context extends Record<string, unknown>>(
   context: Context,
 ) =>
@@ -60,12 +61,13 @@ export const getMessageReader = <Context extends Record<string, unknown>>(
       Object.assign(decoded.context, context);
       controller.enqueue(decoded as Message<Context>);
     },
-  }); /**
+  });
+
+/**
  * Convert a {@link Transport} to a {@link BinaryTransport}.
  *
  * This will encode all messages going in and out of the transport from {@link BinaryMessage} to {@link Message} and vice versa.
  */
-
 export function toBinaryTransport<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
@@ -91,6 +93,11 @@ export function toBinaryTransport<
   };
 }
 
+/**
+ * Convert a {@link BinaryTransport} to a {@link Transport}.
+ *
+ * This will decode all messages going in and out of the transport from {@link BinaryMessage} to {@link Message} and vice versa.
+ */
 export function fromBinaryTransport<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
