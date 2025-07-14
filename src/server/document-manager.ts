@@ -1,5 +1,4 @@
-import { ObservableV2 } from "lib0/observable";
-import type { Message, ServerContext } from "teleportal";
+import { Observable, type Message, type ServerContext } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
@@ -21,9 +20,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
  *
  * It holds all open documents in memory, and provides a way to get or create documents.
  */
-export class DocumentManager<
-  Context extends ServerContext,
-> extends ObservableV2<{
+export class DocumentManager<Context extends ServerContext> extends Observable<{
   "document-created": (document: Document<Context>) => void;
   "document-destroyed": (document: Document<Context>) => void;
 }> {
@@ -97,12 +94,12 @@ export class DocumentManager<
     });
 
     // Subscribe to this document's updates
-    await this.options.syncTransport.subscribe?.(documentId);
+    await this.options.syncTransport.observer?.call("subscribe", documentId);
 
     this.documents.set(documentId, doc);
     this.logger.withMetadata({ documentId }).trace("document created");
 
-    this.emit("document-created", [doc]);
+    await this.call("document-created", doc);
 
     doc.on("broadcast", (message) => {
       this.syncTransportWriter.write(message);
@@ -143,7 +140,7 @@ export class DocumentManager<
       .withMetadata({ documentId })
       .trace("document removed from manager");
 
-    this.emit("document-destroyed", [document]);
+    await this.call("document-destroyed", document);
   }
 
   /**

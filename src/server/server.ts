@@ -1,5 +1,10 @@
-import { ObservableV2 } from "lib0/observable";
-import { DocMessage, Message, ServerContext, Transport } from "teleportal";
+import {
+  DocMessage,
+  Message,
+  Observable,
+  ServerContext,
+  Transport,
+} from "teleportal";
 import { withMessageValidator } from "teleportal/transports";
 import { Client } from "./client";
 import { ClientManager } from "./client-manager";
@@ -79,7 +84,7 @@ export type ServerOptions<Context extends ServerContext> = {
  *
  * It is responsible for creating, destroying, and managing clients and documents.
  */
-export class Server<Context extends ServerContext> extends ObservableV2<{
+export class Server<Context extends ServerContext> extends Observable<{
   "client-connected": (client: Client<Context>) => void;
   "client-disconnected": (client: Client<Context>) => void;
   "document-load": (document: Document<Context>) => void;
@@ -110,21 +115,19 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
         this.options.syncTransport ?? createNoopServerSyncTransport(),
     });
 
-    this.documentManager.on("document-created", (document) =>
-      this.emit("document-load", [document]),
-    );
-    this.documentManager.on("document-destroyed", (document) =>
-      this.emit("document-unload", [document]),
-    );
+    this.documentManager.addListeners({
+      "document-created": (document) => this.call("document-load", document),
+      "document-destroyed": (document) =>
+        this.call("document-unload", document),
+    });
 
     this.clientManager = new ClientManager({ logger: this.logger.child() });
 
-    this.clientManager.on("client-connected", (client) =>
-      this.emit("client-connected", [client]),
-    );
-    this.clientManager.on("client-disconnected", (client) =>
-      this.emit("client-disconnected", [client]),
-    );
+    this.clientManager.addListeners({
+      "client-connected": (client) => this.call("client-connected", client),
+      "client-disconnected": (client) =>
+        this.call("client-disconnected", client),
+    });
   }
 
   #clock = 0;

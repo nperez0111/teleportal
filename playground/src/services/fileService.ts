@@ -1,5 +1,5 @@
-import { ObservableV2 } from "lib0/observable";
 import { uuidv4 } from "lib0/random";
+import { Observable } from "teleportal";
 import {
   createEncryptionKey,
   exportEncryptionKey,
@@ -14,7 +14,7 @@ export type Document = {
   encryptedKey: CryptoKey | undefined;
 };
 
-class FileService extends ObservableV2<{
+class FileService extends Observable<{
   documents: (documents: Document[]) => void;
 }> {
   private readonly STORAGE_KEY = "teleportal-documents";
@@ -48,7 +48,7 @@ class FileService extends ObservableV2<{
 
   private async saveDocuments(documents: Document[]): Promise<void> {
     this.documents = documents;
-    this.emit("documents", [this.documents]);
+    await this.call("documents", this.documents);
     localStorage.setItem(
       this.STORAGE_KEY,
       JSON.stringify(
@@ -70,7 +70,7 @@ class FileService extends ObservableV2<{
 
   async loadAllDocuments(): Promise<Document[]> {
     this.documents = await this.getDocuments();
-    this.emit("documents", [this.documents]);
+    await this.call("documents", this.documents);
     return this.documents;
   }
 

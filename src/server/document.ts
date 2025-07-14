@@ -1,9 +1,9 @@
-import { ObservableV2 } from "lib0/observable";
 import type { StateVector } from "teleportal";
 import {
   DocMessage,
   getEmptyStateVector,
   getEmptyUpdate,
+  Observable,
   type Message,
   type ServerContext,
   type Update,
@@ -27,7 +27,7 @@ import type { Logger } from "./logger";
  * and the storage of the document.
  *
  */
-export class Document<Context extends ServerContext> extends ObservableV2<{
+export class Document<Context extends ServerContext> extends Observable<{
   destroy: (document: Document<Context>) => void;
   "client-connected": (client: Client<Context>) => void;
   "client-disconnected": (client: Client<Context>) => void;
@@ -109,7 +109,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
       }
     }
 
-    this.emit("broadcast", [message]);
+    await this.call("broadcast", message);
   }
 
   /**
@@ -166,7 +166,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
       .withMetadata({ clientId: client.id })
       .trace("client added to document");
 
-    this.emit("client-connected", [client]);
+    this.call("client-connected", client);
   }
 
   /**
@@ -178,7 +178,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
       .withMetadata({ clientId: client.id })
       .trace("client removed from document");
 
-    this.emit("client-disconnected", [client]);
+    this.call("client-disconnected", client);
 
     // If no clients remain, destroy the document
     if (this.clients.size === 0) {
@@ -337,7 +337,7 @@ export class Document<Context extends ServerContext> extends ObservableV2<{
     }
     this.#destroyed = true;
 
-    this.emit("destroy", [this]);
+    await this.call("destroy", this);
     this.logger.trace("destroying document");
 
     await this.storage.unload(this.id);

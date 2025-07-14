@@ -1,17 +1,17 @@
-import { ObservableV2 } from "lib0/observable";
+import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { IndexeddbPersistence } from "y-indexeddb";
 
 import {
   DocMessage,
+  Observable,
   StateVector,
-  type ClientContext,
   type BinaryTransport,
+  type ClientContext,
   type Transport,
 } from "teleportal";
-import { toBinaryTransport } from "../../transports/utils";
 import { getYTransportFromYDoc } from "../../transports";
+import { toBinaryTransport } from "../../transports/utils";
 import { WebsocketConnection } from "./connection-manager";
 import type { ReaderInstance } from "./utils";
 
@@ -42,7 +42,7 @@ export type ProviderOptions = {
   >;
 };
 
-export class Provider extends ObservableV2<{
+export class Provider extends Observable<{
   "load-subdoc": (ctx: {
     subdoc: Y.Doc;
     provider: Provider;
@@ -183,14 +183,12 @@ export class Provider extends ObservableV2<{
 
       this.subdocs.set(doc.guid, provider);
 
-      this.emit("load-subdoc", [
-        {
-          subdoc: doc,
-          provider,
-          document: this.document,
-          parentDoc: this.doc,
-        },
-      ]);
+      this.call("load-subdoc", {
+        subdoc: doc,
+        provider,
+        document: this.document,
+        parentDoc: this.doc,
+      });
     });
 
     removed.forEach((doc) => {
@@ -200,14 +198,12 @@ export class Provider extends ObservableV2<{
       }
       provider.destroy({ destroyWebSocket: false });
       this.subdocs.delete(doc.guid);
-      this.emit("unload-subdoc", [
-        {
-          subdoc: doc,
-          provider,
-          document: this.document,
-          parentDoc: this.doc,
-        },
-      ]);
+      this.call("unload-subdoc", {
+        subdoc: doc,
+        provider,
+        document: this.document,
+        parentDoc: this.doc,
+      });
     });
   }
 

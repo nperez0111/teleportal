@@ -9,10 +9,10 @@ import {
   ServerContext,
   Sink,
   Source,
-  Transport,
+  Observable,
 } from "teleportal";
 import { compose } from "teleportal/transports";
-import { Document } from "teleportal/server";
+import { Document, ServerSyncTransport } from "teleportal/server";
 
 function encode(message: Message, instanceId: string) {
   return encoding.encode((encoder) => {
@@ -56,15 +56,21 @@ export function getRedisSource<Context extends ServerContext>({
   Context,
   {
     sourceRedisClient: Redis;
-    subscribe: (documentId: string) => Promise<void>;
-    unsubscribe: (documentId: string) => Promise<void>;
+    observer: Observable<{
+      subscribe: (documentId: string) => void;
+      unsubscribe: (documentId: string) => void;
+    }>;
   }
 > {
   const redis = new Redis(redisOptions.path, redisOptions.options ?? {});
   const subscribedDocuments = new Set<string>();
 
-  return {
-    sourceRedisClient: redis,
+  const observer = new Observable<{
+    subscribe: (documentId: string) => void;
+    unsubscribe: (documentId: string) => void;
+  }>();
+
+  observer.addListeners({
     subscribe: async (documentId: string) => {
       if (!subscribedDocuments.has(documentId)) {
         await redis.subscribe(keyPrefix + documentId);
@@ -77,6 +83,11 @@ export function getRedisSource<Context extends ServerContext>({
         subscribedDocuments.delete(documentId);
       }
     },
+  });
+
+  return {
+    sourceRedisClient: redis,
+    observer,
     readable: new ReadableStream({
       async start(controller) {
         redis.on("messageBuffer", (channel, rawMessage) => {
@@ -105,6 +116,7 @@ export function getRedisSource<Context extends ServerContext>({
         });
       },
       async cancel() {
+        observer.destroy();
         // Unsubscribe from all documents
         for (const documentId of subscribedDocuments) {
           await redis.unsubscribe(keyPrefix + documentId);
@@ -178,14 +190,11 @@ export function getRedisTransport<Context extends ServerContext>({
   };
   keyPrefix?: string;
   instanceId?: string;
-}): Transport<
+}): ServerSyncTransport<
   Context,
   {
     sourceRedisClient: Redis;
     sinkRedisClient: Redis;
-    subscribe: (documentId: string) => Promise<void>;
-    unsubscribe: (documentId: string) => Promise<void>;
-    close: () => Promise<void>;
   }
 > {
   const source = getRedisSource({

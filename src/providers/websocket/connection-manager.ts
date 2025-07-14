@@ -1,4 +1,4 @@
-import { ObservableV2 } from "lib0/observable";
+import { Observable } from "teleportal";
 import {
   encodePingMessage,
   isPongMessage,
@@ -81,7 +81,7 @@ export type WebsocketState =
       reconnectAttempt: number;
     };
 
-export class WebsocketConnection extends ObservableV2<{
+export class WebsocketConnection extends Observable<{
   update: (state: WebsocketState) => void;
   message: (message: BinaryMessage) => void;
   close: (event: CloseEvent) => void;
@@ -179,20 +179,20 @@ export class WebsocketConnection extends ObservableV2<{
 
   public set state(state: WebsocketState) {
     this.#state = state;
-    this.emit("update", [state]);
+    this.call("update", state);
     switch (state.type) {
       case "error": {
-        this.emit("error", [state.error]);
+        this.call("error", state.error);
         break;
       }
       case "connected": {
         if (this.#reconnectAttempt > 0) {
           this.#reconnectAttempt = 0;
           this.#backoff.reset();
-          this.emit("reconnect", []);
+          this.call("reconnect");
         }
         this.#lastConnection = new Date();
-        this.emit("open", []);
+        this.call("open");
         break;
       }
     }
@@ -279,7 +279,7 @@ export class WebsocketConnection extends ObservableV2<{
   #setupOnlineOfflineListeners() {
     const handleOnline = () => {
       this.#isOnline = true;
-      this.emit("online", []);
+      this.call("online");
 
       // If we were disconnected due to being offline and should connect, try to reconnect
       if (
@@ -295,7 +295,7 @@ export class WebsocketConnection extends ObservableV2<{
 
     const handleOffline = () => {
       this.#isOnline = false;
-      this.emit("offline", []);
+      this.call("offline");
 
       // Cancel any pending reconnection attempts when going offline
       if (this.#reconnectTimeout) {
@@ -375,7 +375,7 @@ export class WebsocketConnection extends ObservableV2<{
 
         try {
           await this.#fanOutWriter.writer.write(message);
-          this.emit("message", [message]);
+          this.call("message", message);
         } catch (err) {
           const error = new Error(
             "Failed to write message to internal stream",
@@ -405,7 +405,7 @@ export class WebsocketConnection extends ObservableV2<{
 
       websocket.addEventListener("close", (event) => {
         this.#closeWebSocketConnection();
-        this.emit("close", [event]);
+        this.call("close", event);
       });
 
       websocket.addEventListener("open", () => {
@@ -447,7 +447,7 @@ export class WebsocketConnection extends ObservableV2<{
     const delay = this.#backoff.next();
 
     // Emit retry event with attempt info
-    this.emit("retry", [this.#reconnectAttempt + 1, delay]);
+    this.call("retry", this.#reconnectAttempt + 1, delay);
 
     this.#reconnectTimeout = WebsocketConnection.setTimeout(() => {
       if (this.#reconnectAttempt >= this.#maxReconnectAttempts) {

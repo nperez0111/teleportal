@@ -1,5 +1,4 @@
-import { ObservableV2 } from "lib0/observable";
-import type { ServerContext } from "teleportal";
+import { Observable, type ServerContext } from "teleportal";
 import { Client } from "./client";
 import type { Logger } from "./logger";
 
@@ -12,7 +11,7 @@ export type ClientManagerOptions = {
  *
  * It holds all open clients in memory, and provides a way to get or create clients.
  */
-export class ClientManager<Context extends ServerContext> extends ObservableV2<{
+export class ClientManager<Context extends ServerContext> extends Observable<{
   "client-connected": (client: Client<Context>) => void;
   "client-disconnected": (client: Client<Context>) => void;
 }> {
@@ -40,7 +39,7 @@ export class ClientManager<Context extends ServerContext> extends ObservableV2<{
       .withMetadata({ clientId: client.id })
       .trace("client added to manager");
 
-    this.emit("client-connected", [client]);
+    this.call("client-connected", client);
   }
 
   /**
@@ -56,7 +55,7 @@ export class ClientManager<Context extends ServerContext> extends ObservableV2<{
       .withMetadata({ clientId })
       .trace("removing client from manager");
 
-    this.emit("client-disconnected", [client]);
+    await this.call("client-disconnected", client);
 
     await client.destroy();
     this.clients.delete(clientId);

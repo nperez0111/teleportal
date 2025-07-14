@@ -6,6 +6,7 @@
       "dependencies": {
         "crossws": "^0.4.1",
         "db0": "^0.3.2",
+        "hookable": "^5.5.3",
         "ioredis": "^5.6.1",
         "jose": "^6.0.11",
         "lib0": "^0.2.109",

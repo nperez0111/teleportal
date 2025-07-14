@@ -1,5 +1,4 @@
-import { ObservableV2 } from "lib0/observable";
-import type { Message, ServerContext } from "teleportal";
+import { Observable, type Message, type ServerContext } from "teleportal";
 import { Document } from "./document";
 import type { Logger } from "./logger";
 
@@ -10,7 +9,7 @@ import type { Logger } from "./logger";
  *
  * It also provides a way to subscribe to and unsubscribe from documents.
  */
-export class Client<Context extends ServerContext> extends ObservableV2<{
+export class Client<Context extends ServerContext> extends Observable<{
   destroy: (client: Client<Context>) => void;
   "document-added": (document: Document<Context>) => void;
   "document-removed": (document: Document<Context>) => void;
@@ -65,7 +64,7 @@ export class Client<Context extends ServerContext> extends ObservableV2<{
     this.logger
       .withMetadata({ documentId: document.id })
       .trace("subscribed to document");
-    this.emit("document-added", [document]);
+    this.call("document-added", document);
   }
 
   /**
@@ -77,7 +76,7 @@ export class Client<Context extends ServerContext> extends ObservableV2<{
     this.logger
       .withMetadata({ documentId: document.id })
       .trace("unsubscribed from document");
-    this.emit("document-removed", [document]);
+    this.call("document-removed", document);
   }
 
   /**
@@ -110,7 +109,7 @@ export class Client<Context extends ServerContext> extends ObservableV2<{
           .error("Failed to abort client, ignoring error");
       }
     }
-    this.emit("destroy", [this]);
+    await this.call("destroy", this);
     super.destroy();
   }
 }

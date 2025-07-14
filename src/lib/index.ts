@@ -11,6 +11,7 @@ import { type BinaryMessage, type Message } from "./protocol";
  * - yjs base protocol (type + data payload)
  */
 export * from "./protocol";
+export * from "./utils";
 
 export type ClientContext = {
   /**
