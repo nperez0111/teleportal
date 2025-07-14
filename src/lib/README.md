@@ -229,6 +229,8 @@ Client                           Server
 ```
 Client                           Server
   │                                │
+  │◀───── Awareness Request ──────│  (request current user states)
+  │                                │
   │─────── Awareness Update ─────▶│  (user cursor/selection)
   │                                │
   │◀────── Awareness Update ──────│  (other clients' user states)
