@@ -6,7 +6,7 @@ import {
   Source,
   Observable,
 } from "teleportal";
-import { getMessageReader } from "../utils";
+import { compose, getMessageReader } from "../utils";
 
 /**
  * Generic interface for a pub/sub backend implementation.
@@ -41,11 +41,9 @@ export interface PubSubBackend {
 export function getPubSubSink<Context extends ServerContext>({
   backend,
   topicResolver,
-  onError,
 }: {
   backend: PubSubBackend;
   topicResolver: (message: Message<Context>) => string;
-  onError?: (error: Error) => void;
 }): Sink<Context, { backend: PubSubBackend }> {
   return {
     backend,
@@ -58,7 +56,7 @@ export function getPubSubSink<Context extends ServerContext>({
         await backend.close();
       },
       async abort() {
-        backend.close().catch(console.error);
+        await backend.close();
       },
     }),
   };
@@ -77,6 +75,7 @@ export function getPubSubSource<Context extends ServerContext>({
   observer: Observable<{
     subscribe: (topic: string) => void;
     unsubscribe: (topic: string) => void;
+    destroy: () => void;
   }>;
 }): Source<
   Context,
@@ -85,6 +84,7 @@ export function getPubSubSource<Context extends ServerContext>({
     observer: Observable<{
       subscribe: (topic: string) => void;
       unsubscribe: (topic: string) => void;
+      destroy: () => void;
     }>;
   }
 > {
@@ -114,71 +114,13 @@ export function getPubSubSource<Context extends ServerContext>({
         });
       },
       async cancel() {
-        observer.destroy();
-        // Unsubscribe from all topics
-        for (const topic of Array.from(subscribedTopics.keys())) {
-          const unsubscribe = subscribedTopics.get(topic);
-          if (unsubscribe) {
-            try {
-              await unsubscribe();
-            } catch (error) {
-              console.error(`Error unsubscribing from topic ${topic}:`, error);
-            }
-          }
-        }
+        await observer.call("destroy");
         subscribedTopics.clear();
 
         await backend.close();
       },
     }).pipeThrough(reader),
   };
-}
-
-/**
- * Simple in-memory pub/sub backend implementation for testing/development
- */
-export class InMemoryPubSubBackend implements PubSubBackend {
-  private subscribers = new Map<
-    string,
-    Set<(message: BinaryMessage) => void>
-  >();
-
-  async publish(topic: string, message: BinaryMessage): Promise<void> {
-    const callbacks = this.subscribers.get(topic);
-    if (callbacks) {
-      for (const callback of Array.from(callbacks)) {
-        try {
-          callback(message);
-        } catch (error) {
-          console.error("Error in subscriber callback:", error);
-        }
-      }
-    }
-  }
-
-  async subscribe(
-    topic: string,
-    callback: (message: BinaryMessage) => void,
-  ): Promise<() => Promise<void>> {
-    if (!this.subscribers.has(topic)) {
-      this.subscribers.set(topic, new Set());
-    }
-
-    const callbacks = this.subscribers.get(topic)!;
-    callbacks.add(callback);
-
-    // Return unsubscribe function
-    return async () => {
-      callbacks.delete(callback);
-      if (callbacks.size === 0) {
-        this.subscribers.delete(topic);
-      }
-    };
-  }
-
-  async close(): Promise<void> {
-    this.subscribers.clear();
-  }
 }
 
 /**
@@ -198,25 +140,17 @@ export function getPubSubTransport<Context extends ServerContext>({
     unsubscribe: (topic: string) => void;
   }>;
 }) {
-  const source = getPubSubSource({
-    context,
-    backend,
-    observer,
-  });
+  const transport = compose(
+    getPubSubSource({
+      context,
+      backend,
+      observer,
+    }),
+    getPubSubSink({
+      backend,
+      topicResolver,
+    }),
+  );
 
-  const sink = getPubSubSink({
-    backend,
-    topicResolver,
-  });
-
-  return {
-    ...source,
-    ...sink,
-    readable: source.readable,
-    writable: sink.writable,
-    close: async () => {
-      await source.readable.cancel();
-      await sink.writable.close();
-    },
-  };
+  return transport;
 }
