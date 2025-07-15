@@ -13,5 +13,33 @@ export * from "./decode";
 export * from "./encode";
 export * from "./message-types";
 export * from "./ping";
-export * from "./types";
 export * from "./utils";
+export * from "./merkle-tree";
+
+// Export specific types to avoid conflicts
+export type {
+  Tag,
+  AwarenessUpdateMessage,
+  DecodedAwarenessUpdateMessage,
+  AwarenessRequestMessage,
+  DecodedAwarenessRequest,
+  Update,
+  StateVector,
+  SyncStep1,
+  DecodedSyncStep1,
+  SyncStep2,
+  DecodedSyncStep2,
+  UpdateStep,
+  DecodedUpdateStep,
+  AuthMessage,
+  DecodedAuthMessage,
+  BlobMessage as BlobMessageType,
+  DecodedBlobMessage,
+  BlobPartMessage,
+  DecodedBlobPartMessage,
+  RequestBlobMessage,
+  DecodedRequestBlobMessage,
+  DocStep,
+  AwarenessStep,
+  EncodedDocUpdateMessage,
+} from "./types";

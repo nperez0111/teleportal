@@ -126,6 +126,31 @@ export function encodeMessage(update: Message): BinaryMessage {
           encoding.writeVarString(encoder, update.payload.contentType);
           // binary data
           encoding.writeVarUint8Array(encoder, update.payload.data);
+          
+          // Merkle tree metadata (optional for backward compatibility)
+          if (update.payload.merkleRootHash) {
+            // merkle root hash
+            encoding.writeVarString(encoder, update.payload.merkleRootHash);
+            // merkle tree depth
+            encoding.writeVarUint(encoder, update.payload.merkleTreeDepth || 0);
+            // chunk hashes
+            const chunkHashes = update.payload.merkleChunkHashes || [];
+            encoding.writeVarUint(encoder, chunkHashes.length);
+            for (const hash of chunkHashes) {
+              encoding.writeVarString(encoder, hash);
+            }
+            // start chunk index
+            encoding.writeVarUint(encoder, update.payload.startChunkIndex || 0);
+            // end chunk index
+            encoding.writeVarUint(encoder, update.payload.endChunkIndex || 0);
+          } else {
+            // No merkle tree metadata - write empty values for backward compatibility
+            encoding.writeVarString(encoder, "");
+            encoding.writeVarUint(encoder, 0);
+            encoding.writeVarUint(encoder, 0);
+            encoding.writeVarUint(encoder, 0);
+            encoding.writeVarUint(encoder, 0);
+          }
         } else if (update.payload.type === "request-blob") {
           // request id
           encoding.writeVarString(encoder, update.payload.requestId);

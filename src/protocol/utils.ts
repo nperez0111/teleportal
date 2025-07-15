@@ -8,6 +8,14 @@ import type {
 import { BlobMessage } from "./message-types";
 import { digest } from "lib0/hash/sha256";
 import { toBase64 } from "lib0/buffer";
+import {
+  generateMerkleContentId,
+  buildMerkleTreeMetadata,
+  verifyMerkleTree,
+  createMerkleTreeSegments,
+  reconstructMerkleTreeFromSegments,
+  type MerkleTreeMetadata,
+} from "./merkle-tree";
 
 /**
  * An empty Update for use as a placeholder.
@@ -55,15 +63,24 @@ export function isEmptyStateVector(stateVector: StateVector): boolean {
 export const MAX_SEGMENT_SIZE = 4 * 1024 * 1024; // 4MB
 
 /**
- * Generate a content-based file ID using SHA-256 hash
+ * Generate a content-based file ID using merkle tree root hash
+ * This replaces the simple SHA-256 approach with BLAKE3-style merkle tree hashing
  */
 export function generateContentId(fileData: Uint8Array): string {
+  return generateMerkleContentId(fileData);
+}
+
+/**
+ * Legacy SHA-256 content ID generation for backward compatibility
+ * @deprecated Use generateContentId instead for new implementations
+ */
+export function generateLegacyContentId(fileData: Uint8Array): string {
   const hash = digest(fileData);
   return toBase64(hash);
 }
 
 /**
- * Segment a large file into 4MB chunks for upload
+ * Segment a large file into 4MB chunks for upload with merkle tree metadata
  */
 export function segmentFileForUpload(
   fileData: Uint8Array,
@@ -74,11 +91,18 @@ export function segmentFileForUpload(
   const segments: BlobMessage<Record<string, unknown>>[] = [];
   const totalSegments = Math.ceil(fileData.length / MAX_SEGMENT_SIZE);
   const contentId = generateContentId(fileData);
+  
+  // Build merkle tree metadata for the entire file
+  const merkleMetadata = buildMerkleTreeMetadata(fileData);
+  const merkleTreeSegments = createMerkleTreeSegments(fileData, MAX_SEGMENT_SIZE);
 
   for (let i = 0; i < totalSegments; i++) {
     const start = i * MAX_SEGMENT_SIZE;
     const end = Math.min(start + MAX_SEGMENT_SIZE, fileData.length);
     const segmentData = fileData.slice(start, end);
+    
+    // Get corresponding merkle tree segment
+    const merkleSegment = merkleTreeSegments[i];
 
     const payload: DecodedBlobPartMessage = {
       type: "blob-part",
@@ -88,6 +112,12 @@ export function segmentFileForUpload(
       name,
       contentType,
       data: segmentData,
+      // Add merkle tree metadata
+      merkleRootHash: merkleMetadata.rootHash,
+      merkleTreeDepth: merkleMetadata.treeDepth,
+      merkleChunkHashes: merkleSegment.chunkHashes,
+      startChunkIndex: merkleSegment.startChunkIndex,
+      endChunkIndex: merkleSegment.endChunkIndex,
     };
 
     segments.push(new BlobMessage(documentId || "", payload));
@@ -153,7 +183,8 @@ export function reconstructFileFromSegments(
 }
 
 /**
- * Verify content integrity by comparing content IDs
+ * Verify content integrity using merkle tree verification
+ * This replaces simple content ID comparison with comprehensive merkle tree verification
  */
 export function verifyContentIntegrity(
   segments: BlobMessage<Record<string, unknown>>[],
@@ -167,17 +198,81 @@ export function verifyContentIntegrity(
   if (!firstSegment || firstSegment.payload.type !== "blob-part") return false;
 
   const expectedContentId = firstSegment.payload.contentId;
+  const expectedRootHash = firstSegment.payload.merkleRootHash;
 
-  // Verify all segments have the same content ID
+  // Verify all segments have the same content ID and merkle root hash
   for (const segment of segments) {
     if (segment.payload.type === "blob-part") {
       if (segment.payload.contentId !== expectedContentId) {
         return false;
       }
+      
+      // If merkle tree metadata is available, verify it matches
+      if (expectedRootHash && segment.payload.merkleRootHash !== expectedRootHash) {
+        return false;
+      }
+    }
+  }
+
+  // If we have merkle tree metadata, verify the reconstructed file against it
+  if (expectedRootHash) {
+    const reconstructed = reconstructFileFromSegments(segments);
+    if (!reconstructed) return false;
+
+    // Build expected merkle metadata from first segment
+    const firstPayload = firstSegment.payload;
+    if (firstPayload.merkleTreeDepth && firstPayload.merkleRootHash) {
+      const expectedMetadata: MerkleTreeMetadata = {
+        rootHash: firstPayload.merkleRootHash,
+        totalChunks: 0, // Will be calculated during verification
+        treeDepth: firstPayload.merkleTreeDepth,
+        fileSize: reconstructed.length,
+        leafHashes: [], // Will be reconstructed during verification
+      };
+
+      return verifyMerkleTree(reconstructed, expectedMetadata);
     }
   }
 
   return true;
+}
+
+/**
+ * Verify merkle tree integrity for segments
+ */
+export function verifyMerkleTreeIntegrity(
+  segments: BlobMessage<Record<string, unknown>>[],
+): boolean {
+  if (segments.length === 0) return false;
+
+  const reconstructed = reconstructFileFromSegments(segments);
+  if (!reconstructed) return false;
+
+  // Extract merkle tree segments
+  const merkleSegments = segments
+    .filter((segment) => segment.payload.type === "blob-part")
+    .map((segment) => {
+      const payload = segment.payload as DecodedBlobPartMessage;
+      return {
+        segmentIndex: payload.segmentIndex,
+        totalSegments: payload.totalSegments,
+        merkleMetadata: {
+          rootHash: payload.merkleRootHash || "",
+          totalChunks: 0,
+          treeDepth: payload.merkleTreeDepth || 0,
+          fileSize: reconstructed.length,
+          leafHashes: [],
+        },
+        chunkHashes: payload.merkleChunkHashes || [],
+        startChunkIndex: payload.startChunkIndex || 0,
+        endChunkIndex: payload.endChunkIndex || 0,
+      };
+    });
+
+  const metadata = reconstructMerkleTreeFromSegments(merkleSegments);
+  if (!metadata) return false;
+
+  return verifyMerkleTree(reconstructed, metadata);
 }
 
 /**
@@ -216,6 +311,8 @@ export function getFileMetadata(
   documentId?: string;
   totalSegments: number;
   totalSize: number;
+  merkleRootHash?: string;
+  merkleTreeDepth?: number;
 } | null {
   if (segments.length === 0) return null;
 
@@ -237,5 +334,7 @@ export function getFileMetadata(
     contentId: firstSegment.payload.contentId,
     totalSegments: firstSegment.payload.totalSegments,
     totalSize,
+    merkleRootHash: firstSegment.payload.merkleRootHash,
+    merkleTreeDepth: firstSegment.payload.merkleTreeDepth,
   };
 }

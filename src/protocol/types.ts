@@ -116,6 +116,12 @@ export type DecodedBlobPartMessage = {
   name: string;
   contentType: string;
   data: Uint8Array;
+  // Merkle tree metadata for BLAKE3-style streaming verification
+  merkleRootHash?: string;
+  merkleTreeDepth?: number;
+  merkleChunkHashes?: string[];
+  startChunkIndex?: number;
+  endChunkIndex?: number;
 };
 
 /**

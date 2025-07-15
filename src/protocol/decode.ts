@@ -111,6 +111,20 @@ function decodeBlobPartStepWithDecoder(
     const contentId = decoding.readVarString(decoder);
     const name = decoding.readVarString(decoder);
     const contentType = decoding.readVarString(decoder);
+    const data = decoding.readVarUint8Array(decoder);
+
+    // Read merkle tree metadata (added for BLAKE3-style streaming)
+    const merkleRootHash = decoding.readVarString(decoder);
+    const merkleTreeDepth = decoding.readVarUint(decoder);
+    const chunkHashesLength = decoding.readVarUint(decoder);
+    
+    const merkleChunkHashes: string[] = [];
+    for (let i = 0; i < chunkHashesLength; i++) {
+      merkleChunkHashes.push(decoding.readVarString(decoder));
+    }
+    
+    const startChunkIndex = decoding.readVarUint(decoder);
+    const endChunkIndex = decoding.readVarUint(decoder);
 
     return {
       type: "blob-part",
@@ -119,7 +133,13 @@ function decodeBlobPartStepWithDecoder(
       contentId,
       name,
       contentType,
-      data: decoding.readVarUint8Array(decoder),
+      data,
+      // Only include merkle tree metadata if it's present
+      merkleRootHash: merkleRootHash || undefined,
+      merkleTreeDepth: merkleTreeDepth > 0 ? merkleTreeDepth : undefined,
+      merkleChunkHashes: merkleChunkHashes.length > 0 ? merkleChunkHashes : undefined,
+      startChunkIndex: startChunkIndex > 0 || endChunkIndex > 0 ? startChunkIndex : undefined,
+      endChunkIndex: startChunkIndex > 0 || endChunkIndex > 0 ? endChunkIndex : undefined,
     };
   } catch (err) {
     throw new Error("Failed to decode blob part step", {

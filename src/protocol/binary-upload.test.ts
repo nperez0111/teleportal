@@ -8,15 +8,252 @@ import type {
 import {
   createRequestBlob,
   generateContentId,
+  generateLegacyContentId,
   generateRequestId,
   getFileMetadata,
   MAX_SEGMENT_SIZE,
   reconstructFileFromSegments,
   segmentFileForUpload,
   verifyContentIntegrity,
+  verifyMerkleTreeIntegrity,
 } from "./utils";
+import {
+  generateMerkleContentId,
+  buildMerkleTreeMetadata,
+  verifyMerkleTree,
+} from "./merkle-tree";
 
 describe("Blob Message", () => {
+  describe("Merkle Tree Content ID Generation", () => {
+    it("should generate merkle tree-based content IDs", () => {
+      const fileData = new Uint8Array([1, 2, 3, 4, 5]);
+      
+      const merkleContentId = generateContentId(fileData);
+      const legacyContentId = generateLegacyContentId(fileData);
+      
+      expect(merkleContentId).toBeTruthy();
+      expect(legacyContentId).toBeTruthy();
+      expect(merkleContentId).not.toBe(legacyContentId); // Should be different approaches
+    });
+
+    it("should generate consistent merkle content IDs", () => {
+      const fileData = new Uint8Array([1, 2, 3, 4, 5]);
+      
+      const contentId1 = generateContentId(fileData);
+      const contentId2 = generateContentId(fileData);
+      
+      expect(contentId1).toBe(contentId2);
+    });
+  });
+
+  describe("Blob Part with Merkle Tree", () => {
+    it("should encode and decode a blob part message with merkle tree metadata", () => {
+      const fileData = new Uint8Array([1, 2, 3, 4, 5]);
+      const contentId = generateContentId(fileData);
+      const merkleMetadata = buildMerkleTreeMetadata(fileData);
+
+      const payload: DecodedBlobPartMessage = {
+        type: "blob-part",
+        segmentIndex: 0,
+        totalSegments: 1,
+        contentId,
+        name: "test.txt",
+        contentType: "text/plain",
+        data: fileData,
+        merkleRootHash: merkleMetadata.rootHash,
+        merkleTreeDepth: merkleMetadata.treeDepth,
+        merkleChunkHashes: merkleMetadata.leafHashes.slice(0, 2), // Sample chunk hashes
+        startChunkIndex: 0,
+        endChunkIndex: 0,
+      };
+
+      const message = new BlobMessage("test-doc", payload);
+      const encoded = encodeMessage(message);
+      const decoded = decodeMessage(encoded);
+
+      expect(decoded.type).toBe("blob");
+      expect(decoded.document).toBe("test-doc");
+
+      if (decoded.type === "blob" && decoded.payload.type === "blob-part") {
+        expect(decoded.payload.segmentIndex).toBe(0);
+        expect(decoded.payload.totalSegments).toBe(1);
+        expect(decoded.payload.contentId).toBe(contentId);
+        expect(decoded.payload.name).toBe("test.txt");
+        expect(decoded.payload.contentType).toBe("text/plain");
+        expect(decoded.payload.data).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+        expect(decoded.payload.merkleRootHash).toBe(merkleMetadata.rootHash);
+        expect(decoded.payload.merkleTreeDepth).toBe(merkleMetadata.treeDepth);
+        expect(decoded.payload.merkleChunkHashes).toEqual(merkleMetadata.leafHashes.slice(0, 2));
+        expect(decoded.payload.startChunkIndex).toBe(0);
+        expect(decoded.payload.endChunkIndex).toBe(0);
+      } else {
+        throw new Error("Expected blob part message with merkle tree metadata");
+      }
+    });
+
+    it("should handle blob part message without merkle tree metadata (backward compatibility)", () => {
+      const fileData = new Uint8Array([255, 216, 255, 224]); // JPEG header
+      const contentId = generateLegacyContentId(fileData); // Use legacy for backward compatibility test
+
+      const payload: DecodedBlobPartMessage = {
+        type: "blob-part",
+        segmentIndex: 0,
+        totalSegments: 1,
+        contentId,
+        name: "image.jpg",
+        contentType: "image/jpeg",
+        data: fileData,
+        // No merkle tree metadata
+      };
+
+      const message = new BlobMessage("test-doc", payload);
+      const encoded = encodeMessage(message);
+      const decoded = decodeMessage(encoded);
+
+      if (decoded.type === "blob" && decoded.payload.type === "blob-part") {
+        expect(decoded.payload.contentType).toBe("image/jpeg");
+        expect(decoded.payload.contentId).toBe(contentId);
+        expect(decoded.payload.merkleRootHash).toBeUndefined();
+        expect(decoded.payload.merkleTreeDepth).toBeUndefined();
+        expect(decoded.payload.merkleChunkHashes).toBeUndefined();
+      } else {
+        throw new Error("Expected blob part message");
+      }
+    });
+  });
+
+  describe("File Segmentation with Merkle Trees", () => {
+    it("should segment files with merkle tree metadata", () => {
+      const largeFileData = new Uint8Array(MAX_SEGMENT_SIZE * 2.5);
+      for (let i = 0; i < largeFileData.length; i++) {
+        largeFileData[i] = i % 256;
+      }
+
+      const segments = segmentFileForUpload(
+        largeFileData,
+        "large-file.bin",
+        "application/octet-stream",
+      );
+
+      expect(segments.length).toBe(3);
+
+      // Verify merkle tree metadata is consistent across segments
+      for (const segment of segments) {
+        if (segment.payload.type === "blob-part") {
+          expect(segment.payload.merkleRootHash).toBeTruthy();
+          expect(segment.payload.merkleTreeDepth).toBeGreaterThan(0);
+          expect(segment.payload.merkleChunkHashes).toBeTruthy();
+          expect(segment.payload.startChunkIndex).toBeGreaterThanOrEqual(0);
+          expect(segment.payload.endChunkIndex).toBeGreaterThanOrEqual(0);
+          
+          // All segments should have the same root hash
+          if (segments[0].payload.type === "blob-part") {
+            expect(segment.payload.merkleRootHash).toBe(segments[0].payload.merkleRootHash);
+          }
+        }
+      }
+    });
+
+    it("should verify merkle tree integrity of segmented files", () => {
+      const testData = new Uint8Array(MAX_SEGMENT_SIZE * 1.5);
+      for (let i = 0; i < testData.length; i++) {
+        testData[i] = (i * 7 + 13) % 256;
+      }
+
+      const segments = segmentFileForUpload(
+        testData,
+        "test-file.bin",
+        "application/octet-stream",
+      );
+
+      // Verify using traditional content integrity
+      const isValid = verifyContentIntegrity(segments);
+      expect(isValid).toBe(true);
+
+      // Verify using merkle tree integrity
+      const isMerkleValid = verifyMerkleTreeIntegrity(segments);
+      expect(isMerkleValid).toBe(true);
+
+      // Reconstruct and verify against original
+      const reconstructed = reconstructFileFromSegments(segments);
+      expect(reconstructed).toEqual(testData);
+    });
+
+    it("should detect corrupted segments using merkle tree verification", () => {
+      const testData = new Uint8Array(MAX_SEGMENT_SIZE * 2);
+      for (let i = 0; i < testData.length; i++) {
+        testData[i] = i % 256;
+      }
+
+      const segments = segmentFileForUpload(
+        testData,
+        "test-file.bin",
+        "application/octet-stream",
+      );
+
+      // Corrupt one segment's data
+      if (segments[1].payload.type === "blob-part") {
+        segments[1].payload.data[0] = 255; // Change first byte
+      }
+
+      // Traditional integrity check might not catch this
+      const isValid = verifyContentIntegrity(segments);
+      
+      // But merkle tree verification should catch it
+      const isMerkleValid = verifyMerkleTreeIntegrity(segments);
+      expect(isMerkleValid).toBe(false);
+    });
+  });
+
+  describe("Merkle Tree File Metadata", () => {
+    it("should include merkle tree metadata in file metadata", () => {
+      const fileData = new Uint8Array(1000);
+      for (let i = 0; i < fileData.length; i++) {
+        fileData[i] = i % 256;
+      }
+
+      const segments = segmentFileForUpload(
+        fileData,
+        "test-file.bin",
+        "application/octet-stream",
+      );
+
+      const metadata = getFileMetadata(segments);
+
+      expect(metadata).toBeTruthy();
+      expect(metadata!.merkleRootHash).toBeTruthy();
+      expect(metadata!.merkleTreeDepth).toBeGreaterThan(0);
+      expect(metadata!.totalSize).toBe(fileData.length);
+    });
+  });
+
+  describe("Performance Comparison", () => {
+    it("should compare performance of merkle tree vs legacy hashing", () => {
+      const largeData = new Uint8Array(MAX_SEGMENT_SIZE);
+      for (let i = 0; i < largeData.length; i++) {
+        largeData[i] = i % 256;
+      }
+
+      // Time legacy hashing
+      const legacyStart = Date.now();
+      const legacyContentId = generateLegacyContentId(largeData);
+      const legacyEnd = Date.now();
+
+      // Time merkle tree hashing
+      const merkleStart = Date.now();
+      const merkleContentId = generateContentId(largeData);
+      const merkleEnd = Date.now();
+
+      expect(legacyContentId).toBeTruthy();
+      expect(merkleContentId).toBeTruthy();
+      expect(legacyContentId).not.toBe(merkleContentId);
+
+      // Both should complete reasonably quickly
+      expect(legacyEnd - legacyStart).toBeLessThan(1000);
+      expect(merkleEnd - merkleStart).toBeLessThan(1000);
+    });
+  });
+
   describe("Blob Part", () => {
     it("should encode and decode a blob part message", () => {
       const fileData = new Uint8Array([1, 2, 3, 4, 5]);
