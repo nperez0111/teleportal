@@ -70,7 +70,9 @@ export function getSSEHandler<Context extends ServerContext>({
   /**
    * Callback function to extract documents to subscribe to from the request with optional encryption flag
    */
-  getDocumentsToSubscribe?: (request: Request) => { document: string; encrypted?: boolean }[];
+  getDocumentsToSubscribe?: (
+    request: Request,
+  ) => { document: string; encrypted?: boolean }[];
 }) {
   return async (req: Request): Promise<Response> => {
     const context = {
@@ -78,11 +80,7 @@ export function getSSEHandler<Context extends ServerContext>({
       clientId: uuidv4(),
     } as Context;
 
-    const sseTransport = compose(
-      // This endpoint does not have a source, so we just create a dummy one
-      { readable: new ReadableStream() },
-      getSSESink({ context }),
-    );
+    const sseTransport = compose(source, getSSESink({ context }));
 
     const client = await server.createClient({
       transport: sseTransport,
