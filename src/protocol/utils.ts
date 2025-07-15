@@ -58,9 +58,10 @@ export function isEmptyStateVector(stateVector: StateVector): boolean {
 }
 
 /**
- * Maximum size for each binary upload segment (4MB)
+ * Maximum size for each binary upload segment (1MB)
+ * Aligned with merkle tree segmentation for optimal streaming performance
  */
-export const MAX_SEGMENT_SIZE = 4 * 1024 * 1024; // 4MB
+export const MAX_SEGMENT_SIZE = 1 * 1024 * 1024; // 1MB
 
 /**
  * Generate a content-based file ID using merkle tree root hash

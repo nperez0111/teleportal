@@ -1,8 +1,8 @@
-# BLAKE3-Style Merkle Tree Implementation for Binary Uploads
+# Streaming Merkle Tree Implementation for Binary Uploads
 
 ## Overview
 
-This implementation adds BLAKE3-style merkle tree hashing to the binary upload system, replacing the simple SHA-256 content ID generation with a hierarchical tree-based approach. This provides better streaming verification, chunk-level integrity checking, and enables efficient partial file verification.
+This implementation adds streaming merkle tree hashing to the binary upload system, replacing the simple SHA-256 content ID generation with a hierarchical tree-based approach inspired by BLAKE3's streaming methodology. This provides better streaming verification, chunk-level integrity checking, and enables efficient partial file verification.
 
 ## Key Features
 
@@ -10,10 +10,10 @@ This implementation adds BLAKE3-style merkle tree hashing to the binary upload s
 - **Chunk Size**: 1KB (1024 bytes) for optimal balance of granularity and performance
 - **Tree Depth**: Automatically calculated based on file size
 - **Domain Separation**: Each level and chunk includes index/level information to prevent hash collision attacks
-- **BLAKE2b Hashing**: Uses BLAKE2b for all hash operations (compatible with BLAKE3 approach)
+- **SHA-256 Hashing**: Uses SHA-256 for all hash operations (existing lib0 dependency)
 
 ### 📦 **Segment-Based Upload**
-- **Backward Compatibility**: Existing 4MB segments are preserved
+- **1MB Segments**: Aligned with merkle tree segmentation for optimal streaming
 - **Enhanced Metadata**: Each segment now includes merkle tree information
 - **Chunk Mapping**: Segments contain chunk hash arrays for their portion of the file
 - **Tree Verification**: Complete file verification without needing all segments
@@ -29,7 +29,7 @@ This implementation adds BLAKE3-style merkle tree hashing to the binary upload s
 ### Core Files Modified/Added
 
 1. **`src/protocol/merkle-tree.ts`** (NEW)
-   - Complete merkle tree implementation
+   - Complete merkle tree implementation using SHA-256
    - Chunk hashing with domain separation
    - Tree construction and verification
    - Merkle proof generation and verification
@@ -40,6 +40,7 @@ This implementation adds BLAKE3-style merkle tree hashing to the binary upload s
 
 3. **`src/protocol/utils.ts`** (MODIFIED)
    - Replaced `generateContentId()` with merkle tree approach
+   - Updated `MAX_SEGMENT_SIZE` from 4MB to 1MB
    - Enhanced `segmentFileForUpload()` with merkle metadata
    - Added `verifyMerkleTreeIntegrity()` function
    - Kept legacy functions for backward compatibility
@@ -60,18 +61,18 @@ This implementation adds BLAKE3-style merkle tree hashing to the binary upload s
 
 ```typescript
 interface MerkleTreeMetadata {
-  rootHash: string;        // Root hash of the complete merkle tree
+  rootHash: string;        // Root hash of the complete merkle tree (base64)
   totalChunks: number;     // Total number of 1KB chunks in file
   treeDepth: number;       // Depth of the merkle tree
   fileSize: number;        // Original file size in bytes
-  leafHashes: string[];    // Array of all leaf (chunk) hashes
+  leafHashes: string[];    // Array of all leaf (chunk) hashes (base64)
 }
 
 interface MerkleTreeSegment {
   segmentIndex: number;       // Index of this segment
   totalSegments: number;      // Total number of segments
   merkleMetadata: MerkleTreeMetadata;  // Complete file tree metadata
-  chunkHashes: string[];      // Hashes for chunks in this segment
+  chunkHashes: string[];      // Hashes for chunks in this segment (base64)
   startChunkIndex: number;    // First chunk index in this segment
   endChunkIndex: number;      // Last chunk index in this segment
 }
@@ -90,9 +91,9 @@ type DecodedBlobPartMessage = {
   data: Uint8Array;
   
   // NEW: Merkle tree metadata (optional for backward compatibility)
-  merkleRootHash?: string;        // Root hash of complete file tree
+  merkleRootHash?: string;        // Root hash of complete file tree (base64)
   merkleTreeDepth?: number;       // Tree depth
-  merkleChunkHashes?: string[];   // Chunk hashes for this segment
+  merkleChunkHashes?: string[];   // Chunk hashes for this segment (base64)
   startChunkIndex?: number;       // First chunk index in segment
   endChunkIndex?: number;         // Last chunk index in segment
 };
@@ -159,7 +160,7 @@ const isValid = verifyMerkleProof(
 
 ### 🚀 **Performance**
 - **Streaming Verification**: Verify chunks as they arrive without waiting for complete file
-- **Parallel Processing**: Multiple segments can be processed simultaneously
+- **Parallel Processing**: Multiple 1MB segments can be processed simultaneously
 - **Efficient Storage**: Only store merkle root for fast verification
 - **Incremental Verification**: Verify individual chunks without full file reconstruction
 
@@ -180,16 +181,16 @@ const isValid = verifyMerkleProof(
 ### Constants
 
 ```typescript
-export const BLAKE_CHUNK_SIZE = 1024;      // 1KB chunks for merkle tree
-export const BLAKE_MAX_DEPTH = 16;         // Maximum tree depth
-export const MAX_SEGMENT_SIZE = 4 * 1024 * 1024; // 4MB segments (unchanged)
+export const CHUNK_SIZE = 1024;                    // 1KB chunks for merkle tree
+export const MAX_TREE_DEPTH = 16;                  // Maximum tree depth
+export const MAX_SEGMENT_SIZE = 1 * 1024 * 1024;   // 1MB segments (aligned)
 ```
 
 ### Adjustable Parameters
 
 - **Chunk Size**: Can be modified for different granularity vs performance trade-offs
-- **Hash Algorithm**: Currently BLAKE2b, can be swapped for BLAKE3 when available
-- **Segment Size**: Existing 4MB segments maintained for compatibility
+- **Hash Algorithm**: Currently SHA-256 using existing lib0 dependency
+- **Segment Size**: 1MB segments for optimal streaming and consistency
 - **Tree Depth**: Automatically calculated, max depth configurable
 
 ## Testing
@@ -219,6 +220,7 @@ The implementation has been tested with:
 - Add merkle tree support to protocol
 - Maintain backward compatibility
 - Extend blob message format
+- Align segment sizes (1MB) for consistency
 
 ### Phase 2: Deployment
 - Deploy updated servers with merkle tree support
@@ -239,19 +241,19 @@ The implementation has been tested with:
 - **Repair Protocols**: Use merkle proofs to identify and repair corrupted chunks
 
 ### Potential Optimizations
-- **BLAKE3 Integration**: Switch to native BLAKE3 when widely available
+- **Native BLAKE3**: Switch to BLAKE3 when widely available and mature
 - **Parallel Hashing**: Multi-threaded hash computation for large files
 - **Memory Optimization**: Streaming merkle tree construction for very large files
 - **Network Optimization**: Send only necessary merkle proofs instead of full metadata
 
 ## Dependencies
 
-- **blakejs**: BLAKE2b implementation (added to package.json)
-- **lib0**: Existing utility library for encoding/decoding
+- **lib0**: Existing utility library for SHA-256 hashing and encoding/decoding
+- **No New Dependencies**: Uses existing crypto primitives
 - **Backward Compatible**: No new runtime dependencies for existing functionality
 
 ## Conclusion
 
-This implementation successfully adds BLAKE3-style merkle tree hashing to the binary upload system while maintaining full backward compatibility. The new system provides enhanced security, better performance for large files, and enables advanced features like streaming verification and partial file validation.
+This implementation successfully adds streaming merkle tree hashing to the binary upload system while maintaining full backward compatibility and using existing dependencies. The new system provides enhanced security, better performance for large files with 1MB segments, and enables advanced features like streaming verification and partial file validation.
 
-The implementation is production-ready and provides a solid foundation for future enhancements in file transfer and verification capabilities.
+The implementation is production-ready and provides a solid foundation for future enhancements in file transfer and verification capabilities, all while keeping the dependency footprint minimal.

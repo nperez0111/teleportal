@@ -7,7 +7,7 @@ import {
   reconstructMerkleTreeFromSegments,
   getMerkleProof,
   verifyMerkleProof,
-  BLAKE_CHUNK_SIZE,
+  CHUNK_SIZE,
 } from "./merkle-tree";
 
 describe("Merkle Tree Implementation", () => {
@@ -42,7 +42,7 @@ describe("Merkle Tree Implementation", () => {
     });
 
     it("should build merkle tree metadata correctly", () => {
-      const data = new Uint8Array(BLAKE_CHUNK_SIZE * 2.5); // 2.5 chunks
+      const data = new Uint8Array(CHUNK_SIZE * 2.5); // 2.5 chunks
       for (let i = 0; i < data.length; i++) {
         data[i] = i % 256;
       }
@@ -93,12 +93,12 @@ describe("Merkle Tree Implementation", () => {
 
   describe("Merkle Tree Segments", () => {
     it("should create and reconstruct segments correctly", () => {
-      const data = new Uint8Array(BLAKE_CHUNK_SIZE * 10); // 10 chunks
+      const data = new Uint8Array(CHUNK_SIZE * 10); // 10 chunks
       for (let i = 0; i < data.length; i++) {
         data[i] = i % 256;
       }
       
-      const maxSegmentSize = BLAKE_CHUNK_SIZE * 3; // 3 chunks per segment
+      const maxSegmentSize = CHUNK_SIZE * 3; // 3 chunks per segment
       const segments = createMerkleTreeSegments(data, maxSegmentSize);
       
       expect(segments.length).toBe(4); // ceil(10/3) = 4 segments
@@ -128,12 +128,12 @@ describe("Merkle Tree Implementation", () => {
     });
 
     it("should reject inconsistent segments", () => {
-      const data = new Uint8Array(BLAKE_CHUNK_SIZE * 6);
+      const data = new Uint8Array(CHUNK_SIZE * 6);
       for (let i = 0; i < data.length; i++) {
         data[i] = i % 256;
       }
       
-      const segments = createMerkleTreeSegments(data, BLAKE_CHUNK_SIZE * 2);
+      const segments = createMerkleTreeSegments(data, CHUNK_SIZE * 2);
       
       // Corrupt one segment's metadata
       segments[1].merkleMetadata.rootHash = "corrupted_hash";
@@ -145,7 +145,7 @@ describe("Merkle Tree Implementation", () => {
 
   describe("Merkle Proofs", () => {
     it("should generate and verify valid merkle proofs", () => {
-      const data = new Uint8Array(BLAKE_CHUNK_SIZE * 8); // 8 chunks
+      const data = new Uint8Array(CHUNK_SIZE * 8); // 8 chunks
       for (let i = 0; i < data.length; i++) {
         data[i] = i % 256;
       }
@@ -167,7 +167,7 @@ describe("Merkle Tree Implementation", () => {
     });
 
     it("should reject invalid merkle proofs", () => {
-      const data = new Uint8Array(BLAKE_CHUNK_SIZE * 4);
+      const data = new Uint8Array(CHUNK_SIZE * 4);
       for (let i = 0; i < data.length; i++) {
         data[i] = i % 256;
       }
@@ -212,7 +212,7 @@ describe("Merkle Tree Implementation", () => {
 
   describe("Large File Handling", () => {
     it("should handle large files efficiently", () => {
-      const largeData = new Uint8Array(BLAKE_CHUNK_SIZE * 100); // 100 chunks
+      const largeData = new Uint8Array(CHUNK_SIZE * 100); // 100 chunks (~100KB)
       for (let i = 0; i < largeData.length; i++) {
         largeData[i] = i % 256;
       }
@@ -232,7 +232,7 @@ describe("Merkle Tree Implementation", () => {
 
     it("should maintain consistency across different chunk boundaries", () => {
       // Test that the same data produces the same merkle tree regardless of how it's processed
-      const testData = new Uint8Array(BLAKE_CHUNK_SIZE * 7 + 500); // Non-aligned size
+      const testData = new Uint8Array(CHUNK_SIZE * 7 + 500); // Non-aligned size
       for (let i = 0; i < testData.length; i++) {
         testData[i] = (i * 3 + 7) % 256;
       }

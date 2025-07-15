@@ -341,7 +341,7 @@ describe("Blob Message", () => {
     });
 
     it("should handle very large files with multiple segments", () => {
-      // Create a file that's exactly 3 segments (12MB)
+      // Create a file that's exactly 3 segments (3MB)
       const largeFileData = new Uint8Array(MAX_SEGMENT_SIZE * 3);
       for (let i = 0; i < largeFileData.length; i++) {
         largeFileData[i] = i % 256;
@@ -382,7 +382,7 @@ describe("Blob Message", () => {
     });
 
     it("should handle files exactly at segment boundary", () => {
-      // Create a file that's exactly 4MB (one segment)
+      // Create a file that's exactly 1MB (one segment)
       const exactSegmentData = new Uint8Array(MAX_SEGMENT_SIZE);
       for (let i = 0; i < exactSegmentData.length; i++) {
         exactSegmentData[i] = i % 256;
