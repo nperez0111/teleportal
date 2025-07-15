@@ -65,19 +65,10 @@ export const MAX_SEGMENT_SIZE = 1 * 1024 * 1024; // 1MB
 
 /**
  * Generate a content-based file ID using merkle tree root hash
- * This replaces the simple SHA-256 approach with BLAKE3-style merkle tree hashing
+ * This replaces the simple SHA-256 approach with streaming merkle tree hashing
  */
 export function generateContentId(fileData: Uint8Array): string {
   return generateMerkleContentId(fileData);
-}
-
-/**
- * Legacy SHA-256 content ID generation for backward compatibility
- * @deprecated Use generateContentId instead for new implementations
- */
-export function generateLegacyContentId(fileData: Uint8Array): string {
-  const hash = digest(fileData);
-  return toBase64(hash);
 }
 
 /**

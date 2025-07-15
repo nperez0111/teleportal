@@ -8,7 +8,6 @@ import type {
 import {
   createRequestBlob,
   generateContentId,
-  generateLegacyContentId,
   generateRequestId,
   getFileMetadata,
   MAX_SEGMENT_SIZE,
@@ -28,12 +27,12 @@ describe("Blob Message", () => {
     it("should generate merkle tree-based content IDs", () => {
       const fileData = new Uint8Array([1, 2, 3, 4, 5]);
       
-      const merkleContentId = generateContentId(fileData);
-      const legacyContentId = generateLegacyContentId(fileData);
+      const contentId1 = generateContentId(fileData);
+      const contentId2 = generateMerkleContentId(fileData);
       
-      expect(merkleContentId).toBeTruthy();
-      expect(legacyContentId).toBeTruthy();
-      expect(merkleContentId).not.toBe(legacyContentId); // Should be different approaches
+      expect(contentId1).toBeTruthy();
+      expect(contentId2).toBeTruthy();
+      expect(contentId1).toBe(contentId2); // Should be the same implementation
     });
 
     it("should generate consistent merkle content IDs", () => {
@@ -93,7 +92,7 @@ describe("Blob Message", () => {
 
     it("should handle blob part message without merkle tree metadata (backward compatibility)", () => {
       const fileData = new Uint8Array([255, 216, 255, 224]); // JPEG header
-      const contentId = generateLegacyContentId(fileData); // Use legacy for backward compatibility test
+      const contentId = generateContentId(fileData); // Use current implementation
 
       const payload: DecodedBlobPartMessage = {
         type: "blob-part",
@@ -228,28 +227,20 @@ describe("Blob Message", () => {
   });
 
   describe("Performance Comparison", () => {
-    it("should compare performance of merkle tree vs legacy hashing", () => {
+    it("should process merkle tree hashing efficiently", () => {
       const largeData = new Uint8Array(MAX_SEGMENT_SIZE);
       for (let i = 0; i < largeData.length; i++) {
         largeData[i] = i % 256;
       }
-
-      // Time legacy hashing
-      const legacyStart = Date.now();
-      const legacyContentId = generateLegacyContentId(largeData);
-      const legacyEnd = Date.now();
 
       // Time merkle tree hashing
       const merkleStart = Date.now();
       const merkleContentId = generateContentId(largeData);
       const merkleEnd = Date.now();
 
-      expect(legacyContentId).toBeTruthy();
       expect(merkleContentId).toBeTruthy();
-      expect(legacyContentId).not.toBe(merkleContentId);
 
-      // Both should complete reasonably quickly
-      expect(legacyEnd - legacyStart).toBeLessThan(1000);
+      // Should complete reasonably quickly
       expect(merkleEnd - merkleStart).toBeLessThan(1000);
     });
   });
