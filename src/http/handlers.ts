@@ -55,13 +55,10 @@ export function getSSEHandler<Context extends ServerContext>({
   validateRequest,
   source = { readable: new ReadableStream() },
   observer,
+  getDocumentsToSubscribe,
 }: {
   server: Server<Context>;
-  validateRequest: (request: Request) => Promise<
-    Omit<Context, "clientId"> & {
-      subscribeToDocuments?: { document: string; encrypted?: boolean }[];
-    }
-  >;
+  validateRequest: (request: Request) => Promise<Omit<Context, "clientId">>;
   /**
    * The source to use for the SSE endpoint, defaults to a dummy source
    */
@@ -70,19 +67,20 @@ export function getSSEHandler<Context extends ServerContext>({
     subscribe: (documentId: string) => void;
     unsubscribe: (documentId: string) => void;
   }>;
+  /**
+   * Callback function to extract documents to subscribe to from the request with optional encryption flag
+   */
+  getDocumentsToSubscribe?: (
+    request: Request,
+  ) => { document: string; encrypted?: boolean }[];
 }) {
   return async (req: Request): Promise<Response> => {
-    const { subscribeToDocuments, ...rest } = await validateRequest(req);
     const context = {
-      ...rest,
+      ...(await validateRequest(req)),
       clientId: uuidv4(),
     } as Context;
 
-    const sseTransport = compose(
-      // This endpoint does not have a source, so we just create a dummy one
-      { readable: new ReadableStream() },
-      getSSESink({ context }),
-    );
+    const sseTransport = compose(source, getSSESink({ context }));
 
     const client = await server.createClient({
       transport: sseTransport,
@@ -106,7 +104,10 @@ export function getSSEHandler<Context extends ServerContext>({
       },
     });
 
-    if (subscribeToDocuments) {
+    // Use the getDocumentsToSubscribe callback if provided
+    if (getDocumentsToSubscribe) {
+      const subscribeToDocuments = getDocumentsToSubscribe(req);
+
       for (const { document, encrypted = false } of subscribeToDocuments) {
         client.subscribeToDocument(
           await server.getOrCreateDocument({
