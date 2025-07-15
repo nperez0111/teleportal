@@ -1,12 +1,12 @@
-import { blake2bHex } from "blakejs";
-import { toBase64 } from "lib0/buffer";
+import { digest } from "lib0/hash/sha256";
+import { toBase64, fromBase64 } from "lib0/buffer";
 
 /**
- * BLAKE3-style merkle tree constants
- * Using BLAKE2b for hashing to maintain compatibility
+ * Streaming merkle tree constants
+ * Using SHA-256 for hashing with streaming verification capabilities
  */
-export const BLAKE_CHUNK_SIZE = 1024; // 1KB chunks for merkle tree nodes
-export const BLAKE_MAX_DEPTH = 16; // Maximum tree depth
+export const CHUNK_SIZE = 1024; // 1KB chunks for merkle tree nodes
+export const MAX_TREE_DEPTH = 16; // Maximum tree depth
 
 /**
  * Represents a node in the merkle tree
@@ -44,7 +44,7 @@ export interface MerkleTreeSegment {
 }
 
 /**
- * Hash a single chunk using BLAKE2b
+ * Hash a single chunk using SHA-256 with domain separation
  */
 function hashChunk(data: Uint8Array, chunkIndex: number): string {
   // Create a buffer that includes the chunk index for domain separation
@@ -57,16 +57,17 @@ function hashChunk(data: Uint8Array, chunkIndex: number): string {
   combined.set(indexBytes, 0);
   combined.set(data, indexBytes.length);
   
-  return blake2bHex(combined);
+  const hash = digest(combined);
+  return toBase64(hash);
 }
 
 /**
  * Hash two child hashes together to create a parent hash
  */
 function hashParent(leftHash: string, rightHash: string, level: number): string {
-  // Convert hex strings to bytes
-  const leftBytes = new Uint8Array(leftHash.match(/.{2}/g)!.map(byte => parseInt(byte, 16)));
-  const rightBytes = new Uint8Array(rightHash.match(/.{2}/g)!.map(byte => parseInt(byte, 16)));
+  // Convert base64 strings to bytes
+  const leftBytes = fromBase64(leftHash);
+  const rightBytes = fromBase64(rightHash);
   
   // Create level bytes for domain separation
   const levelBytes = new Uint8Array(4);
@@ -79,7 +80,8 @@ function hashParent(leftHash: string, rightHash: string, level: number): string 
   combined.set(leftBytes, levelBytes.length);
   combined.set(rightBytes, levelBytes.length + leftBytes.length);
   
-  return blake2bHex(combined);
+  const hash = digest(combined);
+  return toBase64(hash);
 }
 
 /**
@@ -88,8 +90,8 @@ function hashParent(leftHash: string, rightHash: string, level: number): string 
 function chunkData(data: Uint8Array): Uint8Array[] {
   const chunks: Uint8Array[] = [];
   
-  for (let i = 0; i < data.length; i += BLAKE_CHUNK_SIZE) {
-    const end = Math.min(i + BLAKE_CHUNK_SIZE, data.length);
+  for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+    const end = Math.min(i + CHUNK_SIZE, data.length);
     chunks.push(data.slice(i, end));
   }
   
@@ -160,7 +162,7 @@ function buildMerkleTree(leafHashes: string[]): MerkleNode {
  */
 export function generateMerkleContentId(data: Uint8Array): string {
   const metadata = buildMerkleTreeMetadata(data);
-  return toBase64(new Uint8Array(metadata.rootHash.match(/.{2}/g)!.map(byte => parseInt(byte, 16))));
+  return metadata.rootHash;
 }
 
 /**

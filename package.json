@@ -83,7 +83,6 @@
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
-    "blakejs": "^1.2.1",
     "crossws": "^0.4.1",
     "db0": "^0.3.2",
     "ioredis": "^5.6.1",
