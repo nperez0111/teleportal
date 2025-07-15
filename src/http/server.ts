@@ -38,21 +38,14 @@ export function getHandlers<Context extends ServerContext>({
   const sseEndpoint = getSSEHandler({
     server,
     validateRequest: async (req) => {
-      const documentIds = getDocumentsToSubscribe(req);
-      const subscribeToDocuments = documentIds.map(document => ({
-        document,
-        encrypted: false, // Default to false, can be customized later
-      }));
-
       return { 
         userId: "test", 
         room: "test",
-        subscribeToDocuments: subscribeToDocuments.length > 0 ? subscribeToDocuments : undefined,
-      } as Context & {
-        subscribeToDocuments?: { document: string; encrypted?: boolean }[];
-      };
+      } as Context;
     },
+    getDocumentsToSubscribe,
   });
+  
   const httpEndpoint = getHTTPEndpoint({
     server,
     validateRequest: async (req) => {

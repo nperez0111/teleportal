@@ -55,13 +55,10 @@ export function getSSEHandler<Context extends ServerContext>({
   validateRequest,
   source = { readable: new ReadableStream() },
   observer,
+  getDocumentsToSubscribe,
 }: {
   server: Server<Context>;
-  validateRequest: (request: Request) => Promise<
-    Omit<Context, "clientId"> & {
-      subscribeToDocuments?: { document: string; encrypted?: boolean }[];
-    }
-  >;
+  validateRequest: (request: Request) => Promise<Omit<Context, "clientId">>;
   /**
    * The source to use for the SSE endpoint, defaults to a dummy source
    */
@@ -70,11 +67,14 @@ export function getSSEHandler<Context extends ServerContext>({
     subscribe: (documentId: string) => void;
     unsubscribe: (documentId: string) => void;
   }>;
+  /**
+   * Callback function to extract document names to subscribe to from the request
+   */
+  getDocumentsToSubscribe?: (request: Request) => string[];
 }) {
   return async (req: Request): Promise<Response> => {
-    const { subscribeToDocuments, ...rest } = await validateRequest(req);
     const context = {
-      ...rest,
+      ...(await validateRequest(req)),
       clientId: uuidv4(),
     } as Context;
 
@@ -106,7 +106,14 @@ export function getSSEHandler<Context extends ServerContext>({
       },
     });
 
-    if (subscribeToDocuments) {
+    // Use the getDocumentsToSubscribe callback if provided
+    if (getDocumentsToSubscribe) {
+      const documentIds = getDocumentsToSubscribe(req);
+      const subscribeToDocuments = documentIds.map(document => ({
+        document,
+        encrypted: false, // Default to false, can be customized later
+      }));
+
       for (const { document, encrypted = false } of subscribeToDocuments) {
         client.subscribeToDocument(
           await server.getOrCreateDocument({
