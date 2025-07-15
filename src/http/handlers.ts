@@ -144,9 +144,8 @@ export function getHTTPEndpoint<Context extends ServerContext>({
     const messages: Message[] = [];
     const writable = new WritableStream({
       write: (message) => {
-        console.log("writing http", message);
+        console.log("writing back to http response", message);
         messages.push(message);
-        console.log("messages", messages.length);
       },
     });
     const httpTransport = compose(getHTTPSource({ context }), {
@@ -158,15 +157,33 @@ export function getHTTPEndpoint<Context extends ServerContext>({
       id: context.clientId,
     });
 
-    await new Promise((resolve) => {
-      client.once("destroy", () => {
-        console.log("client destroyed");
-        resolve(true);
-      });
+    let cleanup = () => {};
+    await Promise.race([
+      new Promise(async (resolve) => {
+        client.once("destroy", () => {
+          console.log("client destroyed");
+          resolve(true);
+        });
 
-      // TODO might be able to support batching of multiple messages
-      httpTransport.handleHTTPRequest(req);
-    });
+        // TODO might be able to support batching of multiple messages
+        await httpTransport.handleHTTPRequest(req);
+      }),
+      new Promise((resolve) => {
+        req.signal.addEventListener("abort", () => {
+          resolve(true);
+        });
+      }),
+      new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve(true);
+        }, 10000);
+        const prevCleanup = cleanup;
+        cleanup = () => {
+          clearTimeout(timeout);
+          prevCleanup();
+        };
+      }),
+    ]);
 
     console.log("messages", messages.length);
     return new Response(new Blob([encodeMessageArray(messages)]), {

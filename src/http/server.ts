@@ -24,11 +24,11 @@ export function getHandlers<Context extends ServerContext>({
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/sse") {
-      return sseEndpoint(req);
+      return await sseEndpoint(req);
     }
 
     if (req.method === "POST" && url.pathname === "/message") {
-      return httpEndpoint(req);
+      return await httpEndpoint(req);
     }
 
     return new Response("Not Found", { status: 404 });
