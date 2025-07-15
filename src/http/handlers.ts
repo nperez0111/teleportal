@@ -68,9 +68,9 @@ export function getSSEHandler<Context extends ServerContext>({
     unsubscribe: (documentId: string) => void;
   }>;
   /**
-   * Callback function to extract document names to subscribe to from the request
+   * Callback function to extract documents to subscribe to from the request with optional encryption flag
    */
-  getDocumentsToSubscribe?: (request: Request) => string[];
+  getDocumentsToSubscribe?: (request: Request) => { document: string; encrypted?: boolean }[];
 }) {
   return async (req: Request): Promise<Response> => {
     const context = {
@@ -108,11 +108,7 @@ export function getSSEHandler<Context extends ServerContext>({
 
     // Use the getDocumentsToSubscribe callback if provided
     if (getDocumentsToSubscribe) {
-      const documentIds = getDocumentsToSubscribe(req);
-      const subscribeToDocuments = documentIds.map(document => ({
-        document,
-        encrypted: false, // Default to false, can be customized later
-      }));
+      const subscribeToDocuments = getDocumentsToSubscribe(req);
 
       for (const { document, encrypted = false } of subscribeToDocuments) {
         client.subscribeToDocument(
