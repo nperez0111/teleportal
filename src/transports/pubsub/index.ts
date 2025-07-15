@@ -117,8 +117,12 @@ export function getPubSubSource<Context extends ServerContext>({
       },
       async cancel() {
         await observer.call("destroy");
+        await Promise.all(
+          Array.from(
+            subscribedTopics.values().map((unsubscribe) => unsubscribe()),
+          ),
+        );
         subscribedTopics.clear();
-
         await backend.close();
       },
     }).pipeThrough(reader),
