@@ -71,7 +71,6 @@ export function getPubSubSource<Context extends ServerContext>({
   context,
   backend,
   observer,
-  onError,
 }: {
   context?: Context;
   backend: PubSubBackend;
@@ -79,7 +78,6 @@ export function getPubSubSource<Context extends ServerContext>({
     subscribe: (topic: string) => void;
     unsubscribe: (topic: string) => void;
   }>;
-  onError?: (error: Error) => void;
 }): Source<
   Context,
   {
@@ -92,32 +90,28 @@ export function getPubSubSource<Context extends ServerContext>({
 > {
   const subscribedTopics = new Map<string, () => Promise<void>>();
   const reader = getMessageReader(context || ({} as Context));
-  const writer = reader.writable.getWriter();
 
-  observer.addListeners({
-    subscribe: async (topic: string) => {
-      if (!subscribedTopics.has(topic)) {
-        const unsubscribe = await backend.subscribe(topic, (message) => {
-            writer.write(message);
-        });
-        subscribedTopics.set(topic, unsubscribe);
-      }
-    },
-    unsubscribe: async (topic: string) => {
-      const unsubscribe = subscribedTopics.get(topic);
-      if (unsubscribe) {
-        await unsubscribe();
-        subscribedTopics.delete(topic);
-      }
-    },
+  observer.on("unsubscribe", async (topic: string) => {
+    const unsubscribe = subscribedTopics.get(topic);
+    if (unsubscribe) {
+      await unsubscribe();
+      subscribedTopics.delete(topic);
+    }
   });
 
   return {
     backend,
     observer,
     readable: new ReadableStream({
-      async start() {
-        // Stream is ready to receive messages
+      async start(controller) {
+        observer.on("subscribe", async (topic: string) => {
+          if (!subscribedTopics.has(topic)) {
+            const unsubscribe = await backend.subscribe(topic, (message) => {
+              controller.enqueue(message);
+            });
+            subscribedTopics.set(topic, unsubscribe);
+          }
+        });
       },
       async cancel() {
         observer.destroy();
@@ -133,13 +127,7 @@ export function getPubSubSource<Context extends ServerContext>({
           }
         }
         subscribedTopics.clear();
-        
-        try {
-          await writer.close();
-        } catch (error) {
-          console.error("Error closing writer:", error);
-        }
-        
+
         await backend.close();
       },
     }).pipeThrough(reader),
@@ -150,9 +138,12 @@ export function getPubSubSource<Context extends ServerContext>({
  * Simple in-memory pub/sub backend implementation for testing/development
  */
 export class InMemoryPubSubBackend implements PubSubBackend {
-  private subscribers = new Map<string, Set<(message: Uint8Array) => void>>();
+  private subscribers = new Map<
+    string,
+    Set<(message: BinaryMessage) => void>
+  >();
 
-  async publish(topic: string, message: Uint8Array): Promise<void> {
+  async publish(topic: string, message: BinaryMessage): Promise<void> {
     const callbacks = this.subscribers.get(topic);
     if (callbacks) {
       for (const callback of Array.from(callbacks)) {
@@ -172,7 +163,7 @@ export class InMemoryPubSubBackend implements PubSubBackend {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
     }
-    
+
     const callbacks = this.subscribers.get(topic)!;
     callbacks.add(callback);
 
@@ -198,7 +189,6 @@ export function getPubSubTransport<Context extends ServerContext>({
   backend,
   topicResolver,
   observer,
-  onError,
 }: {
   context?: Context;
   backend: PubSubBackend;
@@ -207,19 +197,16 @@ export function getPubSubTransport<Context extends ServerContext>({
     subscribe: (topic: string) => void;
     unsubscribe: (topic: string) => void;
   }>;
-  onError?: (error: Error) => void;
 }) {
   const source = getPubSubSource({
     context,
     backend,
     observer,
-    onError,
   });
-  
+
   const sink = getPubSubSink({
     backend,
     topicResolver,
-    onError,
   });
 
   return {

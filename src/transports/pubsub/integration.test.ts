@@ -14,7 +14,7 @@ class MockRedisBackend implements PubSubBackend {
 
   async publish(topic: string, message: Uint8Array): Promise<void> {
     this.publishLog.push({ topic, message });
-    
+
     const callbacks = this.subscribers.get(topic);
     if (callbacks) {
       // Simulate async delivery like Redis
@@ -37,7 +37,7 @@ class MockRedisBackend implements PubSubBackend {
     if (!this.subscribers.has(topic)) {
       this.subscribers.set(topic, new Set());
     }
-    
+
     const callbacks = this.subscribers.get(topic)!;
     callbacks.add(callback);
 
@@ -80,7 +80,7 @@ describe("PubSub Transport Integration", () => {
         subscribe: (topic: string) => void;
         unsubscribe: (topic: string) => void;
       }>();
-      
+
       const client2Observer = new Observable<{
         subscribe: (topic: string) => void;
         unsubscribe: (topic: string) => void;
@@ -133,40 +133,44 @@ describe("PubSub Transport Integration", () => {
       })();
 
       // Both clients subscribe to doc1
-      client1Observer.emit("subscribe", "doc:doc1");
-      client2Observer.emit("subscribe", "doc:doc1");
+      client1Observer.call("subscribe", "doc:doc1");
+      client2Observer.call("subscribe", "doc:doc1");
 
       // Client2 also subscribes to doc2
-      client2Observer.emit("subscribe", "doc:doc2");
+      client2Observer.call("subscribe", "doc:doc2");
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Client1 makes changes to doc1
       const client1Writer = client1Transport.writable.getWriter();
-      await client1Writer.write(new DocMessage(
-        "doc1",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as any },
-        { clientId: "client-1" },
-      ));
+      await client1Writer.write(
+        new DocMessage(
+          "doc1",
+          { type: "update", update: new Uint8Array([1, 2, 3]) as any },
+          { clientId: "client-1" },
+        ),
+      );
 
-      // Client2 makes changes to doc2  
+      // Client2 makes changes to doc2
       const client2Writer = client2Transport.writable.getWriter();
-      await client2Writer.write(new DocMessage(
-        "doc2", 
-        { type: "update", update: new Uint8Array([4, 5, 6]) as any },
-        { clientId: "client-2" },
-      ));
+      await client2Writer.write(
+        new DocMessage(
+          "doc2",
+          { type: "update", update: new Uint8Array([4, 5, 6]) as any },
+          { clientId: "client-2" },
+        ),
+      );
 
       // Allow messages to propagate
-      await new Promise(resolve => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Verify message distribution
       expect(client1Messages).toHaveLength(1); // Should receive doc1 update
       expect(client2Messages).toHaveLength(2); // Should receive both doc1 and doc2 updates
 
       expect(client1Messages[0].document).toBe("doc1");
-      expect(client2Messages.find(m => m.document === "doc1")).toBeDefined();
-      expect(client2Messages.find(m => m.document === "doc2")).toBeDefined();
+      expect(client2Messages.find((m) => m.document === "doc1")).toBeDefined();
+      expect(client2Messages.find((m) => m.document === "doc2")).toBeDefined();
 
       // Cleanup
       await client1Transport.close();
@@ -191,24 +195,24 @@ describe("PubSub Transport Integration", () => {
       });
 
       // Initially subscribe to doc1
-      observer.emit("subscribe", "doc1");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "doc1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(redisBackend.getSubscriberCount("doc1")).toBe(1);
 
       // Add subscription to doc2
-      observer.emit("subscribe", "doc2");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "doc2");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(redisBackend.getSubscriberCount("doc2")).toBe(1);
 
       // Unsubscribe from doc1
-      observer.emit("unsubscribe", "doc1");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("unsubscribe", "doc1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(redisBackend.getSubscriberCount("doc1")).toBe(0);
       expect(redisBackend.getSubscriberCount("doc2")).toBe(1);
 
       // Subscribe to doc1 again
-      observer.emit("subscribe", "doc1");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "doc1");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(redisBackend.getSubscriberCount("doc1")).toBe(1);
 
       await transport.close();
@@ -227,11 +231,11 @@ describe("PubSub Transport Integration", () => {
       });
 
       // Subscribe multiple times to same topic
-      observer.emit("subscribe", "test-topic");
-      observer.emit("subscribe", "test-topic");
-      observer.emit("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic");
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Should only have one subscription
       expect(redisBackend.getSubscriberCount("test-topic")).toBe(1);
@@ -242,7 +246,10 @@ describe("PubSub Transport Integration", () => {
 
   describe("Cross-Backend Compatibility", () => {
     it("should work identically across different backend implementations", async () => {
-      const testScenario = async (backend: PubSubBackend, backendName: string) => {
+      const testScenario = async (
+        backend: PubSubBackend,
+        backendName: string,
+      ) => {
         const observer = new Observable<{
           subscribe: (topic: string) => void;
           unsubscribe: (topic: string) => void;
@@ -251,12 +258,13 @@ describe("PubSub Transport Integration", () => {
         const transport = getPubSubTransport({
           context: { backend: backendName },
           backend,
-          topicResolver: (message) => `topic-${Document.getDocumentId(message)}`,
+          topicResolver: (message) =>
+            `topic-${Document.getDocumentId(message)}`,
           observer,
         });
 
         const receivedMessages: any[] = [];
-        
+
         // Setup reader
         const reader = transport.readable.getReader();
         const readPromise = (async () => {
@@ -272,17 +280,19 @@ describe("PubSub Transport Integration", () => {
         })();
 
         // Subscribe and publish
-        observer.emit("subscribe", "topic-test-doc");
-        await new Promise(resolve => setTimeout(resolve, 0));
+        observer.call("subscribe", "topic-test-doc");
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         const writer = transport.writable.getWriter();
-        await writer.write(new DocMessage(
-          "test-doc",
-          { type: "update", update: new Uint8Array([1, 2, 3]) as any },
-          { backend: backendName },
-        ));
+        await writer.write(
+          new DocMessage(
+            "test-doc",
+            { type: "update", update: new Uint8Array([1, 2, 3]) as any },
+            { backend: backendName },
+          ),
+        );
 
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         await transport.close();
         await readPromise;
@@ -307,10 +317,10 @@ describe("PubSub Transport Integration", () => {
   describe("Error Recovery and Resilience", () => {
     it("should continue working after backend errors", async () => {
       let shouldFail = true;
-      
+
       class FlakeyBackend implements PubSubBackend {
         private actualBackend = new InMemoryPubSubBackend();
-        
+
         async publish(topic: string, message: Uint8Array): Promise<void> {
           if (shouldFail) {
             shouldFail = false; // Fail once, then work
@@ -319,7 +329,10 @@ describe("PubSub Transport Integration", () => {
           return this.actualBackend.publish(topic, message);
         }
 
-        async subscribe(topic: string, callback: (message: Uint8Array) => void): Promise<() => Promise<void>> {
+        async subscribe(
+          topic: string,
+          callback: (message: Uint8Array) => void,
+        ): Promise<() => Promise<void>> {
           return this.actualBackend.subscribe(topic, callback);
         }
 
@@ -344,18 +357,22 @@ describe("PubSub Transport Integration", () => {
       const writer = transport.writable.getWriter();
 
       // First write should fail
-      await writer.write(new DocMessage(
-        "doc1",
-        { type: "update", update: new Uint8Array([1]) as any },
-        { test: "first" },
-      ));
+      await writer.write(
+        new DocMessage(
+          "doc1",
+          { type: "update", update: new Uint8Array([1]) as any },
+          { test: "first" },
+        ),
+      );
 
       // Second write should succeed
-      await writer.write(new DocMessage(
-        "doc2", 
-        { type: "update", update: new Uint8Array([2]) as any },
-        { test: "second" },
-      ));
+      await writer.write(
+        new DocMessage(
+          "doc2",
+          { type: "update", update: new Uint8Array([2]) as any },
+          { test: "second" },
+        ),
+      );
 
       expect(errors).toHaveLength(1);
       expect(errors[0].message).toContain("Temporary backend failure");
@@ -378,7 +395,7 @@ describe("PubSub Transport Integration", () => {
       });
 
       const receivedMessages: any[] = [];
-      
+
       // Setup reader
       const reader = transport.readable.getReader();
       const readPromise = (async () => {
@@ -393,26 +410,28 @@ describe("PubSub Transport Integration", () => {
         }
       })();
 
-      observer.emit("subscribe", "high-throughput-topic");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "high-throughput-topic");
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Send many messages quickly
       const writer = transport.writable.getWriter();
       const messageCount = 100;
-      
+
       const startTime = Date.now();
-      
+
       for (let i = 0; i < messageCount; i++) {
-        await writer.write(new DocMessage(
-          "speed-test-doc",
-          { type: "update", update: new Uint8Array([i % 256]) as any },
-          { messageId: i },
-        ));
+        await writer.write(
+          new DocMessage(
+            "speed-test-doc",
+            { type: "update", update: new Uint8Array([i % 256]) as any },
+            { messageId: i },
+          ),
+        );
       }
 
       // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
       const endTime = Date.now();
       const duration = endTime - startTime;
 
@@ -421,7 +440,7 @@ describe("PubSub Transport Integration", () => {
 
       expect(receivedMessages).toHaveLength(messageCount);
       expect(duration).toBeLessThan(1000); // Should complete within 1 second
-      
+
       console.log(`Processed ${messageCount} messages in ${duration}ms`);
     });
   });
@@ -440,9 +459,9 @@ describe("PubSub Transport Integration", () => {
       });
 
       // Subscribe to topics
-      observer.emit("subscribe", "topic1");
-      observer.emit("subscribe", "topic2");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "topic1");
+      observer.call("subscribe", "topic2");
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(redisBackend.getSubscriberCount("topic1")).toBe(1);
       expect(redisBackend.getSubscriberCount("topic2")).toBe(1);

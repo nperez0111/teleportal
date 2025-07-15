@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import { Observable, DocMessage, AwarenessMessage, type Message } from "teleportal";
+import {
+  Observable,
+  DocMessage,
+  AwarenessMessage,
+  type Message,
+} from "teleportal";
 import { Document } from "teleportal/server";
 import {
   PubSubBackend,
@@ -32,7 +37,7 @@ class MockFailureBackend implements PubSubBackend {
     if (this.shouldFailSubscribe) {
       throw new Error(`Mock subscribe failure for topic: ${topic}`);
     }
-    
+
     return async () => {
       // Mock unsubscribe
     };
@@ -44,7 +49,10 @@ class MockFailureBackend implements PubSubBackend {
 }
 
 // Helper to create test messages
-function createTestDocMessage(documentId: string, contextId: string): Message<{ test: string }> {
+function createTestDocMessage(
+  documentId: string,
+  contextId: string,
+): Message<{ test: string }> {
   return new DocMessage(
     documentId,
     {
@@ -55,7 +63,10 @@ function createTestDocMessage(documentId: string, contextId: string): Message<{ 
   );
 }
 
-function createTestAwarenessMessage(documentId: string, contextId: string): Message<{ test: string }> {
+function createTestAwarenessMessage(
+  documentId: string,
+  contextId: string,
+): Message<{ test: string }> {
   return new AwarenessMessage(
     documentId,
     {
@@ -88,9 +99,12 @@ describe("PubSub Transport", () => {
       const receivedMessages: Uint8Array[] = [];
       const testMessage = new Uint8Array([1, 2, 3, 4, 5]);
 
-      const unsubscribe = await inMemoryBackend.subscribe("test-topic", (message) => {
-        receivedMessages.push(message);
-      });
+      const unsubscribe = await inMemoryBackend.subscribe(
+        "test-topic",
+        (message) => {
+          receivedMessages.push(message);
+        },
+      );
 
       await inMemoryBackend.publish("test-topic", testMessage);
 
@@ -105,8 +119,12 @@ describe("PubSub Transport", () => {
       const messages2: Uint8Array[] = [];
       const testMessage = new Uint8Array([1, 2, 3]);
 
-      const unsub1 = await inMemoryBackend.subscribe("test-topic", (msg) => messages1.push(msg));
-      const unsub2 = await inMemoryBackend.subscribe("test-topic", (msg) => messages2.push(msg));
+      const unsub1 = await inMemoryBackend.subscribe("test-topic", (msg) =>
+        messages1.push(msg),
+      );
+      const unsub2 = await inMemoryBackend.subscribe("test-topic", (msg) =>
+        messages2.push(msg),
+      );
 
       await inMemoryBackend.publish("test-topic", testMessage);
 
@@ -125,8 +143,12 @@ describe("PubSub Transport", () => {
       const message1 = new Uint8Array([1, 1, 1]);
       const message2 = new Uint8Array([2, 2, 2]);
 
-      const unsub1 = await inMemoryBackend.subscribe("topic1", (msg) => topic1Messages.push(msg));
-      const unsub2 = await inMemoryBackend.subscribe("topic2", (msg) => topic2Messages.push(msg));
+      const unsub1 = await inMemoryBackend.subscribe("topic1", (msg) =>
+        topic1Messages.push(msg),
+      );
+      const unsub2 = await inMemoryBackend.subscribe("topic2", (msg) =>
+        topic2Messages.push(msg),
+      );
 
       await inMemoryBackend.publish("topic1", message1);
       await inMemoryBackend.publish("topic2", message2);
@@ -144,9 +166,12 @@ describe("PubSub Transport", () => {
       const receivedMessages: Uint8Array[] = [];
       const testMessage = new Uint8Array([1, 2, 3]);
 
-      const unsubscribe = await inMemoryBackend.subscribe("test-topic", (message) => {
-        receivedMessages.push(message);
-      });
+      const unsubscribe = await inMemoryBackend.subscribe(
+        "test-topic",
+        (message) => {
+          receivedMessages.push(message);
+        },
+      );
 
       await inMemoryBackend.publish("test-topic", testMessage);
       expect(receivedMessages).toHaveLength(1);
@@ -157,11 +182,16 @@ describe("PubSub Transport", () => {
     });
 
     it("should clean up topics when all subscribers are removed", async () => {
-      const unsubscribe = await inMemoryBackend.subscribe("test-topic", () => {});
+      const unsubscribe = await inMemoryBackend.subscribe(
+        "test-topic",
+        () => {},
+      );
       await unsubscribe();
 
       // Internal verification - check that topic is cleaned up
-      expect((inMemoryBackend as any).subscribers.has("test-topic")).toBe(false);
+      expect((inMemoryBackend as any).subscribers.has("test-topic")).toBe(
+        false,
+      );
     });
 
     it("should handle errors in subscriber callbacks gracefully", async () => {
@@ -174,12 +204,17 @@ describe("PubSub Transport", () => {
       });
 
       // Add a good subscriber
-      const unsubscribe = await inMemoryBackend.subscribe("test-topic", (msg) => {
-        goodMessages.push(msg);
-      });
+      const unsubscribe = await inMemoryBackend.subscribe(
+        "test-topic",
+        (msg) => {
+          goodMessages.push(msg);
+        },
+      );
 
       // Publishing should not fail even if one subscriber throws
-      await expect(inMemoryBackend.publish("test-topic", testMessage)).resolves.not.toThrow();
+      await expect(
+        inMemoryBackend.publish("test-topic", testMessage),
+      ).resolves.not.toThrow();
       expect(goodMessages).toHaveLength(1);
 
       await unsubscribe();
@@ -204,7 +239,7 @@ describe("PubSub Transport", () => {
 
     it("should use custom topic resolver", async () => {
       const publishedTopics: string[] = [];
-      
+
       class CustomBackend implements PubSubBackend {
         async publish(topic: string, message: Uint8Array): Promise<void> {
           publishedTopics.push(topic);
@@ -270,7 +305,7 @@ describe("PubSub Transport", () => {
       });
 
       // Subscribe to a topic
-      observer.emit("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic");
 
       expect(source.backend).toBe(inMemoryBackend);
       expect(source.observer).toBe(observer);
@@ -280,7 +315,7 @@ describe("PubSub Transport", () => {
 
     it("should receive messages from subscribed topics", async () => {
       const receivedMessages: Message<{ test: string }>[] = [];
-      
+
       const source = getPubSubSource({
         context: { test: "base-context" },
         backend: inMemoryBackend,
@@ -301,17 +336,17 @@ describe("PubSub Transport", () => {
       })();
 
       // Subscribe to topic
-      observer.emit("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic");
 
       // Allow subscription to complete
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Publish a message
       const testMessage = createTestDocMessage("test-doc", "test-context");
       await inMemoryBackend.publish("test-topic", testMessage.encoded);
 
       // Allow message processing
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       await source.readable.cancel();
       await readPromise;
@@ -330,10 +365,10 @@ describe("PubSub Transport", () => {
         onError: (error) => errors.push(error),
       });
 
-      observer.emit("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic");
 
       // Allow error to propagate
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(errors).toHaveLength(1);
       expect(errors[0].message).toContain("Mock subscribe failure");
@@ -349,18 +384,18 @@ describe("PubSub Transport", () => {
       });
 
       // Subscribe then unsubscribe
-      observer.emit("subscribe", "test-topic");
-      await new Promise(resolve => setTimeout(resolve, 0));
-      
-      observer.emit("unsubscribe", "test-topic");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "test-topic");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      observer.call("unsubscribe", "test-topic");
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       await source.readable.cancel();
     });
 
     it("should not subscribe to the same topic twice", async () => {
       let subscribeCount = 0;
-      
+
       class CountingBackend implements PubSubBackend {
         async publish(): Promise<void> {}
         async subscribe(): Promise<() => Promise<void>> {
@@ -376,10 +411,10 @@ describe("PubSub Transport", () => {
         observer,
       });
 
-      observer.emit("subscribe", "test-topic");
-      observer.emit("subscribe", "test-topic"); // Should not subscribe again
+      observer.call("subscribe", "test-topic");
+      observer.call("subscribe", "test-topic"); // Should not subscribe again
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(subscribeCount).toBe(1);
       await source.readable.cancel();
@@ -412,7 +447,7 @@ describe("PubSub Transport", () => {
       });
 
       const receivedMessages: Message<{ test: string }>[] = [];
-      
+
       // Start reading messages
       const reader = transport.readable.getReader();
       const readPromise = (async () => {
@@ -428,8 +463,8 @@ describe("PubSub Transport", () => {
       })();
 
       // Subscribe to the document topic
-      observer.emit("subscribe", "test-doc");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "test-doc");
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Write a message
       const writer = transport.writable.getWriter();
@@ -437,7 +472,7 @@ describe("PubSub Transport", () => {
       await writer.write(testMessage);
 
       // Allow message to flow through
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       await transport.close();
       await readPromise;
@@ -455,7 +490,7 @@ describe("PubSub Transport", () => {
       });
 
       const receivedMessages: Message<{ test: string }>[] = [];
-      
+
       // Start reading
       const reader = transport.readable.getReader();
       const readPromise = (async () => {
@@ -471,22 +506,22 @@ describe("PubSub Transport", () => {
       })();
 
       // Subscribe to multiple documents
-      observer.emit("subscribe", "doc1");
-      observer.emit("subscribe", "doc2");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "doc1");
+      observer.call("subscribe", "doc2");
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Write messages to different documents
       const writer = transport.writable.getWriter();
       await writer.write(createTestDocMessage("doc1", "ctx1"));
       await writer.write(createTestDocMessage("doc2", "ctx2"));
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       await transport.close();
       await readPromise;
 
       expect(receivedMessages).toHaveLength(2);
-      const documentIds = receivedMessages.map(m => m.document);
+      const documentIds = receivedMessages.map((m) => m.document);
       expect(documentIds).toContain("doc1");
       expect(documentIds).toContain("doc2");
     });
@@ -535,7 +570,7 @@ describe("PubSub Transport", () => {
 
     it("should handle message processing errors", async () => {
       const errors: Error[] = [];
-      
+
       const source = getPubSubSource({
         context: { test: "base-context" },
         backend: inMemoryBackend,
@@ -549,12 +584,12 @@ describe("PubSub Transport", () => {
         // Expected to fail
       });
 
-      observer.emit("subscribe", "test-topic");
-      await new Promise(resolve => setTimeout(resolve, 0));
+      observer.call("subscribe", "test-topic");
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Publish invalid message data
-      await inMemoryBackend.publish("test-topic", new Uint8Array([0xFF, 0xFF]));
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await inMemoryBackend.publish("test-topic", new Uint8Array([0xff, 0xff]));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       await source.readable.cancel();
       await readPromise;
