@@ -8,6 +8,8 @@ import {
 } from "teleportal";
 import { compose, getMessageReader } from "../utils";
 
+export { InMemoryPubSubBackend } from "./in-memory";
+
 /**
  * Generic interface for a pub/sub backend implementation.
  * Can be implemented by in-memory queues, Redis, or any other pub/sub system.
