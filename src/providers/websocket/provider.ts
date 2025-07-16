@@ -13,7 +13,7 @@ import {
 import { getYTransportFromYDoc } from "../../transports";
 import { toBinaryTransport } from "../../transports/utils";
 import { WebsocketConnection } from "./connection-manager";
-import type { ReaderInstance } from "./utils";
+import type { ReaderInstance } from "../../transports/utils";
 
 export type ProviderOptions = {
   client: WebsocketConnection;

@@ -10,6 +10,180 @@ import {
   isPingMessage,
 } from "teleportal";
 
+export type ReaderInstance = {
+  /**
+   * Unsubscribe from further messages from the fan out writer
+   */
+  unsubscribe: () => void;
+  /**
+   * A readable stream to read messages from the fan out writer
+   */
+  readable: ReadableStream<BinaryMessage>;
+};
+
+export type WriterInstance = {
+  /**
+   * Remove this writer from the fan in reader
+   */
+  remove: () => void;
+  /**
+   * A writable stream to write messages to the fan in reader
+   */
+  writable: WritableStream<BinaryMessage>;
+};
+
+/**
+ * Creates a writer which will fan out to all connected readers.
+ * 
+ * @param defaultReaders Optional array of readable streams to connect by default
+ */
+export function createFanOutWriter(defaultReaders?: ReadableStream<BinaryMessage>[]) {
+  const transports: TransformStream<BinaryMessage, BinaryMessage>[] = [];
+
+  const writable = new WritableStream<BinaryMessage>({
+    write: async (message) => {
+      await Promise.all(
+        transports.map(async (transport) => {
+          const writer = transport.writable.getWriter();
+          await writer.write(message);
+          writer.releaseLock();
+        }),
+      );
+    },
+    close: () => {
+      transports.forEach((transport) => {
+        transport.writable.close();
+      });
+    },
+    abort: (reason) => {
+      transports.forEach((transport) => {
+        transport.writable.abort(reason);
+      });
+    },
+  });
+
+  function getReader(): ReaderInstance {
+    const transform = new TransformStream<BinaryMessage, BinaryMessage>();
+
+    transports.push(transform);
+
+    return {
+      unsubscribe: () => {
+        const index = transports.indexOf(transform);
+        if (index > -1) {
+          transports.splice(index, 1);
+        }
+      },
+      readable: transform.readable,
+    };
+  }
+
+  // Connect default readers if provided
+  if (defaultReaders) {
+    defaultReaders.forEach(() => {
+      getReader();
+    });
+  }
+
+  return {
+    writer: writable.getWriter(),
+    getReader,
+  };
+}
+
+/**
+ * Creates a reader which will fan in from all connected writers.
+ * 
+ * @param defaultWriters Optional array of writable streams to connect by default
+ */
+export function createFanInReader(defaultWriters?: WritableStream<BinaryMessage>[]) {
+  const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
+  let isClosed = false;
+
+  const readable = new ReadableStream<BinaryMessage>({
+    start(controller) {
+      controllers.push(controller);
+    },
+    cancel() {
+      isClosed = true;
+    },
+  });
+
+  const writers: { transform: TransformStream<BinaryMessage, BinaryMessage>; writable: WritableStream<BinaryMessage> }[] = [];
+
+  function addWriter(): WriterInstance {
+    if (isClosed) {
+      throw new Error("Cannot add writer to closed fan in reader");
+    }
+
+    const transform = new TransformStream<BinaryMessage, BinaryMessage>({
+      transform(chunk, controller) {
+        // Forward the message to all readable stream controllers
+        controllers.forEach((ctrl) => {
+          try {
+            ctrl.enqueue(chunk);
+          } catch (error) {
+            // Controller might be closed, ignore the error
+          }
+        });
+        controller.enqueue(chunk);
+      },
+    });
+
+    const writerEntry = {
+      transform,
+      writable: transform.writable,
+    };
+
+    writers.push(writerEntry);
+
+    return {
+      remove: () => {
+        const index = writers.indexOf(writerEntry);
+        if (index > -1) {
+          writers.splice(index, 1);
+        }
+        try {
+          writerEntry.writable.close();
+        } catch {
+          // Ignore if already closed
+        }
+      },
+      writable: writerEntry.writable,
+    };
+  }
+
+  // Connect default writers if provided
+  const defaultWriterInstances: WriterInstance[] = [];
+  if (defaultWriters) {
+    defaultWriters.forEach(() => {
+      defaultWriterInstances.push(addWriter());
+    });
+  }
+
+  return {
+    readable,
+    addWriter,
+    close: () => {
+      isClosed = true;
+      controllers.forEach((controller) => {
+        try {
+          controller.close();
+        } catch {
+          // Ignore if already closed
+        }
+      });
+      writers.forEach((writer) => {
+        try {
+          writer.writable.close();
+        } catch {
+          // Ignore if already closed
+        }
+      });
+    },
+  };
+}
+
 /**
  * Compose a {@link Source} and {@link Sink} into a {@link Transport}.
  */
