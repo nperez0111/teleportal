@@ -14,7 +14,6 @@ export type MessageArray = Tag<Uint8Array, "message-array">;
  */
 export function encodeMessageArray(messages: Message[]): MessageArray {
   return encoding.encode((encoder) => {
-    encoding.writeVarUint(encoder, messages.length);
     for (const message of messages) {
       encoding.writeVarUint8Array(encoder, message.encoded);
     }
@@ -26,10 +25,9 @@ export function encodeMessageArray(messages: Message[]): MessageArray {
  */
 export function decodeMessageArray(buffer: MessageArray): RawReceivedMessage[] {
   const decoder = decoding.createDecoder(buffer);
-
-  const length = decoding.readVarUint(decoder);
   const messages: RawReceivedMessage[] = [];
-  for (let i = 0; i < length; i++) {
+
+  while (decoder.pos < decoder.arr.length) {
     const encoded = decoding.readVarUint8Array(decoder);
     messages.push(decodeMessage(encoded as BinaryMessage));
   }
