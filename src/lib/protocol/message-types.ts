@@ -45,6 +45,7 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
   public type = "awareness" as const;
   public context: Context;
   #encoded: BinaryMessage | undefined;
+  #id: string | undefined;
 
   constructor(
     public document: string,
@@ -62,7 +63,12 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
   }
 
   public get id() {
-    return toBase64(digest(this.encoded));
+    return this.#id ?? (this.#id = toBase64(digest(this.encoded)));
+  }
+
+  public resetEncoded() {
+    this.#encoded = undefined;
+    this.#id = undefined;
   }
 }
 
@@ -75,6 +81,7 @@ export class DocMessage<Context extends Record<string, unknown>> {
   public type = "doc" as const;
   public context: Context;
   #encoded: BinaryMessage | undefined;
+  #id: string | undefined;
 
   constructor(
     public document: string,
@@ -97,6 +104,11 @@ export class DocMessage<Context extends Record<string, unknown>> {
   }
 
   public get id() {
-    return toBase64(digest(this.encoded));
+    return this.#id ?? (this.#id = toBase64(digest(this.encoded)));
+  }
+
+  public resetEncoded() {
+    this.#encoded = undefined;
+    this.#id = undefined;
   }
 }
