@@ -23,7 +23,6 @@ export function getPubSubSink<Context extends ServerContext>({
     writable: new WritableStream({
       async write(chunk) {
         const topic = topicResolver(chunk);
-        console.log("publish", topic);
         await pubsub.publish(topic, chunk.encoded);
       },
     }),
@@ -58,10 +57,8 @@ export function getPubSubSource<Context extends ServerContext>({
 
   return {
     async subscribe(topic) {
-      console.log("subscribe", topic);
       if (!subscribedTopics.has(topic)) {
         const unsubscribe = await pubsub.subscribe(topic, (message) => {
-          console.log({ hasMessage: !!message, topic });
           controller.enqueue(message);
         });
         subscribedTopics.set(topic, unsubscribe);
