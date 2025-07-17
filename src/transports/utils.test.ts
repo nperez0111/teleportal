@@ -4,7 +4,7 @@ import type { BinaryMessage } from "teleportal";
 
 // Helper function to create a test message
 function createTestMessage(data: number[]): BinaryMessage {
-  return new Uint8Array(data);
+  return new Uint8Array(data) as unknown as BinaryMessage;
 }
 
 // Helper function to collect messages from a readable stream
@@ -134,13 +134,19 @@ describe("FanOut Writer", () => {
       const reader1 = fanOutWriter.getReader();
       const reader2 = fanOutWriter.getReader();
       
+      // Start collecting messages from new readers
+      const [received1Promise, received2Promise] = [
+        collectMessages(reader1.readable, 1, 500),
+        collectMessages(reader2.readable, 1, 500)
+      ];
+      
       const message2 = createTestMessage([4, 5, 6]);
       await fanOutWriter.writer.write(message2);
       
       // New readers should only receive messages written after they were added
       const [received1, received2] = await Promise.all([
-        collectMessages(reader1.readable, 1, 200),
-        collectMessages(reader2.readable, 1, 200)
+        received1Promise,
+        received2Promise
       ]);
       
       expect(received1).toHaveLength(1);
@@ -288,9 +294,9 @@ describe("FanIn Reader", () => {
 
   afterEach(() => {
     try {
-      fanInReader.readable.cancel();
+      fanInReader.close();
     } catch {
-      // Ignore if already cancelled
+      // Ignore if already closed
     }
   });
 
@@ -416,7 +422,7 @@ describe("FanIn Reader", () => {
   });
 
   describe("Reader cancellation", () => {
-    it("should close all writers when reader is cancelled", async () => {
+    it("should close all writers when reader is closed", async () => {
       const writer1 = fanInReader.getWriter();
       const writer2 = fanInReader.getWriter();
 
@@ -426,8 +432,8 @@ describe("FanIn Reader", () => {
       await w1.write(createTestMessage([1, 2, 3]));
       await w2.write(createTestMessage([4, 5, 6]));
 
-      // Cancel the reader
-      await fanInReader.readable.cancel();
+      // Close the reader
+      fanInReader.close();
 
       // Writers should be closed/affected
       // Note: The exact behavior may depend on implementation details
@@ -435,11 +441,11 @@ describe("FanIn Reader", () => {
       w2.releaseLock();
     });
 
-    it("should handle cancelling an already cancelled reader", async () => {
-      await fanInReader.readable.cancel();
+    it("should handle closing an already closed reader", async () => {
+      fanInReader.close();
       
-      // Cancelling again should not throw
-      await expect(fanInReader.readable.cancel()).resolves.toBeUndefined();
+      // Closing again should not throw
+      expect(() => fanInReader.close()).not.toThrow();
     });
   });
 
@@ -448,7 +454,7 @@ describe("FanIn Reader", () => {
       const writer1 = fanInReader.getWriter();
       const writer2 = fanInReader.getWriter();
 
-      const receivedPromise = collectMessages(fanInReader.readable, 2, 1000);
+      const receivedPromise = collectMessages(fanInReader.readable, 3, 1000);
 
       const w1 = writer1.writable.getWriter();
       const w2 = writer2.writable.getWriter();
@@ -464,9 +470,12 @@ describe("FanIn Reader", () => {
       await w2.write(createTestMessage([7, 8, 9]));
       w2.releaseLock();
 
-      // Should be able to collect messages
+      // Should be able to collect all 3 messages
       const received = await receivedPromise;
-      expect(received).toHaveLength(2);
+      expect(received).toHaveLength(3);
+      expect(received).toContainEqual(createTestMessage([1, 2, 3]));
+      expect(received).toContainEqual(createTestMessage([4, 5, 6]));
+      expect(received).toContainEqual(createTestMessage([7, 8, 9]));
     });
 
     it("should handle writing to a closed writer gracefully", async () => {
@@ -556,8 +565,8 @@ describe("Integration tests", () => {
     // Write some messages
     await fanOut.writer.write(createTestMessage([1, 2, 3]));
 
-    // Cancel fanin reader
-    await fanIn.readable.cancel();
+    // Close fanin reader
+    fanIn.close();
 
     // Unsubscribe from fanout
     reader1.unsubscribe();

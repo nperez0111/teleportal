@@ -86,25 +86,20 @@ export function createFanOutWriter() {
  * Creates a reader which will fan in from all connected writers.
  */
 export function createFanInReader() {
-  const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
+  let mainController: ReadableStreamDefaultController<BinaryMessage> | null = null;
+  let isClosed = false;
 
-  const writers: { transform: TransformStream<BinaryMessage, BinaryMessage>; writable: WritableStream<BinaryMessage> }[] = [];
+  const writers: WritableStream<BinaryMessage>[] = [];
 
   const readable = new ReadableStream<BinaryMessage>({
     start(controller) {
-      controllers.push(controller);
+      mainController = controller;
     },
     cancel() {
-      controllers.forEach((controller) => {
-        try {
-          controller.close();
-        } catch {
-          // Ignore if already closed
-        }
-      });
+      isClosed = true;
       writers.forEach((writer) => {
         try {
-          writer.writable.close();
+          writer.abort();
         } catch {
           // Ignore if already closed
         }
@@ -113,46 +108,66 @@ export function createFanInReader() {
   });
 
   function getWriter(): WriterInstance {
-    const transform = new TransformStream<BinaryMessage, BinaryMessage>({
-      transform(chunk, controller) {
-        // Forward the message to all readable stream controllers
-        controllers.forEach((ctrl) => {
+    if (isClosed) {
+      throw new Error("Cannot add writer to closed fan in reader");
+    }
+
+    const writable = new WritableStream<BinaryMessage>({
+      write: async (chunk) => {
+        if (mainController && !isClosed) {
           try {
-            ctrl.enqueue(chunk);
+            mainController.enqueue(chunk);
           } catch (error) {
             // Controller might be closed, ignore the error
           }
-        });
-        controller.enqueue(chunk);
+        }
+      },
+      close: () => {
+        // Individual writer close doesn't close the main stream
+      },
+      abort: () => {
+        // Individual writer abort doesn't close the main stream
       },
     });
 
-    const writerEntry = {
-      transform,
-      writable: transform.writable,
-    };
-
-    writers.push(writerEntry);
+    writers.push(writable);
 
     return {
       remove: () => {
-        const index = writers.indexOf(writerEntry);
+        const index = writers.indexOf(writable);
         if (index > -1) {
           writers.splice(index, 1);
         }
         try {
-          writerEntry.writable.close();
+          writable.abort();
         } catch {
           // Ignore if already closed
         }
       },
-      writable: writerEntry.writable,
+      writable,
     };
   }
 
   return {
     readable,
-    getWriter
+    getWriter,
+    close: () => {
+      isClosed = true;
+      if (mainController) {
+        try {
+          mainController.close();
+        } catch {
+          // Ignore if already closed
+        }
+      }
+      writers.forEach((writer) => {
+        try {
+          writer.abort();
+        } catch {
+          // Ignore if already closed
+        }
+      });
+    },
   };
 }
 
