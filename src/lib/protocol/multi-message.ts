@@ -1,7 +1,12 @@
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import { decodeMessage } from "./decode";
-import { BinaryMessage, Message, RawReceivedMessage } from "./message-types";
+import {
+  BinaryMessage,
+  isBinaryMessage,
+  Message,
+  RawReceivedMessage,
+} from "./message-types";
 import { Tag } from "./types";
 
 /**
@@ -29,7 +34,11 @@ export function decodeMessageArray(buffer: MessageArray): RawReceivedMessage[] {
 
   while (decoder.pos < decoder.arr.length) {
     const encoded = decoding.readVarUint8Array(decoder);
-    messages.push(decodeMessage(encoded as BinaryMessage));
+    if (isBinaryMessage(encoded)) {
+      messages.push(decodeMessage(encoded));
+    } else {
+      throw new Error("Invalid message");
+    }
   }
   return messages;
 }

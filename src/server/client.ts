@@ -34,15 +34,12 @@ export class Client<Context extends ServerContext> extends Observable<{
     this.logger = logger.withContext({ name: "client", clientId: id });
   }
 
-  public get ready() {
-    return this.writer.ready;
-  }
-
   public async send(message: Message<Context>) {
     try {
       this.logger
         .withMetadata({ messageId: message.id })
         .trace("sending message");
+      await this.writer.ready;
       await this.writer.write(message);
       this.logger
         .withMetadata({ messageId: message.id })

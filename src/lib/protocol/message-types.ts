@@ -112,3 +112,16 @@ export class DocMessage<Context extends Record<string, unknown>> {
     this.#id = undefined;
   }
 }
+
+export const isBinaryMessage = (
+  message: Uint8Array,
+): message is BinaryMessage => {
+  return (
+    // Y
+    message[0] === 0x59 &&
+    // J
+    message[1] === 0x4a &&
+    // S
+    message[2] === 0x53
+  );
+};

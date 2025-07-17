@@ -260,10 +260,6 @@ export class Server<Context extends ServerContext> extends Observable<{
 
     logger.trace("client created");
 
-    await client.ready;
-
-    logger.trace("client ready");
-
     return client;
   }
 

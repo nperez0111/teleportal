@@ -31,6 +31,7 @@ export function withMessageValidatorSink<
 
         const writer = sink.writable.getWriter();
         try {
+          await writer.ready;
           await writer.write(chunk);
         } finally {
           writer.releaseLock();
