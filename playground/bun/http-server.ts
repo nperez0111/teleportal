@@ -22,14 +22,18 @@ const server = new Server({
   logger: logger,
 });
 
-const httpHandlers = getHandlers({ server });
+const httpHandlers = getHandlers({
+  server,
+  validateRequest: async (request) => {
+    return { userId: "123", room: "123" };
+  },
+});
 
 const instance = Bun.serve({
   routes: {
     "/": homepage,
   },
   async fetch(request) {
-    console.log("fetch", request.url);
     return httpHandlers(request);
   },
   idleTimeout: 255,

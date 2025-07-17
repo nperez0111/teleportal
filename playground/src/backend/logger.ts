@@ -21,7 +21,7 @@ export const logger = new LogLayer({
       runtime: "node", // Required: "node" or "browser"
       viewMode: "expanded", // "inline" | "message-only" | "expanded"
       theme: moonlight,
-      level: "trace",
+      level: "info",
     }),
   ],
 });
