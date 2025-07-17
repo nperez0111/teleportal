@@ -7,7 +7,6 @@ import {
   getHTTPSink,
   getSSESource,
   getYTransportFromYDoc,
-  sync,
   withLogger,
 } from "teleportal/transports";
 
@@ -18,18 +17,29 @@ const url = "http://localhost:3000";
 const observer = new Observable<{
   message: (message: Message[]) => void;
 }>();
+const context = { clientId: "abc-123" };
 const transport = withLogger(
   compose(
-    getSSESource(new EventSource(url + "/sse"), {
-      clientId: "local",
+    getSSESource({
+      context,
+      source: new EventSource(url + "/sse?documents=test-load"),
     }),
     getHTTPSink({
+      context,
       request: async ({ requestOptions }) => {
-        const messages = await fetch(url + "/message", requestOptions).then(
-          decodeHTTPRequest,
-        );
-        console.log("http got back", messages);
-        observer.call("message", messages);
+        await fetch(url + "/message", requestOptions)
+          .then(decodeHTTPRequest)
+          .then((readable) =>
+            readable.pipeTo(
+              new WritableStream({
+                write(message) {
+                  console.log("http got back", message);
+                  message.context.clientId = context.clientId;
+                  observer.call("message", [message]);
+                },
+              }),
+            ),
+          );
       },
     }),
   ),
@@ -42,28 +52,31 @@ const yTransport = getYTransportFromYDoc({
 
 const openWithMessageStream = new TransformStream<Message, Message>({
   start(controller) {
-    controller.enqueue(
-      new DocMessage("test-load", {
-        type: "sync-step-1",
-        sv: Y.encodeStateVector(yTransport.ydoc) as StateVector,
-      }),
-    );
+    // artificially delay the open message to ensure the sse transport is ready
+    setTimeout(() => {
+      controller.enqueue(
+        new DocMessage("test-load", {
+          type: "sync-step-1",
+          sv: Y.encodeStateVector(yTransport.ydoc) as StateVector,
+        }),
+      );
+    }, 250);
   },
 });
 const httpWriterStream = new TransformStream<Message, Message>({
   start(controller) {
     observer.on("message", (messages) => {
       for (const message of messages) {
-        controller.enqueue(message);
+        // controller.enqueue(message);
       }
     });
   },
 });
 
+transport.readable.pipeThrough(httpWriterStream).pipeTo(yTransport.writable);
 yTransport.readable
   .pipeThrough(openWithMessageStream)
   .pipeTo(transport.writable);
-transport.readable.pipeThrough(httpWriterStream).pipeTo(yTransport.writable);
 
 await yTransport.synced;
 

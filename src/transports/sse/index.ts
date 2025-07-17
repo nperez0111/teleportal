@@ -2,6 +2,7 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import {
   BinaryMessage,
   ClientContext,
+  isBinaryMessage,
   Message,
   Sink,
   Source,
@@ -23,10 +24,9 @@ export function getSSESink<Context extends ClientContext>({
 > {
   const transform = new TransformStream<Message<any>, string>({
     transform(chunk, controller) {
-      console.log("original", chunk.encoded);
+      // TODO probably a better encoding for sse
       const payload = toBase64(chunk.encoded);
       const message = `event:message\nid:${chunk.id}\ndata: ${payload}\n\n`;
-      console.log("writing sse", message);
       controller.enqueue(message);
     },
   });
@@ -48,29 +48,30 @@ export function getSSESink<Context extends ClientContext>({
 /**
  * Transport which transforms SSE messages into messages
  */
-export function getSSESource<Context extends ClientContext>(
-  source: EventSource,
-  context: Context,
-): Source<
-  Context,
-  {
-    close: () => void;
-  }
-> {
-  const reader = getMessageReader(context);
-  const writer = reader.writable.getWriter();
+export function getSSESource<Context extends ClientContext>({
+  source,
+  context,
+}: {
+  source: EventSource;
+  context: Context;
+}): Source<Context> {
+  let handler: (event: MessageEvent) => void;
 
-  const handler = (event: MessageEvent) => {
-    console.log("event", event.data);
-    const message = fromBase64(event.data) as BinaryMessage;
-    console.log("reading sse", message);
-    writer.write(message);
-  };
-  source.addEventListener("message", handler);
   return {
-    readable: reader.readable,
-    close: () => {
-      source.removeEventListener("message", handler);
-    },
+    readable: new ReadableStream<BinaryMessage>({
+      start(controller) {
+        handler = (event: MessageEvent) => {
+          const message = fromBase64(event.data);
+
+          if (isBinaryMessage(message)) {
+            controller.enqueue(message);
+          }
+        };
+        source.addEventListener("message", handler);
+      },
+      cancel() {
+        source.removeEventListener("message", handler);
+      },
+    }).pipeThrough(getMessageReader(context)),
   };
 }

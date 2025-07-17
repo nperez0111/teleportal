@@ -8,9 +8,13 @@ import {
   BinaryTransport,
   encodePongMessage,
   isPingMessage,
+  MessageArray,
+  decodeMessageArray,
+  encodeMessageArray,
+  ClientContext,
 } from "teleportal";
 
-export type FanOutReader = {
+export type FanOutReader<T> = {
   /**
    * Unsubscribe from further messages from the fan out writer
    */
@@ -18,20 +22,19 @@ export type FanOutReader = {
   /**
    * A readable stream to read messages from the fan out writer
    */
-  readable: ReadableStream<BinaryMessage>;
+  readable: ReadableStream<T>;
 };
 
 /**
  * Creates a writer which will fan out to all connected readers.
  */
-export function createFanOutWriter() {
-  const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
+export function createFanOutWriter<T>() {
+  const controllers: ReadableStreamDefaultController<T>[] = [];
 
-  function getReader(): FanOutReader {
-    let controller: ReadableStreamDefaultController<BinaryMessage> | null =
-      null;
+  function getReader(): FanOutReader<T> {
+    let controller: ReadableStreamDefaultController<T> | null = null;
 
-    const readable = new ReadableStream<BinaryMessage>({
+    const readable = new ReadableStream<T>({
       start(ctrl) {
         controller = ctrl;
         controllers.push(ctrl);
@@ -64,7 +67,7 @@ export function createFanOutWriter() {
     };
   }
 
-  const writable = new WritableStream<BinaryMessage>({
+  const writable = new WritableStream<T>({
     write: async (message) => {
       // Send message to all active controllers
       controllers.forEach((controller) => {
@@ -98,12 +101,12 @@ export function createFanOutWriter() {
   });
 
   return {
-    writer: writable.getWriter(),
+    writable,
     getReader,
   };
 }
 
-export type FanInWriter = {
+export type FanInWriter<T> = {
   /**
    * Remove this writer from the fan in reader
    */
@@ -111,20 +114,19 @@ export type FanInWriter = {
   /**
    * A writable stream to write messages to the fan in reader
    */
-  writable: WritableStream<BinaryMessage>;
+  writable: WritableStream<T>;
 };
 
 /**
  * Creates a reader which will fan in from all connected writers.
  */
-export function createFanInReader() {
-  let mainController: ReadableStreamDefaultController<BinaryMessage> | null =
-    null;
+export function createFanInReader<T>() {
+  let mainController: ReadableStreamDefaultController<T> | null = null;
   let isClosed = false;
 
-  const writers: WritableStream<BinaryMessage>[] = [];
+  const writers: WritableStream<T>[] = [];
 
-  const readable = new ReadableStream<BinaryMessage>({
+  const readable = new ReadableStream<T>({
     start(controller) {
       mainController = controller;
     },
@@ -143,12 +145,12 @@ export function createFanInReader() {
     },
   });
 
-  function getWriter(): FanInWriter {
+  function getWriter(): FanInWriter<T> {
     if (isClosed) {
       throw new Error("Cannot add writer to closed fan in reader");
     }
 
-    const writable = new WritableStream<BinaryMessage>({
+    const writable = new WritableStream<T>({
       write: async (chunk) => {
         if (mainController && !isClosed) {
           try {
@@ -342,3 +344,24 @@ export function fromBinaryTransport<
     writable,
   };
 }
+export const toMessageArrayStream = () =>
+  new TransformStream<Message, MessageArray>({
+    transform: (chunk, controller) => {
+      const messageArray = encodeMessageArray([chunk]);
+      controller.enqueue(messageArray);
+    },
+  });
+
+export const fromMessageArrayStream = <Context extends ClientContext>(
+  context: Context,
+) =>
+  new TransformStream<MessageArray, Message<Context>>({
+    transform: (chunk, controller) => {
+      for (const message of decodeMessageArray(chunk)) {
+        if (context) {
+          Object.assign(message.context, context);
+        }
+        controller.enqueue(message);
+      }
+    },
+  });
