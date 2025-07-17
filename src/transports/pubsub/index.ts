@@ -4,61 +4,27 @@ import {
   ServerContext,
   Sink,
   Source,
-  Observable,
+  PubSub,
+  Transport,
 } from "teleportal";
 import { compose, getMessageReader } from "../utils";
-
-export { InMemoryPubSubBackend } from "./in-memory";
-
-/**
- * Generic interface for a pub/sub backend implementation.
- * Can be implemented by in-memory queues, Redis, or any other pub/sub system.
- */
-export interface PubSubBackend {
-  /**
-   * Publish a message to a topic/channel
-   */
-  publish(topic: string, message: BinaryMessage): Promise<void>;
-
-  /**
-   * Subscribe to a topic/channel and receive messages
-   * @param topic - The topic to subscribe to
-   * @param callback - Function called when a message is received
-   * @returns A function to unsubscribe
-   */
-  subscribe(
-    topic: string,
-    callback: (message: BinaryMessage) => void,
-  ): Promise<() => Promise<void>>;
-
-  /**
-   * Close/cleanup the backend connection
-   */
-  close(): Promise<void>;
-}
 
 /**
  * Generic publisher sink that publishes messages to a topic using the provided backend
  */
 export function getPubSubSink<Context extends ServerContext>({
-  backend,
+  pubsub,
   topicResolver,
 }: {
-  backend: PubSubBackend;
+  pubsub: PubSub;
   topicResolver: (message: Message<Context>) => string;
-}): Sink<Context, { backend: PubSubBackend }> {
+}): Sink<Context> {
   return {
-    backend,
     writable: new WritableStream({
       async write(chunk) {
         const topic = topicResolver(chunk);
-        await backend.publish(topic, chunk.encoded);
-      },
-      async close() {
-        await backend.close();
-      },
-      async abort() {
-        await backend.close();
+        console.log("publish", topic);
+        await pubsub.publish(topic, chunk.encoded);
       },
     }),
   };
@@ -69,61 +35,65 @@ export function getPubSubSink<Context extends ServerContext>({
  */
 export function getPubSubSource<Context extends ServerContext>({
   context,
-  backend,
-  observer,
+  pubsub,
 }: {
   context?: Context;
-  backend: PubSubBackend;
-  observer: Observable<{
-    subscribe: (topic: string) => void;
-    unsubscribe: (topic: string) => void;
-    destroy: () => void;
-  }>;
+  pubsub: PubSub;
 }): Source<
   Context,
   {
-    backend: PubSubBackend;
-    observer: Observable<{
-      subscribe: (topic: string) => void;
-      unsubscribe: (topic: string) => void;
-      destroy: () => void;
-    }>;
+    /**
+     * Subscribe to a topic
+     */
+    subscribe: (topic: string) => Promise<void>;
+    /**
+     * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
+     */
+    unsubscribe: (topic?: string) => Promise<void>;
   }
 > {
   const subscribedTopics = new Map<string, () => Promise<void>>();
   const reader = getMessageReader(context || ({} as Context));
-
-  observer.on("unsubscribe", async (topic: string) => {
-    const unsubscribe = subscribedTopics.get(topic);
-    if (unsubscribe) {
-      await unsubscribe();
-      subscribedTopics.delete(topic);
-    }
-  });
+  let controller: ReadableStreamDefaultController<BinaryMessage>;
 
   return {
-    backend,
-    observer,
-    readable: new ReadableStream({
-      async start(controller) {
-        observer.on("subscribe", async (topic: string) => {
-          if (!subscribedTopics.has(topic)) {
-            const unsubscribe = await backend.subscribe(topic, (message) => {
-              controller.enqueue(message);
-            });
-            subscribedTopics.set(topic, unsubscribe);
-          }
+    async subscribe(topic) {
+      console.log("subscribe", topic);
+      if (!subscribedTopics.has(topic)) {
+        const unsubscribe = await pubsub.subscribe(topic, (message) => {
+          console.log({ hasMessage: !!message, topic });
+          controller.enqueue(message);
         });
-      },
-      async cancel() {
-        await observer.call("destroy");
+        subscribedTopics.set(topic, unsubscribe);
+      }
+    },
+    async unsubscribe(topic) {
+      if (topic === undefined) {
         await Promise.all(
           Array.from(subscribedTopics.values()).map((unsubscribe) =>
             unsubscribe(),
           ),
         );
         subscribedTopics.clear();
-        await backend.close();
+        return;
+      }
+      const unsubscribe = subscribedTopics.get(topic);
+      if (unsubscribe) {
+        await unsubscribe();
+        subscribedTopics.delete(topic);
+      }
+    },
+    readable: new ReadableStream<BinaryMessage>({
+      async start(_controller) {
+        controller = _controller;
+      },
+      async cancel() {
+        await Promise.all(
+          Array.from(subscribedTopics.values()).map((unsubscribe) =>
+            unsubscribe(),
+          ),
+        );
+        subscribedTopics.clear();
       },
     }).pipeThrough(reader),
   };
@@ -134,26 +104,26 @@ export function getPubSubSource<Context extends ServerContext>({
  */
 export function getPubSubTransport<Context extends ServerContext>({
   context,
-  backend,
+  pubsub,
   topicResolver,
-  observer,
 }: {
   context?: Context;
-  backend: PubSubBackend;
+  pubsub: PubSub;
   topicResolver: (message: Message<Context>) => string;
-  observer: Observable<{
-    subscribe: (topic: string) => void;
-    unsubscribe: (topic: string) => void;
-  }>;
-}) {
+}): Transport<
+  Context,
+  {
+    subscribe: (topic: string) => Promise<void>;
+    unsubscribe: (topic: string) => Promise<void>;
+  }
+> {
   const transport = compose(
     getPubSubSource({
       context,
-      backend,
-      observer,
+      pubsub,
     }),
     getPubSubSink({
-      backend,
+      pubsub,
       topicResolver,
     }),
   );

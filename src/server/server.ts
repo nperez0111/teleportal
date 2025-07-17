@@ -1,7 +1,9 @@
 import {
   DocMessage,
+  InMemoryPubSub,
   Message,
   Observable,
+  PubSub,
   ServerContext,
   Transport,
 } from "teleportal";
@@ -77,6 +79,11 @@ export type ServerOptions<Context extends ServerContext> = {
    * If provided, the server will use this to synchronize updates across multiple server instances.
    */
   syncTransport?: ServerSyncTransport<Context>;
+  /**
+   * Optional pub/sub backend for cross-instance communication.
+   * If provided, the server will use this to publish and subscribe to messages across multiple server instances.
+   */
+  pubSub?: PubSub;
 };
 
 /**
@@ -94,6 +101,7 @@ export class Server<Context extends ServerContext> extends Observable<{
   private options: ServerOptions<Context>;
   private documentManager: DocumentManager<Context>;
   private clientManager: ClientManager<Context>;
+  public pubsub: PubSub;
 
   constructor(options: ServerOptions<Context>) {
     super();
@@ -101,6 +109,7 @@ export class Server<Context extends ServerContext> extends Observable<{
     this.logger = (options.logger ?? defaultLogger).withContext({
       name: "server",
     });
+    this.pubsub = options.pubSub ?? new InMemoryPubSub();
 
     // Initialize managers
     this.documentManager = new DocumentManager({
