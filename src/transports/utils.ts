@@ -128,7 +128,7 @@ export function createFanInReader() {
     start(controller) {
       mainController = controller;
     },
-    cancel() {
+    async cancel() {
       isClosed = true;
       // Just clear the writers array and let garbage collection handle cleanup
       await Promise.all(
@@ -138,7 +138,7 @@ export function createFanInReader() {
           } catch {
             // Ignore if already closed
           }
-        })
+        }),
       );
     },
   });
@@ -187,7 +187,7 @@ export function createFanInReader() {
   return {
     readable,
     getWriter,
-    close: () => {
+    async close() {
       isClosed = true;
       try {
         mainController?.close();
@@ -202,7 +202,7 @@ export function createFanInReader() {
           } catch {
             // Ignore if already closed
           }
-        })
+        }),
       );
     },
   };
