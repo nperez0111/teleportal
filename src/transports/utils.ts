@@ -10,6 +10,204 @@ import {
   isPingMessage,
 } from "teleportal";
 
+export type FanOutReader = {
+  /**
+   * Unsubscribe from further messages from the fan out writer
+   */
+  unsubscribe: () => void;
+  /**
+   * A readable stream to read messages from the fan out writer
+   */
+  readable: ReadableStream<BinaryMessage>;
+};
+
+/**
+ * Creates a writer which will fan out to all connected readers.
+ */
+export function createFanOutWriter() {
+  const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
+
+  function getReader(): FanOutReader {
+    let controller: ReadableStreamDefaultController<BinaryMessage> | null =
+      null;
+
+    const readable = new ReadableStream<BinaryMessage>({
+      start(ctrl) {
+        controller = ctrl;
+        controllers.push(ctrl);
+      },
+      cancel() {
+        if (controller) {
+          const index = controllers.indexOf(controller);
+          if (index > -1) {
+            controllers.splice(index, 1);
+          }
+        }
+      },
+    });
+
+    return {
+      unsubscribe: () => {
+        if (controller) {
+          const index = controllers.indexOf(controller);
+          if (index > -1) {
+            controllers.splice(index, 1);
+          }
+          try {
+            controller.close();
+          } catch {
+            // Ignore if already closed
+          }
+        }
+      },
+      readable,
+    };
+  }
+
+  const writable = new WritableStream<BinaryMessage>({
+    write: async (message) => {
+      // Send message to all active controllers
+      controllers.forEach((controller) => {
+        try {
+          controller.enqueue(message);
+        } catch {
+          // Ignore if controller is closed
+        }
+      });
+    },
+    close: () => {
+      controllers.forEach((controller) => {
+        try {
+          controller.close();
+        } catch {
+          // Ignore if already closed
+        }
+      });
+      controllers.length = 0; // Clear the array
+    },
+    abort: (reason) => {
+      controllers.forEach((controller) => {
+        try {
+          controller.error(reason);
+        } catch {
+          // Ignore if already closed
+        }
+      });
+      controllers.length = 0; // Clear the array
+    },
+  });
+
+  return {
+    writer: writable.getWriter(),
+    getReader,
+  };
+}
+
+export type FanInWriter = {
+  /**
+   * Remove this writer from the fan in reader
+   */
+  unsubscribe: () => void;
+  /**
+   * A writable stream to write messages to the fan in reader
+   */
+  writable: WritableStream<BinaryMessage>;
+};
+
+/**
+ * Creates a reader which will fan in from all connected writers.
+ */
+export function createFanInReader() {
+  let mainController: ReadableStreamDefaultController<BinaryMessage> | null =
+    null;
+  let isClosed = false;
+
+  const writers: WritableStream<BinaryMessage>[] = [];
+
+  const readable = new ReadableStream<BinaryMessage>({
+    start(controller) {
+      mainController = controller;
+    },
+    async cancel() {
+      isClosed = true;
+      // Just clear the writers array and let garbage collection handle cleanup
+      await Promise.all(
+        writers.map(async (writer) => {
+          try {
+            await writer.close();
+          } catch {
+            // Ignore if already closed
+          }
+        }),
+      );
+    },
+  });
+
+  function getWriter(): FanInWriter {
+    if (isClosed) {
+      throw new Error("Cannot add writer to closed fan in reader");
+    }
+
+    const writable = new WritableStream<BinaryMessage>({
+      write: async (chunk) => {
+        if (mainController && !isClosed) {
+          try {
+            mainController.enqueue(chunk);
+          } catch (error) {
+            // Controller might be closed, ignore the error
+          }
+        }
+      },
+      close: () => {
+        // Individual writer close doesn't close the main stream
+      },
+      abort: () => {
+        // Individual writer abort doesn't close the main stream
+      },
+    });
+
+    writers.push(writable);
+
+    return {
+      unsubscribe: () => {
+        const index = writers.indexOf(writable);
+        if (index > -1) {
+          writers.splice(index, 1);
+        }
+        try {
+          writable.abort();
+        } catch {
+          // Ignore if already closed
+        }
+      },
+      writable,
+    };
+  }
+
+  return {
+    readable,
+    getWriter,
+    async close() {
+      isClosed = true;
+      try {
+        mainController?.close();
+      } catch {
+        // Ignore if already closed
+      }
+      // Just clear the writers array and let garbage collection handle cleanup
+      await Promise.all(
+        writers.map(async (writer) => {
+          try {
+            await writer.close();
+          } catch {
+            // Ignore if already closed
+          }
+        }),
+      );
+    },
+  };
+}
+
 /**
  * Compose a {@link Source} and {@link Sink} into a {@link Transport}.
  */
