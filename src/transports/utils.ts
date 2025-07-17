@@ -36,51 +36,76 @@ export type WriterInstance = {
  * Creates a writer which will fan out to all connected readers.
  */
 export function createFanOutWriter() {
-  const transports: TransformStream<BinaryMessage, BinaryMessage>[] = [];
-
-  const writable = new WritableStream<BinaryMessage>({
-    write: async (message) => {
-      await Promise.all(
-        transports.map(async (transport) => {
-          const writer = transport.writable.getWriter();
-          await writer.write(message);
-          writer.releaseLock();
-        }),
-      );
-    },
-    close: () => {
-      transports.forEach((transport) => {
-        transport.writable.close();
-      });
-    },
-    abort: (reason) => {
-      transports.forEach((transport) => {
-        transport.writable.abort(reason);
-      });
-    },
-  });
+  const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
 
   function getReader(): ReaderInstance {
-    const transform = new TransformStream<BinaryMessage, BinaryMessage>();
-
-    transports.push(transform);
+    let controller: ReadableStreamDefaultController<BinaryMessage> | null = null;
+    
+    const readable = new ReadableStream<BinaryMessage>({
+      start(ctrl) {
+        controller = ctrl;
+        controllers.push(ctrl);
+      },
+      cancel() {
+        if (controller) {
+          const index = controllers.indexOf(controller);
+          if (index > -1) {
+            controllers.splice(index, 1);
+          }
+        }
+      }
+    });
 
     return {
       unsubscribe: () => {
-        const index = transports.indexOf(transform);
-        if (index > -1) {
-          transports.splice(index, 1);
+        if (controller) {
+          const index = controllers.indexOf(controller);
+          if (index > -1) {
+            controllers.splice(index, 1);
+          }
+          try {
+            controller.close();
+          } catch {
+            // Ignore if already closed
+          }
         }
-        // Close the transform stream to signal end of messages
+      },
+      readable,
+    };
+  }
+
+  const writable = new WritableStream<BinaryMessage>({
+    write: async (message) => {
+      // Send message to all active controllers
+      controllers.forEach(controller => {
         try {
-          transform.writable.close();
+          controller.enqueue(message);
+        } catch {
+          // Ignore if controller is closed
+        }
+      });
+    },
+    close: () => {
+      controllers.forEach(controller => {
+        try {
+          controller.close();
         } catch {
           // Ignore if already closed
         }
-      },
-      readable: transform.readable,
-    };
-  }
+      });
+      controllers.length = 0; // Clear the array
+    },
+    abort: (reason) => {
+      controllers.forEach(controller => {
+        try {
+          controller.error(reason);
+        } catch {
+          // Ignore if already closed
+        }
+      });
+      controllers.length = 0; // Clear the array
+    },
+  });
 
   return {
     writer: writable.getWriter(),
@@ -103,13 +128,8 @@ export function createFanInReader() {
     },
     cancel() {
       isClosed = true;
-      writers.forEach((writer) => {
-        try {
-          writer.abort();
-        } catch {
-          // Ignore if already closed
-        }
-      });
+      // Just clear the writers array and let garbage collection handle cleanup
+      writers.length = 0;
     },
   });
 
@@ -166,13 +186,8 @@ export function createFanInReader() {
           // Ignore if already closed
         }
       }
-      writers.forEach((writer) => {
-        try {
-          writer.abort();
-        } catch {
-          // Ignore if already closed
-        }
-      });
+      // Just clear the writers array and let garbage collection handle cleanup
+      writers.length = 0;
     },
   };
 }
