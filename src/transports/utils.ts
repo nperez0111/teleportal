@@ -195,13 +195,15 @@ export function createFanInReader() {
         // Ignore if already closed
       }
       // Just clear the writers array and let garbage collection handle cleanup
-      writers.forEach(async (writer) => {
-        try {
-          await writer.close();
-        } catch {
-          // Ignore if already closed
-        }
-      });
+      await Promise.all(
+        writers.map(async (writer) => {
+          try {
+            await writer.close();
+          } catch {
+            // Ignore if already closed
+          }
+        })
+      );
     },
   };
 }
