@@ -71,6 +71,12 @@ export function createFanOutWriter() {
         if (index > -1) {
           transports.splice(index, 1);
         }
+        // Close the transform stream to signal end of messages
+        try {
+          transform.writable.close();
+        } catch {
+          // Ignore if already closed
+        }
       },
       readable: transform.readable,
     };

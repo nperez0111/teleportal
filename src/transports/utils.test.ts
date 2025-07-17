@@ -164,22 +164,31 @@ describe("FanOut Writer", () => {
       const message1 = createTestMessage([1, 2, 3]);
       await fanOutWriter.writer.write(message1);
 
+      // Collect the first message from both readers
+      const [received1Initial, received2Initial] = await Promise.all([
+        collectMessages(reader1.readable, 1, 200),
+        collectMessages(reader2.readable, 1, 200)
+      ]);
+
+      expect(received1Initial).toHaveLength(1);
+      expect(received1Initial[0]).toEqual(message1);
+      expect(received2Initial).toHaveLength(1);
+      expect(received2Initial[0]).toEqual(message1);
+
       // Unsubscribe reader1
       reader1.unsubscribe();
 
       const message2 = createTestMessage([4, 5, 6]);
       await fanOutWriter.writer.write(message2);
 
-      // Reader1 should only have received the first message
-      const received1 = await collectMessages(reader1.readable, 2, 200);
-      const received2 = await collectMessages(reader2.readable, 2, 200);
+      // Reader1 should not receive the second message (stream is closed)
+      const received1Final = await collectMessages(reader1.readable, 1, 200);
+      expect(received1Final).toHaveLength(0); // No more messages since stream is closed
 
-      expect(received1).toHaveLength(1);
-      expect(received1[0]).toEqual(message1);
-
-      expect(received2).toHaveLength(2);
-      expect(received2[0]).toEqual(message1);
-      expect(received2[1]).toEqual(message2);
+      // Reader2 should receive the second message
+      const received2Final = await collectMessages(reader2.readable, 1, 200);
+      expect(received2Final).toHaveLength(1);
+      expect(received2Final[0]).toEqual(message2);
     });
 
     it("should handle multiple unsubscriptions gracefully", async () => {
