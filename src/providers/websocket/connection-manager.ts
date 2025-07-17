@@ -122,7 +122,7 @@ export class WebsocketConnection extends Observable<{
   /**
    * Given a single writer (the incoming websocket messages), this will fan out to all connected readers
    */
-  #fanOutWriter = createFanOutWriter();
+  #fanOutWriter = createFanOutWriter<BinaryMessage>();
   #writer = this.#fanOutWriter.writable.getWriter();
 
   /**

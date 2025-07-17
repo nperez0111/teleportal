@@ -5,9 +5,10 @@ import * as Y from "yjs";
 import {
   DocMessage,
   Observable,
-  StateVector,
+  type BinaryMessage,
   type BinaryTransport,
   type ClientContext,
+  type StateVector,
   type Transport,
 } from "teleportal";
 import {
@@ -66,7 +67,7 @@ export class Provider extends Observable<{
   }>;
   public document: string;
   #websocketConnection: WebsocketConnection;
-  #websocketReader: FanOutReader;
+  #websocketReader: FanOutReader<BinaryMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
 
