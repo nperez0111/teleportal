@@ -10,7 +10,7 @@ import {
   isPingMessage,
 } from "teleportal";
 
-export type ReaderInstance = {
+export type FanOutReader = {
   /**
    * Unsubscribe from further messages from the fan out writer
    */
@@ -21,26 +21,16 @@ export type ReaderInstance = {
   readable: ReadableStream<BinaryMessage>;
 };
 
-export type WriterInstance = {
-  /**
-   * Remove this writer from the fan in reader
-   */
-  remove: () => void;
-  /**
-   * A writable stream to write messages to the fan in reader
-   */
-  writable: WritableStream<BinaryMessage>;
-};
-
 /**
  * Creates a writer which will fan out to all connected readers.
  */
 export function createFanOutWriter() {
   const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
 
-  function getReader(): ReaderInstance {
-    let controller: ReadableStreamDefaultController<BinaryMessage> | null = null;
-    
+  function getReader(): FanOutReader {
+    let controller: ReadableStreamDefaultController<BinaryMessage> | null =
+      null;
+
     const readable = new ReadableStream<BinaryMessage>({
       start(ctrl) {
         controller = ctrl;
@@ -53,7 +43,7 @@ export function createFanOutWriter() {
             controllers.splice(index, 1);
           }
         }
-      }
+      },
     });
 
     return {
@@ -77,7 +67,7 @@ export function createFanOutWriter() {
   const writable = new WritableStream<BinaryMessage>({
     write: async (message) => {
       // Send message to all active controllers
-      controllers.forEach(controller => {
+      controllers.forEach((controller) => {
         try {
           controller.enqueue(message);
         } catch {
@@ -86,7 +76,7 @@ export function createFanOutWriter() {
       });
     },
     close: () => {
-      controllers.forEach(controller => {
+      controllers.forEach((controller) => {
         try {
           controller.close();
         } catch {
@@ -96,7 +86,7 @@ export function createFanOutWriter() {
       controllers.length = 0; // Clear the array
     },
     abort: (reason) => {
-      controllers.forEach(controller => {
+      controllers.forEach((controller) => {
         try {
           controller.error(reason);
         } catch {
@@ -113,11 +103,23 @@ export function createFanOutWriter() {
   };
 }
 
+export type FanInWriter = {
+  /**
+   * Remove this writer from the fan in reader
+   */
+  unsubscribe: () => void;
+  /**
+   * A writable stream to write messages to the fan in reader
+   */
+  writable: WritableStream<BinaryMessage>;
+};
+
 /**
  * Creates a reader which will fan in from all connected writers.
  */
 export function createFanInReader() {
-  let mainController: ReadableStreamDefaultController<BinaryMessage> | null = null;
+  let mainController: ReadableStreamDefaultController<BinaryMessage> | null =
+    null;
   let isClosed = false;
 
   const writers: WritableStream<BinaryMessage>[] = [];
@@ -129,11 +131,17 @@ export function createFanInReader() {
     cancel() {
       isClosed = true;
       // Just clear the writers array and let garbage collection handle cleanup
-      writers.length = 0;
+      writers.forEach(async (writer) => {
+        try {
+          await writer.close();
+        } catch {
+          // Ignore if already closed
+        }
+      });
     },
   });
 
-  function getWriter(): WriterInstance {
+  function getWriter(): FanInWriter {
     if (isClosed) {
       throw new Error("Cannot add writer to closed fan in reader");
     }
@@ -159,7 +167,7 @@ export function createFanInReader() {
     writers.push(writable);
 
     return {
-      remove: () => {
+      unsubscribe: () => {
         const index = writers.indexOf(writable);
         if (index > -1) {
           writers.splice(index, 1);
@@ -179,15 +187,19 @@ export function createFanInReader() {
     getWriter,
     close: () => {
       isClosed = true;
-      if (mainController) {
+      try {
+        mainController?.close();
+      } catch {
+        // Ignore if already closed
+      }
+      // Just clear the writers array and let garbage collection handle cleanup
+      writers.forEach(async (writer) => {
         try {
-          mainController.close();
+          await writer.close();
         } catch {
           // Ignore if already closed
         }
-      }
-      // Just clear the writers array and let garbage collection handle cleanup
-      writers.length = 0;
+      });
     },
   };
 }

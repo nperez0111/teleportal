@@ -10,7 +10,11 @@ import {
   type ClientContext,
   type Transport,
 } from "teleportal";
-import { getYTransportFromYDoc, toBinaryTransport, type ReaderInstance } from "teleportal/transports";
+import {
+  getYTransportFromYDoc,
+  toBinaryTransport,
+  type FanOutReader,
+} from "teleportal/transports";
 import { WebsocketConnection } from "./connection-manager";
 
 export type ProviderOptions = {
@@ -62,7 +66,7 @@ export class Provider extends Observable<{
   }>;
   public document: string;
   #websocketConnection: WebsocketConnection;
-  #websocketReader: ReaderInstance;
+  #websocketReader: FanOutReader;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
 
