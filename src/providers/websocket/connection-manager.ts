@@ -4,7 +4,7 @@ import {
   isPongMessage,
   type BinaryMessage,
 } from "teleportal";
-import { createFanOutWriter } from "../../transports/utils";
+import { createFanOutWriter } from "teleportal/transports";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;
 const HEARTBEAT_INTERVAL = 10000;

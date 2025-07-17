@@ -10,10 +10,8 @@ import {
   type ClientContext,
   type Transport,
 } from "teleportal";
-import { getYTransportFromYDoc } from "../../transports";
-import { toBinaryTransport } from "../../transports/utils";
+import { getYTransportFromYDoc, toBinaryTransport, type ReaderInstance } from "teleportal/transports";
 import { WebsocketConnection } from "./connection-manager";
-import type { ReaderInstance } from "../../transports/utils";
 
 export type ProviderOptions = {
   client: WebsocketConnection;

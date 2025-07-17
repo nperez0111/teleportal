@@ -34,10 +34,8 @@ export type WriterInstance = {
 
 /**
  * Creates a writer which will fan out to all connected readers.
- * 
- * @param defaultReaders Optional array of readable streams to connect by default
  */
-export function createFanOutWriter(defaultReaders?: ReadableStream<BinaryMessage>[]) {
+export function createFanOutWriter() {
   const transports: TransformStream<BinaryMessage, BinaryMessage>[] = [];
 
   const writable = new WritableStream<BinaryMessage>({
@@ -78,13 +76,6 @@ export function createFanOutWriter(defaultReaders?: ReadableStream<BinaryMessage
     };
   }
 
-  // Connect default readers if provided
-  if (defaultReaders) {
-    defaultReaders.forEach(() => {
-      getReader();
-    });
-  }
-
   return {
     writer: writable.getWriter(),
     getReader,
@@ -93,29 +84,35 @@ export function createFanOutWriter(defaultReaders?: ReadableStream<BinaryMessage
 
 /**
  * Creates a reader which will fan in from all connected writers.
- * 
- * @param defaultWriters Optional array of writable streams to connect by default
  */
-export function createFanInReader(defaultWriters?: WritableStream<BinaryMessage>[]) {
+export function createFanInReader() {
   const controllers: ReadableStreamDefaultController<BinaryMessage>[] = [];
-  let isClosed = false;
+
+  const writers: { transform: TransformStream<BinaryMessage, BinaryMessage>; writable: WritableStream<BinaryMessage> }[] = [];
 
   const readable = new ReadableStream<BinaryMessage>({
     start(controller) {
       controllers.push(controller);
     },
     cancel() {
-      isClosed = true;
+      controllers.forEach((controller) => {
+        try {
+          controller.close();
+        } catch {
+          // Ignore if already closed
+        }
+      });
+      writers.forEach((writer) => {
+        try {
+          writer.writable.close();
+        } catch {
+          // Ignore if already closed
+        }
+      });
     },
   });
 
-  const writers: { transform: TransformStream<BinaryMessage, BinaryMessage>; writable: WritableStream<BinaryMessage> }[] = [];
-
-  function addWriter(): WriterInstance {
-    if (isClosed) {
-      throw new Error("Cannot add writer to closed fan in reader");
-    }
-
+  function getWriter(): WriterInstance {
     const transform = new TransformStream<BinaryMessage, BinaryMessage>({
       transform(chunk, controller) {
         // Forward the message to all readable stream controllers
@@ -153,34 +150,9 @@ export function createFanInReader(defaultWriters?: WritableStream<BinaryMessage>
     };
   }
 
-  // Connect default writers if provided
-  const defaultWriterInstances: WriterInstance[] = [];
-  if (defaultWriters) {
-    defaultWriters.forEach(() => {
-      defaultWriterInstances.push(addWriter());
-    });
-  }
-
   return {
     readable,
-    addWriter,
-    close: () => {
-      isClosed = true;
-      controllers.forEach((controller) => {
-        try {
-          controller.close();
-        } catch {
-          // Ignore if already closed
-        }
-      });
-      writers.forEach((writer) => {
-        try {
-          writer.writable.close();
-        } catch {
-          // Ignore if already closed
-        }
-      });
-    },
+    getWriter
   };
 }
 
