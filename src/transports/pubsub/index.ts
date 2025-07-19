@@ -6,6 +6,8 @@ import {
   Source,
   PubSub,
   Transport,
+  decodeMessage,
+  ClientContext,
 } from "teleportal";
 import { compose, getMessageReader } from "../utils";
 
@@ -16,7 +18,13 @@ export function getPubSubSink<Context extends ServerContext>({
   pubsub,
   topicResolver,
 }: {
+  /**
+   * The {@link PubSub} to use for publishing {@link Message}s.
+   */
   pubsub: PubSub;
+  /**
+   * A function that resolves the topic for a given {@link Message}.
+   */
   topicResolver: (message: Message<Context>) => string;
 }): Sink<Context> {
   return {
@@ -32,11 +40,17 @@ export function getPubSubSink<Context extends ServerContext>({
 /**
  * Generic consumer source that consumes messages from topics using the provided backend
  */
-export function getPubSubSource<Context extends ServerContext>({
+export function getPubSubSource<Context extends ClientContext>({
   context,
   pubsub,
 }: {
-  context?: Context;
+  /**
+   * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
+   */
+  context: Context;
+  /**
+   * The {@link PubSub} to use for consuming {@link Message}s.
+   */
   pubsub: PubSub;
 }): Source<
   Context,
@@ -52,7 +66,7 @@ export function getPubSubSource<Context extends ServerContext>({
   }
 > {
   const subscribedTopics = new Map<string, () => Promise<void>>();
-  const reader = getMessageReader(context || ({} as Context));
+  const reader = getMessageReader(context);
   let controller: ReadableStreamDefaultController<BinaryMessage>;
 
   return {
@@ -104,14 +118,29 @@ export function getPubSubTransport<Context extends ServerContext>({
   pubsub,
   topicResolver,
 }: {
-  context?: Context;
+  /**
+   * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
+   */
+  context: Context;
+  /**
+   * The {@link PubSub} to use for consuming {@link Message}s.
+   */
   pubsub: PubSub;
+  /**
+   * A function that resolves the topic for a given {@link Message}.
+   */
   topicResolver: (message: Message<Context>) => string;
 }): Transport<
   Context,
   {
+    /**
+     * Subscribe to a topic
+     */
     subscribe: (topic: string) => Promise<void>;
-    unsubscribe: (topic: string) => Promise<void>;
+    /**
+     * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
+     */
+    unsubscribe: (topic?: string) => Promise<void>;
   }
 > {
   const transport = compose(

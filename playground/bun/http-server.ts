@@ -5,7 +5,7 @@ import {
   EncryptedDocumentStorage,
   UnstorageDocumentStorage,
 } from "teleportal/storage";
-import { getHandlers } from "teleportal/http";
+import { getHTTPHandler } from "teleportal/http";
 
 import { logger } from "../src/backend/logger";
 import homepage from "../src/index.html";
@@ -22,9 +22,9 @@ const server = new Server({
   logger: logger,
 });
 
-const httpHandlers = getHandlers({
+const httpHandlers = getHTTPHandler({
   server,
-  validateRequest: async (request) => {
+  getContext: async () => {
     return { userId: "123", room: "123" };
   },
 });
@@ -36,7 +36,6 @@ const instance = Bun.serve({
   async fetch(request) {
     return httpHandlers(request);
   },
-  idleTimeout: 255,
 });
 
 console.log(`Server running on http://${instance.hostname}:${instance.port}`);

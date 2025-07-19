@@ -53,7 +53,9 @@ export class Document<Context extends ServerContext> extends Observable<{
     super();
     this.name = name;
     this.id = id;
-    this.logger = logger.withContext({ name: "document", documentId: id });
+    this.logger = logger
+      .child()
+      .withContext({ name: "document", documentId: id, document: name });
     this.storage = storage;
   }
 
@@ -93,7 +95,7 @@ export class Document<Context extends ServerContext> extends Observable<{
         },
       });
     }
-    const logger = this.logger.withContext({
+    const logger = this.logger.child().withContext({
       documentId: this.id,
       messageId: message.id,
     });
@@ -200,13 +202,12 @@ export class Document<Context extends ServerContext> extends Observable<{
     message: Message<Context>,
     client = this.getClient(message.context.clientId),
   ) {
-    const logger = this.logger
-      .withContext({ name: "message-handler" })
-      .withContext({
-        context: message.context,
-        document: message.document,
-        documentId: this.id,
-      });
+    const logger = this.logger.child().withContext({
+      name: "message-handler",
+      context: message.context,
+      messageId: message.id,
+      payloadType: message.payload.type,
+    });
 
     try {
       logger.trace("processing message");
@@ -255,6 +256,7 @@ export class Document<Context extends ServerContext> extends Observable<{
                   this.encrypted,
                 ),
               );
+              logger.trace("sync-step-2 sent");
 
               // TODO not implemented for encrypted documents
               if (!this.encrypted) {
@@ -267,9 +269,10 @@ export class Document<Context extends ServerContext> extends Observable<{
                     this.encrypted,
                   ),
                 );
+                logger.trace("sync-step-1 sent");
               } else {
                 // since we're encrypted, we can't send a sync-step-1, so we send a sync-done
-                logger.trace("sending sync-done");
+                logger.trace("sending sync-done (encrypted)");
                 await client.send(
                   new DocMessage(
                     this.name,
@@ -280,23 +283,29 @@ export class Document<Context extends ServerContext> extends Observable<{
                     this.encrypted,
                   ),
                 );
+                logger.trace("sync-done sent");
               }
               return;
             case "update":
               logger.trace("broadcasting update");
               await this.broadcast(message, client?.id);
+              logger.trace("writing update");
               await this.write(message.payload.update);
+              logger.trace("update written");
               return;
             case "sync-step-2":
               logger.trace("broadcasting sync-step-2");
               await this.broadcast(message, client?.id);
+              logger.trace("writing update");
               await this.write(message.payload.update);
+              logger.trace("update written");
+
               if (!client) {
                 throw new Error(`Client not found`, {
                   cause: { clientId: message.context.clientId },
                 });
               }
-              logger.trace("sending sync-done");
+              logger.trace("sending sync-done (clear text)");
               await client.send(
                 new DocMessage(
                   this.name,
@@ -307,6 +316,7 @@ export class Document<Context extends ServerContext> extends Observable<{
                   this.encrypted,
                 ),
               );
+              logger.trace("sync-done sent");
               return;
             case "sync-done":
             case "auth-message":
@@ -316,8 +326,10 @@ export class Document<Context extends ServerContext> extends Observable<{
               throw new Error("unknown message type");
           }
         default:
+          logger.trace("broadcasting message");
           // Broadcast the message to all clients
           await this.broadcast(message, client?.id);
+          logger.trace("message broadcasted");
       }
 
       logger.trace("message processed successfully");
@@ -335,16 +347,25 @@ export class Document<Context extends ServerContext> extends Observable<{
     if (this.#destroyed) {
       return;
     }
+
     this.#destroyed = true;
 
-    await this.call("destroy", this);
     this.logger.trace("destroying document");
+    await this.call("destroy", this);
 
+    this.logger.trace("unloading storage");
     await this.storage.unload(this.id);
+    this.logger.trace("unloading storage done");
+
+    this.logger.trace("unsubscribing clients");
     this.clients.forEach((client) => client.unsubscribeFromDocument(this));
+    this.logger.trace("clients unsubscribed");
+
     this.clients.clear();
-    this.logger.trace("document destroyed");
+    this.logger.trace("clients cleared");
+
     super.destroy();
+    this.logger.trace("document destroyed");
   }
 }
 

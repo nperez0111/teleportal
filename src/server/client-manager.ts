@@ -20,7 +20,9 @@ export class ClientManager<Context extends ServerContext> extends Observable<{
 
   constructor(options: ClientManagerOptions) {
     super();
-    this.logger = options.logger.withContext({ name: "client-manager" });
+    this.logger = options.logger
+      .child()
+      .withContext({ name: "client-manager" });
   }
 
   /**
@@ -34,12 +36,14 @@ export class ClientManager<Context extends ServerContext> extends Observable<{
    * Add a client to the manager
    */
   public addClient(client: Client<Context>): void {
-    this.clients.set(client.id, client);
-    this.logger
-      .withMetadata({ clientId: client.id })
-      .trace("client added to manager");
+    const clientId = client.id;
+    this.clients.set(clientId, client);
+    this.logger.withMetadata({ clientId }).trace("client added to manager");
 
     this.call("client-connected", client);
+    client.once("destroy", () => {
+      this.removeClient(clientId);
+    });
   }
 
   /**
@@ -72,6 +76,7 @@ export class ClientManager<Context extends ServerContext> extends Observable<{
   }
 
   public async destroy() {
+    this.logger.trace("destroying client manager");
     await Promise.all(
       Array.from(this.clients.values()).map((client) =>
         this.removeClient(client.id),

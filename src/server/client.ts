@@ -31,18 +31,24 @@ export class Client<Context extends ServerContext> extends Observable<{
     super();
     this.id = id;
     this.writer = writable.getWriter();
-    this.logger = logger.withContext({ name: "client", clientId: id });
+    this.logger = logger.child().withContext({ name: "client", clientId: id });
   }
 
   public async send(message: Message<Context>) {
     try {
       this.logger
-        .withMetadata({ messageId: message.id })
+        .withMetadata({
+          messageId: message.id,
+          payloadType: message.payload.type,
+        })
         .trace("sending message");
       await this.writer.ready;
       await this.writer.write(message);
       this.logger
-        .withMetadata({ messageId: message.id })
+        .withMetadata({
+          messageId: message.id,
+          payloadType: message.payload.type,
+        })
         .trace("message sent to client");
     } catch (e) {
       this.logger
@@ -56,6 +62,9 @@ export class Client<Context extends ServerContext> extends Observable<{
    * Subscribe to a document
    */
   public subscribeToDocument(document: Document<Context>): void {
+    if (this.documents.has(document)) {
+      return;
+    }
     this.documents.add(document);
     document.addClient(this);
     this.logger
@@ -68,6 +77,12 @@ export class Client<Context extends ServerContext> extends Observable<{
    * Unsubscribe from a document
    */
   public unsubscribeFromDocument(document: Document<Context>): void {
+    if (!this.documents.has(document)) {
+      return;
+    }
+    this.logger
+      .withMetadata({ documentId: document.id })
+      .trace("unsubscribing from document");
     this.documents.delete(document);
     document.removeClient(this);
     this.logger

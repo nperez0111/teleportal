@@ -1,277 +1,306 @@
 import { uuidv4 } from "lib0/random";
-import {
+import type {
+  ClientContext,
   Message,
-  Observable,
-  RawReceivedMessage,
+  MessageArray,
+  PubSub,
   ServerContext,
-  Source,
   Transport,
 } from "teleportal";
-import { Document, Server } from "teleportal/server";
+import type { Client, Server } from "teleportal/server";
 import {
   compose,
-  createFanOutWriter,
-  fromMessageArrayStream,
   getHTTPSource,
   getPubSubSink,
   getPubSubSource,
   getSSESink,
+  pipe,
   toMessageArrayStream,
 } from "teleportal/transports";
-
-// export function handleHTTP<Context extends ServerContext>({
-//   validateRequest,
-//   onCreateClient,
-// }: {
-//   validateRequest: (request: Request) => Promise<Omit<Context, "clientId">>;
-//   onCreateClient: (ctx: {
-//     clientId: string;
-//     transport: Transport<
-//       Context,
-//       {
-//         handleHTTPRequest: (request: Request) => Promise<void>;
-//       }
-//     >;
-//     context: Context;
-//   }) => Promise<void>;
-// }): (request: Request) => Promise<Response> {
-//   return async (req) => {
-//     const context = {
-//       ...(await validateRequest(req)),
-//       clientId: uuidv4(),
-//     } as Context;
-
-//     const sseHTTPTransport = compose(
-//       getHTTPSource({ context }),
-//       getSSESink({ context }),
-//     );
-
-//     await onCreateClient({
-//       context,
-//       clientId: context.clientId,
-//       transport: sseHTTPTransport,
-//     });
-
-//     return sseHTTPTransport.sseResponse;
-//   };
-// }
+import { getDocumentsFromQueryParams } from "./utils";
 
 /**
- * Default implementation that extracts document IDs from URL query parameters
- * Supports multiple 'documents' parameters: ?documents=id-1&documents=id-2
- * Also supports comma-separated values: ?documents=id-1,id-2
- * Supports encryption suffix: ?documents=id-1:encrypted,id-2,id-3:encrypted
- * Documents with ":encrypted" suffix will be marked as encrypted
+ * Creates an SSE endpoint that can be used to stream {@link Message}s to the client.
  */
-export function getDocumentsFromQueryParams(
-  request: Request,
-): { document: string; encrypted?: boolean }[] {
-  const url = new URL(request.url);
-  const documentParams = url.searchParams.getAll("documents");
-
-  const documents: { document: string; encrypted?: boolean }[] = [];
-
-  for (const param of documentParams) {
-    // Handle both single IDs and comma-separated lists
-    const ids = param
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0);
-
-    for (const id of ids) {
-      // Check if the document has an ":encrypted" suffix
-      if (id.endsWith(":encrypted")) {
-        const documentName = id.slice(0, -10); // Remove ':encrypted' suffix
-        if (documentName.length > 0) {
-          documents.push({ document: documentName, encrypted: true });
-        }
-      } else {
-        documents.push({ document: id, encrypted: false });
-      }
-    }
-  }
-
-  // Remove duplicates based on document name (keep the one with encryption preference)
-  const uniqueDocuments = new Map<
-    string,
-    { document: string; encrypted?: boolean }
-  >();
-  for (const doc of documents) {
-    const existing = uniqueDocuments.get(doc.document);
-    // If document already exists, prefer the encrypted version
-    if (!existing || (doc.encrypted && !existing.encrypted)) {
-      uniqueDocuments.set(doc.document, doc);
-    }
-  }
-
-  return Array.from(uniqueDocuments.values());
-}
-
-export function getSSEHandler<Context extends ServerContext>({
+export function getSSEEndpoint<Context extends ServerContext>({
   server,
-  validateRequest,
-  observer,
-  getDocumentsToSubscribe = getDocumentsFromQueryParams,
+  getContext,
+  getInitialDocuments = getDocumentsFromQueryParams,
 }: {
+  /**
+   * The {@link Server} to use for creating {@link Client}s.
+   */
   server: Server<Context>;
-  validateRequest: (request: Request) => Promise<Omit<Context, "clientId">>;
   /**
-   * Allows you to add document subscriptions to the client. While already streaming the response
+   * A function that extracts the context from the request.
    */
-  observer?: Observable<{
-    /**
-     * Subscribe to a document, by name, and optionally indicate if it is encrypted
-     * @returns the document id
-     */
-    subscribe: (document: string, encrypted?: boolean) => Promise<string>;
-    /**
-     * Unsubscribe from a document, by id
-     */
-    unsubscribe: (documentId: string) => void;
-  }>;
+  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
   /**
-   * Callback function to extract documents to subscribe to from the request with optional encryption flag
+   * Callback function to extract documents to subscribe to from the request with optional encryption flag.
+   *
+   * Defaults to {@link getDocumentsFromQueryParams}
    */
-  getDocumentsToSubscribe?: (
+  getInitialDocuments?: (
     request: Request,
+    ctx: {
+      clientId: string;
+      transport: Transport<
+        Context,
+        {
+          subscribe: (topic: string) => Promise<void>;
+          unsubscribe: (topic?: string) => Promise<void>;
+        }
+      >;
+      client: Client<Context>;
+    },
   ) => { document: string; encrypted?: boolean }[];
 }) {
+  const baseLogger = server.logger.child().withContext({
+    name: "sse-endpoint",
+  });
+
   return async (req: Request): Promise<Response> => {
+    const clientId =
+      req.headers.get("x-teleportal-client-id") ??
+      new URL(req.url).searchParams.get("client-id") ??
+      uuidv4();
+    const logger = baseLogger.child().withContext({
+      clientId,
+      url: req.url,
+    });
     const context = {
-      clientId: req.headers.get("x-teleportal-client-id") ?? uuidv4(),
-      ...(await validateRequest(req)),
+      clientId,
+      ...(await getContext(req)),
     } as Context;
+
+    logger.trace("sse request");
 
     const sseTransport = compose(
       getPubSubSource({ context, pubsub: server.pubsub }),
       getSSESink({ context }),
     );
 
+    logger.trace("creating client");
     const client = await server.createClient({
       transport: sseTransport,
       id: context.clientId,
     });
 
+    logger
+      .withMetadata({
+        clientId: context.clientId,
+      })
+      .trace("created client");
+
+    // When the request is aborted, destroy the client
+    req.signal.addEventListener("abort", async () => {
+      logger.trace("aborting");
+      await client.destroy();
+    });
+
     client.addListeners({
       "document-added": async (doc) => {
-        console.log("document-added", doc.id);
+        logger
+          .withMetadata({
+            documentId: doc.id,
+          })
+          .trace("sse document-added");
         await sseTransport.subscribe(doc.id);
       },
       "document-removed": async (doc) => {
-        console.log("document-removed", doc.id);
+        logger
+          .withMetadata({
+            documentId: doc.id,
+          })
+          .trace("sse document-removed");
         await sseTransport.unsubscribe(doc.id);
       },
       destroy: async () => {
+        logger.trace("sse destroy");
         await sseTransport.unsubscribe();
       },
     });
 
-    observer?.addListeners({
-      subscribe: async (document, encrypted = false) => {
-        const doc = await server.getOrCreateDocument({
-          document,
-          context,
-          encrypted,
-        });
+    logger.trace("subscribing to client");
+    await sseTransport.subscribe(context.clientId);
+    logger.trace("sseTransport subscribed to client");
 
-        client.subscribeToDocument(doc);
+    logger.trace("getting initial documents");
+    Promise.all(
+      (
+        getInitialDocuments?.(req, {
+          clientId: context.clientId,
+          transport: sseTransport,
+          client,
+        }) ?? []
+      ).map(({ document, encrypted = false }) =>
+        server
+          .getOrCreateDocument({
+            document,
+            context,
+            encrypted,
+          })
+          .then((doc) => {
+            logger
+              .withMetadata({
+                documentId: doc.id,
+              })
+              .trace("subscribed to document");
+            return client.subscribeToDocument(doc);
+          }),
+      ),
+    );
 
-        return doc.id;
-      },
-      unsubscribe: (documentId) => {
-        const document = server.getDocument(documentId);
-        if (!document) {
-          throw new Error(`Document ${documentId} not loaded`);
-        }
-        client.unsubscribeFromDocument(document);
-      },
-    });
-
-    // Use the getDocumentsToSubscribe callback if provided
-    if (getDocumentsToSubscribe) {
-      const subscribeToDocuments = getDocumentsToSubscribe(req);
-      console.log("subscribeToDocuments", subscribeToDocuments);
-
-      for (const { document, encrypted = false } of subscribeToDocuments) {
-        const doc = await server.getOrCreateDocument({
-          document,
-          context,
-          encrypted,
-        });
-        client.subscribeToDocument(doc);
-      }
-    }
-
-    // When the request is aborted, destroy the client
-    req.signal.addEventListener("abort", () => {
-      client.destroy();
-      observer?.destroy();
-    });
-
+    logger.trace("returning sse response");
     return sseTransport.sseResponse;
   };
 }
 
-export function getHTTPEndpoint<Context extends ServerContext>({
+/**
+ * Creates an HTTP endpoint that pipes the {@link Message}s to the
+ * {@link getSSEEndpoint} via the {@link PubSub} which is listening by the {@link ClientContext.clientId}.
+ */
+export function getHTTPPublishSSEEndpoint<Context extends ServerContext>({
   server,
-  validateRequest,
+  getContext,
 }: {
   server: Server<Context>;
-  validateRequest: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
 }) {
+  const baseLogger = server.logger.child().withContext({
+    name: "http-publish-endpoint",
+  });
+
   return async (req: Request): Promise<Response> => {
+    const clientId =
+      req.headers.get("x-teleportal-client-id") ??
+      new URL(req.url).searchParams.get("client-id");
+    const logger = baseLogger.child().withContext({
+      clientId,
+      url: req.url,
+    });
+    logger.trace("http request");
     const context = {
-      clientId: req.headers.get("x-teleportal-client-id") ?? uuidv4(),
-      ...(await validateRequest(req)),
+      clientId,
+      ...(await getContext(req)),
     } as Context;
 
-    const fanOutWriter = createFanOutWriter<Message>();
+    if (!context.clientId) {
+      logger.warn("no client id provided");
+      return Response.json(
+        { error: "No client ID provided" },
+        {
+          status: 400,
+          headers: {
+            "x-powered-by": "teleportal",
+          },
+        },
+      );
+    }
 
-    const httpTransport = compose(getHTTPSource({ context }), fanOutWriter);
-    const responseStream = httpTransport
-      .getReader()
-      .readable.pipeThrough(toMessageArrayStream());
+    const httpSource = getHTTPSource({ context });
+    const pubSubSink = getPubSubSink({
+      pubsub: server.pubsub,
+      topicResolver: (message) => {
+        logger
+          .withMetadata({
+            messageId: message.id,
+            payloadType: message.payload.type,
+          })
+          .trace("publishing");
+        return context.clientId;
+      },
+    });
+    // TODO
+    req.signal.addEventListener("abort", async (e) => {
+      logger.trace("aborting");
+      await pubSubSink.writable.abort(e);
+    });
 
-    httpTransport.getReader().readable.pipeTo(
-      getPubSubSink({
-        pubsub: server.pubsub,
-        topicResolver: (message) => Document.getDocumentId(message),
-      }).writable,
+    logger.trace("starting to publish");
+    await Promise.all([
+      httpSource.handleHTTPRequest(req),
+      pipe(httpSource, pubSubSink),
+    ]);
+    logger.trace("finished publishing");
+
+    return Response.json(
+      {
+        message: "ok",
+      },
+      {
+        headers: {
+          "x-teleportal-client-id": context.clientId,
+          "x-powered-by": "teleportal",
+        },
+      },
     );
+  };
+}
 
+/**
+ * Creates an HTTP endpoint that directly handles {@link Message}s and responds with a {@link Response}
+ * containing a {@link ReadableStream} of {@link MessageArray}s.
+ */
+export function getHTTPEndpoint<Context extends ServerContext>({
+  server,
+  getContext,
+}: {
+  server: Server<Context>;
+  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+}) {
+  const baseLogger = server.logger.child().withContext({
+    name: "http-endpoint",
+  });
+
+  return async (req: Request): Promise<Response> => {
+    const clientId = uuidv4();
+    const logger = baseLogger.child().withContext({
+      clientId,
+      url: req.url,
+    });
+    const context = {
+      clientId,
+      ...(await getContext(req)),
+    } as Context;
+
+    logger.trace("http request");
+
+    const transformStream = toMessageArrayStream();
+
+    req.signal.addEventListener("abort", async (e) => {
+      logger.trace("aborting");
+      await transformStream.writable.abort(e);
+    });
+    const httpTransport = compose(getHTTPSource({ context }), {
+      writable: transformStream.writable,
+    });
+
+    logger.trace("creating client");
     const client = await server.createClient({
       transport: httpTransport,
       id: context.clientId,
     });
 
+    logger.trace("client created");
+
     client.once("destroy", async () => {
+      logger.trace("client destroyed");
       // close the transform stream to signal the client that the request is complete
-      await fanOutWriter.writable.close();
+      await transformStream.writable.close();
     });
 
+    logger.trace("handling http request");
     await httpTransport.handleHTTPRequest(req);
+    logger.trace("http request handled");
 
-    req.signal.addEventListener("abort", async () => {
-      // transform.writable.abort();
-      await fanOutWriter.writable.abort();
-    });
-
-    return new Response(responseStream, {
+    logger.trace("returning response");
+    return new Response(transformStream.readable, {
       headers: {
         "Content-Type": "application/octet-stream",
-        "x-teleportal-client-id": context.clientId,
         "x-powered-by": "teleportal",
+        "x-teleportal-client-id": context.clientId,
       },
     });
   };
-}
-
-export function decodeHTTPRequest(
-  response: Response,
-): ReadableStream<RawReceivedMessage> {
-  return response.body!.pipeThrough(
-    fromMessageArrayStream({
-      clientId: response.headers.get("x-teleportal-client-id")!,
-    }),
-  );
 }

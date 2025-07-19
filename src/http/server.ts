@@ -1,27 +1,46 @@
-import { ServerContext } from "teleportal";
-import { Server } from "teleportal/server";
-import { getHTTPEndpoint, getSSEHandler } from "./handlers";
+import type { ServerContext, Message } from "teleportal";
+import type { Server } from "teleportal/server";
+import {
+  getHTTPEndpoint,
+  getHTTPPublishSSEEndpoint,
+  getSSEEndpoint,
+} from "./handlers";
 
-export function getHandlers<Context extends ServerContext>({
+/**
+ * Creates an HTTP handler that can be used to handle HTTP requests to the {@link Server}.
+ *
+ * It sets up the following endpoints:
+ * - GET `/sse` - SSE endpoint for streaming {@link Message}s to the client. (Based on {@link getSSEEndpoint})
+ * - POST `/sse` - HTTP endpoint for pushing {@link Message}s to the {@link getSSEEndpoint}. (Based on {@link getHTTPPublishSSEEndpoint})
+ * - POST `/message` - HTTP endpoint for directly handling {@link Message}s. (Based on {@link getHTTPEndpoint})
+ *
+ * @note if a request is not handled by any of the above endpoints, a `404` response is returned.
+ */
+export function getHTTPHandler<Context extends ServerContext>({
   server,
-  validateRequest,
-  getDocumentsToSubscribe,
+  getContext,
+  getInitialDocuments,
 }: {
   server: Server<Context>;
-  validateRequest: (request: Request) => Promise<Omit<Context, "clientId">>;
-  getDocumentsToSubscribe?: (
+  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getInitialDocuments?: (
     request: Request,
   ) => { document: string; encrypted?: boolean }[];
 }): (req: Request) => Response | Promise<Response> {
-  const sseEndpoint = getSSEHandler({
+  const sseEndpoint = getSSEEndpoint({
     server,
-    validateRequest,
-    getDocumentsToSubscribe,
+    getContext,
+    getInitialDocuments,
+  });
+
+  const httpPublishSSEEndpoint = getHTTPPublishSSEEndpoint({
+    server,
+    getContext,
   });
 
   const httpEndpoint = getHTTPEndpoint({
     server,
-    validateRequest,
+    getContext,
   });
 
   return async (req: Request) => {
@@ -29,6 +48,10 @@ export function getHandlers<Context extends ServerContext>({
 
     if (req.method === "GET" && url.pathname === "/sse") {
       return await sseEndpoint(req);
+    }
+
+    if (req.method === "POST" && url.pathname === "/sse") {
+      return await httpPublishSSEEndpoint(req);
     }
 
     if (req.method === "POST" && url.pathname === "/message") {

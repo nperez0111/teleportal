@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getDocumentsFromQueryParams, getSSEHandler } from "./handlers";
+import { getDocumentsFromQueryParams } from "./utils";
 
 describe("getDocumentsFromQueryParams", () => {
   it("should extract single document from query parameter", () => {
@@ -193,35 +193,5 @@ describe("getDocumentsFromQueryParams", () => {
       { document: "doc-1", encrypted: false },
       { document: "doc-2", encrypted: true },
     ]);
-  });
-});
-
-describe("getSSEHandler with document subscription", () => {
-  it("should accept getDocumentsToSubscribe as a separate parameter", () => {
-    // Mock server - minimal implementation for test
-    const mockServer = {
-      createClient: async () => ({
-        subscribeToDocument: () => {},
-        destroy: () => {},
-      }),
-      getOrCreateDocument: async () => ({}),
-    } as any;
-
-    const customDocumentCallback = (request: Request) => {
-      const url = new URL(request.url);
-      return url.searchParams.getAll("customDocs").map((doc) => ({
-        document: doc,
-        encrypted: doc.includes("secure"),
-      }));
-    };
-
-    // This should not throw and should accept the callback
-    const handler = getSSEHandler({
-      server: mockServer,
-      validateRequest: async (req) => ({ userId: "test", room: "test" }),
-      getDocumentsToSubscribe: customDocumentCallback,
-    });
-
-    expect(typeof handler).toBe("function");
   });
 });

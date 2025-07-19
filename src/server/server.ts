@@ -106,7 +106,7 @@ export class Server<Context extends ServerContext> extends Observable<{
   constructor(options: ServerOptions<Context>) {
     super();
     this.options = options;
-    this.logger = (options.logger ?? defaultLogger).withContext({
+    this.logger = (options.logger ?? defaultLogger).child().withContext({
       name: "server",
     });
     this.pubsub = options.pubSub ?? new InMemoryPubSub();
@@ -187,7 +187,15 @@ export class Server<Context extends ServerContext> extends Observable<{
     transport: Transport<Context>;
     id: string;
   }): Promise<Client<Context>> {
-    const logger = this.logger.withContext({
+    const existingClient = this.clientManager.getClient(clientId);
+    if (existingClient) {
+      this.logger.withMetadata({ clientId }).trace("client already exists");
+      throw new Error("Client already exists", {
+        cause: { clientId },
+      });
+    }
+
+    const logger = this.logger.child().withContext({
       clientId: clientId,
     });
 
@@ -241,7 +249,7 @@ export class Server<Context extends ServerContext> extends Observable<{
       .pipeTo(
         new WritableStream({
           write: async (message) => {
-            const logger = this.logger.withContext({
+            const log = logger.child().withContext({
               clientId,
               context: message.context,
               document: message.document,
@@ -249,20 +257,21 @@ export class Server<Context extends ServerContext> extends Observable<{
             });
 
             try {
-              logger.trace("getting document");
+              log.trace("getting document");
               const document = await this.getOrCreateDocument(message);
-              logger.trace("processing message");
+              log.trace("processing message");
               await document.handleMessage(message, client);
             } catch (e) {
               console.error(e);
-              logger.withError(e).error("Failed to process message");
+              log.withError(e).error("Failed to process message");
             }
           },
         }),
       )
       .finally(async () => {
-        logger.trace("client disconnected");
+        logger.trace("disconnecting client since stream is closed");
         await this.disconnectClient(clientId);
+        logger.trace("client disconnected since stream is closed");
       });
 
     this.clientManager.addClient(client);
@@ -273,11 +282,18 @@ export class Server<Context extends ServerContext> extends Observable<{
   }
 
   public async disconnectClient(clientId: string) {
+    this.logger.withMetadata({ clientId }).trace("disconnecting client");
     await this.clientManager.removeClient(clientId);
+    this.logger.withMetadata({ clientId }).trace("client disconnected");
   }
 
   public async destroy() {
+    this.logger.trace("destroying server");
     await this.documentManager.destroy();
+    this.logger.trace("document manager destroyed");
     await this.clientManager.destroy();
+    this.logger.trace("client manager destroyed");
+    super.destroy();
+    this.logger.trace("server destroyed");
   }
 }

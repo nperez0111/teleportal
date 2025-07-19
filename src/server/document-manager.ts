@@ -43,7 +43,9 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
   constructor(options: DocumentManagerOptions<Context>) {
     super();
     this.options = options;
-    this.logger = options.logger.withContext({ name: "document-manager" });
+    this.logger = options.logger
+      .child()
+      .withContext({ name: "document-manager" });
     this.syncTransportWriter = this.options.syncTransport.writable.getWriter();
     this.options.syncTransport.readable.pipeTo(this.syncTransportSink);
   }
