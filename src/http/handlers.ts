@@ -126,7 +126,7 @@ export function getSSEEndpoint<Context extends ServerContext>({
     logger.trace("sseTransport subscribed to client");
 
     logger.trace("getting initial documents");
-    Promise.all(
+    await Promise.all(
       (
         getInitialDocuments?.(req, {
           clientId: context.clientId,
