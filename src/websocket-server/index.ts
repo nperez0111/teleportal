@@ -4,6 +4,7 @@ import {
   type BinaryMessage,
   type ServerContext,
   type BinaryTransport,
+  isBinaryMessage,
 } from "teleportal";
 import { fromBinaryTransport } from "../transports/utils";
 import type { Server } from "teleportal/server";
@@ -142,12 +143,16 @@ export function getWebsocketHandlers<
         logger
           .withMetadata({ clientId: peer.id, messageId: msg.id })
           .trace("message");
-        const message = msg.uint8Array() as BinaryMessage;
+        const message = msg.uint8Array();
+        if (!isBinaryMessage(message)) {
+          throw new Error("Invalid message");
+        }
         try {
           await onMessage?.({
             message,
             peer,
           });
+          await peer.context.writer.ready;
           await peer.context.writer.write(message);
         } catch (e) {
           new Error("Failed to write message", { cause: { err: e } });

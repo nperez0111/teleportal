@@ -2,6 +2,9 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import {
   BinaryMessage,
   ClientContext,
+  encodePingMessage,
+  isBinaryMessage,
+  isPingMessage,
   Message,
   Sink,
   Source,
@@ -9,27 +12,53 @@ import {
 import { getMessageReader } from "../utils";
 
 /**
- * Transport which transforms messages into SSE messages
+ * {@link Sink} which transforms {@link Message}s into SSE messages
  */
 export function getSSESink<Context extends ClientContext>({
   context,
 }: {
-  context?: Context;
-} = {}): Sink<
+  /**
+   * The {@link ClientContext} to use for writing {@link Message}s to the {@link Sink}.
+   */
+  context: Context;
+}): Sink<
   Context,
   {
+    /**
+     * The {@link Response} to send to the client.
+     */
     sseResponse: Response;
   }
 > {
+  let interval: ReturnType<typeof setInterval>;
   const transform = new TransformStream<Message<any>, string>({
+    start(controller) {
+      if (context.clientId) {
+        controller.enqueue(
+          `event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`,
+        );
+      }
+
+      interval = setInterval(() => {
+        try {
+          controller.enqueue(
+            `event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`,
+          );
+        } catch (error) {
+          clearInterval(interval);
+        }
+      }, 5000);
+    },
     transform(chunk, controller) {
-      console.log("original", chunk.encoded);
       const payload = toBase64(chunk.encoded);
       const message = `event:message\nid:${chunk.id}\ndata: ${payload}\n\n`;
-      console.log("writing sse", message);
       controller.enqueue(message);
     },
+    flush() {
+      clearInterval(interval);
+    },
   });
+
   return {
     writable: transform.writable,
     sseResponse: new Response(transform.readable, {
@@ -46,31 +75,57 @@ export function getSSESink<Context extends ClientContext>({
 }
 
 /**
- * Transport which transforms SSE messages into messages
+ * {@link Source} which transforms SSE messages into {@link Message}s
  */
-export function getSSESource<Context extends ClientContext>(
-  source: EventSource,
-  context: Context,
-): Source<
+export function getSSESource<Context extends ClientContext>({
+  source,
+  context,
+}: {
+  /**
+   * The {@link EventSource} to listen to for SSE messages.
+   */
+  source: EventSource;
+  /**
+   * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
+   */
+  context: Context;
+}): Source<
   Context,
   {
-    close: () => void;
+    /**
+     * The first message an SSE sends is it's {@link ClientContext.clientId},
+     * so this tells you that the SSE is ready and can be used.
+     */
+    clientId: Promise<string>;
   }
 > {
-  const reader = getMessageReader(context);
-  const writer = reader.writable.getWriter();
+  let handler: (event: MessageEvent) => void;
 
-  const handler = (event: MessageEvent) => {
-    console.log("event", event.data);
-    const message = fromBase64(event.data) as BinaryMessage;
-    console.log("reading sse", message);
-    writer.write(message);
-  };
-  source.addEventListener("message", handler);
+  const clientId = new Promise<string>((resolve) => {
+    source.addEventListener("client-id", (ev) => {
+      resolve(ev.data);
+    });
+  });
   return {
-    readable: reader.readable,
-    close: () => {
-      source.removeEventListener("message", handler);
-    },
+    clientId,
+    readable: new ReadableStream<BinaryMessage>({
+      start(controller) {
+        handler = (event: MessageEvent) => {
+          const message = fromBase64(event.data);
+
+          if (isPingMessage(message)) {
+            return;
+          }
+
+          if (isBinaryMessage(message)) {
+            controller.enqueue(message);
+          }
+        };
+        source.addEventListener("message", handler);
+      },
+      cancel() {
+        source.removeEventListener("message", handler);
+      },
+    }).pipeThrough(getMessageReader(context)),
   };
 }

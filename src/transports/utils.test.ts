@@ -57,15 +57,17 @@ async function collectMessages(
 }
 
 describe("FanOut Writer", () => {
-  let fanOutWriter: ReturnType<typeof createFanOutWriter>;
+  let fanOutWriter: ReturnType<typeof createFanOutWriter<BinaryMessage>>;
+  let writer: WritableStreamDefaultWriter<BinaryMessage>;
 
   beforeEach(() => {
-    fanOutWriter = createFanOutWriter();
+    fanOutWriter = createFanOutWriter<BinaryMessage>();
+    writer = fanOutWriter.writable.getWriter();
   });
 
   afterEach(async () => {
     try {
-      await fanOutWriter.writer.close();
+      await writer.close();
     } catch {
       // Ignore if already closed
     }
@@ -92,7 +94,7 @@ describe("FanOut Writer", () => {
 
       // Write messages
       for (const message of messages) {
-        await fanOutWriter.writer.write(message);
+        await writer.write(message);
       }
 
       // Wait for all readers to receive messages
@@ -119,14 +121,14 @@ describe("FanOut Writer", () => {
       const message = createTestMessage([1, 2, 3]);
 
       // Should not throw when writing to a fanout writer with no readers
-      await expect(fanOutWriter.writer.write(message)).resolves.toBeUndefined();
+      await expect(writer.write(message)).resolves.toBeUndefined();
     });
 
     it("should handle readers added after writing starts", async () => {
       const message1 = createTestMessage([1, 2, 3]);
 
       // Write a message before any readers exist
-      await fanOutWriter.writer.write(message1);
+      await writer.write(message1);
 
       // Add readers after message was written
       const reader1 = fanOutWriter.getReader();
@@ -139,7 +141,7 @@ describe("FanOut Writer", () => {
       ];
 
       const message2 = createTestMessage([4, 5, 6]);
-      await fanOutWriter.writer.write(message2);
+      await writer.write(message2);
 
       // New readers should only receive messages written after they were added
       const [received1, received2] = await Promise.all([
@@ -160,7 +162,7 @@ describe("FanOut Writer", () => {
 
       // Write a message
       const message = createTestMessage([1, 2, 3]);
-      await fanOutWriter.writer.write(message);
+      await writer.write(message);
 
       // Verify message received
       const received = await collectMessages(reader.readable, 1, 100);
@@ -181,7 +183,7 @@ describe("FanOut Writer", () => {
 
       // Should not throw when writing after all readers unsubscribed
       const message = createTestMessage([1, 2, 3]);
-      await expect(fanOutWriter.writer.write(message)).resolves.toBeUndefined();
+      await expect(writer.write(message)).resolves.toBeUndefined();
     });
 
     it("should handle unsubscribing the same reader multiple times", async () => {
@@ -199,7 +201,7 @@ describe("FanOut Writer", () => {
       const reader = fanOutWriter.getReader();
 
       const message = createTestMessage([1, 2, 3]);
-      await fanOutWriter.writer.write(message);
+      await writer.write(message);
 
       // Verify message received before closure
       const received = await collectMessages(reader.readable, 1, 100);
@@ -207,21 +209,21 @@ describe("FanOut Writer", () => {
       expect(received[0]).toEqual(message);
 
       // Close the writer should not throw
-      await expect(fanOutWriter.writer.close()).resolves.toBeUndefined();
+      await expect(writer.close()).resolves.toBeUndefined();
     });
 
     it("should handle closing an already closed writer", async () => {
-      await fanOutWriter.writer.close();
+      await writer.close();
 
       // Closing again should throw
-      await expect(fanOutWriter.writer.close()).rejects.toThrow();
+      await expect(writer.close()).rejects.toThrow();
     });
 
     it("should reject writes after closure", async () => {
-      await fanOutWriter.writer.close();
+      await writer.close();
 
       const message = createTestMessage([1, 2, 3]);
-      await expect(fanOutWriter.writer.write(message)).rejects.toThrow();
+      await expect(writer.write(message)).rejects.toThrow();
     });
   });
 
@@ -230,7 +232,7 @@ describe("FanOut Writer", () => {
       const reader = fanOutWriter.getReader();
 
       const message = createTestMessage([1, 2, 3]);
-      await fanOutWriter.writer.write(message);
+      await writer.write(message);
 
       // Verify message received before abortion
       const received = await collectMessages(reader.readable, 1, 100);
@@ -238,18 +240,16 @@ describe("FanOut Writer", () => {
       expect(received[0]).toEqual(message);
 
       const abortReason = new Error("Test abort");
-      await expect(
-        fanOutWriter.writer.abort(abortReason),
-      ).resolves.toBeUndefined();
+      await expect(writer.abort(abortReason)).resolves.toBeUndefined();
     });
   });
 });
 
 describe("FanIn Reader", () => {
-  let fanInReader: ReturnType<typeof createFanInReader>;
+  let fanInReader: ReturnType<typeof createFanInReader<BinaryMessage>>;
 
   beforeEach(() => {
-    fanInReader = createFanInReader();
+    fanInReader = createFanInReader<BinaryMessage>();
   });
 
   afterEach(() => {
@@ -432,13 +432,14 @@ describe("FanIn Reader", () => {
 
 describe("Integration tests", () => {
   it("should create and use fanout and fanin independently", async () => {
-    const fanOut = createFanOutWriter();
-    const fanIn = createFanInReader();
+    const fanOut = createFanOutWriter<BinaryMessage>();
+    const fanIn = createFanInReader<BinaryMessage>();
 
     // Test fanout independently
     const reader = fanOut.getReader();
+    const fanOutWriter = fanOut.writable.getWriter();
     const message1 = createTestMessage([1, 2, 3]);
-    await fanOut.writer.write(message1);
+    await fanOutWriter.write(message1);
 
     const received1 = await collectMessages(reader.readable, 1, 200);
     expect(received1).toHaveLength(1);
@@ -458,20 +459,21 @@ describe("Integration tests", () => {
     // Cleanup
     reader.unsubscribe();
     writer.unsubscribe();
-    await fanOut.writer.close();
+    await fanOutWriter.close();
     fanIn.close();
   });
 
   it("should handle cleanup gracefully", async () => {
-    const fanOut = createFanOutWriter();
-    const fanIn = createFanInReader();
+    const fanOut = createFanOutWriter<BinaryMessage>();
+    const fanIn = createFanInReader<BinaryMessage>();
 
     const reader = fanOut.getReader();
     const writer = fanIn.getWriter();
+    const fanOutWriter = fanOut.writable.getWriter();
 
     // Basic operations should not throw
     await expect(
-      fanOut.writer.write(createTestMessage([1, 2, 3])),
+      fanOutWriter.write(createTestMessage([1, 2, 3])),
     ).resolves.toBeUndefined();
 
     const w = writer.writable.getWriter();
@@ -483,7 +485,7 @@ describe("Integration tests", () => {
     // Cleanup should not throw
     expect(() => reader.unsubscribe()).not.toThrow();
     expect(() => writer.unsubscribe()).not.toThrow();
-    await expect(fanOut.writer.close()).resolves.toBeUndefined();
+    await expect(fanOutWriter.close()).resolves.toBeUndefined();
     expect(() => fanIn.close()).not.toThrow();
   });
 });

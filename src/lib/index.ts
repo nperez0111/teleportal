@@ -1,15 +1,5 @@
 import { type BinaryMessage, type Message } from "./protocol";
 
-/**
- * Binary encoding of the teleportal protocol.
- *
- * The format (version 1) is as follows:
- * - 3 bytes: magic number "YJS" (0x59, 0x4a, 0x53)
- * - 1 byte: version (currently only 0x01 is supported)
- * - 1 byte: length of document name
- * - document name: the name of the document
- * - yjs base protocol (type + data payload)
- */
 export * from "./protocol";
 export * from "./utils";
 
@@ -95,3 +85,30 @@ export type BinaryTransport<
    */
   writable: WritableStream<BinaryMessage>;
 } & AdditionalProperties;
+
+/**
+ * Generic interface for a pub/sub backend implementation.
+ * Can be implemented by in-memory queues, Redis, or any other pub/sub system.
+ */
+export interface PubSub {
+  /**
+   * Publish a message to a topic/channel
+   */
+  publish(topic: string, message: BinaryMessage): Promise<void>;
+
+  /**
+   * Subscribe to a topic/channel and receive messages
+   * @param topic - The topic to subscribe to
+   * @param callback - Function called when a message is received
+   * @returns A function to unsubscribe
+   */
+  subscribe(
+    topic: string,
+    callback: (message: BinaryMessage) => void,
+  ): Promise<() => Promise<void>>;
+
+  /**
+   * Shutdown the backend
+   */
+  destroy?: () => Promise<void>;
+}

@@ -1,4 +1,4 @@
-import { Observable } from "teleportal";
+import { isBinaryMessage, Observable } from "teleportal";
 import {
   encodePingMessage,
   isPongMessage,
@@ -122,7 +122,8 @@ export class WebsocketConnection extends Observable<{
   /**
    * Given a single writer (the incoming websocket messages), this will fan out to all connected readers
    */
-  #fanOutWriter = createFanOutWriter();
+  #fanOutWriter = createFanOutWriter<BinaryMessage>();
+  #writer = this.#fanOutWriter.writable.getWriter();
 
   /**
    * A writable stream to send messages over the websocket connection
@@ -365,16 +366,25 @@ export class WebsocketConnection extends Observable<{
 
       websocket.addEventListener("message", async (event) => {
         this.#wsLastMessageReceived = Date.now();
-        const message = new Uint8Array(
-          event.data as ArrayBuffer,
-        ) as BinaryMessage;
+        const message = new Uint8Array(event.data as ArrayBuffer);
+
+        if (!isBinaryMessage(message)) {
+          const error = new Error("Invalid message", { cause: event });
+          this.state = {
+            type: "error",
+            ws: websocket,
+            error,
+            reconnectAttempt: this.#reconnectAttempt,
+          };
+          return;
+        }
 
         if (isPongMessage(message)) {
           return;
         }
 
         try {
-          await this.#fanOutWriter.writer.write(message);
+          await this.#writer.write(message);
           this.call("message", message);
         } catch (err) {
           const error = new Error(
@@ -533,8 +543,6 @@ export class WebsocketConnection extends Observable<{
     super.destroy();
     this.isDestroyed = true;
 
-    this.#fanOutWriter.writer.close();
-
     // Clean up online/offline listeners
     if (this.#onlineHandler) {
       this.#eventTarget.removeEventListener("online", this.#onlineHandler);
@@ -560,6 +568,8 @@ export class WebsocketConnection extends Observable<{
     if (this.state.ws) {
       this.#closeWebSocketConnection();
     }
+
+    this.#writer.close();
   }
 
   [Symbol.dispose]() {

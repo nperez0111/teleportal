@@ -1,13 +1,22 @@
-import { BinaryMessage, ServerContext, Sink, Source } from "teleportal";
-import { getMessageReader } from "../utils";
+import {
+  type ClientContext,
+  encodeMessageArray,
+  type Message,
+  type Sink,
+  type Source,
+} from "teleportal";
+import { fromMessageArrayStream } from "../utils";
 
 /**
- * Transport which receives a single binary message from an HTTP request
+ * Transport which receives a binary message from an HTTP request
  * It is single use, and will close the writer when the request is complete
  */
-export function getHTTPSource<Context extends ServerContext>({
+export function getHTTPSource<Context extends ClientContext>({
   context,
 }: {
+  /**
+   * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
+   */
   context: Context;
 }): Source<
   Context,
@@ -15,14 +24,13 @@ export function getHTTPSource<Context extends ServerContext>({
     handleHTTPRequest: (request: Request) => Promise<void>;
   }
 > {
-  const reader = getMessageReader(context);
-  const writer = reader.writable.getWriter();
+  const transform = new TransformStream<Message, Message>();
   return {
-    readable: reader.readable,
+    readable: transform.readable,
     handleHTTPRequest: async (request) => {
-      const buffer = await request.arrayBuffer();
-      await writer.write(new Uint8Array(buffer) as BinaryMessage);
-      await writer.close();
+      await request
+        .body!.pipeThrough(fromMessageArrayStream(context))
+        .pipeTo(transform.writable);
       return;
     },
   };
@@ -31,13 +39,21 @@ export function getHTTPSource<Context extends ServerContext>({
 /**
  * Transport which sends a single binary message as an HTTP request
  */
-export function getHTTPSink({
+export function getHTTPSink<Context extends ClientContext>({
   request,
+  context,
 }: {
+  /**
+   * A function that sends a {@link Message} as an HTTP request.
+   */
   request: (ctx: {
     requestOptions: Pick<RequestInit, "method" | "headers" | "cache" | "body">;
   }) => Promise<void>;
-}): Sink<any> {
+  /**
+   * The {@link ClientContext} to use for writing {@link Message}s to the {@link Sink}.
+   */
+  context: Context;
+}): Sink<Context> {
   return {
     writable: new WritableStream({
       async write(chunk) {
@@ -46,11 +62,12 @@ export function getHTTPSink({
             method: "POST",
             headers: {
               "Content-Type": "application/octet-stream",
-              "X-Teleportal-Message-Id": chunk.id,
               "x-powered-by": "teleportal",
+              "x-teleportal-client-id": context.clientId,
             },
             cache: "no-store",
-            body: chunk.encoded,
+            // TODO can implement batching of requests in the future
+            body: encodeMessageArray([chunk]),
           },
         });
       },

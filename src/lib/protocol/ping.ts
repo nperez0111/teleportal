@@ -4,7 +4,7 @@ import type { BinaryMessage } from "./message-types";
 /**
  * Checks if a message is a ping message.
  */
-export function isPingMessage(message: BinaryMessage): boolean {
+export function isPingMessage(message: Uint8Array): boolean {
   return (
     // Y
     message[0] === 0x59 &&
@@ -26,7 +26,7 @@ export function isPingMessage(message: BinaryMessage): boolean {
 /**
  * Checks if a message is a pong message.
  */
-export function isPongMessage(message: BinaryMessage): boolean {
+export function isPongMessage(message: Uint8Array): boolean {
   return (
     // Y
     message[0] === 0x59 &&

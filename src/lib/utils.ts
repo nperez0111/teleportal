@@ -1,4 +1,5 @@
 import { createHooks } from "hookable";
+import { BinaryMessage, PubSub } from "teleportal";
 
 export class Observable<
   EVENTS extends Record<string, (...args: any[]) => void>,
@@ -45,4 +46,33 @@ export class Observable<
    * Add a listener for a named event.
    */
   addListeners = this.#hooks.addHooks.bind(this.#hooks);
+}
+
+/**
+ * Simple in-memory pub/sub backend implementation for testing/development
+ */
+export class InMemoryPubSub
+  extends Observable<{
+    [key: string]: (message: BinaryMessage) => void;
+  }>
+  implements PubSub
+{
+  async publish(topic: string, message: BinaryMessage): Promise<void> {
+    await this.call(topic, message);
+  }
+
+  async subscribe(
+    topic: string,
+    callback: (message: BinaryMessage) => void,
+  ): Promise<() => Promise<void>> {
+    const unsubscribe = this.on(topic, callback);
+
+    return async () => {
+      unsubscribe();
+    };
+  }
+
+  async destroy(): Promise<void> {
+    super.destroy();
+  }
 }
