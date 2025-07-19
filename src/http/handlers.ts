@@ -122,7 +122,7 @@ export function getSSEEndpoint<Context extends ServerContext>({
     });
 
     logger.trace("subscribing to client");
-    await sseTransport.subscribe(context.clientId);
+    await sseTransport.subscribe(`clients/${context.clientId}`);
     logger.trace("sseTransport subscribed to client");
 
     logger.trace("getting initial documents");
@@ -208,7 +208,7 @@ export function getHTTPPublishSSEEndpoint<Context extends ServerContext>({
             payloadType: message.payload.type,
           })
           .trace("publishing");
-        return context.clientId;
+        return `clients/${context.clientId}`;
       },
     });
     // TODO

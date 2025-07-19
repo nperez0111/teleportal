@@ -26,7 +26,7 @@ const transport = compose(
   getHTTPSink({
     context,
     request: async ({ requestOptions }) => {
-      const USE_SSE_PUBLISH = false;
+      const USE_SSE_PUBLISH = true;
       if (USE_SSE_PUBLISH) {
         const resp = await fetch(url + "/sse", requestOptions);
         if (!resp.ok) {
