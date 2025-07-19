@@ -1,4 +1,4 @@
-import type { BinaryMessage, Observable } from "teleportal";
+import type { Message, Observable, RawReceivedMessage } from "teleportal";
 import { FanOutReader } from "teleportal/transports";
 
 /**
@@ -51,14 +51,14 @@ export type ConnectionState<Context extends ConnectionContext> =
 export interface Connection<Context extends ConnectionContext>
   extends Observable<{
     update: (state: ConnectionState<Context>) => void;
-    message: (message: BinaryMessage) => void;
+    message: (message: Message) => void;
     connected: () => void;
     disconnected: () => void;
   }> {
   /**
    * Send a message to the connection.
    */
-  send(message: BinaryMessage): void;
+  send(message: Message): void;
   /**
    * Connect to the underlying connection
    */
@@ -74,7 +74,7 @@ export interface Connection<Context extends ConnectionContext>
   /**
    * Get a reader for the connection (based on {@link FanOutReader})
    */
-  getReader(): FanOutReader<BinaryMessage>;
+  getReader(): FanOutReader<RawReceivedMessage>;
   /**
    * A promise that resolves when the connection is connected
    */

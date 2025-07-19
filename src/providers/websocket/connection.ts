@@ -1,8 +1,15 @@
-import { BinaryMessage, Observable } from "teleportal";
-import { FanOutReader, createFanOutWriter } from "teleportal/transports";
-import { Connection, ConnectionState } from "../connection";
+import {
+  decodeMessage,
+  encodePingMessage,
+  isBinaryMessage,
+  isPongMessage,
+  type Message,
+  Observable,
+  type RawReceivedMessage,
+} from "teleportal";
+import { createFanOutWriter, FanOutReader } from "teleportal/transports";
+import type { Connection, ConnectionState } from "../connection";
 import { ExponentialBackoff } from "../utils";
-import { encodePingMessage, isPongMessage, isBinaryMessage } from "teleportal";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;
 const HEARTBEAT_INTERVAL = 10000;
@@ -10,7 +17,7 @@ const INITIAL_RECONNECT_DELAY = 100;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const MAX_BACKOFF_TIME = 30000;
 
-type ConnectionContext = {
+export type WebSocketConnectContext = {
   connected: {
     ws: WebSocket;
   };
@@ -27,12 +34,12 @@ type ConnectionContext = {
 
 export class WebSocketConnection
   extends Observable<{
-    update: (state: ConnectionState<ConnectionContext>) => void;
-    message: (message: BinaryMessage) => void;
+    update: (state: ConnectionState<WebSocketConnectContext>) => void;
+    message: (message: Message) => void;
     connected: () => void;
     disconnected: () => void;
   }>
-  implements Connection<ConnectionContext>
+  implements Connection<WebSocketConnectContext>
 {
   // Static timer functions that can be overridden for testing
   static setTimeout = globalThis.setTimeout.bind(globalThis);
@@ -50,12 +57,12 @@ export class WebSocketConnection
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   #url: string;
   #protocols: string[];
-  #state: ConnectionState<ConnectionContext> = {
+  #state: ConnectionState<WebSocketConnectContext> = {
     type: "disconnected",
     context: { ws: null },
   };
 
-  #setState(state: ConnectionState<ConnectionContext>) {
+  #setState(state: ConnectionState<WebSocketConnectContext>) {
     this.#state = state;
     this.call("update", state);
     switch (state.type) {
@@ -71,9 +78,8 @@ export class WebSocketConnection
   #reconnectAttempt = 0;
   #WebSocketImpl: typeof WebSocket;
   #backoff: ExponentialBackoff;
-  #messageBuffer: BinaryMessage[] = [];
+  #messageBuffer: Message[] = [];
   #maxReconnectAttempts: number;
-  #lastConnection?: Date;
   #eventTarget: EventTarget;
   #onlineHandler: (() => void) | null = null;
   #offlineHandler: (() => void) | null = null;
@@ -81,13 +87,13 @@ export class WebSocketConnection
   /**
    * Given a single writer (the incoming websocket messages), this will fan out to all connected readers
    */
-  #fanOutWriter = createFanOutWriter<BinaryMessage>();
+  #fanOutWriter = createFanOutWriter<RawReceivedMessage>();
   #writer = this.#fanOutWriter.writable.getWriter();
 
   /**
    * A writable stream to send messages over the websocket connection
    */
-  public writable: WritableStream<BinaryMessage> = new WritableStream({
+  public writable: WritableStream<Message> = new WritableStream({
     write: (message) => {
       this.send(message);
     },
@@ -189,8 +195,15 @@ export class WebSocketConnection
 
   #setupHeartbeat() {
     this.#heartbeatInterval = WebSocketConnection.setInterval(() => {
-      if (this.state.type === "connected") {
-        this.send(encodePingMessage());
+      if (
+        this.state.type === "connected" &&
+        this.state.context.ws.readyState === this.#WebSocketImpl.OPEN
+      ) {
+        try {
+          this.state.context.ws.send(encodePingMessage());
+        } catch (e) {
+          // no-op
+        }
       }
     }, HEARTBEAT_INTERVAL);
   }
@@ -257,8 +270,9 @@ export class WebSocketConnection
         }
 
         try {
-          await this.#writer.write(message);
-          this.call("message", message);
+          const decodedMessage = decodeMessage(message);
+          await this.#writer.write(decodedMessage);
+          this.call("message", decodedMessage);
         } catch (err) {
           const error = new Error(
             "Failed to write message to internal stream",
@@ -366,7 +380,7 @@ export class WebSocketConnection
     }
   }
 
-  send(message: BinaryMessage): void {
+  send(message: Message): void {
     if (this.destroyed) {
       throw new Error(
         "WebSocketConnection is destroyed, create a new instance",
@@ -382,7 +396,7 @@ export class WebSocketConnection
       this.state.context.ws.readyState === this.#WebSocketImpl.OPEN
     ) {
       try {
-        this.state.context.ws.send(message);
+        this.state.context.ws.send(message.encoded);
       } catch (err) {
         const error =
           err instanceof Error
@@ -434,11 +448,11 @@ export class WebSocketConnection
     }
   }
 
-  get state(): ConnectionState<ConnectionContext> {
+  get state(): ConnectionState<WebSocketConnectContext> {
     return this.#state;
   }
 
-  getReader(): FanOutReader<BinaryMessage> {
+  getReader(): FanOutReader<RawReceivedMessage> {
     return this.#fanOutWriter.getReader();
   }
 

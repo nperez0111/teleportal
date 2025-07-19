@@ -5,15 +5,13 @@ import * as Y from "yjs";
 import {
   DocMessage,
   Observable,
-  type BinaryMessage,
-  type BinaryTransport,
+  RawReceivedMessage,
   type ClientContext,
   type StateVector,
   type Transport,
 } from "teleportal";
 import {
   getYTransportFromYDoc,
-  toBinaryTransport,
   type FanOutReader,
 } from "teleportal/transports";
 import { Connection } from "../connection";
@@ -42,6 +40,7 @@ export type ProviderOptions = {
     ClientContext,
     {
       synced: Promise<void>;
+      key?: CryptoKey;
     }
   >;
 };
@@ -62,13 +61,16 @@ export class Provider extends Observable<{
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: BinaryTransport<{
-    synced: Promise<void>;
-    key?: CryptoKey;
-  }>;
+  public transport: Transport<
+    ClientContext,
+    {
+      synced: Promise<void>;
+      key?: CryptoKey;
+    }
+  >;
   public document: string;
   #underlyingConnection: Connection<any>;
-  #messageReader: FanOutReader<BinaryMessage>;
+  #messageReader: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
 
@@ -94,17 +96,14 @@ export class Provider extends Observable<{
     this.#getTransport = getTransport;
     this.#enableOfflinePersistence = enableOfflinePersistence;
     this.#indexedDBPrefix = indexedDBPrefix;
-    this.transport = toBinaryTransport(
-      getTransport({
-        ydoc,
-        document,
-        awareness,
-        getDefaultTransport() {
-          return getYTransportFromYDoc({ ydoc, document, awareness });
-        },
-      }),
-      { clientId: "remote" },
-    );
+    this.transport = getTransport({
+      ydoc,
+      document,
+      awareness,
+      getDefaultTransport() {
+        return getYTransportFromYDoc({ ydoc, document, awareness });
+      },
+    });
     this.#underlyingConnection = client;
     this.#messageReader = this.#underlyingConnection.getReader();
 
@@ -163,7 +162,7 @@ export class Provider extends Observable<{
         },
         { clientId: "local" },
         Boolean(this.transport.key),
-      ).encoded,
+      ),
     );
   };
 
