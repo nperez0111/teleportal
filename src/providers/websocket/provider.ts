@@ -16,10 +16,11 @@ import {
   toBinaryTransport,
   type FanOutReader,
 } from "teleportal/transports";
-import { WebsocketConnection } from "./connection-manager";
+import { Connection } from "../connection";
+import { WebSocketConnection } from "./connection";
 
 export type ProviderOptions = {
-  client: WebsocketConnection;
+  client: Connection<any>;
   document: string;
   ydoc?: Y.Doc;
   awareness?: Awareness;
@@ -66,8 +67,8 @@ export class Provider extends Observable<{
     key?: CryptoKey;
   }>;
   public document: string;
-  #websocketConnection: WebsocketConnection;
-  #websocketReader: FanOutReader<BinaryMessage>;
+  #underlyingConnection: Connection<any>;
+  #messageReader: FanOutReader<BinaryMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
 
@@ -104,17 +105,17 @@ export class Provider extends Observable<{
       }),
       { clientId: "remote" },
     );
-    this.#websocketConnection = client;
-    this.#websocketReader = this.#websocketConnection.getReader();
+    this.#underlyingConnection = client;
+    this.#messageReader = this.#underlyingConnection.getReader();
 
     this.transport.readable.pipeTo(
       new WritableStream({
         write: (message) => {
-          this.#websocketConnection.send(message);
+          this.#underlyingConnection.send(message);
         },
       }),
     );
-    this.#websocketReader.readable.pipeTo(this.transport.writable);
+    this.#messageReader.readable.pipeTo(this.transport.writable);
 
     this.doc.on("subdocs", this.subdocListener);
 
@@ -126,7 +127,7 @@ export class Provider extends Observable<{
     if (client.state.type === "connected") {
       this.init();
     }
-    client.on("open", this.init);
+    client.on("connected", this.init);
   }
 
   private initOfflinePersistence() {
@@ -153,7 +154,7 @@ export class Provider extends Observable<{
   }
 
   private init = () => {
-    this.#websocketConnection.send(
+    this.#underlyingConnection.send(
       new DocMessage(
         this.document,
         {
@@ -226,7 +227,7 @@ export class Provider extends Observable<{
     const awareness = new Awareness(doc);
 
     return new Provider({
-      client: this.#websocketConnection,
+      client: this.#underlyingConnection,
       ydoc: doc,
       awareness,
       getTransport: this.#getTransport,
@@ -279,20 +280,20 @@ export class Provider extends Observable<{
     }
 
     const synced = Promise.all([
-      this.#websocketConnection.connected,
+      this.#underlyingConnection.connected,
       this.transport.synced,
     ]).then(() => {});
 
     this.#synced = synced;
     // if the underlying connection changes, then clear out the cached promise
-    this.#websocketConnection.once("update", () => {
+    this.#underlyingConnection.once("update", () => {
       this.#synced = null;
     });
     return synced;
   }
 
   public get state() {
-    return this.#websocketConnection.state;
+    return this.#underlyingConnection.state;
   }
 
   public destroy({
@@ -313,9 +314,9 @@ export class Provider extends Observable<{
 
     // TODO how to clean up the transport?
     // this.transport.readable
-    this.#websocketReader.unsubscribe();
+    this.#messageReader.unsubscribe();
     if (destroyWebSocket) {
-      this.#websocketConnection.destroy();
+      this.#underlyingConnection.destroy();
     }
     if (destroyDoc) {
       this.doc.destroy();
@@ -339,10 +340,10 @@ export class Provider extends Observable<{
     getTransport,
     enableOfflinePersistence,
     indexedDBPrefix: indexedDBPrefix,
-    client = new WebsocketConnection({ url: url! }),
+    client = new WebSocketConnection({ url: url! }),
   }: (
     | { url: string; client?: undefined }
-    | { url?: undefined; client: WebsocketConnection }
+    | { url?: undefined; client: Connection<any> }
   ) &
     Omit<ProviderOptions, "client">) {
     // Wait for the websocket to connect

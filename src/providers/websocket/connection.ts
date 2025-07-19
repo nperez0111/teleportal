@@ -1,97 +1,39 @@
-import { isBinaryMessage, Observable } from "teleportal";
-import {
-  encodePingMessage,
-  isPongMessage,
-  type BinaryMessage,
-} from "teleportal";
-import { createFanOutWriter } from "teleportal/transports";
+import { BinaryMessage, Observable } from "teleportal";
+import { FanOutReader, createFanOutWriter } from "teleportal/transports";
+import { Connection, ConnectionState } from "../connection";
+import { ExponentialBackoff } from "../utils";
+import { encodePingMessage, isPongMessage, isBinaryMessage } from "teleportal";
 
 const MESSAGE_RECONNECT_TIMEOUT = 30000;
 const HEARTBEAT_INTERVAL = 10000;
 const INITIAL_RECONNECT_DELAY = 100;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const MAX_BACKOFF_TIME = 30000; // Increased from 2500ms to 30s for better exponential backoff
+const MAX_BACKOFF_TIME = 30000;
 
-/**
- * Exponential backoff implementation inspired by websocket-ts
- */
-class ExponentialBackoff {
-  private readonly base: number;
-  private readonly maxExponent?: number;
-  private i: number = 0;
-  private _retries: number = 0;
+type ConnectionContext = {
+  connected: {
+    ws: WebSocket;
+  };
+  disconnected: {
+    ws: null;
+  };
+  connecting: {
+    ws: WebSocket;
+  };
+  errored: {
+    reconnectAttempt: number;
+  };
+};
 
-  constructor(base: number, maxExponent?: number) {
-    if (!Number.isInteger(base) || base < 0) {
-      throw new Error("Base must be a positive integer or zero");
-    }
-    if (
-      maxExponent !== undefined &&
-      (!Number.isInteger(maxExponent) || maxExponent < 0)
-    ) {
-      throw new Error(
-        "MaxExponent must be undefined, a positive integer or zero",
-      );
-    }
-
-    this.base = base;
-    this.maxExponent = maxExponent;
-  }
-
-  get retries(): number {
-    return this._retries;
-  }
-
-  get current(): number {
-    return this.base * Math.pow(2, this.i);
-  }
-
-  next(): number {
-    this._retries++;
-    this.i =
-      this.maxExponent === undefined
-        ? this.i + 1
-        : Math.min(this.i + 1, this.maxExponent);
-    return this.current;
-  }
-
-  reset(): void {
-    this._retries = 0;
-    this.i = 0;
-  }
-}
-
-export type WebsocketState =
-  | {
-      type: "offline";
-      ws: null;
-    }
-  | {
-      type: "connecting";
-      ws: WebSocket;
-    }
-  | {
-      type: "connected";
-      ws: WebSocket;
-    }
-  | {
-      type: "error";
-      ws: WebSocket | null;
-      error: Error;
-      reconnectAttempt: number;
-    };
-
-export class WebsocketConnection extends Observable<{
-  update: (state: WebsocketState) => void;
-  message: (message: BinaryMessage) => void;
-  close: (event: CloseEvent) => void;
-  open: () => void;
-  error: (error: Error) => void;
-  reconnect: () => void;
-  retry: (attempt: number, delay: number) => void;
-  online: () => void;
-  offline: () => void;
-}> {
+export class WebSocketConnection
+  extends Observable<{
+    update: (state: ConnectionState<ConnectionContext>) => void;
+    message: (message: BinaryMessage) => void;
+    connected: () => void;
+    disconnected: () => void;
+  }>
+  implements Connection<ConnectionContext>
+{
   // Static timer functions that can be overridden for testing
   static setTimeout = globalThis.setTimeout.bind(globalThis);
   static setInterval = globalThis.setInterval.bind(globalThis);
@@ -108,7 +50,24 @@ export class WebsocketConnection extends Observable<{
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   #url: string;
   #protocols: string[];
-  #state: WebsocketState = { type: "offline", ws: null };
+  #state: ConnectionState<ConnectionContext> = {
+    type: "disconnected",
+    context: { ws: null },
+  };
+
+  #setState(state: ConnectionState<ConnectionContext>) {
+    this.#state = state;
+    this.call("update", state);
+    switch (state.type) {
+      case "connected":
+        this.call("connected");
+        break;
+      case "disconnected":
+        this.call("disconnected");
+        break;
+    }
+  }
+
   #reconnectAttempt = 0;
   #WebSocketImpl: typeof WebSocket;
   #backoff: ExponentialBackoff;
@@ -134,91 +93,7 @@ export class WebsocketConnection extends Observable<{
     },
   });
 
-  /**
-   * Whether the websocket connection has been destroyed
-   */
-  public isDestroyed = false;
-
-  /**
-   * @returns a promise that resolves when the websocket is connected
-   */
-  public get connected(): Promise<void> {
-    switch (this.state.type) {
-      case "offline":
-      case "connecting": {
-        return new Promise((resolve, reject) => {
-          let handled = false;
-          this.once("close", () => {
-            if (!handled) {
-              handled = true;
-              reject(new Error("WebSocket closed"));
-            }
-          });
-          this.once("open", () => {
-            if (!handled) {
-              handled = true;
-              resolve();
-            }
-          });
-        });
-      }
-      case "connected": {
-        return Promise.resolve();
-      }
-
-      default: {
-        return Promise.reject(
-          new Error(`WebSocket is in an invalid state: ${this.state.type}`),
-        );
-      }
-    }
-  }
-
-  public get state() {
-    return this.#state;
-  }
-
-  public set state(state: WebsocketState) {
-    this.#state = state;
-    this.call("update", state);
-    switch (state.type) {
-      case "error": {
-        this.call("error", state.error);
-        break;
-      }
-      case "connected": {
-        if (this.#reconnectAttempt > 0) {
-          this.#reconnectAttempt = 0;
-          this.#backoff.reset();
-          this.call("reconnect");
-        }
-        this.#lastConnection = new Date();
-        this.call("open");
-        break;
-      }
-    }
-  }
-
-  /**
-   * Get the last connection timestamp
-   */
-  public get lastConnection(): Date | undefined {
-    return this.#lastConnection;
-  }
-
-  /**
-   * Check if the device is currently online
-   */
-  public get isOnline(): boolean {
-    return this.#isOnline;
-  }
-
-  /**
-   * Check if the connection was manually disconnected
-   */
-  public get disconnected(): boolean {
-    return this.#disconnected;
-  }
+  public destroyed = false;
 
   constructor({
     url,
@@ -249,7 +124,7 @@ export class WebsocketConnection extends Observable<{
     if (typeof window !== "undefined") {
       this.#eventTarget = eventTarget ?? window;
       this.#isOnline =
-        (isOnline ?? WebsocketConnection.location?.hostname !== "localhost")
+        (isOnline ?? WebSocketConnection.location?.hostname !== "localhost")
           ? (navigator.onLine ?? true)
           : true;
     } else {
@@ -265,7 +140,7 @@ export class WebsocketConnection extends Observable<{
     this.#maxReconnectAttempts = maxReconnectAttempts;
 
     // Set up online/offline event listeners
-    if (WebsocketConnection.location?.hostname !== "localhost") {
+    if (WebSocketConnection.location?.hostname !== "localhost") {
       this.#setupOnlineOfflineListeners();
     }
 
@@ -280,23 +155,21 @@ export class WebsocketConnection extends Observable<{
   #setupOnlineOfflineListeners() {
     const handleOnline = () => {
       this.#isOnline = true;
-      this.call("online");
 
       // If we were disconnected due to being offline and should connect, try to reconnect
       if (
         this.#shouldConnect &&
         !this.#disconnected &&
-        this.state.type === "offline"
+        this.state.type === "disconnected"
       ) {
         this.#backoff.reset();
         this.#reconnectAttempt++;
-        this._setupWebSocket();
+        this.#setupWebSocket();
       }
     };
 
     const handleOffline = () => {
       this.#isOnline = false;
-      this.call("offline");
 
       // Cancel any pending reconnection attempts when going offline
       if (this.#reconnectTimeout) {
@@ -315,7 +188,7 @@ export class WebsocketConnection extends Observable<{
   }
 
   #setupHeartbeat() {
-    this.#heartbeatInterval = WebsocketConnection.setInterval(() => {
+    this.#heartbeatInterval = WebSocketConnection.setInterval(() => {
       if (this.state.type === "connected") {
         this.send(encodePingMessage());
       }
@@ -323,7 +196,7 @@ export class WebsocketConnection extends Observable<{
   }
 
   #setupConnectionCheck() {
-    this.#checkInterval = WebsocketConnection.setInterval(() => {
+    this.#checkInterval = WebSocketConnection.setInterval(() => {
       if (
         this.state.type === "connected" &&
         MESSAGE_RECONNECT_TIMEOUT < Date.now() - this.#wsLastMessageReceived
@@ -337,18 +210,19 @@ export class WebsocketConnection extends Observable<{
     const error = new Error(
       "WebSocket connection timeout - no messages received",
     );
-    this.state = {
-      type: "error",
-      ws: this.state.ws,
+    this.#setState({
+      type: "errored",
+      context: { reconnectAttempt: this.#reconnectAttempt },
       error,
-      reconnectAttempt: this.#reconnectAttempt,
-    };
+    });
     this.#closeWebSocketConnection();
   }
 
-  private _setupWebSocket() {
-    if (this.isDestroyed) {
-      throw new Error("WebsocketClient is destroyed, create a new instance");
+  #setupWebSocket() {
+    if (this.destroyed) {
+      throw new Error(
+        "WebSocketConnection is destroyed, create a new instance",
+      );
     }
     if (!this.#shouldConnect) {
       return;
@@ -362,7 +236,7 @@ export class WebsocketConnection extends Observable<{
     try {
       const websocket = new this.#WebSocketImpl(this.#url, this.#protocols);
       websocket.binaryType = "arraybuffer";
-      this.state = { type: "connecting", ws: websocket };
+      this.#setState({ type: "connecting", context: { ws: websocket } });
 
       websocket.addEventListener("message", async (event) => {
         this.#wsLastMessageReceived = Date.now();
@@ -370,12 +244,11 @@ export class WebsocketConnection extends Observable<{
 
         if (!isBinaryMessage(message)) {
           const error = new Error("Invalid message", { cause: event });
-          this.state = {
-            type: "error",
-            ws: websocket,
+          this.#setState({
+            type: "errored",
+            context: { reconnectAttempt: this.#reconnectAttempt },
             error,
-            reconnectAttempt: this.#reconnectAttempt,
-          };
+          });
           return;
         }
 
@@ -393,50 +266,46 @@ export class WebsocketConnection extends Observable<{
               cause: err,
             },
           );
-          this.state = {
-            type: "error",
-            ws: websocket,
+          this.#setState({
+            type: "errored",
+            context: { reconnectAttempt: this.#reconnectAttempt },
             error,
-            reconnectAttempt: this.#reconnectAttempt,
-          };
+          });
           this.#closeWebSocketConnection();
         }
       });
 
       websocket.addEventListener("error", (event) => {
         const error = new Error("WebSocket error", { cause: event });
-        this.state = {
-          type: "error",
-          ws: websocket,
+        this.#setState({
+          type: "errored",
+          context: { reconnectAttempt: this.#reconnectAttempt },
           error,
-          reconnectAttempt: this.#reconnectAttempt,
-        };
+        });
       });
 
-      websocket.addEventListener("close", (event) => {
+      websocket.addEventListener("close", () => {
         this.#closeWebSocketConnection();
-        this.call("close", event);
       });
 
       websocket.addEventListener("open", () => {
         this.#wsLastMessageReceived = Date.now();
-        this.state = { type: "connected", ws: websocket };
+        this.#setState({ type: "connected", context: { ws: websocket } });
         this.#sendBufferedMessages();
       });
     } catch (error) {
-      this.state = {
-        type: "error",
-        ws: null,
+      this.#setState({
+        type: "errored",
+        context: { reconnectAttempt: this.#reconnectAttempt },
         error: error instanceof Error ? error : new Error(String(error)),
-        reconnectAttempt: this.#reconnectAttempt,
-      };
+      });
       this.#scheduleReconnect();
     }
   }
 
   #scheduleReconnect() {
     if (this.#reconnectTimeout) {
-      WebsocketConnection.clearTimeout(this.#reconnectTimeout);
+      WebSocketConnection.clearTimeout(this.#reconnectTimeout);
     }
 
     // Don't schedule reconnection if:
@@ -446,7 +315,7 @@ export class WebsocketConnection extends Observable<{
     // - We're offline
     if (
       !this.#shouldConnect ||
-      this.isDestroyed ||
+      this.destroyed ||
       this.#disconnected ||
       !this.#isOnline
     ) {
@@ -456,30 +325,26 @@ export class WebsocketConnection extends Observable<{
     // Use exponential backoff for delay calculation
     const delay = this.#backoff.next();
 
-    // Emit retry event with attempt info
-    this.call("retry", this.#reconnectAttempt + 1, delay);
-
-    this.#reconnectTimeout = WebsocketConnection.setTimeout(() => {
+    this.#reconnectTimeout = WebSocketConnection.setTimeout(() => {
       if (this.#reconnectAttempt >= this.#maxReconnectAttempts) {
-        this.state = {
-          type: "error",
-          ws: null,
+        this.#setState({
+          type: "errored",
+          context: { reconnectAttempt: this.#reconnectAttempt },
           error: new Error("Maximum reconnection attempts reached"),
-          reconnectAttempt: this.#reconnectAttempt,
-        };
+        });
         return;
       }
 
       this.#reconnectAttempt++;
-      this._setupWebSocket();
+      this.#setupWebSocket();
     }, delay);
   }
 
   #closeWebSocketConnection() {
-    if (this.state.ws) {
-      this.state.ws.close();
+    if (this.state.type === "connected" || this.state.type === "connecting") {
+      this.state.context.ws.close();
       const wasConnected = this.state.type === "connected";
-      this.state = { type: "offline", ws: null };
+      this.#setState({ type: "disconnected", context: { ws: null } });
 
       if (
         !this.#disconnected &&
@@ -501,9 +366,11 @@ export class WebsocketConnection extends Observable<{
     }
   }
 
-  public send(data: BinaryMessage) {
-    if (this.isDestroyed) {
-      throw new Error("WebsocketClient is destroyed, create a new instance");
+  send(message: BinaryMessage): void {
+    if (this.destroyed) {
+      throw new Error(
+        "WebSocketConnection is destroyed, create a new instance",
+      );
     }
 
     if (this.#disconnected) {
@@ -512,36 +379,106 @@ export class WebsocketConnection extends Observable<{
 
     if (
       this.state.type === "connected" &&
-      this.state.ws.readyState === this.#WebSocketImpl.OPEN
+      this.state.context.ws.readyState === this.#WebSocketImpl.OPEN
     ) {
       try {
-        this.state.ws.send(data);
+        this.state.context.ws.send(message);
       } catch (err) {
         const error =
           err instanceof Error
             ? err
             : new Error("Failed to send message", { cause: err });
-        this.state = {
-          type: "error",
-          ws: this.state.ws,
+        this.#setState({
+          type: "errored",
+          context: { reconnectAttempt: this.#reconnectAttempt },
           error,
-          reconnectAttempt: this.#reconnectAttempt,
-        };
+        });
         this.#closeWebSocketConnection();
         throw error;
       }
     } else {
       // Buffer message if not connected
-      this.#messageBuffer.push(data);
+      this.#messageBuffer.push(message);
     }
   }
 
-  public destroy() {
-    if (this.isDestroyed) {
+  async connect(): Promise<void> {
+    if (this.destroyed) {
+      throw new Error(
+        "WebSocketConnection is destroyed, create a new instance",
+      );
+    }
+    this.#shouldConnect = true;
+    this.#disconnected = false;
+    this.#reconnectAttempt = 0;
+    this.#backoff.reset();
+    if (this.state.type === "disconnected" && this.#isOnline) {
+      this.#setupWebSocket();
+    }
+    return this.connected;
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.destroyed) {
+      throw new Error(
+        "WebSocketConnection is destroyed, create a new instance",
+      );
+    }
+    this.#shouldConnect = false;
+    this.#disconnected = true;
+    if (this.#reconnectTimeout) {
+      clearTimeout(this.#reconnectTimeout);
+    }
+    if (this.state.type === "connected" || this.state.type === "connecting") {
+      this.#closeWebSocketConnection();
+    }
+  }
+
+  get state(): ConnectionState<ConnectionContext> {
+    return this.#state;
+  }
+
+  getReader(): FanOutReader<BinaryMessage> {
+    return this.#fanOutWriter.getReader();
+  }
+
+  get connected(): Promise<void> {
+    const currentState = this.state;
+    switch (currentState.type) {
+      case "disconnected":
+      case "connecting": {
+        return new Promise((resolve, reject) => {
+          let handled = false;
+          const unsubscribe = this.on("update", (state) => {
+            if (!handled) {
+              if (state.type === "connected") {
+                handled = true;
+                unsubscribe();
+                resolve();
+              } else if (state.type === "errored") {
+                handled = true;
+                unsubscribe();
+                reject(state.error);
+              }
+            }
+          });
+        });
+      }
+      case "connected": {
+        return Promise.resolve();
+      }
+      case "errored": {
+        return Promise.reject(currentState.error);
+      }
+    }
+  }
+
+  destroy(): void {
+    if (this.destroyed) {
       return;
     }
     super.destroy();
-    this.isDestroyed = true;
+    this.destroyed = true;
 
     // Clean up online/offline listeners
     if (this.#onlineHandler) {
@@ -552,20 +489,20 @@ export class WebsocketConnection extends Observable<{
     }
 
     if (this.#heartbeatInterval) {
-      WebsocketConnection.clearInterval(this.#heartbeatInterval);
+      WebSocketConnection.clearInterval(this.#heartbeatInterval);
     }
     if (this.#checkInterval) {
-      WebsocketConnection.clearInterval(this.#checkInterval);
+      WebSocketConnection.clearInterval(this.#checkInterval);
     }
     if (this.#reconnectTimeout) {
-      WebsocketConnection.clearTimeout(this.#reconnectTimeout);
+      WebSocketConnection.clearTimeout(this.#reconnectTimeout);
     }
 
     this.#shouldConnect = false;
     this.#disconnected = true;
     this.#messageBuffer.length = 0; // Clear the array
 
-    if (this.state.ws) {
+    if (this.state.type === "connected" || this.state.type === "connecting") {
       this.#closeWebSocketConnection();
     }
 
@@ -574,45 +511,5 @@ export class WebsocketConnection extends Observable<{
 
   [Symbol.dispose]() {
     this.destroy();
-  }
-
-  /**
-   * Manually connect to the websocket connection
-   */
-  public connect() {
-    if (this.isDestroyed) {
-      throw new Error("WebsocketClient is destroyed, create a new instance");
-    }
-    this.#shouldConnect = true;
-    this.#disconnected = false;
-    this.#reconnectAttempt = 0;
-    this.#backoff.reset();
-    if (this.state.type === "offline" && this.#isOnline) {
-      this._setupWebSocket();
-    }
-  }
-
-  /**
-   * Manually disconnect from the websocket connection
-   */
-  public disconnect() {
-    if (this.isDestroyed) {
-      throw new Error("WebsocketClient is destroyed, create a new instance");
-    }
-    this.#shouldConnect = false;
-    this.#disconnected = true;
-    if (this.#reconnectTimeout) {
-      clearTimeout(this.#reconnectTimeout);
-    }
-    if (this.state.ws) {
-      this.#closeWebSocketConnection();
-    }
-  }
-
-  /**
-   * Get a new reader to read incoming messages from the websocket connection
-   */
-  public getReader() {
-    return this.#fanOutWriter.getReader();
   }
 }
