@@ -358,9 +358,8 @@ export const fromMessageArrayStream = <Context extends ClientContext>(
   new TransformStream<MessageArray, Message<Context>>({
     transform: (chunk, controller) => {
       for (const message of decodeMessageArray(chunk)) {
-        if (context) {
-          Object.assign(message.context, context);
-        }
+        Object.assign(message.context, context);
+
         controller.enqueue(message);
       }
     },

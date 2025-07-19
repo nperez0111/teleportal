@@ -50,7 +50,6 @@ export function getSSESink<Context extends ClientContext>({
       }, 5000);
     },
     transform(chunk, controller) {
-      // TODO probably a better encoding for sse
       const payload = toBase64(chunk.encoded);
       const message = `event:message\nid:${chunk.id}\ndata: ${payload}\n\n`;
       controller.enqueue(message);

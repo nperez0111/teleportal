@@ -211,7 +211,6 @@ export function getHTTPPublishSSEEndpoint<Context extends ServerContext>({
         return `clients/${context.clientId}`;
       },
     });
-    // TODO
     req.signal.addEventListener("abort", async (e) => {
       logger.trace("aborting");
       await pubSubSink.writable.abort(e);

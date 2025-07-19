@@ -59,10 +59,12 @@ export class ClientManager<Context extends ServerContext> extends Observable<{
       .withMetadata({ clientId })
       .trace("removing client from manager");
 
+    // Remove client from map first to prevent recursive calls
+    this.clients.delete(clientId);
+
     await this.call("client-disconnected", client);
 
     await client.destroy();
-    this.clients.delete(clientId);
   }
 
   /**
