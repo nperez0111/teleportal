@@ -97,6 +97,10 @@ export function getSSESource<Context extends ClientContext>({
      * so this tells you that the SSE is ready and can be used.
      */
     clientId: Promise<string>;
+    /**
+     * The {@link EventSource} that is being listened to.
+     */
+    eventSource: EventSource;
   }
 > {
   let handler: (event: MessageEvent) => void;
@@ -107,6 +111,7 @@ export function getSSESource<Context extends ClientContext>({
     });
   });
   return {
+    eventSource: source,
     clientId,
     readable: new ReadableStream<BinaryMessage>({
       start(controller) {
