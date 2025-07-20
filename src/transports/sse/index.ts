@@ -80,6 +80,7 @@ export function getSSESink<Context extends ClientContext>({
 export function getSSESource<Context extends ClientContext>({
   source,
   context,
+  onPing,
 }: {
   /**
    * The {@link EventSource} to listen to for SSE messages.
@@ -89,6 +90,7 @@ export function getSSESource<Context extends ClientContext>({
    * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
    */
   context: Context;
+  onPing?: () => void;
 }): Source<
   Context,
   {
@@ -119,6 +121,7 @@ export function getSSESource<Context extends ClientContext>({
           const message = fromBase64(event.data);
 
           if (isPingMessage(message)) {
+            onPing?.();
             return;
           }
 
@@ -127,9 +130,24 @@ export function getSSESource<Context extends ClientContext>({
           }
         };
         source.addEventListener("message", handler);
+        source.addEventListener("ping", handler);
+        source.addEventListener("error", (e) => {
+          controller.error(e);
+        });
+
+        const interval = setInterval(() => {
+          if (source.readyState === source.CLOSED) {
+            clearInterval(interval);
+            try {
+              controller.close();
+            } catch (e) {
+              // ignore if we can't close, it may have already been cancelled
+            }
+          }
+        }, 3000);
       },
       cancel() {
-        source.removeEventListener("message", handler);
+        source.close();
       },
     }).pipeThrough(getMessageReader(context)),
   };
