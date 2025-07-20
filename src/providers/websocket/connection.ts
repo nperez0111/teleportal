@@ -138,6 +138,8 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       this.state.context.ws.readyState === this.#WebSocketImpl.OPEN
     ) {
       this.state.context.ws.send(message.encoded);
+    } else {
+      await this.sendOrBuffer(message);
     }
   }
 

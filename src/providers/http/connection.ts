@@ -138,8 +138,10 @@ export class HttpConnection extends Connection<HttpConnectContext> {
   }
 
   protected async sendMessage(message: Message): Promise<void> {
-    if (this.#httpWriter) {
+    if (this.state.type === "connected" && this.#httpWriter) {
       await this.#httpWriter.write(message);
+    } else {
+      await this.sendOrBuffer(message);
     }
   }
 
