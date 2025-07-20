@@ -203,8 +203,12 @@ export abstract class Connection<
 
     if (connect) {
       // Attempt to connect on next tick to allow for initialization
-      setTimeout(() => {
-        this.connect();
+      Connection.setTimeout(() => {
+        this.connect().catch((error) => {
+          // Handle any errors from the initial connection attempt
+          // This prevents unhandled promise rejections
+          console.warn("Initial connection attempt failed:", error);
+        });
       }, 0);
     }
   }

@@ -121,9 +121,8 @@ export class HttpConnection extends Connection<HttpConnectContext> {
           }),
         )
         .finally(() => {
-          if (this.state.type === "disconnected") {
-            this.scheduleReconnect();
-          }
+          // This will set the state to disconnected and trigger reconnection
+          this.closeConnection();
         });
       this.#httpWriter = sink.writable.getWriter();
       this.setState({
