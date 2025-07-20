@@ -27,11 +27,11 @@ export type HttpConnectionOptions = {
   /**
    * The fetch implementation to use
    */
-  fetch: typeof fetch;
+  fetch?: typeof fetch;
   /**
    * The EventSource implementation to use
    */
-  EventSource: typeof EventSource;
+  EventSource?: typeof EventSource;
 } & Omit<ConnectionOptions, "heartbeatInterval">;
 
 export class HttpConnection extends Connection<HttpConnectContext> {
@@ -43,8 +43,8 @@ export class HttpConnection extends Connection<HttpConnectContext> {
   constructor(options: HttpConnectionOptions) {
     super(options);
     this.#url = options.url;
-    this.#fetch = options.fetch;
-    this.#EventSource = options.EventSource;
+    this.#fetch = options.fetch ?? fetch.bind(globalThis);
+    this.#EventSource = options.EventSource ?? EventSource;
 
     // Initialize the state with the correct HTTP context
     this._state = {
