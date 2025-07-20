@@ -463,7 +463,7 @@ export abstract class Connection<
     if (this.state.type === "disconnected" && this.#isOnline) {
       await this.initConnection();
     }
-    return this.connected;
+    return await this.connected;
   }
 
   /**
