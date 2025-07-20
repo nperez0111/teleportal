@@ -146,7 +146,11 @@ export class HttpConnection extends Connection<HttpConnectContext> {
 
   protected async closeConnection(): Promise<void> {
     if (this.#httpWriter) {
-      await this.#httpWriter.close();
+      try {
+        await this.#httpWriter.close();
+      } catch (error) {
+        // Ignore errors when closing writer, it might already be closed
+      }
       this.#httpWriter = undefined;
     }
     if (this.#source) {
@@ -167,7 +171,13 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     if (this.destroyed) {
       return;
     }
-    this.#httpWriter?.releaseLock();
+    if (this.#httpWriter) {
+      try {
+        this.#httpWriter.releaseLock();
+      } catch (error) {
+        // Ignore errors when releasing lock, it might already be released
+      }
+    }
     await super.destroy();
   }
 }
