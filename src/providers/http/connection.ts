@@ -99,7 +99,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         new WritableStream({
           write: async (chunk) => {
             this.updateLastMessageReceived();
-            this.writer.write(chunk);
+            await this.writer.write(chunk);
           },
         }),
         // TODO likely can do something at the end of this pipe, either cleanup or schedule a reconnect
@@ -138,11 +138,11 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     });
   }
 
-  public destroy(): void {
+  public async destroy(): Promise<void> {
     if (this.destroyed) {
       return;
     }
     this.#httpWriter?.releaseLock();
-    super.destroy();
+    await super.destroy();
   }
 }

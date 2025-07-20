@@ -273,7 +273,7 @@ export abstract class Connection<
    */
   #setupHeartbeat() {
     if (this.#heartbeatIntervalMs > 0) {
-      this.#heartbeatInterval = setInterval(() => {
+      this.#heartbeatInterval = Connection.setInterval(() => {
         if (this.state.type === "connected") {
           this.sendHeartbeat();
         }
@@ -286,7 +286,7 @@ export abstract class Connection<
    */
   #setupConnectionCheck() {
     if (this.#messageReconnectTimeoutMs > 0) {
-      this.#checkInterval = setInterval(() => {
+      this.#checkInterval = Connection.setInterval(() => {
         if (
           this.state.type === "connected" &&
           this.#messageReconnectTimeoutMs <
@@ -532,7 +532,7 @@ export abstract class Connection<
   /**
    * Destroy the connection
    */
-  public destroy(): void {
+  public async destroy(): Promise<void> {
     if (this.destroyed) {
       return;
     }
@@ -554,18 +554,19 @@ export abstract class Connection<
 
     // Clear heartbeat and connection check intervals
     if (this.#heartbeatInterval) {
-      clearInterval(this.#heartbeatInterval);
+      Connection.clearInterval(this.#heartbeatInterval);
     }
     if (this.#checkInterval) {
-      clearInterval(this.#checkInterval);
+      Connection.clearInterval(this.#checkInterval);
     }
 
     // Clear message buffer
     this.#messageBuffer = [];
 
+    // Release the writer lock, then close the fan out writer
     this.writer.releaseLock();
     this.fanOutWriter.writable.close();
 
-    this.closeConnection();
+    await this.closeConnection();
   }
 }
