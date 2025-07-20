@@ -364,3 +364,72 @@ export const fromMessageArrayStream = <Context extends ClientContext>(
       }
     },
   });
+
+export type BatchingOptions = {
+  /**
+   * The maximum number of messages to batch together
+   */
+  maxBatchSize?: number;
+  /**
+   * The maximum delay in milliseconds to wait before sending a batch
+   */
+  maxBatchDelay?: number;
+};
+
+/**
+ * Creates a transform stream that batches messages together
+ */
+export function getBatchingTransform({
+  maxBatchSize = 10,
+  maxBatchDelay = 100,
+}: BatchingOptions = {}) {
+  let messageQueue: Message[] = [];
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let controller: TransformStreamDefaultController<Message[]> | null = null;
+
+  const sendBatch = () => {
+    if (messageQueue.length === 0 || !controller) return;
+    const batch = messageQueue;
+    messageQueue = [];
+    try {
+      controller.enqueue(batch);
+    } catch (error) {
+      // Ignore errors if controller is closed or stream is errored
+    }
+  };
+
+  const scheduleBatch = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(sendBatch, maxBatchDelay);
+  };
+
+  return new TransformStream<Message, Message[]>({
+    start(c) {
+      controller = c;
+    },
+
+    transform(message, _controller) {
+      messageQueue.push(message);
+
+      if (messageQueue.length >= maxBatchSize) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        sendBatch();
+      } else {
+        scheduleBatch();
+      }
+    },
+
+    flush() {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      sendBatch();
+    },
+  });
+}

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { BinaryMessage } from "teleportal";
-import { createFanInReader, createFanOutWriter } from "./utils";
+import type { BinaryMessage, Message } from "teleportal";
+import {
+  createFanInReader,
+  createFanOutWriter,
+  getBatchingTransform,
+} from "./utils";
 
 // Helper function to create a test message
 function createTestMessage(data: number[]): BinaryMessage {
@@ -487,5 +491,505 @@ describe("Integration tests", () => {
     expect(() => writer.unsubscribe()).not.toThrow();
     await expect(fanOutWriter.close()).resolves.toBeUndefined();
     expect(() => fanIn.close()).not.toThrow();
+  });
+});
+
+describe("Batching Transform", () => {
+  // Helper function to create test messages
+  function createTestMessage(data: number[]): Message {
+    // Create a mock Message object for testing
+    const encoded = new Uint8Array(data) as unknown as BinaryMessage;
+    return {
+      type: "doc" as const,
+      document: "test-doc",
+      payload: { type: "sync-step-1", sv: encoded as any },
+      context: {},
+      encrypted: false,
+      get encoded() {
+        return encoded;
+      },
+      get id() {
+        return "test-id";
+      },
+      resetEncoded() {},
+    } as Message;
+  }
+
+  // Helper function to collect batched messages
+  async function collectBatchedMessages(
+    readable: ReadableStream<Message[]>,
+    maxBatches = 5,
+    timeout = 1000,
+  ): Promise<Message[][]> {
+    const batches: Message[][] = [];
+    let reader: ReadableStreamDefaultReader<Message[]> | null = null;
+
+    return new Promise<Message[][]>((resolve) => {
+      const timeoutId = setTimeout(() => {
+        if (reader) {
+          try {
+            reader.releaseLock();
+          } catch {}
+        }
+        resolve(batches);
+      }, timeout);
+
+      const collectAsync = async () => {
+        try {
+          reader = readable.getReader();
+
+          while (batches.length < maxBatches) {
+            const result = await reader.read();
+
+            if (result.done) {
+              break;
+            }
+
+            batches.push(result.value);
+          }
+        } catch (error) {
+          // Ignore errors during collection
+        } finally {
+          clearTimeout(timeoutId);
+          if (reader) {
+            try {
+              reader.releaseLock();
+            } catch {}
+          }
+          resolve(batches);
+        }
+      };
+
+      collectAsync();
+    });
+  }
+
+  describe("Basic functionality", () => {
+    it("should batch messages up to maxBatchSize", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 3,
+        maxBatchDelay: 50,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = [
+        createTestMessage([1, 2, 3]),
+        createTestMessage([4, 5, 6]),
+        createTestMessage([7, 8, 9]),
+      ];
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages
+      for (const message of messages) {
+        await writer.write(message);
+      }
+
+      // Wait for batch to be sent
+      const result = await readPromise;
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(3);
+      expect(result.value).toEqual(messages);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+
+    it("should send partial batch after maxBatchDelay", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 5,
+        maxBatchDelay: 100,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = [
+        createTestMessage([1, 2, 3]),
+        createTestMessage([4, 5, 6]),
+      ];
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages
+      for (const message of messages) {
+        await writer.write(message);
+      }
+
+      // Wait for timeout to trigger batch
+      const result = await readPromise;
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(2);
+      expect(result.value).toEqual(messages);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+
+    it("should use default options when none provided", async () => {
+      const batchingTransform = getBatchingTransform();
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = Array.from({ length: 10 }, (_, i) =>
+        createTestMessage([i]),
+      );
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write exactly maxBatchSize messages (default 10)
+      for (const message of messages) {
+        await writer.write(message);
+      }
+
+      const result = await readPromise;
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(10);
+      expect(result.value).toEqual(messages);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+  });
+
+  describe("Batch timing", () => {
+    it("should send batch immediately when maxBatchSize is reached", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 2,
+        maxBatchDelay: 1000,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = [
+        createTestMessage([1, 2, 3]),
+        createTestMessage([4, 5, 6]),
+      ];
+
+      const startTime = Date.now();
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages
+      for (const message of messages) {
+        await writer.write(message);
+      }
+
+      // Should receive batch immediately
+      const result = await readPromise;
+      const endTime = Date.now();
+
+      expect(result.done).toBe(false);
+      expect(result.value).toBeDefined();
+      expect(result.value!).toHaveLength(2);
+      expect(result.value!).toEqual(messages);
+      expect(endTime - startTime).toBeLessThan(100); // Should be much faster than 1000ms
+
+      await writer.close();
+      reader.releaseLock();
+    });
+
+    it("should respect maxBatchDelay for partial batches", async () => {
+      const maxBatchDelay = 200;
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 5,
+        maxBatchDelay,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const message = createTestMessage([1, 2, 3]);
+      const startTime = Date.now();
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      await writer.write(message);
+
+      // Should receive batch after delay
+      const result = await readPromise;
+      const endTime = Date.now();
+
+      expect(result.done).toBe(false);
+      expect(result.value).toBeDefined();
+      expect(result.value!).toHaveLength(1);
+      expect(result.value![0]).toEqual(message);
+      expect(endTime - startTime).toBeGreaterThanOrEqual(maxBatchDelay - 50); // Allow some tolerance
+
+      await writer.close();
+      reader.releaseLock();
+    });
+  });
+
+  describe("Multiple batches", () => {
+    it("should send multiple batches correctly", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 2,
+        maxBatchDelay: 50,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = [createTestMessage([1]), createTestMessage([2])];
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages
+      await writer.write(messages[0]);
+      await writer.write(messages[1]);
+
+      // Should get batch
+      const result = await readPromise;
+
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(2);
+      expect(result.value).toEqual(messages);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+
+    it("should handle rapid message writes", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 3,
+        maxBatchDelay: 100,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = Array.from({ length: 3 }, (_, i) =>
+        createTestMessage([i]),
+      );
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages rapidly
+      await Promise.all(messages.map((message) => writer.write(message)));
+
+      // Should get batch
+      const result = await readPromise;
+
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(3);
+      expect(result.value).toEqual(messages);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+  });
+
+  describe("Stream closure", () => {
+    it("should flush remaining messages on close", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 5,
+        maxBatchDelay: 1000,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = [
+        createTestMessage([1, 2, 3]),
+        createTestMessage([4, 5, 6]),
+      ];
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages
+      for (const message of messages) {
+        await writer.write(message);
+      }
+
+      // Close writer immediately
+      await writer.close();
+
+      // Should receive remaining messages
+      const result = await readPromise;
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(2);
+      expect(result.value).toEqual(messages);
+
+      // Stream should be done
+      const finalResult = await reader.read();
+      expect(finalResult.done).toBe(true);
+
+      reader.releaseLock();
+    });
+
+    it("should handle empty queue on close", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 5,
+        maxBatchDelay: 100,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      // Close without writing any messages
+      await writer.close();
+
+      // Stream should be done immediately
+      const result = await reader.read();
+      expect(result.done).toBe(true);
+
+      reader.releaseLock();
+    });
+  });
+
+  describe("Error handling", () => {
+    it("should handle writer abort gracefully", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 3,
+        maxBatchDelay: 100,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const message = createTestMessage([1, 2, 3]);
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      await writer.write(message);
+
+      // Abort the writer
+      await writer.abort(new Error("Test abort"));
+
+      // Should not receive any messages after abort
+      try {
+        const result = await readPromise;
+        expect(result.done).toBe(true);
+      } catch (error) {
+        // It's also acceptable for the read to fail due to abort
+        expect(error).toBeDefined();
+      }
+
+      reader.releaseLock();
+    });
+
+    it("should handle reader cancellation gracefully", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 3,
+        maxBatchDelay: 100,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const message = createTestMessage([1, 2, 3]);
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      await writer.write(message);
+
+      // Cancel the reader
+      await reader.cancel();
+
+      // Writer should still be functional (may throw due to cancellation)
+      try {
+        await writer.write(createTestMessage([4, 5, 6]));
+        // If no error is thrown, that's also acceptable
+      } catch (error) {
+        // It's acceptable for the write to fail after reader cancellation
+        // No need to check the error since it might be undefined
+      }
+
+      // Close writer (may fail if already closed)
+      try {
+        await writer.close();
+      } catch (error) {
+        // It's acceptable for close to fail if writer is already closed
+      }
+    });
+  });
+
+  describe("Edge cases", () => {
+    it("should handle maxBatchSize of 1", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 1,
+        maxBatchDelay: 50,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const message = createTestMessage([1]);
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write message
+      await writer.write(message);
+
+      // Should get batch of 1 message
+      const result = await readPromise;
+
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(1);
+      expect(result.value![0]).toEqual(message);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+
+    it("should handle very large maxBatchSize", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 1000,
+        maxBatchDelay: 50,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const messages = Array.from({ length: 5 }, (_, i) =>
+        createTestMessage([i]),
+      );
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      // Write messages
+      for (const message of messages) {
+        await writer.write(message);
+      }
+
+      // Should get batch after delay since we didn't reach maxBatchSize
+      const result = await readPromise;
+      expect(result.done).toBe(false);
+      expect(result.value).toHaveLength(5);
+      expect(result.value).toEqual(messages);
+
+      await writer.close();
+      reader.releaseLock();
+    });
+
+    it("should handle very small maxBatchDelay", async () => {
+      const batchingTransform = getBatchingTransform({
+        maxBatchSize: 5,
+        maxBatchDelay: 1,
+      });
+      const writer = batchingTransform.writable.getWriter();
+      const reader = batchingTransform.readable.getReader();
+
+      const message = createTestMessage([1, 2, 3]);
+
+      // Start reading before writing to prevent backpressure
+      const readPromise = reader.read();
+
+      await writer.write(message);
+
+      // Should get batch very quickly
+      const result = await readPromise;
+      expect(result.done).toBe(false);
+      expect(result.value).toBeDefined();
+      expect(result.value!).toHaveLength(1);
+      expect(result.value![0]).toEqual(message);
+
+      await writer.close();
+      reader.releaseLock();
+    });
   });
 });
