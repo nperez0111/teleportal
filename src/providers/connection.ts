@@ -440,7 +440,7 @@ export abstract class Connection<
   /**
    * Send a message to the underlying connection (called when connected)
    */
-  protected abstract sendMessage(message: Message): void;
+  protected abstract sendMessage(message: Message): Promise<void>;
 
   /**
    * Send a message to the connection (public interface)
