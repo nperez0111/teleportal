@@ -1,9 +1,4 @@
-import {
-  Message,
-  RawReceivedMessage,
-  type Source,
-  type ClientContext,
-} from "teleportal";
+import { Message, RawReceivedMessage, type ClientContext } from "teleportal";
 import { getHTTPSink, getSSESource } from "teleportal/transports";
 import { Connection, ConnectionOptions } from "../connection";
 
@@ -13,29 +8,43 @@ export type HttpConnectContext = {
     lastEventId: string;
   };
   disconnected: {
-    clientId: null;
-    lastEventId: null;
+    clientId: string | null;
+    lastEventId: string | null;
   };
   connecting: {
-    clientId: null;
-    lastEventId: null;
+    clientId: string | null;
+    lastEventId: string | null;
   };
   errored: {
+    clientId: string | null;
+    lastEventId: string | null;
     reconnectAttempt: number;
   };
 };
 
 export type HttpConnectionOptions = {
   url: string;
+  /**
+   * The fetch implementation to use
+   */
+  fetch: typeof fetch;
+  /**
+   * The EventSource implementation to use
+   */
+  EventSource: typeof EventSource;
 } & Omit<ConnectionOptions, "heartbeatInterval">;
 
 export class HttpConnection extends Connection<HttpConnectContext> {
   #httpWriter: WritableStreamDefaultWriter<RawReceivedMessage> | undefined;
   #url: string;
+  #fetch: typeof fetch;
+  #EventSource: typeof EventSource;
 
   constructor(options: HttpConnectionOptions) {
     super(options);
     this.#url = options.url;
+    this.#fetch = options.fetch;
+    this.#EventSource = options.EventSource;
 
     // Initialize the state with the correct HTTP context
     this._state = {
@@ -61,7 +70,10 @@ export class HttpConnection extends Connection<HttpConnectContext> {
 
     this.setState({
       type: "connecting",
-      context: { clientId: null, lastEventId: null },
+      context: {
+        clientId: this.state.context.clientId,
+        lastEventId: this.state.context.lastEventId,
+      },
     });
 
     const sseSource = new URL(this.#url);
@@ -69,7 +81,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
 
     this.#source = getSSESource({
       context: {} as ClientContext,
-      source: new EventSource(sseSource.toString()),
+      source: new this.#EventSource(sseSource.toString()),
       onPing: () => {
         this.updateLastMessageReceived();
       },
@@ -88,22 +100,31 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         context,
         request: async ({ requestOptions }) => {
           // Send the message to the HTTP sink
-          const resp = await fetch(httpSink.toString(), requestOptions);
+          const resp = await this.#fetch(httpSink.toString(), requestOptions);
           if (!resp.ok) {
             throw new Error("Failed to fetch");
           }
         },
       });
 
-      this.#source.readable.pipeTo(
-        new WritableStream({
-          write: async (chunk) => {
-            this.updateLastMessageReceived();
-            await this.writer.write(chunk);
-          },
-        }),
-        // TODO likely can do something at the end of this pipe, either cleanup or schedule a reconnect
-      );
+      this.#source.readable
+        .pipeTo(
+          new WritableStream({
+            write: async (chunk) => {
+              this.updateLastMessageReceived();
+              this.setState({
+                type: "connected",
+                context: { clientId, lastEventId: chunk.id },
+              });
+              await this.writer.write(chunk);
+            },
+          }),
+        )
+        .finally(() => {
+          if (this.state.type === "disconnected") {
+            this.scheduleReconnect();
+          }
+        });
       this.#httpWriter = sink.writable.getWriter();
       this.setState({
         type: "connected",
@@ -117,9 +138,9 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     }
   }
 
-  protected sendMessage(message: Message): void {
+  protected async sendMessage(message: Message): Promise<void> {
     if (this.#httpWriter) {
-      this.#httpWriter.write(message);
+      await this.#httpWriter.write(message);
     }
   }
 
@@ -132,9 +153,13 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       this.#source.eventSource.close();
       this.#source = undefined;
     }
+
     this.setState({
       type: "disconnected",
-      context: { clientId: null, lastEventId: null },
+      context: {
+        clientId: this.state.context.clientId,
+        lastEventId: this.state.context.lastEventId,
+      },
     });
   }
 

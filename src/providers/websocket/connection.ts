@@ -124,7 +124,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       websocket.addEventListener("open", () => {
         this.updateLastMessageReceived();
         this.setState({ type: "connected", context: { ws: websocket } });
-        this.sendBufferedMessages();
       });
     } catch (error) {
       this.handleConnectionError(
@@ -133,7 +132,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     }
   }
 
-  protected sendMessage(message: Message): void {
+  protected async sendMessage(message: Message): Promise<void> {
     if (
       this.state.type === "connected" &&
       this.state.context.ws.readyState === this.#WebSocketImpl.OPEN

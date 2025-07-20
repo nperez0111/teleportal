@@ -215,10 +215,17 @@ export abstract class Connection<
     this.call("update", state);
     switch (state.type) {
       case "connected":
-        this.call("connected");
+        if (previousState.type !== "connected") {
+          this.call("connected");
+        }
+        if (this.#messageBuffer.length > 0) {
+          this.sendBufferedMessages();
+        }
         break;
       case "disconnected":
-        this.call("disconnected");
+        if (previousState.type !== "disconnected") {
+          this.call("disconnected");
+        }
         // If we were previously connected and should reconnect, schedule reconnection
         if (
           previousState.type === "connected" &&
@@ -362,7 +369,7 @@ export abstract class Connection<
   /**
    * Send a buffered message if connected, otherwise buffer it
    */
-  protected sendOrBuffer(message: Message): void {
+  protected async sendOrBuffer(message: Message): Promise<void> {
     if (this.destroyed) {
       throw new Error("Connection is destroyed, create a new instance");
     }
@@ -373,14 +380,13 @@ export abstract class Connection<
 
     if (this.state.type === "connected") {
       try {
-        this.sendMessage(message);
+        await this.sendMessage(message);
       } catch (err) {
         const error =
           err instanceof Error
             ? err
             : new Error("Failed to send message", { cause: err });
         this.handleConnectionError(error);
-        throw error;
       }
     } else {
       // Buffer message if not connected
@@ -391,11 +397,11 @@ export abstract class Connection<
   /**
    * Send all buffered messages
    */
-  protected sendBufferedMessages() {
+  private async sendBufferedMessages() {
     while (this.#messageBuffer.length > 0) {
       const message = this.#messageBuffer.shift();
       if (message) {
-        this.sendOrBuffer(message);
+        await this.sendOrBuffer(message);
       }
     }
   }
@@ -435,8 +441,8 @@ export abstract class Connection<
   /**
    * Send a message to the connection (public interface)
    */
-  public send(message: Message): void {
-    this.sendOrBuffer(message);
+  public async send(message: Message): Promise<void> {
+    await this.sendOrBuffer(message);
   }
 
   /**
