@@ -22,7 +22,7 @@ const websocketConnection = tokenManager
       .build(),
   )
   .then((token) => {
-    return new websocket.WebsocketConnection({
+    return new websocket.WebSocketConnection({
       url: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/?token=${token}`,
     });
   });

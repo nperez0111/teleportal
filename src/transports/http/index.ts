@@ -5,7 +5,11 @@ import {
   type Sink,
   type Source,
 } from "teleportal";
-import { fromMessageArrayStream } from "../utils";
+import {
+  BatchingOptions,
+  fromMessageArrayStream,
+  getBatchingTransform,
+} from "../utils";
 
 /**
  * Transport which receives a binary message from an HTTP request
@@ -42,6 +46,7 @@ export function getHTTPSource<Context extends ClientContext>({
 export function getHTTPSink<Context extends ClientContext>({
   request,
   context,
+  batchingOptions,
 }: {
   /**
    * A function that sends a {@link Message} as an HTTP request.
@@ -53,10 +58,20 @@ export function getHTTPSink<Context extends ClientContext>({
    * The {@link ClientContext} to use for writing {@link Message}s to the {@link Sink}.
    */
   context: Context;
+  /**
+   * The {@link BatchingOptions} to use for the {@link Sink}.
+   */
+  batchingOptions?: BatchingOptions;
 }): Sink<Context> {
-  return {
-    writable: new WritableStream({
-      async write(chunk) {
+  const batchingTransform = getBatchingTransform(
+    batchingOptions ?? {
+      maxBatchSize: 10,
+      maxBatchDelay: 100,
+    },
+  );
+  batchingTransform.readable.pipeTo(
+    new WritableStream({
+      async write(messages) {
         await request({
           requestOptions: {
             method: "POST",
@@ -66,11 +81,13 @@ export function getHTTPSink<Context extends ClientContext>({
               "x-teleportal-client-id": context.clientId,
             },
             cache: "no-store",
-            // TODO can implement batching of requests in the future
-            body: encodeMessageArray([chunk]),
+            body: encodeMessageArray(messages),
           },
         });
       },
     }),
+  );
+  return {
+    writable: batchingTransform.writable,
   };
 }
