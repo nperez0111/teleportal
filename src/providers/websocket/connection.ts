@@ -4,9 +4,7 @@ import {
   isBinaryMessage,
   isPongMessage,
   type Message,
-  type RawReceivedMessage,
 } from "teleportal";
-import { createFanOutWriter } from "teleportal/transports";
 import { Connection, ConnectionOptions } from "../connection";
 
 export type WebSocketConnectContext = {
@@ -94,6 +92,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
         }
 
         if (isPongMessage(message)) {
+          this.call("ping");
           return;
         }
 

@@ -83,7 +83,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       context: {} as ClientContext,
       source: new this.#EventSource(sseSource.toString()),
       onPing: () => {
-        this.updateLastMessageReceived();
+        this.call("ping");
       },
     });
 

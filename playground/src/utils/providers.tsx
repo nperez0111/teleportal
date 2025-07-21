@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { websocket } from "teleportal/providers";
+import { FallbackConnection, websocket } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 
 import { getEncryptedTransport } from "./encrypted";
@@ -22,8 +22,8 @@ const websocketConnection = tokenManager
       .build(),
   )
   .then((token) => {
-    return new websocket.WebSocketConnection({
-      url: `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/?token=${token}`,
+    return new FallbackConnection({
+      url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
     });
   });
 
@@ -54,7 +54,7 @@ export function useProvider(
         .then((client) => {
           // Create initial provider
           return websocket.Provider.create({
-            client: client,
+            client,
             document: documentId,
             getTransport: key
               ? getEncryptedTransport(key, documentId)

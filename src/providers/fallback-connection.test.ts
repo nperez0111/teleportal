@@ -141,6 +141,9 @@ class MockWebSocket {
   }
 
   close(code?: number, reason?: string) {
+    if (this.readyState === MockWebSocket.CLOSED) {
+      return; // Already closed, don't dispatch events again
+    }
     this.readyState = MockWebSocket.CLOSED;
     this.dispatchEvent(
       new CloseEvent("close", { code: code || 1000, reason: reason || "" }),
@@ -164,7 +167,6 @@ class MockEventSource {
 
   constructor(url: string) {
     this.url = url;
-    console.log("[MockEventSource] constructed", url);
     // Delay connection process until after listeners are added
     queueMicrotask(() => {
       this.readyState = MockEventSource.OPEN;
@@ -187,7 +189,6 @@ class MockEventSource {
   }
 
   dispatchEvent(event: Event) {
-    console.log("[MockEventSource] dispatchEvent", event);
     const listeners = this.listeners[event.type];
     if (listeners) {
       listeners.forEach((listener) => listener(event));
@@ -196,7 +197,6 @@ class MockEventSource {
   }
 
   private simulateClientIdMessage() {
-    console.log("[MockEventSource] simulateClientIdMessage", this.clientId);
     // Dispatch a 'client-id' event as expected by getSSESource
     this.dispatchEvent(
       new MessageEvent("client-id", {

@@ -13,7 +13,7 @@ export type FallbackConnectionOptions = {
   url: string;
   /**
    * Timeout in milliseconds for WebSocket connection attempts
-   * @default 5000
+   * @default 2000
    */
   websocketTimeout?: number;
   /**
@@ -61,13 +61,13 @@ export class FallbackConnection extends Connection<FallbackContext> {
   #httpOptions: Required<FallbackConnectionOptions>["httpOptions"];
   #currentConnection: WebSocketConnection | HttpConnection | null = null;
   #reader: FanOutReader<RawReceivedMessage> | null = null;
-  #websocketFailed = false;
+  #websocketConnectionStatus: "init" | "failed" | "success" = "init";
 
   constructor(options: FallbackConnectionOptions) {
     super(options);
 
     this.#baseUrl = options.url;
-    this.#websocketTimeout = options.websocketTimeout ?? 5000;
+    this.#websocketTimeout = options.websocketTimeout ?? 2000;
     this.#websocketOptions = options.websocketOptions ?? {};
     this.#httpOptions = options.httpOptions ?? {};
 
@@ -88,7 +88,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
   }
 
   private getHttpUrl(baseUrl: string): string {
-    return this.#baseUrl;
+    return new URL(baseUrl).toString();
   }
 
   protected async initConnection(): Promise<void> {
@@ -99,18 +99,22 @@ export class FallbackConnection extends Connection<FallbackContext> {
     if (!this.shouldAttemptConnection()) {
       return;
     }
+    if (this.state.type === "connecting" || this.state.type === "connected") {
+      return;
+    }
 
     // If WebSocket hasn't failed yet, try WebSocket first
-    if (!this.#websocketFailed) {
+    if (this.#websocketConnectionStatus === "init") {
       try {
         await this.tryWebSocketConnection();
+        this.#websocketConnectionStatus = "success";
         return;
       } catch (error) {
         console.warn(
           "WebSocket connection failed, falling back to HTTP:",
           error,
         );
-        this.#websocketFailed = true;
+        this.#websocketConnectionStatus = "failed";
         // Continue to HTTP fallback
       }
     }
@@ -145,19 +149,25 @@ export class FallbackConnection extends Connection<FallbackContext> {
     // Set up connection monitoring
     this.setupConnectionEventHandlers(wsConnection, "websocket");
 
+    let timeout: ReturnType<typeof setTimeout>;
     // Try to connect with timeout
-    const connectPromise = wsConnection.connect();
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("WebSocket connection timeout")),
-        this.#websocketTimeout,
-      );
+    const connectPromise = wsConnection.connect().catch((e) => {
+      // ignore websocket errors if we haven't failed it yet
+      return new Promise(() => {
+        // Purposefully never resolve so that we wait for the timeout
+      });
     });
-
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        wsConnection.destroy().finally(() => {
+          reject(new Error("WebSocket connection timeout"));
+        });
+      }, this.#websocketTimeout);
+    });
     await Promise.race([connectPromise, timeoutPromise]);
+    clearTimeout(timeout!);
 
     // If we get here, WebSocket connected successfully
-    this.#currentConnection = wsConnection;
     this.#reader = wsConnection.getReader();
     this.setupMessagePipe();
   }
@@ -184,7 +194,6 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
     await httpConnection.connect();
 
-    this.#currentConnection = httpConnection;
     this.#reader = httpConnection.getReader();
     this.setupMessagePipe();
   }
@@ -193,38 +202,50 @@ export class FallbackConnection extends Connection<FallbackContext> {
     connection: WebSocketConnection | HttpConnection,
     type: "websocket" | "http",
   ): void {
-    connection.on("update", (state) => {
-      if (state.type === "errored") {
-        this.handleConnectionError(
-          (state as any).error,
-          (state as any).context?.reconnectAttempt,
-        );
-        return;
-      }
-      this.setState({
-        type: state.type,
-        context: {
-          connectionType: type,
-          underlyingContext: state.context,
-        },
-      } as ConnectionState<FallbackContext>);
-    });
+    connection.addListeners({
+      update: (state) => {
+        if (state.type === "errored") {
+          if (
+            this.#websocketConnectionStatus === "init" &&
+            type === "websocket"
+          ) {
+            // ignore websocket errors if we haven't failed it yet
+            return;
+          }
 
-    connection.on("message", (message) => {
-      this.call("message", message);
-    });
+          this.handleConnectionError(
+            state.error,
+            state.context?.reconnectAttempt,
+          );
+          return;
+        }
 
-    connection.on("connected", () => {
-      this.call("connected");
-    });
-
-    connection.on("disconnected", () => {
-      this.call("disconnected");
-      // Clean up the reader when disconnected
-      if (this.#reader) {
-        this.#reader.unsubscribe();
-        this.#reader = null;
-      }
+        this.setState({
+          type: state.type,
+          context: {
+            connectionType: type,
+            underlyingContext: state.context,
+          },
+        } as ConnectionState<FallbackContext>);
+      },
+      message: (message) => {
+        this.call("message", message);
+      },
+      connected: () => {
+        this.#currentConnection = connection;
+        this.call("connected");
+      },
+      disconnected: () => {
+        this.call("disconnected");
+        // Clean up the reader when disconnected
+        if (this.#reader) {
+          this.#reader.unsubscribe();
+          this.#reader = null;
+        }
+      },
+      ping: () => {
+        this.call("ping");
+      },
     });
   }
 
@@ -252,13 +273,6 @@ export class FallbackConnection extends Connection<FallbackContext> {
       throw new Error("No active connection");
     }
     await this.#currentConnection.send(message);
-  }
-
-  protected sendHeartbeat(): void {
-    if (this.#currentConnection && this.state.type === "connected") {
-      // Delegate to the underlying connection
-      (this.#currentConnection as any).sendHeartbeat?.();
-    }
   }
 
   protected async closeConnection(): Promise<void> {
@@ -311,23 +325,5 @@ export class FallbackConnection extends Connection<FallbackContext> {
       throw new Error("FallbackConnection is destroyed, create a new instance");
     }
     return super.connect();
-  }
-
-  /**
-   * Override error handling to trigger fallback logic
-   */
-  protected handleConnectionError(error: Error, reconnectAttempt?: number) {
-    // If we haven't already failed WebSocket, treat this as a WebSocket failure and fallback to HTTP
-    if (
-      !this.#websocketFailed &&
-      this.state.context.connectionType === "websocket"
-    ) {
-      this.#websocketFailed = true;
-      // Try HTTP connection immediately
-      this.initConnection();
-      return;
-    }
-    // If HTTP also fails, call the base class handler
-    super.handleConnectionError(error, reconnectAttempt);
   }
 }

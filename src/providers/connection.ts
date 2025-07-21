@@ -116,6 +116,7 @@ export abstract class Connection<
   message: (message: Message) => void;
   connected: () => void;
   disconnected: () => void;
+  ping: () => void;
 }> {
   // Static timer functions that can be overridden for testing
   static setTimeout = globalThis.setTimeout.bind(globalThis);
@@ -211,6 +212,9 @@ export abstract class Connection<
         });
       }, 0);
     }
+    this.on("ping", () => {
+      this.updateLastMessageReceived();
+    });
   }
 
   protected setState(state: ConnectionState<Context>) {
