@@ -1,8 +1,8 @@
 import { Message, RawReceivedMessage } from "teleportal";
 import { FanOutReader } from "teleportal/transports";
 import { Connection, ConnectionOptions, ConnectionState } from "./connection";
-import { WebSocketConnection } from "./websocket/connection";
 import { HttpConnection } from "./http/connection";
+import { WebSocketConnection } from "./websocket/connection";
 
 export type FallbackConnectionOptions = {
   /**
@@ -65,7 +65,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
   constructor(options: FallbackConnectionOptions) {
     super(options);
-    
+
     this.#baseUrl = options.url;
     this.#websocketTimeout = options.websocketTimeout ?? 5000;
     this.#websocketOptions = options.websocketOptions ?? {};
@@ -106,7 +106,10 @@ export class FallbackConnection extends Connection<FallbackContext> {
         await this.tryWebSocketConnection();
         return;
       } catch (error) {
-        console.warn("WebSocket connection failed, falling back to HTTP:", error);
+        console.warn(
+          "WebSocket connection failed, falling back to HTTP:",
+          error,
+        );
         this.#websocketFailed = true;
         // Continue to HTTP fallback
       }
@@ -117,7 +120,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
       await this.tryHttpConnection();
     } catch (error) {
       this.handleConnectionError(
-        error instanceof Error ? error : new Error(String(error))
+        error instanceof Error ? error : new Error(String(error)),
       );
     }
   }
@@ -145,11 +148,14 @@ export class FallbackConnection extends Connection<FallbackContext> {
     // Try to connect with timeout
     const connectPromise = wsConnection.connect();
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("WebSocket connection timeout")), this.#websocketTimeout);
+      setTimeout(
+        () => reject(new Error("WebSocket connection timeout")),
+        this.#websocketTimeout,
+      );
     });
 
     await Promise.race([connectPromise, timeoutPromise]);
-    
+
     // If we get here, WebSocket connected successfully
     this.#currentConnection = wsConnection;
     this.#reader = wsConnection.getReader();
@@ -177,7 +183,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
     this.setupConnectionEventHandlers(httpConnection, "http");
 
     await httpConnection.connect();
-    
+
     this.#currentConnection = httpConnection;
     this.#reader = httpConnection.getReader();
     this.setupMessagePipe();
@@ -185,17 +191,22 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
   private setupConnectionEventHandlers(
     connection: WebSocketConnection | HttpConnection,
-    type: "websocket" | "http"
+    type: "websocket" | "http",
   ): void {
     connection.on("update", (state) => {
+      if (state.type === "errored") {
+        this.handleConnectionError(
+          (state as any).error,
+          (state as any).context?.reconnectAttempt,
+        );
+        return;
+      }
       this.setState({
         type: state.type,
         context: {
           connectionType: type,
           underlyingContext: state.context,
-          ...(state.type === "errored" && { reconnectAttempt: (state as any).context.reconnectAttempt }),
         },
-        ...(state.type === "errored" && { error: (state as any).error }),
       } as ConnectionState<FallbackContext>);
     });
 
@@ -221,17 +232,19 @@ export class FallbackConnection extends Connection<FallbackContext> {
     if (!this.#reader) return;
 
     // Pipe messages from the underlying connection to our writer
-    this.#reader.readable.pipeTo(
-      new WritableStream({
-        write: async (message) => {
-          this.updateLastMessageReceived();
-          await this.writer.write(message);
-        },
-      })
-    ).catch((error) => {
-      // Handle pipe errors
-      console.warn("Message pipe error:", error);
-    });
+    this.#reader.readable
+      .pipeTo(
+        new WritableStream({
+          write: async (message) => {
+            this.updateLastMessageReceived();
+            await this.writer.write(message);
+          },
+        }),
+      )
+      .catch((error) => {
+        // Handle pipe errors
+        console.warn("Message pipe error:", error);
+      });
   }
 
   protected async sendMessage(message: Message): Promise<void> {
@@ -288,5 +301,33 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
   public get connectionType(): "websocket" | "http" | null {
     return this.state.context.connectionType;
+  }
+
+  /**
+   * Override the connect method to throw the correct error message
+   */
+  public async connect(): Promise<void> {
+    if (this.destroyed) {
+      throw new Error("FallbackConnection is destroyed, create a new instance");
+    }
+    return super.connect();
+  }
+
+  /**
+   * Override error handling to trigger fallback logic
+   */
+  protected handleConnectionError(error: Error, reconnectAttempt?: number) {
+    // If we haven't already failed WebSocket, treat this as a WebSocket failure and fallback to HTTP
+    if (
+      !this.#websocketFailed &&
+      this.state.context.connectionType === "websocket"
+    ) {
+      this.#websocketFailed = true;
+      // Try HTTP connection immediately
+      this.initConnection();
+      return;
+    }
+    // If HTTP also fails, call the base class handler
+    super.handleConnectionError(error, reconnectAttempt);
   }
 }

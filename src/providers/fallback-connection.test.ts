@@ -20,12 +20,20 @@ process.on("unhandledRejection", (err) => {
 
 beforeAll(() => {
   // Override timer functions for testing
-  Connection.setTimeout = (fn, delay) => {
+  Connection.setTimeout = ((
+    fn: Function,
+    delay: number = 0,
+    ...args: any[]
+  ) => {
     return setTimeout(fn, Math.min(delay, 10)) as any;
-  };
-  Connection.setInterval = (fn, delay) => {
+  }) as any;
+  Connection.setInterval = ((
+    fn: Function,
+    delay: number = 0,
+    ...args: any[]
+  ) => {
     return setInterval(fn, Math.min(delay, 10)) as any;
-  };
+  }) as any;
   Connection.clearTimeout = clearTimeout;
   Connection.clearInterval = clearInterval;
 });
@@ -58,15 +66,22 @@ class MockWebSocket {
   constructor(url: string, protocols?: string | string[]) {
     this.url = url;
     this.protocols = protocols;
-    
+
     // Delay connection process until after listeners are added
     queueMicrotask(() => {
       if (MockWebSocket.shouldFail) {
         this.readyState = MockWebSocket.CLOSED;
+        // Dispatch error event first, then close event
         this.dispatchEvent(new Event("error"));
-        this.dispatchEvent(
-          new CloseEvent("close", { code: 1006, reason: "Connection failed" }),
-        );
+        // Use setTimeout to ensure error event is processed before close
+        setTimeout(() => {
+          this.dispatchEvent(
+            new CloseEvent("close", {
+              code: 1006,
+              reason: "Connection failed",
+            }),
+          );
+        }, 0);
       } else {
         this.readyState = MockWebSocket.OPEN;
         this.dispatchEvent(new Event("open"));
@@ -87,14 +102,28 @@ class MockWebSocket {
 
   removeEventListener(type: string, listener: (event: any) => void) {
     if (this.listeners[type]) {
-      this.listeners[type] = this.listeners[type].filter(l => l !== listener);
+      this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
     }
   }
 
   dispatchEvent(event: Event) {
     const listeners = this.listeners[event.type];
     if (listeners) {
-      listeners.forEach(listener => listener(event));
+      // Use setTimeout to ensure errors are handled asynchronously
+      if (event.type === "error") {
+        setTimeout(() => {
+          listeners.forEach((listener) => {
+            try {
+              listener(event);
+            } catch (error) {
+              // Silently handle errors to prevent them from being thrown
+              console.warn("MockWebSocket error handler error:", error);
+            }
+          });
+        }, 0);
+      } else {
+        listeners.forEach((listener) => listener(event));
+      }
     }
     return true;
   }
@@ -135,6 +164,7 @@ class MockEventSource {
 
   constructor(url: string) {
     this.url = url;
+    console.log("[MockEventSource] constructed", url);
     // Delay connection process until after listeners are added
     queueMicrotask(() => {
       this.readyState = MockEventSource.OPEN;
@@ -152,24 +182,28 @@ class MockEventSource {
 
   removeEventListener(type: string, listener: (event: any) => void) {
     if (this.listeners[type]) {
-      this.listeners[type] = this.listeners[type].filter(l => l !== listener);
+      this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
     }
   }
 
   dispatchEvent(event: Event) {
+    console.log("[MockEventSource] dispatchEvent", event);
     const listeners = this.listeners[event.type];
     if (listeners) {
-      listeners.forEach(listener => listener(event));
+      listeners.forEach((listener) => listener(event));
     }
     return true;
   }
 
   private simulateClientIdMessage() {
-    this.dispatchEvent({
-      type: "message",
-      data: "client-id: " + this.clientId,
-      lastEventId: "client-id",
-    } as MessageEvent);
+    console.log("[MockEventSource] simulateClientIdMessage", this.clientId);
+    // Dispatch a 'client-id' event as expected by getSSESource
+    this.dispatchEvent(
+      new MessageEvent("client-id", {
+        data: this.clientId,
+        lastEventId: "client-id",
+      }),
+    );
   }
 
   close() {
@@ -195,8 +229,10 @@ class MockFetch {
   }
 }
 
-function createMockFetch(mockFetch: MockFetch) {
-  return mockFetch.fetch.bind(mockFetch);
+function createMockFetch(mockFetch: MockFetch): typeof fetch {
+  const fetchFn = mockFetch.fetch.bind(mockFetch) as typeof fetch;
+  (fetchFn as any).preconnect = () => {};
+  return fetchFn;
 }
 
 describe("FallbackConnection", () => {
@@ -275,9 +311,24 @@ describe("FallbackConnection", () => {
         EventSource: MockEventSource as any,
       },
       websocketTimeout: 50, // Short timeout to speed up test
+      maxReconnectAttempts: 0, // Disable reconnection attempts
+      initialReconnectDelay: 1, // Minimal delay for fallback
     });
 
-    await client.connected;
+    // Wait for the fallback to HTTP connection
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Fallback to HTTP timed out")),
+        500,
+      );
+      client.on("update", (state) => {
+        if (state.type === "connected" && client.connectionType === "http") {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
     expect(client.state.type).toBe("connected");
     expect(client.connectionType).toBe("http");
   });
@@ -351,7 +402,7 @@ describe("FallbackConnection", () => {
 
     await client.connected;
     expect(client.connectionType).toBe("websocket");
-    
+
     // Check that the WebSocket URL was properly converted
     // This is tested indirectly by successful connection
   });
