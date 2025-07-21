@@ -9,8 +9,17 @@ import { getHTTPHandler } from "teleportal/http";
 
 import { logger } from "../src/backend/logger";
 import homepage from "../src/index.html";
+import {
+  checkPermissionWithTokenManager,
+  createTokenManager,
+} from "teleportal/token";
 
 const memoryStorage = createStorage();
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here", // In production, use a strong secret
+  expiresIn: 3600, // 1 hour
+  issuer: "my-collaborative-app",
+});
 
 const server = new Server({
   getStorage: async (ctx) => {
@@ -19,6 +28,7 @@ const server = new Server({
     }
     return new UnstorageDocumentStorage(memoryStorage);
   },
+  checkPermission: checkPermissionWithTokenManager(tokenManager),
   logger: logger,
 });
 
