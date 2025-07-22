@@ -12,7 +12,6 @@ export type ServerSyncTransport<
 > = Transport<
   Context,
   {
-    // TODO will probably switch to hookable here, but want the types to be better first
     /**
      * The observer to use for the transport
      */
