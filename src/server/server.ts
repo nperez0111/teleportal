@@ -15,10 +15,6 @@ import { DocumentManager } from "./document-manager";
 import { logger as defaultLogger, Logger } from "./logger";
 
 import type { DocumentStorage } from "teleportal/storage";
-import {
-  createNoopServerSyncTransport,
-  ServerSyncTransport,
-} from "./server-sync";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -73,12 +69,6 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     type: "read" | "write";
   }) => Promise<boolean>;
-
-  /**
-   * Optional server synchronization transport for cross-instance communication.
-   * If provided, the server will use this to synchronize updates across multiple server instances.
-   */
-  syncTransport?: ServerSyncTransport<Context>;
   /**
    * Optional pub/sub backend for cross-instance communication.
    * If provided, the server will use this to publish and subscribe to messages across multiple server instances.
@@ -120,8 +110,7 @@ export class Server<Context extends ServerContext> extends Observable<{
           server: this,
         });
       },
-      syncTransport:
-        this.options.syncTransport ?? createNoopServerSyncTransport(),
+      pubSub: this.pubsub,
     });
 
     this.documentManager.addListeners({
@@ -293,6 +282,8 @@ export class Server<Context extends ServerContext> extends Observable<{
     this.logger.trace("document manager destroyed");
     await this.clientManager.destroy();
     this.logger.trace("client manager destroyed");
+    await this.pubsub.destroy?.();
+    this.logger.trace("pubsub destroyed");
     super.destroy();
     this.logger.trace("server destroyed");
   }

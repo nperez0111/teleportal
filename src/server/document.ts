@@ -1,5 +1,6 @@
-import type { StateVector } from "teleportal";
+import type { PubSub, StateVector } from "teleportal";
 import {
+  decodeMessage,
   DocMessage,
   getEmptyStateVector,
   getEmptyUpdate,
@@ -38,17 +39,21 @@ export class Document<Context extends ServerContext> extends Observable<{
   public logger: Logger;
   public readonly clients = new Set<Client<Context>>();
   private readonly storage: DocumentStorage;
+  private readonly pubSub: PubSub;
+  private readonly unsubscribe: Promise<() => Promise<void>>;
 
   constructor({
     name,
     id,
     logger,
     storage,
+    pubSub,
   }: {
     name: string;
     id: string;
     logger: Logger;
     storage: DocumentStorage;
+    pubSub: PubSub;
   }) {
     super();
     this.name = name;
@@ -57,6 +62,10 @@ export class Document<Context extends ServerContext> extends Observable<{
       .child()
       .withContext({ name: "document", documentId: id, document: name });
     this.storage = storage;
+    this.pubSub = pubSub;
+    this.unsubscribe = pubSub.subscribe(`documents/${id}`, (message) => {
+      this.handleMessage(decodeMessage(message));
+    });
   }
 
   /**
@@ -112,6 +121,7 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
 
     await this.call("broadcast", message);
+    this.pubSub.publish(`documents/${this.id}`, message.encoded);
   }
 
   /**
@@ -141,22 +151,6 @@ export class Document<Context extends ServerContext> extends Observable<{
     return message.context.room
       ? message.context.room + "/" + message.document
       : message.document;
-  }
-
-  /**
-   * Create a document from a message.
-   */
-  static fromMessage(ctx: {
-    message: Message<ServerContext>;
-    logger: Logger;
-    storage: DocumentStorage;
-  }) {
-    return new Document({
-      id: Document.getDocumentId(ctx.message),
-      name: ctx.message.document,
-      logger: ctx.logger,
-      storage: ctx.storage,
-    });
   }
 
   /**
@@ -352,6 +346,12 @@ export class Document<Context extends ServerContext> extends Observable<{
 
     this.logger.trace("destroying document");
     await this.call("destroy", this);
+
+    this.logger.trace("unsubscribing from pubsub");
+    await (
+      await this.unsubscribe
+    )();
+    this.logger.trace("unsubscribed from pubsub");
 
     this.logger.trace("unloading storage");
     await this.storage.unload(this.id);

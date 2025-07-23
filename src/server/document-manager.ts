@@ -1,8 +1,12 @@
-import { Observable, type Message, type ServerContext } from "teleportal";
+import {
+  Observable,
+  type PubSub,
+  type Message,
+  type ServerContext,
+} from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
-import type { ServerSyncTransport } from "./server-sync";
 
 export type DocumentManagerOptions<Context extends ServerContext> = {
   logger: Logger;
@@ -12,7 +16,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     context: Context;
     encrypted: boolean;
   }) => Promise<DocumentStorage>;
-  syncTransport: ServerSyncTransport<Context>;
+  pubSub: PubSub;
 };
 
 /**
@@ -27,18 +31,6 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
   private documents = new Map<string, Document<Context>>();
   private logger: Logger;
   private options: DocumentManagerOptions<Context>;
-  private syncTransportWriter: WritableStreamDefaultWriter<Message<Context>>;
-  private syncTransportSink = new WritableStream<Message<Context>>({
-    write: async (message) => {
-      const documentId = Document.getDocumentId(message);
-      const document = this.getDocument(documentId);
-      if (!document) {
-        return;
-      }
-
-      await document.handleMessage(message);
-    },
-  });
 
   constructor(options: DocumentManagerOptions<Context>) {
     super();
@@ -46,8 +38,6 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
     this.logger = options.logger
       .child()
       .withContext({ name: "document-manager" });
-    this.syncTransportWriter = this.options.syncTransport.writable.getWriter();
-    this.options.syncTransport.readable.pipeTo(this.syncTransportSink);
   }
 
   /**
@@ -89,23 +79,17 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
       id: documentId,
       logger: this.logger.child(),
       storage: storage,
+      pubSub: this.options.pubSub,
     });
 
     doc.on("destroy", (document) => {
       this.removeDocument(document.id);
     });
 
-    // Subscribe to this document's updates
-    await this.options.syncTransport.observer?.call("subscribe", documentId);
-
     this.documents.set(documentId, doc);
     this.logger.withMetadata({ documentId }).trace("document created");
 
     await this.call("document-created", doc);
-
-    doc.on("broadcast", (message) => {
-      this.syncTransportWriter.write(message);
-    });
 
     return doc;
   }
@@ -162,11 +146,6 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
       ),
     );
     this.documents.clear();
-
-    await this.syncTransportSink.abort();
-    await this.syncTransportWriter.releaseLock();
-    await this.options.syncTransport.close?.();
-    this.logger.trace("server sync transport closed");
 
     this.logger.trace("document manager destroyed");
     super.destroy();
