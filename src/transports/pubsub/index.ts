@@ -1,13 +1,12 @@
 import {
   BinaryMessage,
   Message,
+  PubSub,
+  PubSubTopic,
   ServerContext,
   Sink,
   Source,
-  PubSub,
   Transport,
-  decodeMessage,
-  ClientContext,
 } from "teleportal";
 import { compose, getMessageReader } from "../utils";
 
@@ -25,9 +24,18 @@ export function getPubSubSink<Context extends ServerContext>({
   /**
    * A function that resolves the topic for a given {@link Message}.
    */
-  topicResolver: (message: Message<Context>) => string;
-}): Sink<Context> {
+  topicResolver: (message: Message<Context>) => PubSubTopic;
+}): Sink<
+  Context,
+  {
+    /**
+     * The {@link PubSub} to use for publishing {@link Message}s.
+     */
+    pubsub: PubSub;
+  }
+> {
   return {
+    pubsub,
     writable: new WritableStream({
       async write(chunk) {
         const topic = topicResolver(chunk);
@@ -40,12 +48,12 @@ export function getPubSubSink<Context extends ServerContext>({
 /**
  * Generic consumer source that consumes messages from topics using the provided backend
  */
-export function getPubSubSource<Context extends ClientContext>({
+export function getPubSubSource<Context extends ServerContext>({
   context,
   pubsub,
 }: {
   /**
-   * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
+   * The {@link ServerContext} to use for reading {@link Message}s from the {@link Source}.
    */
   context: Context;
   /**
@@ -58,18 +66,24 @@ export function getPubSubSource<Context extends ClientContext>({
     /**
      * Subscribe to a topic
      */
-    subscribe: (topic: string) => Promise<void>;
+    subscribe: (topic: PubSubTopic) => Promise<void>;
     /**
      * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
      */
-    unsubscribe: (topic?: string) => Promise<void>;
+    unsubscribe: (topic?: PubSubTopic) => Promise<void>;
+    /**
+     * The {@link PubSub} to use for consuming {@link Message}s.
+     */
+    pubsub: PubSub;
   }
 > {
-  const subscribedTopics = new Map<string, () => Promise<void>>();
+  const subscribedTopics = new Map<PubSubTopic, () => Promise<void>>();
+  // TODO this could probably be a getContext method instead of having to pass in the context
   const reader = getMessageReader(context);
   let controller: ReadableStreamDefaultController<BinaryMessage>;
 
   return {
+    pubsub,
     async subscribe(topic) {
       if (!subscribedTopics.has(topic)) {
         const unsubscribe = await pubsub.subscribe(topic, (message) => {
@@ -119,7 +133,7 @@ export function getPubSubTransport<Context extends ServerContext>({
   topicResolver,
 }: {
   /**
-   * The {@link ClientContext} to use for reading {@link Message}s from the {@link Source}.
+   * The {@link ServerContext} to use for reading {@link Message}s from the {@link Source}.
    */
   context: Context;
   /**
@@ -129,18 +143,22 @@ export function getPubSubTransport<Context extends ServerContext>({
   /**
    * A function that resolves the topic for a given {@link Message}.
    */
-  topicResolver: (message: Message<Context>) => string;
+  topicResolver: (message: Message<Context>) => PubSubTopic;
 }): Transport<
   Context,
   {
     /**
      * Subscribe to a topic
      */
-    subscribe: (topic: string) => Promise<void>;
+    subscribe: (topic: PubSubTopic) => Promise<void>;
     /**
      * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
      */
-    unsubscribe: (topic?: string) => Promise<void>;
+    unsubscribe: (topic?: PubSubTopic) => Promise<void>;
+    /**
+     * The {@link PubSub} to use for consuming {@link Message}s.
+     */
+    pubsub: PubSub;
   }
 > {
   const transport = compose(

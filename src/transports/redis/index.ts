@@ -4,12 +4,14 @@ import * as encoding from "lib0/encoding";
 import { uuidv4 } from "lib0/random";
 import {
   BinaryMessage,
+  decodeMessage,
   Message,
   PubSub,
+  PubSubTopic,
   ServerContext,
   Transport,
 } from "teleportal";
-import { Document, ServerSyncTransport } from "teleportal/server";
+import { Document } from "teleportal/server";
 import { getPubSubTransport } from "../pubsub";
 
 /**
@@ -37,14 +39,20 @@ export class RedisPubSub implements PubSub {
     this.instanceId = instanceId;
   }
 
-  async publish(topic: string, message: BinaryMessage): Promise<void> {
+  async publish(topic: PubSubTopic, message: BinaryMessage): Promise<void> {
+    console.log(
+      this.instanceId,
+      "publishing to",
+      topic,
+      decodeMessage(message).id,
+    );
     // Encode the message with instance ID to avoid loops
     const encoded = this.encodeMessage(message);
     await this.publisherRedis.publish(topic, Buffer.from(encoded));
   }
 
   async subscribe(
-    topic: string,
+    topic: PubSubTopic,
     callback: (message: BinaryMessage) => void,
   ): Promise<() => Promise<void>> {
     // If already subscribed, return existing unsubscribe function
@@ -52,11 +60,22 @@ export class RedisPubSub implements PubSub {
       return this.subscriptions.get(topic)!;
     }
 
+    console.log(this.instanceId, "subscribing to", topic);
     await this.subscriberRedis.subscribe(topic);
 
     const messageHandler = (channel: string | Buffer, rawMessage: Buffer) => {
       const channelStr =
         typeof channel === "string" ? channel : channel.toString();
+      const msg = this.decodeMessage(new Uint8Array(rawMessage));
+      console.log(
+        this.instanceId,
+        "received message on",
+        channelStr,
+        "from",
+        msg.instanceId,
+        "with message",
+        decodeMessage(msg.message).id,
+      );
       if (channelStr === topic) {
         try {
           const decoded = this.decodeMessage(new Uint8Array(rawMessage));
@@ -123,31 +142,43 @@ export class RedisPubSub implements PubSub {
 export function getRedisTransport<Context extends ServerContext>({
   context,
   redisOptions,
-  keyPrefix = "",
   instanceId = uuidv4(),
 }: {
-  context?: Context;
+  context: Context;
   redisOptions: {
     path: string;
     options?: RedisOptions;
   };
-  keyPrefix?: string;
   instanceId?: string;
-}): ServerSyncTransport<
+}): Transport<
   Context,
   {
-    subscribe: (topic: string) => Promise<void>;
-    unsubscribe: (topic?: string) => Promise<void>;
+    /**
+     * The {@link PubSub} to use for consuming {@link Message}s.
+     */
+    pubsub: PubSub;
+    /**
+     * Subscribe to a topic
+     */
+    subscribe: (topic: PubSubTopic) => Promise<void>;
+    /**
+     * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
+     */
+    unsubscribe: (topic?: PubSubTopic) => Promise<void>;
+    /**
+     * Close the transport
+     */
+    close: () => Promise<void>;
   }
 > {
   const pubsub = new RedisPubSub(redisOptions, instanceId);
 
-  const topicResolver = (message: Message<Context>): string => {
-    return keyPrefix + Document.getDocumentId(message);
+  const topicResolver = (message: Message<Context>): PubSubTopic => {
+    return `document/${Document.getDocumentId(message)}`;
   };
 
   const transport = getPubSubTransport({
-    context: context!,
+    context,
     pubsub,
     topicResolver,
   });

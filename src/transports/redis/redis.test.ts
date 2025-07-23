@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { Redis } from "ioredis";
 import { RedisPubSub } from "./index";
+import { PubSubTopic } from "teleportal";
 
 // Test configuration
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
@@ -123,7 +124,7 @@ describe("Redis Transport", () => {
           { path: REDIS_URL },
           testInstanceId + "-subscriber",
         );
-        const testTopic = "test-topic-" + Date.now();
+        const testTopic: PubSubTopic = `document/test-topic-${Date.now()}`;
         const testMessage = new Uint8Array([1, 2, 3, 4]) as any;
         let receivedMessage: any = null;
 
@@ -178,7 +179,7 @@ describe("Redis Transport", () => {
           { path: REDIS_URL },
           testInstanceId + "-publisher",
         );
-        const testTopic = "test-topic-multi-" + Date.now();
+        const testTopic: PubSubTopic = `document/test-topic-multi-${Date.now()}`;
         const testMessage = new Uint8Array([5, 6, 7, 8]) as any;
         const receivedMessages: any[] = [];
 
@@ -228,7 +229,7 @@ describe("Redis Transport", () => {
         }
 
         const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
-        const testTopic = "test-topic-loop-" + Date.now();
+        const testTopic: PubSubTopic = `document/test-topic-loop-${Date.now()}`;
         const testMessage = new Uint8Array([9, 10, 11, 12]) as any;
         let messageReceived = false;
 
@@ -268,7 +269,7 @@ describe("Redis Transport", () => {
         }
 
         const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
-        const testTopic = "test-topic-unsub-" + Date.now();
+        const testTopic: PubSubTopic = `document/test-topic-unsub-${Date.now()}`;
         const testMessage = new Uint8Array([13, 14, 15, 16]) as any;
         let messageReceived = false;
 
@@ -308,7 +309,7 @@ describe("Redis Transport", () => {
         }
 
         const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
-        const testTopic = "test-topic-destroy-" + Date.now();
+        const testTopic: PubSubTopic = `document/test-topic-destroy-${Date.now()}`;
 
         try {
           // Subscribe to a topic

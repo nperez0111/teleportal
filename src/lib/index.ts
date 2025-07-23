@@ -94,7 +94,7 @@ export interface PubSub {
   /**
    * Publish a message to a topic/channel
    */
-  publish(topic: string, message: BinaryMessage): Promise<void>;
+  publish(topic: PubSubTopic, message: BinaryMessage): Promise<void>;
 
   /**
    * Subscribe to a topic/channel and receive messages
@@ -103,7 +103,7 @@ export interface PubSub {
    * @returns A function to unsubscribe
    */
   subscribe(
-    topic: string,
+    topic: PubSubTopic,
     callback: (message: BinaryMessage) => void,
   ): Promise<() => Promise<void>>;
 
@@ -112,3 +112,16 @@ export interface PubSub {
    */
   destroy?: () => Promise<void>;
 }
+
+/**
+ * The types of topics that can be used with the pub/sub backend.
+ */
+export type PubSubTopicTypes = {
+  document: `document/${string}`;
+  client: `client/${string}`;
+};
+
+/**
+ * A topic for a pub/sub backend.
+ */
+export type PubSubTopic = PubSubTopicTypes[keyof PubSubTopicTypes];
