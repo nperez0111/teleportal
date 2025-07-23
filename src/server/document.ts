@@ -135,7 +135,11 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
 
     await this.call("broadcast", message);
-    this.pubSub.publish(`document/${this.id}`, message.encoded, this.uuid);
+    await this.pubSub.publish(
+      `document/${this.id}`,
+      message.encoded,
+      this.uuid,
+    );
   }
 
   /**
