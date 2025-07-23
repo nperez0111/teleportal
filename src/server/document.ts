@@ -1,3 +1,4 @@
+import { uuidv4 } from "lib0/random";
 import type { PubSub, StateVector } from "teleportal";
 import {
   decodeMessage,
@@ -35,6 +36,7 @@ export class Document<Context extends ServerContext> extends Observable<{
   broadcast: (message: Message<Context>) => void;
 }> {
   public readonly id: string;
+  private readonly uuid = "server-document-" + uuidv4();
   public readonly name: string;
   public logger: Logger;
   public readonly clients = new Set<Client<Context>>();
@@ -63,9 +65,21 @@ export class Document<Context extends ServerContext> extends Observable<{
       .withContext({ name: "document", documentId: id, document: name });
     this.storage = storage;
     this.pubSub = pubSub;
-    this.unsubscribe = pubSub.subscribe(`documents/${id}`, (message) => {
-      this.handleMessage(decodeMessage(message));
-    });
+    this.unsubscribe = pubSub.subscribe(
+      `document/${id}`,
+      (message, sourceId) => {
+        if (sourceId === this.uuid) {
+          return;
+        }
+        const rawMessage = decodeMessage(message);
+        // TODO this is a hack to get the room context for the message
+        // Need to think of a better way to do this
+        Object.assign(rawMessage.context, {
+          room: this.id.slice(0, this.id.indexOf(rawMessage.document) - 1),
+        });
+        this.handleMessage(rawMessage);
+      },
+    );
   }
 
   /**
@@ -121,7 +135,7 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
 
     await this.call("broadcast", message);
-    this.pubSub.publish(`documents/${this.id}`, message.encoded);
+    this.pubSub.publish(`document/${this.id}`, message.encoded, this.uuid);
   }
 
   /**
@@ -228,9 +242,8 @@ export class Document<Context extends ServerContext> extends Observable<{
           switch (message.payload.type) {
             case "sync-step-1":
               if (!client) {
-                throw new Error(`Client not found`, {
-                  cause: { clientId: message.context.clientId },
-                });
+                logger.trace("client not found, skipping sync-step-1");
+                return;
               }
 
               const { update, stateVector } = await strategy.fetchUpdate(
@@ -295,9 +308,8 @@ export class Document<Context extends ServerContext> extends Observable<{
               logger.trace("update written");
 
               if (!client) {
-                throw new Error(`Client not found`, {
-                  cause: { clientId: message.context.clientId },
-                });
+                logger.trace("client not found, skipping sync-done");
+                return;
               }
               logger.trace("sending sync-done (clear text)");
               await client.send(

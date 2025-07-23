@@ -98,7 +98,7 @@ describe("Redis Transport", () => {
         return;
       }
 
-      const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
+      const pubsub = new RedisPubSub({ path: REDIS_URL });
       expect(pubsub).toBeDefined();
       expect(typeof pubsub.publish).toBe("function");
       expect(typeof pubsub.subscribe).toBe("function");
@@ -116,14 +116,8 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const publisher = new RedisPubSub(
-          { path: REDIS_URL },
-          testInstanceId + "-publisher",
-        );
-        const subscriber = new RedisPubSub(
-          { path: REDIS_URL },
-          testInstanceId + "-subscriber",
-        );
+        const publisher = new RedisPubSub({ path: REDIS_URL });
+        const subscriber = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-${Date.now()}`;
         const testMessage = new Uint8Array([1, 2, 3, 4]) as any;
         let receivedMessage: any = null;
@@ -141,7 +135,7 @@ describe("Redis Transport", () => {
           await new Promise((resolve) => setTimeout(resolve, 0));
 
           // Publish a message from different instance
-          await publisher.publish(testTopic, testMessage);
+          await publisher.publish(testTopic, testMessage, "test-publisher");
 
           // Wait for message to be received
           await new Promise((resolve) => setTimeout(resolve, 0));
@@ -167,18 +161,9 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const pubsub1 = new RedisPubSub(
-          { path: REDIS_URL },
-          testInstanceId + "-1",
-        );
-        const pubsub2 = new RedisPubSub(
-          { path: REDIS_URL },
-          testInstanceId + "-2",
-        );
-        const publisher = new RedisPubSub(
-          { path: REDIS_URL },
-          testInstanceId + "-publisher",
-        );
+        const pubsub1 = new RedisPubSub({ path: REDIS_URL });
+        const pubsub2 = new RedisPubSub({ path: REDIS_URL });
+        const publisher = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-multi-${Date.now()}`;
         const testMessage = new Uint8Array([5, 6, 7, 8]) as any;
         const receivedMessages: any[] = [];
@@ -198,7 +183,7 @@ describe("Redis Transport", () => {
           await new Promise((resolve) => setTimeout(resolve, 0));
 
           // Publish a message from a third instance
-          await publisher.publish(testTopic, testMessage);
+          await publisher.publish(testTopic, testMessage, "test-publisher");
 
           // Wait for messages to be received
           await new Promise((resolve) => setTimeout(resolve, 0));
@@ -221,46 +206,6 @@ describe("Redis Transport", () => {
     );
 
     test(
-      "should skip messages from the same instance to prevent loops",
-      async () => {
-        if (!redisAvailable) {
-          console.log("Skipping Redis tests - Redis not available");
-          return;
-        }
-
-        const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
-        const testTopic: PubSubTopic = `document/test-topic-loop-${Date.now()}`;
-        const testMessage = new Uint8Array([9, 10, 11, 12]) as any;
-        let messageReceived = false;
-
-        try {
-          // Subscribe to the topic
-          const unsubscribe = await pubsub.subscribe(testTopic, (message) => {
-            messageReceived = true;
-          });
-
-          // Wait for subscription to be established
-          await new Promise((resolve) => setTimeout(resolve, 0));
-
-          // Publish a message from the same instance
-          await pubsub.publish(testTopic, testMessage);
-
-          // Wait a bit
-          await new Promise((resolve) => setTimeout(resolve, 0));
-
-          // Should not receive the message since it's from the same instance
-          expect(messageReceived).toBe(false);
-
-          // Cleanup
-          if (unsubscribe) await unsubscribe();
-        } finally {
-          if (pubsub.destroy) await pubsub.destroy();
-        }
-      },
-      TEST_TIMEOUT,
-    );
-
-    test(
       "should handle unsubscribe correctly",
       async () => {
         if (!redisAvailable) {
@@ -268,7 +213,7 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
+        const pubsub = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-unsub-${Date.now()}`;
         const testMessage = new Uint8Array([13, 14, 15, 16]) as any;
         let messageReceived = false;
@@ -286,7 +231,7 @@ describe("Redis Transport", () => {
           if (unsubscribe) await unsubscribe();
 
           // Publish a message
-          await pubsub.publish(testTopic, testMessage);
+          await pubsub.publish(testTopic, testMessage, "test-publisher");
 
           // Wait a bit
           await new Promise((resolve) => setTimeout(resolve, 0));
@@ -308,7 +253,7 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const pubsub = new RedisPubSub({ path: REDIS_URL }, testInstanceId);
+        const pubsub = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-destroy-${Date.now()}`;
 
         try {
@@ -321,7 +266,7 @@ describe("Redis Transport", () => {
           // Should fail when trying to publish after destroy
           const testMessage = new Uint8Array([17, 18, 19, 20]) as any;
           try {
-            await pubsub.publish(testTopic, testMessage);
+            await pubsub.publish(testTopic, testMessage, "test-publisher");
             expect(true).toBe(false); // Should not reach here
           } catch (error) {
             // Expected to fail after destroy

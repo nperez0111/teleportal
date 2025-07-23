@@ -3,6 +3,7 @@ import {
   Message,
   PubSub,
   PubSubTopic,
+  RawReceivedMessage,
   ServerContext,
   Sink,
   Source,
@@ -16,6 +17,7 @@ import { compose, getMessageReader } from "../utils";
 export function getPubSubSink<Context extends ServerContext>({
   pubsub,
   topicResolver,
+  sourceId,
 }: {
   /**
    * The {@link PubSub} to use for publishing {@link Message}s.
@@ -25,6 +27,10 @@ export function getPubSubSink<Context extends ServerContext>({
    * A function that resolves the topic for a given {@link Message}.
    */
   topicResolver: (message: Message<Context>) => PubSubTopic;
+  /**
+   * The source ID to use for publishing {@link Message}s.
+   */
+  sourceId: string;
 }): Sink<
   Context,
   {
@@ -39,7 +45,7 @@ export function getPubSubSink<Context extends ServerContext>({
     writable: new WritableStream({
       async write(chunk) {
         const topic = topicResolver(chunk);
-        await pubsub.publish(topic, chunk.encoded);
+        await pubsub.publish(topic, chunk.encoded, sourceId);
       },
     }),
   };
@@ -49,17 +55,24 @@ export function getPubSubSink<Context extends ServerContext>({
  * Generic consumer source that consumes messages from topics using the provided backend
  */
 export function getPubSubSource<Context extends ServerContext>({
-  context,
+  getContext,
   pubsub,
+  sourceId,
 }: {
   /**
    * The {@link ServerContext} to use for reading {@link Message}s from the {@link Source}.
    */
-  context: Context;
+  getContext: Context | ((message: RawReceivedMessage) => Context);
   /**
    * The {@link PubSub} to use for consuming {@link Message}s.
    */
   pubsub: PubSub;
+  /**
+   * The source ID to use for consuming {@link Message}s.
+   *
+   * This will skip messages from the same source.
+   */
+  sourceId: string;
 }): Source<
   Context,
   {
@@ -78,17 +91,21 @@ export function getPubSubSource<Context extends ServerContext>({
   }
 > {
   const subscribedTopics = new Map<PubSubTopic, () => Promise<void>>();
-  // TODO this could probably be a getContext method instead of having to pass in the context
-  const reader = getMessageReader(context);
   let controller: ReadableStreamDefaultController<BinaryMessage>;
 
   return {
     pubsub,
     async subscribe(topic) {
       if (!subscribedTopics.has(topic)) {
-        const unsubscribe = await pubsub.subscribe(topic, (message) => {
-          controller.enqueue(message);
-        });
+        const unsubscribe = await pubsub.subscribe(
+          topic,
+          (message, messageSourceId) => {
+            if (messageSourceId === sourceId) {
+              return;
+            }
+            controller.enqueue(message);
+          },
+        );
         subscribedTopics.set(topic, unsubscribe);
       }
     },
@@ -120,7 +137,7 @@ export function getPubSubSource<Context extends ServerContext>({
         );
         subscribedTopics.clear();
       },
-    }).pipeThrough(reader),
+    }).pipeThrough(getMessageReader(getContext)),
   };
 }
 
@@ -128,14 +145,15 @@ export function getPubSubSource<Context extends ServerContext>({
  * Create a generic pub/sub transport that can work with any backend implementation
  */
 export function getPubSubTransport<Context extends ServerContext>({
-  context,
+  getContext,
   pubsub,
   topicResolver,
+  sourceId,
 }: {
   /**
    * The {@link ServerContext} to use for reading {@link Message}s from the {@link Source}.
    */
-  context: Context;
+  getContext: Context | ((message: RawReceivedMessage) => Context);
   /**
    * The {@link PubSub} to use for consuming {@link Message}s.
    */
@@ -144,6 +162,10 @@ export function getPubSubTransport<Context extends ServerContext>({
    * A function that resolves the topic for a given {@link Message}.
    */
   topicResolver: (message: Message<Context>) => PubSubTopic;
+  /**
+   * The source ID to use for publishing {@link Message}s.
+   */
+  sourceId: string;
 }): Transport<
   Context,
   {
@@ -163,12 +185,14 @@ export function getPubSubTransport<Context extends ServerContext>({
 > {
   const transport = compose(
     getPubSubSource({
-      context,
+      getContext,
       pubsub,
+      sourceId,
     }),
     getPubSubSink({
       pubsub,
       topicResolver,
+      sourceId,
     }),
   );
 

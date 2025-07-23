@@ -94,7 +94,15 @@ export interface PubSub {
   /**
    * Publish a message to a topic/channel
    */
-  publish(topic: PubSubTopic, message: BinaryMessage): Promise<void>;
+  publish(
+    topic: PubSubTopic,
+    message: BinaryMessage,
+    /**
+     * Optional source ID to identify the source of the message.
+     * If not provided, the message is published to all subscribers.
+     */
+    sourceId: string,
+  ): Promise<void>;
 
   /**
    * Subscribe to a topic/channel and receive messages
@@ -104,7 +112,13 @@ export interface PubSub {
    */
   subscribe(
     topic: PubSubTopic,
-    callback: (message: BinaryMessage) => void,
+    callback: (
+      message: BinaryMessage,
+      /**
+       * The source ID of the message.
+       */
+      sourceId: string,
+    ) => void,
   ): Promise<() => Promise<void>>;
 
   /**

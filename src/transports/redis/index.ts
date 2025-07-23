@@ -4,10 +4,10 @@ import * as encoding from "lib0/encoding";
 import { uuidv4 } from "lib0/random";
 import {
   BinaryMessage,
-  decodeMessage,
   Message,
   PubSub,
   PubSubTopic,
+  RawReceivedMessage,
   ServerContext,
   Transport,
 } from "teleportal";
@@ -20,13 +20,16 @@ import { getPubSubTransport } from "../pubsub";
 export class RedisPubSub implements PubSub {
   private publisherRedis: Redis;
   private subscriberRedis: Redis;
-  private instanceId: string;
+  /**
+   * A map of topics to the number of subscribers
+   */
+  private subscribedTopics = new Map<PubSubTopic, number>();
+  /**
+   * A map of subscription IDs to unsubscribe functions
+   */
   private subscriptions = new Map<string, () => Promise<void>>();
 
-  constructor(
-    redisOptions: { path: string; options?: RedisOptions },
-    instanceId: string,
-  ) {
+  constructor(redisOptions: { path: string; options?: RedisOptions }) {
     // Use separate connections for publishing and subscribing
     this.publisherRedis = new Redis(
       redisOptions.path,
@@ -36,54 +39,35 @@ export class RedisPubSub implements PubSub {
       redisOptions.path,
       redisOptions.options ?? {},
     );
-    this.instanceId = instanceId;
   }
 
-  async publish(topic: PubSubTopic, message: BinaryMessage): Promise<void> {
-    console.log(
-      this.instanceId,
-      "publishing to",
-      topic,
-      decodeMessage(message).id,
-    );
+  async publish(
+    topic: PubSubTopic,
+    message: BinaryMessage,
+    sourceId: string,
+  ): Promise<void> {
     // Encode the message with instance ID to avoid loops
-    const encoded = this.encodeMessage(message);
+    const encoded = this.encodeMessage(message, sourceId);
     await this.publisherRedis.publish(topic, Buffer.from(encoded));
   }
 
   async subscribe(
     topic: PubSubTopic,
-    callback: (message: BinaryMessage) => void,
+    callback: (message: BinaryMessage, sourceId: string) => void,
   ): Promise<() => Promise<void>> {
-    // If already subscribed, return existing unsubscribe function
-    if (this.subscriptions.has(topic)) {
-      return this.subscriptions.get(topic)!;
-    }
-
-    console.log(this.instanceId, "subscribing to", topic);
+    const subscriptionId = uuidv4();
     await this.subscriberRedis.subscribe(topic);
 
     const messageHandler = (channel: string | Buffer, rawMessage: Buffer) => {
       const channelStr =
         typeof channel === "string" ? channel : channel.toString();
       const msg = this.decodeMessage(new Uint8Array(rawMessage));
-      console.log(
-        this.instanceId,
-        "received message on",
-        channelStr,
-        "from",
-        msg.instanceId,
-        "with message",
-        decodeMessage(msg.message).id,
-      );
+
       if (channelStr === topic) {
         try {
           const decoded = this.decodeMessage(new Uint8Array(rawMessage));
-          if (decoded.instanceId === this.instanceId) {
-            // Skip messages from this instance to avoid loops
-            return;
-          }
-          callback(decoded.message);
+
+          callback(decoded.message, msg.sourceId);
         } catch (error) {
           console.error("Error decoding Redis message:", error);
         }
@@ -94,11 +78,21 @@ export class RedisPubSub implements PubSub {
 
     const unsubscribe = async (): Promise<void> => {
       this.subscriberRedis.off("messageBuffer", messageHandler);
-      await this.subscriberRedis.unsubscribe(topic);
-      this.subscriptions.delete(topic);
+      this.subscribedTopics.set(
+        topic,
+        (this.subscribedTopics.get(topic) ?? 1) - 1,
+      );
+      if (this.subscribedTopics.get(topic) === 0) {
+        await this.subscriberRedis.unsubscribe(topic);
+      }
+      this.subscriptions.delete(subscriptionId);
     };
 
-    this.subscriptions.set(topic, unsubscribe);
+    this.subscriptions.set(subscriptionId, unsubscribe);
+    this.subscribedTopics.set(
+      topic,
+      (this.subscribedTopics.get(topic) ?? 0) + 1,
+    );
     return unsubscribe;
   }
 
@@ -114,9 +108,9 @@ export class RedisPubSub implements PubSub {
     await this.subscriberRedis.quit();
   }
 
-  private encodeMessage(message: BinaryMessage) {
+  private encodeMessage(message: BinaryMessage, sourceId: string) {
     return encoding.encode((encoder) => {
-      encoding.writeVarString(encoder, this.instanceId);
+      encoding.writeVarString(encoder, sourceId);
       encoding.writeUint8Array(encoder, message);
     });
   }
@@ -124,13 +118,13 @@ export class RedisPubSub implements PubSub {
   private decodeMessage(message: Uint8Array) {
     const decoder = decoding.createDecoder(message);
 
-    const instanceId = decoding.readVarString(decoder);
+    const sourceId = decoding.readVarString(decoder);
     const decodedMessage = decoding.readTailAsUint8Array(
       decoder,
     ) as BinaryMessage;
 
     return {
-      instanceId,
+      sourceId,
       message: decodedMessage,
     };
   }
@@ -140,16 +134,16 @@ export class RedisPubSub implements PubSub {
  * Multi-document Redis {@link Transport} that can handle multiple documents with shared connections
  */
 export function getRedisTransport<Context extends ServerContext>({
-  context,
+  getContext,
   redisOptions,
-  instanceId = uuidv4(),
+  sourceId,
 }: {
-  context: Context;
+  getContext: Context | ((message: RawReceivedMessage) => Context);
   redisOptions: {
     path: string;
     options?: RedisOptions;
   };
-  instanceId?: string;
+  sourceId: string;
 }): Transport<
   Context,
   {
@@ -171,16 +165,17 @@ export function getRedisTransport<Context extends ServerContext>({
     close: () => Promise<void>;
   }
 > {
-  const pubsub = new RedisPubSub(redisOptions, instanceId);
+  const pubsub = new RedisPubSub(redisOptions);
 
-  const topicResolver = (message: Message<Context>): PubSubTopic => {
+  const topicResolver = (message: Message<ServerContext>): PubSubTopic => {
     return `document/${Document.getDocumentId(message)}`;
   };
 
   const transport = getPubSubTransport({
-    context,
+    getContext,
     pubsub,
     topicResolver,
+    sourceId,
   });
 
   return {

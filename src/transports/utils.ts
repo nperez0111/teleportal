@@ -12,6 +12,7 @@ import {
   decodeMessageArray,
   encodeMessageArray,
   ClientContext,
+  RawReceivedMessage,
 } from "teleportal";
 
 export type FanOutReader<T> = {
@@ -253,12 +254,16 @@ export function sync<Context extends Record<string, unknown>>(
  * Reads an untrusted {@link BinaryMessage} and decodes it into a {@link Message}.
  */
 export const getMessageReader = <Context extends Record<string, unknown>>(
-  context: Context,
+  context: Context | ((message: RawReceivedMessage) => Context),
 ) =>
   new TransformStream<BinaryMessage, Message<Context>>({
     transform(chunk, controller) {
       const decoded = decodeMessage(chunk);
-      Object.assign(decoded.context, context);
+      if (typeof context === "function") {
+        Object.assign(decoded.context, context(decoded));
+      } else {
+        Object.assign(decoded.context, context);
+      }
       controller.enqueue(decoded as Message<Context>);
     },
   });
