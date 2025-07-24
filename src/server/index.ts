@@ -4,4 +4,3 @@ export * from "./server";
 export * from "./document-manager";
 export * from "./client-manager";
 export { type Logger } from "./logger";
-export * from "./server-sync";

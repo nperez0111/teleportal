@@ -1,9 +1,12 @@
-import { ObservableV2 } from "lib0/observable";
-import type { Message, ServerContext } from "teleportal";
+import {
+  Observable,
+  type PubSub,
+  type Message,
+  type ServerContext,
+} from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
-import type { ServerSyncTransport } from "./server-sync";
 
 export type DocumentManagerOptions<Context extends ServerContext> = {
   logger: Logger;
@@ -13,7 +16,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     context: Context;
     encrypted: boolean;
   }) => Promise<DocumentStorage>;
-  syncTransport: ServerSyncTransport<Context>;
+  pubSub: PubSub;
 };
 
 /**
@@ -21,34 +24,20 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
  *
  * It holds all open documents in memory, and provides a way to get or create documents.
  */
-export class DocumentManager<
-  Context extends ServerContext,
-> extends ObservableV2<{
+export class DocumentManager<Context extends ServerContext> extends Observable<{
   "document-created": (document: Document<Context>) => void;
   "document-destroyed": (document: Document<Context>) => void;
 }> {
   private documents = new Map<string, Document<Context>>();
   private logger: Logger;
   private options: DocumentManagerOptions<Context>;
-  private syncTransportWriter: WritableStreamDefaultWriter<Message<Context>>;
-  private syncTransportSink = new WritableStream<Message<Context>>({
-    write: async (message) => {
-      const documentId = Document.getDocumentId(message);
-      const document = this.getDocument(documentId);
-      if (!document) {
-        return;
-      }
-
-      await document.handleMessage(message);
-    },
-  });
 
   constructor(options: DocumentManagerOptions<Context>) {
     super();
     this.options = options;
-    this.logger = options.logger.withContext({ name: "document-manager" });
-    this.syncTransportWriter = this.options.syncTransport.writable.getWriter();
-    this.options.syncTransport.readable.pipeTo(this.syncTransportSink);
+    this.logger = options.logger
+      .child()
+      .withContext({ name: "document-manager" });
   }
 
   /**
@@ -88,25 +77,19 @@ export class DocumentManager<
     const doc = new Document<Context>({
       name: document,
       id: documentId,
-      logger: this.logger,
+      logger: this.logger.child(),
       storage: storage,
+      pubSub: this.options.pubSub,
     });
 
     doc.on("destroy", (document) => {
       this.removeDocument(document.id);
     });
 
-    // Subscribe to this document's updates
-    await this.options.syncTransport.subscribe?.(documentId);
-
     this.documents.set(documentId, doc);
     this.logger.withMetadata({ documentId }).trace("document created");
 
-    this.emit("document-created", [doc]);
-
-    doc.on("broadcast", (message) => {
-      this.syncTransportWriter.write(message);
-    });
+    await this.call("document-created", doc);
 
     return doc;
   }
@@ -143,7 +126,7 @@ export class DocumentManager<
       .withMetadata({ documentId })
       .trace("document removed from manager");
 
-    this.emit("document-destroyed", [document]);
+    await this.call("document-destroyed", document);
   }
 
   /**
@@ -163,11 +146,6 @@ export class DocumentManager<
       ),
     );
     this.documents.clear();
-
-    await this.syncTransportSink.abort();
-    await this.syncTransportWriter.releaseLock();
-    await this.options.syncTransport.close?.();
-    this.logger.trace("server sync transport closed");
 
     this.logger.trace("document manager destroyed");
     super.destroy();

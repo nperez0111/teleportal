@@ -1,10 +1,5 @@
-import {
-  compose,
-  sync,
-  type YSink,
-  type YSource,
-  type YTransport,
-} from "teleportal";
+import { type Sink, type Source, type Transport } from "teleportal";
+import { sync, compose } from "teleportal/transports";
 import {
   createDecryptionTransform,
   createEncryptionTransform,
@@ -38,16 +33,19 @@ export function withEncryption<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  transport: YTransport<Context, AdditionalProperties>,
-  options: { 
-    key: CryptoKey; 
+  transport: Transport<Context, AdditionalProperties>,
+  options: {
+    key: CryptoKey;
     document: string;
     encryptedClientContext?: EncryptedClientContext;
   },
-): YTransport<Context, AdditionalProperties & { 
-  key: CryptoKey;
-  encryptedClientContext?: EncryptedClientContext;
-}> {
+): Transport<
+  Context,
+  AdditionalProperties & {
+    key: CryptoKey;
+    encryptedClientContext?: EncryptedClientContext;
+  }
+> {
   const reader = createDecryptionTransform<Context>(
     options.key,
     options.document,
@@ -58,10 +56,10 @@ export function withEncryption<
     options.encryptedClientContext,
   );
 
-  const decryptedSource: YSource<Context, any> = {
+  const decryptedSource: Source<Context> = {
     readable: reader.readable,
   };
-  const encryptedSink: YSink<Context, any> = {
+  const encryptedSink: Sink<Context> = {
     writable: writer.writable,
   };
   const encryptedTransport = compose(decryptedSource, encryptedSink);

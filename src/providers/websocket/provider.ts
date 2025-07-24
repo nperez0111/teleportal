@@ -1,60 +1,88 @@
-import { ObservableV2 } from "lib0/observable";
+import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
   DocMessage,
-  StateVector,
-  toBinaryTransport,
+  Observable,
+  RawReceivedMessage,
   type ClientContext,
-  type YBinaryTransport,
-  type YTransport,
+  type StateVector,
+  type Transport,
 } from "teleportal";
+import {
+  getYTransportFromYDoc,
+  type FanOutReader,
+} from "teleportal/transports";
+import { Connection } from "../connection";
+import { WebSocketConnection } from "./connection";
 import type { EncryptedClientContext } from "teleportal/protocol/encryption";
-import { getYTransportFromYDoc } from "../../transports";
-import { WebsocketConnection } from "./connection-manager";
-import type { ReaderInstance } from "./utils";
 
 export type ProviderOptions = {
-  client: WebsocketConnection;
+  client: Connection<any>;
   document: string;
   ydoc?: Y.Doc;
   awareness?: Awareness;
+  /** Enable offline persistence using IndexedDB. Defaults to true. */
+  enableOfflinePersistence?: boolean;
+  /** Custom prefix for IndexedDB storage. Defaults to 'teleportal-'. */
+  indexedDBPrefix?: string;
   getTransport?: (ctx: {
     ydoc: Y.Doc;
     document: string;
     awareness: Awareness;
-    getDefaultTransport(): YTransport<
+    getDefaultTransport(): Transport<
       ClientContext,
       {
         synced: Promise<void>;
       }
     >;
-  }) => YTransport<
+  }) => Transport<
     ClientContext,
     {
       synced: Promise<void>;
+      key?: CryptoKey;
+      encryptedClientContext?: EncryptedClientContext;
     }
   >;
 };
 
-export class Provider extends ObservableV2<{
-  "load-subdoc": (subdoc: string) => void;
-  "update-subdocs": () => void;
+export class Provider extends Observable<{
+  "load-subdoc": (ctx: {
+    subdoc: Y.Doc;
+    provider: Provider;
+    document: string;
+    parentDoc: Y.Doc;
+  }) => void;
+  "unload-subdoc": (ctx: {
+    subdoc: Y.Doc;
+    provider: Provider;
+    document: string;
+    parentDoc: Y.Doc;
+  }) => void;
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: YBinaryTransport<{
-    synced: Promise<void>;
-    key?: CryptoKey;
-    encryptedClientContext?: EncryptedClientContext;
-  }>;
+  public transport: Transport<
+    ClientContext,
+    {
+      synced: Promise<void>;
+      key?: CryptoKey;
+      encryptedClientContext?: EncryptedClientContext;
+    }
+  >;
   public document: string;
-  #websocketConnection: WebsocketConnection;
-  #websocketReader: ReaderInstance;
+  #underlyingConnection: Connection<any>;
+  #messageReader: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
   #encryptedClientContext: EncryptedClientContext;
+
+  // Local persistence properties
+  #localPersistence?: IndexeddbPersistence;
+  #enableOfflinePersistence: boolean;
+  #indexedDBPrefix: string;
+  #localLoaded: boolean = false;
 
   private constructor({
     client,
@@ -62,6 +90,8 @@ export class Provider extends ObservableV2<{
     ydoc = new Y.Doc(),
     awareness = new Awareness(ydoc),
     getTransport = ({ getDefaultTransport }) => getDefaultTransport(),
+    enableOfflinePersistence = true,
+    indexedDBPrefix = "teleportal-",
   }: ProviderOptions) {
     super();
     this.doc = ydoc;
@@ -69,7 +99,9 @@ export class Provider extends ObservableV2<{
     this.document = document;
     this.#getTransport = getTransport;
     this.#encryptedClientContext = { messageIds: new Set() };
-    const baseTransport = getTransport({
+    this.#enableOfflinePersistence = enableOfflinePersistence;
+    this.#indexedDBPrefix = indexedDBPrefix;
+    this.transport = getTransport({
       ydoc,
       document,
       awareness,
@@ -77,38 +109,61 @@ export class Provider extends ObservableV2<{
         return getYTransportFromYDoc({ ydoc, document, awareness });
       },
     });
-    
-    this.transport = toBinaryTransport(
-      baseTransport,
-      { clientId: "remote" },
-    );
-    
+    this.#underlyingConnection = client;
+    this.#messageReader = this.#underlyingConnection.getReader();
+
     // If the transport has encryption, store the context reference
     if (this.transport.key) {
       this.transport.encryptedClientContext = this.#encryptedClientContext;
     }
-    this.#websocketConnection = client;
-    this.#websocketReader = this.#websocketConnection.getReader();
 
     this.transport.readable.pipeTo(
       new WritableStream({
         write: (message) => {
-          this.#websocketConnection.send(message);
+          this.#underlyingConnection.send(message);
         },
       }),
     );
-    this.#websocketReader.readable.pipeTo(this.transport.writable);
+    this.#messageReader.readable.pipeTo(this.transport.writable);
 
-    this.listenToSubdocs();
+    this.doc.on("subdocs", this.subdocListener);
+
+    // Initialize offline persistence if enabled
+    if (this.#enableOfflinePersistence) {
+      this.initOfflinePersistence();
+    }
 
     if (client.state.type === "connected") {
       this.init();
     }
-    client.on("open", this.init);
+    client.on("connected", this.init);
+  }
+
+  private initOfflinePersistence() {
+    if (!this.#enableOfflinePersistence || typeof window === "undefined") {
+      return;
+    }
+
+    const persistenceKey = `${this.#indexedDBPrefix}${this.document}`;
+
+    try {
+      this.#localPersistence = new IndexeddbPersistence(
+        persistenceKey,
+        this.doc,
+      );
+
+      // Set up event listener for local persistence
+      this.#localPersistence.on("synced", () => {
+        this.#localLoaded = true;
+      });
+    } catch (error) {
+      console.warn("Failed to initialize offline persistence:", error);
+      this.#enableOfflinePersistence = false;
+    }
   }
 
   private init = () => {
-    this.#websocketConnection.send(
+    this.#underlyingConnection.send(
       new DocMessage(
         this.document,
         {
@@ -117,43 +172,51 @@ export class Provider extends ObservableV2<{
         },
         { clientId: "local" },
         Boolean(this.transport.key),
-      ).encoded,
+      ),
     );
   };
 
-  private listenToSubdocs() {
-    // TODO all a hack at the moment
-    this.doc.on("subdocs", ({ loaded, added, removed }) => {
-      loaded.forEach((doc: Y.Doc) => {
-        const item = doc._item;
-        if (!item) {
-          throw new Error("doc._item is undefined");
-        }
-        const parentSub = item.parentSub;
-        if (!parentSub) {
-          throw new Error("doc._item.parentSub is undefined");
-        }
+  private subdocListener({
+    loaded,
+    removed,
+  }: {
+    loaded: Set<Y.Doc>;
+    removed: Set<Y.Doc>;
+  }) {
+    loaded.forEach((doc) => {
+      if (this.subdocs.has(doc.guid)) {
+        return;
+      }
+      const provider = this.openDocument({
+        document: this.document + "/" + doc.guid,
+        ydoc: doc,
+        awareness: this.awareness,
+        getTransport: this.#getTransport,
+      });
 
-        if (this.subdocs.has(parentSub)) {
-          console.log("subdoc already exists", parentSub);
-        }
-        const provider = new Provider({
-          client: this.#websocketConnection,
-          ydoc: doc,
-          document: this.document + "/" + parentSub,
-          getTransport: this.#getTransport,
-        });
-        this.subdocs.set(parentSub, provider);
-        this.emit("load-subdoc", [parentSub]);
+      this.subdocs.set(doc.guid, provider);
+
+      this.call("load-subdoc", {
+        subdoc: doc,
+        provider,
+        document: this.document,
+        parentDoc: this.doc,
       });
-      // added.forEach((doc) => {
-      //   console.log("added", doc.collectionid);
-      //   console.log("doc", doc);
-      // });
-      removed.forEach((doc) => {
-        console.log("removed", doc.collectionid);
+    });
+
+    removed.forEach((doc) => {
+      const provider = this.subdocs.get(doc.guid);
+      if (!provider) {
+        return;
+      }
+      provider.destroy({ destroyWebSocket: false });
+      this.subdocs.delete(doc.guid);
+      this.call("unload-subdoc", {
+        subdoc: doc,
+        provider,
+        document: this.document,
+        parentDoc: this.doc,
       });
-      this.emit("update-subdocs", []);
     });
   }
 
@@ -173,15 +236,47 @@ export class Provider extends ObservableV2<{
     const awareness = new Awareness(doc);
 
     return new Provider({
-      client: this.#websocketConnection,
+      client: this.#underlyingConnection,
       ydoc: doc,
       awareness,
       getTransport: this.#getTransport,
+      enableOfflinePersistence: this.#enableOfflinePersistence,
+      indexedDBPrefix: this.#indexedDBPrefix,
       ...options,
     });
   }
 
   #synced: Promise<void> | null = null;
+  #loaded: Promise<void> | null = null;
+
+  /**
+   * Resolves when the document is loaded (from local storage if available, or from network)
+   */
+  public get loaded(): Promise<void> {
+    if (this.#loaded) {
+      return this.#loaded;
+    }
+
+    if (this.#enableOfflinePersistence && this.#localPersistence) {
+      // Wait for local persistence to load
+      const localLoaded = new Promise<void>((resolve) => {
+        if (this.#localLoaded) {
+          resolve();
+        } else {
+          this.#localPersistence!.once("synced", () => {
+            resolve();
+          });
+        }
+      });
+      this.#loaded = localLoaded;
+      return this.#loaded;
+    }
+
+    // If no offline persistence, loaded is same as synced
+    this.#loaded = this.synced;
+    return this.#loaded;
+  }
+
   /**
    * Resolves when both
    *  - the underlying websocket connection is connected
@@ -192,21 +287,22 @@ export class Provider extends ObservableV2<{
       // re-use the promise if the underlying connection is unchanged
       return this.#synced;
     }
+
     const synced = Promise.all([
-      this.#websocketConnection.connected,
+      this.#underlyingConnection.connected,
       this.transport.synced,
     ]).then(() => {});
 
     this.#synced = synced;
     // if the underlying connection changes, then clear out the cached promise
-    this.#websocketConnection.once("update", () => {
+    this.#underlyingConnection.once("update", () => {
       this.#synced = null;
     });
     return synced;
   }
 
   public get state() {
-    return this.#websocketConnection.state;
+    return this.#underlyingConnection.state;
   }
 
   public destroy({
@@ -216,12 +312,20 @@ export class Provider extends ObservableV2<{
     destroyWebSocket?: boolean;
     destroyDoc?: boolean;
   } = {}) {
+    this.doc.off("subdocs", this.subdocListener);
     super.destroy();
+
+    // Clean up offline persistence
+    if (this.#localPersistence) {
+      this.#localPersistence.destroy();
+      this.#localPersistence = undefined;
+    }
+
     // TODO how to clean up the transport?
     // this.transport.readable
-    this.#websocketReader.unsubscribe();
+    this.#messageReader.unsubscribe();
     if (destroyWebSocket) {
-      this.#websocketConnection.destroy();
+      this.#underlyingConnection.destroy();
     }
     if (destroyDoc) {
       this.doc.destroy();
@@ -243,10 +347,12 @@ export class Provider extends ObservableV2<{
     ydoc,
     awareness,
     getTransport,
-    client = new WebsocketConnection({ url: url! }),
+    enableOfflinePersistence,
+    indexedDBPrefix: indexedDBPrefix,
+    client = new WebSocketConnection({ url: url! }),
   }: (
     | { url: string; client?: undefined }
-    | { url?: undefined; client: WebsocketConnection }
+    | { url?: undefined; client: Connection<any> }
   ) &
     Omit<ProviderOptions, "client">) {
     // Wait for the websocket to connect
@@ -258,6 +364,8 @@ export class Provider extends ObservableV2<{
       document,
       awareness,
       getTransport,
+      enableOfflinePersistence,
+      indexedDBPrefix: indexedDBPrefix,
     });
   }
 }

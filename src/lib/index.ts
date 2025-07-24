@@ -1,11 +1,7 @@
-import {
-  type BinaryMessage,
-  decodeMessage,
-  encodePongMessage,
-  isPingMessage,
-  type Message,
-} from "teleportal/protocol";
-export * from "teleportal/protocol";
+import { type BinaryMessage, type Message } from "./protocol";
+
+export * from "./protocol";
+export * from "./utils";
 
 export type ClientContext = {
   /**
@@ -25,14 +21,21 @@ export type ServerContext = {
    * This segments the document further, allowing multiple contexts to re-use document names.
    */
   room: string;
-} & ClientContext;
+  /**
+   * An identifier for the client. Assigned on the server.
+   */
+  clientId: string;
+};
 
 /**
  * A source of Y.js updates.
  */
-export type YSource<
+export type Source<
   Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown>,
+  AdditionalProperties extends Record<string, unknown> = Record<
+    string,
+    unknown
+  >,
 > = {
   /**
    * A readable stream of document/awareness updates.
@@ -43,9 +46,12 @@ export type YSource<
 /**
  * A sink of Y.js updates.
  */
-export type YSink<
+export type Sink<
   Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown>,
+  AdditionalProperties extends Record<string, unknown> = Record<
+    string,
+    unknown
+  >,
 > = {
   /**
    * A writable stream of document updates.
@@ -54,71 +60,20 @@ export type YSink<
 } & AdditionalProperties;
 
 /**
- * A pair of a {@link YSource} and a {@link YSink}, which can both read and write updates.
+ * A pair of a {@link Source} and a {@link Sink}, which can both read and write updates.
  */
-export type YTransport<
+export type Transport<
   Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown>,
-> = YSink<Context, AdditionalProperties> &
-  YSource<Context, AdditionalProperties>;
-
-/**
- * Compose a {@link YSource} and {@link YSink} into a {@link YTransport}.
- */
-export function compose<
-  Context extends Record<string, unknown>,
-  SourceAdditionalProperties extends Record<string, unknown>,
-  SinkAdditionalProperties extends Record<string, unknown>,
->(
-  source: YSource<Context, SourceAdditionalProperties>,
-  sink: YSink<Context, SinkAdditionalProperties>,
-): YTransport<Context, SourceAdditionalProperties & SinkAdditionalProperties> {
-  return {
-    ...source,
-    ...sink,
-    readable: source.readable,
-    writable: sink.writable,
-  };
-}
-
-/**
- * Pipe the updates from a {@link YSource} to a {@link YSink}.
- */
-export function pipe<Context extends Record<string, unknown>>(
-  source: YSource<Context, any>,
-  sink: YSink<Context, any>,
-): Promise<void> {
-  return source.readable.pipeTo(sink.writable);
-}
-
-/**
- * Sync two {@link YTransport}s.
- */
-export function sync<Context extends Record<string, unknown>>(
-  a: YTransport<Context, any>,
-  b: YTransport<Context, any>,
-): Promise<void> {
-  return Promise.all([pipe(a, b), pipe(b, a)]).then(() => undefined);
-}
-
-/**
- * Reads an untrusted {@link BinaryMessage} and decodes it into a {@link Message}.
- */
-export const getMessageReader = <Context extends Record<string, unknown>>(
-  context: Context,
-) =>
-  new TransformStream<BinaryMessage, Message<Context>>({
-    transform(chunk, controller) {
-      const decoded = decodeMessage(chunk);
-      Object.assign(decoded.context, context);
-      controller.enqueue(decoded as Message<Context>);
-    },
-  });
+  AdditionalProperties extends Record<string, unknown> = Record<
+    string,
+    unknown
+  >,
+> = Sink<Context, AdditionalProperties> & Source<Context, AdditionalProperties>;
 
 /**
  * A transport which sends and receives Y.js binary messages.
  */
-export type YBinaryTransport<
+export type BinaryTransport<
   AdditionalProperties extends Record<string, unknown> = {},
 > = {
   /**
@@ -132,78 +87,55 @@ export type YBinaryTransport<
 } & AdditionalProperties;
 
 /**
- * Convert a {@link YTransport} to a {@link YBinaryTransport}.
- *
- * This will encode all messages going in and out of the transport from {@link BinaryMessage} to {@link Message} and vice versa.
+ * Generic interface for a pub/sub backend implementation.
+ * Can be implemented by in-memory queues, Redis, or any other pub/sub system.
  */
-export function toBinaryTransport<
-  Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown>,
->(
-  transport: YTransport<Context, AdditionalProperties>,
-  context: Context,
-): YBinaryTransport<AdditionalProperties> {
-  const reader = getMessageReader(context);
-  const writer = new TransformStream<Message, BinaryMessage>({
-    transform(chunk, controller) {
-      controller.enqueue(chunk.encoded);
-    },
-  });
-  const binarySource: YSource<Context, any> = { readable: reader.readable };
-  const binarySink: YSink<Context, any> = { writable: writer.writable };
-  const binaryTransport = compose(binarySource, binarySink);
+export interface PubSub {
+  /**
+   * Publish a message to a topic/channel
+   */
+  publish(
+    topic: PubSubTopic,
+    message: BinaryMessage,
+    /**
+     * Optional source ID to identify the source of the message.
+     * If not provided, the message is published to all subscribers.
+     */
+    sourceId: string,
+  ): Promise<void>;
 
-  sync(binaryTransport, transport);
-  return {
-    ...transport,
-    readable: writer.readable,
-    writable: reader.writable,
-  };
+  /**
+   * Subscribe to a topic/channel and receive messages
+   * @param topic - The topic to subscribe to
+   * @param callback - Function called when a message is received
+   * @returns A function to unsubscribe
+   */
+  subscribe(
+    topic: PubSubTopic,
+    callback: (
+      message: BinaryMessage,
+      /**
+       * The source ID of the message.
+       */
+      sourceId: string,
+    ) => void,
+  ): Promise<() => Promise<void>>;
+
+  /**
+   * Shutdown the backend
+   */
+  destroy?: () => Promise<void>;
 }
 
-export function fromBinaryTransport<
-  Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown>,
->(
-  transport: YBinaryTransport<AdditionalProperties>,
-  context: Context,
-): YTransport<Context, AdditionalProperties> {
-  const readable = transport.readable
-    .pipeThrough(
-      new TransformStream({
-        async transform(chunk, controller) {
-          // Just filter out ping messages to avoid any unnecessary processing
-          if (isPingMessage(chunk)) {
-            const writer = transport.writable.getWriter();
-            try {
-              await writer.write(encodePongMessage());
-            } finally {
-              writer.releaseLock();
-            }
-            return;
-          }
-          controller.enqueue(chunk);
-        },
-      }),
-    )
-    .pipeThrough(getMessageReader(context));
+/**
+ * The types of topics that can be used with the pub/sub backend.
+ */
+export type PubSubTopicTypes = {
+  document: `document/${string}`;
+  client: `client/${string}`;
+};
 
-  const writable = new WritableStream<Message>({
-    async write(chunk) {
-      const writer = transport.writable.getWriter();
-      try {
-        await writer.write(chunk.encoded);
-      } finally {
-        writer.releaseLock();
-      }
-    },
-    close: transport.writable.close,
-    abort: transport.writable.abort,
-  });
-
-  return {
-    ...transport,
-    readable,
-    writable,
-  };
-}
+/**
+ * A topic for a pub/sub backend.
+ */
+export type PubSubTopic = PubSubTopicTypes[keyof PubSubTopicTypes];

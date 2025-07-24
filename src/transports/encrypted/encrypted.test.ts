@@ -2,13 +2,8 @@ import { describe, expect, it, beforeEach } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import {
-  DocMessage,
-  StateVector,
-  toBinaryTransport,
-  Update,
-  YBinaryTransport,
-} from "teleportal";
+import { DocMessage, StateVector, Update, BinaryTransport } from "teleportal";
+import { toBinaryTransport } from "../utils";
 import { withEncryption } from ".";
 import {
   createEncryptionKey,
@@ -32,7 +27,7 @@ function getEncryptedYDocTransport({
   document: string;
   awareness?: Awareness;
   key: CryptoKey;
-}): YBinaryTransport<{
+}): BinaryTransport<{
   ydoc: Y.Doc;
   awareness: Awareness;
   synced: Promise<void>;
