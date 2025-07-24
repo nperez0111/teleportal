@@ -17,6 +17,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     encrypted: boolean;
   }) => Promise<DocumentStorage>;
   pubSub: PubSub;
+  cleanupDelay?: number;
 };
 
 /**
@@ -29,6 +30,7 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
   "document-destroyed": (document: Document<Context>) => void;
 }> {
   private documents = new Map<string, Document<Context>>();
+  private cleanupTimeouts = new Map<string, NodeJS.Timeout>();
   private logger: Logger;
   private options: DocumentManagerOptions<Context>;
 
@@ -86,12 +88,70 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
       this.removeDocument(document.id);
     });
 
+    doc.on("client-disconnected", () => {
+      if (doc.getClientCount() === 0) {
+        this.scheduleDocumentCleanup(doc);
+      }
+    });
+
+    doc.on("client-connected", () => {
+      this.cancelDocumentCleanup(doc.id);
+    });
+
     this.documents.set(documentId, doc);
     this.logger.withMetadata({ documentId }).trace("document created");
 
     await this.call("document-created", doc);
 
     return doc;
+  }
+
+  /**
+   * Schedule cleanup for a document after the cleanup delay
+   */
+  private scheduleDocumentCleanup(document: Document<Context>): void {
+    // Cancel any existing cleanup timeout
+    this.cancelDocumentCleanup(document.id);
+
+    this.logger
+      .withMetadata({
+        documentId: document.id,
+        cleanupDelay: this.options.cleanupDelay,
+      })
+      .trace("scheduling document cleanup");
+
+    const timeout = setTimeout(() => {
+      // Double-check that no clients have reconnected
+      if (document.getClientCount() === 0) {
+        this.logger
+          .withMetadata({ documentId: document.id })
+          .trace("executing document cleanup after delay");
+        this.removeDocument(document.id);
+      } else {
+        this.logger
+          .withMetadata({
+            documentId: document.id,
+            clientCount: document.getClientCount(),
+          })
+          .trace("cancelling document cleanup - clients reconnected");
+      }
+    }, this.options.cleanupDelay ?? 5000);
+
+    this.cleanupTimeouts.set(document.id, timeout);
+  }
+
+  /**
+   * Cancel cleanup for a document
+   */
+  private cancelDocumentCleanup(documentId: string): void {
+    const timeout = this.cleanupTimeouts.get(documentId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.cleanupTimeouts.delete(documentId);
+      this.logger
+        .withMetadata({ documentId })
+        .trace("cancelled document cleanup");
+    }
   }
 
   /**
@@ -119,14 +179,31 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
       return;
     }
 
-    await document.destroy();
+    // Cancel any pending cleanup timeout
+    this.cancelDocumentCleanup(documentId);
+
+    try {
+      await document.destroy();
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .withMetadata({ documentId })
+        .error("Failed to destroy document");
+    }
 
     this.documents.delete(documentId);
     this.logger
       .withMetadata({ documentId })
       .trace("document removed from manager");
 
-    await this.call("document-destroyed", document);
+    try {
+      await this.call("document-destroyed", document);
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .withMetadata({ documentId })
+        .error("Failed to emit document-destroyed event");
+    }
   }
 
   /**
@@ -140,11 +217,32 @@ export class DocumentManager<Context extends ServerContext> extends Observable<{
   }
 
   public async destroy() {
-    await Promise.all(
-      Array.from(this.documents.values()).map((document) =>
-        this.removeDocument(document.id),
-      ),
+    this.logger.trace("destroying document manager");
+
+    // Clear all cleanup timeouts
+    for (const [documentId, timeout] of this.cleanupTimeouts) {
+      clearTimeout(timeout);
+      this.logger
+        .withMetadata({ documentId })
+        .trace("cleared cleanup timeout during destroy");
+    }
+    this.cleanupTimeouts.clear();
+
+    // Destroy all documents with error handling
+    const destroyPromises = Array.from(this.documents.values()).map(
+      async (document) => {
+        try {
+          await this.removeDocument(document.id);
+        } catch (e) {
+          this.logger
+            .withError(e)
+            .withMetadata({ documentId: document.id })
+            .error("Failed to remove document during destroy");
+        }
+      },
     );
+
+    await Promise.allSettled(destroyPromises);
     this.documents.clear();
 
     this.logger.trace("document manager destroyed");

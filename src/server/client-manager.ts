@@ -62,9 +62,23 @@ export class ClientManager<Context extends ServerContext> extends Observable<{
     // Remove client from map first to prevent recursive calls
     this.clients.delete(clientId);
 
-    await this.call("client-disconnected", client);
+    try {
+      await this.call("client-disconnected", client);
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .withMetadata({ clientId })
+        .error("Failed to emit client-disconnected event");
+    }
 
-    await client.destroy();
+    try {
+      await client.destroy();
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .withMetadata({ clientId })
+        .error("Failed to destroy client");
+    }
   }
 
   /**
@@ -79,10 +93,19 @@ export class ClientManager<Context extends ServerContext> extends Observable<{
 
   public async destroy() {
     this.logger.trace("destroying client manager");
-    await Promise.all(
-      Array.from(this.clients.values()).map((client) =>
-        this.removeClient(client.id),
-      ),
+
+    // Destroy all clients with error handling
+    await Promise.allSettled(
+      Array.from(this.clients.values()).map(async (client) => {
+        try {
+          await this.removeClient(client.id);
+        } catch (e) {
+          this.logger
+            .withError(e)
+            .withMetadata({ clientId: client.id })
+            .error("Failed to remove client during destroy");
+        }
+      }),
     );
     this.clients.clear();
     this.logger.trace("client manager destroyed");
