@@ -1,5 +1,5 @@
 import { createHooks } from "hookable";
-import { BinaryMessage, PubSub } from "teleportal";
+import { BinaryMessage, PubSub, PubSubTopic } from "teleportal";
 
 export class Observable<
   EVENTS extends Record<string, (...args: any[]) => void>,
@@ -53,19 +53,28 @@ export class Observable<
  */
 export class InMemoryPubSub
   extends Observable<{
-    [key: string]: (message: BinaryMessage) => void;
+    [key: PubSubTopic]: (ctx: {
+      message: BinaryMessage;
+      sourceId: string;
+    }) => void;
   }>
   implements PubSub
 {
-  async publish(topic: string, message: BinaryMessage): Promise<void> {
-    await this.call(topic, message);
+  async publish(
+    topic: PubSubTopic,
+    message: BinaryMessage,
+    sourceId: string,
+  ): Promise<void> {
+    await this.call(topic, { message, sourceId });
   }
 
   async subscribe(
-    topic: string,
-    callback: (message: BinaryMessage) => void,
+    topic: PubSubTopic,
+    callback: (message: BinaryMessage, sourceId: string) => void,
   ): Promise<() => Promise<void>> {
-    const unsubscribe = this.on(topic, callback);
+    const unsubscribe = this.on(topic, (ctx) => {
+      callback(ctx.message, ctx.sourceId);
+    });
 
     return async () => {
       unsubscribe();

@@ -4,6 +4,7 @@ import type {
   Message,
   MessageArray,
   PubSub,
+  PubSubTopic,
   ServerContext,
   Transport,
 } from "teleportal";
@@ -47,8 +48,8 @@ export function getSSEEndpoint<Context extends ServerContext>({
       transport: Transport<
         Context,
         {
-          subscribe: (topic: string) => Promise<void>;
-          unsubscribe: (topic?: string) => Promise<void>;
+          subscribe: (topic: PubSubTopic) => Promise<void>;
+          unsubscribe: (topic?: PubSubTopic) => Promise<void>;
         }
       >;
       client: Client<Context>;
@@ -76,7 +77,11 @@ export function getSSEEndpoint<Context extends ServerContext>({
     logger.trace("sse request");
 
     const sseTransport = compose(
-      getPubSubSource({ context, pubsub: server.pubsub }),
+      getPubSubSource({
+        getContext: () => context,
+        pubsub: server.pubsub,
+        sourceId: "sse-" + context.clientId,
+      }),
       getSSESink({ context }),
     );
 
@@ -98,31 +103,15 @@ export function getSSEEndpoint<Context extends ServerContext>({
       await client.destroy();
     });
 
+    // // TODO should this exist?
     client.addListeners({
-      "document-added": async (doc) => {
-        logger
-          .withMetadata({
-            documentId: doc.id,
-          })
-          .trace("sse document-added");
-        await sseTransport.subscribe(doc.id);
-      },
-      "document-removed": async (doc) => {
-        logger
-          .withMetadata({
-            documentId: doc.id,
-          })
-          .trace("sse document-removed");
-        await sseTransport.unsubscribe(doc.id);
-      },
       destroy: async () => {
-        logger.trace("sse destroy");
         await sseTransport.unsubscribe();
       },
     });
 
     logger.trace("subscribing to client");
-    await sseTransport.subscribe(`clients/${context.clientId}`);
+    await sseTransport.subscribe(`client/${context.clientId}`);
     logger.trace("sseTransport subscribed to client");
 
     logger.trace("getting initial documents");
@@ -208,8 +197,9 @@ export function getHTTPPublishSSEEndpoint<Context extends ServerContext>({
             payloadType: message.payload.type,
           })
           .trace("publishing");
-        return `clients/${context.clientId}`;
+        return `client/${context.clientId}`;
       },
+      sourceId: "http-" + context.clientId,
     });
     req.signal.addEventListener("abort", async (e) => {
       logger.trace("aborting");

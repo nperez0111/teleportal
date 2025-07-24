@@ -1,5 +1,7 @@
-import type { StateVector } from "teleportal";
+import { uuidv4 } from "lib0/random";
+import type { PubSub, StateVector } from "teleportal";
 import {
+  decodeMessage,
   DocMessage,
   getEmptyStateVector,
   getEmptyUpdate,
@@ -34,21 +36,26 @@ export class Document<Context extends ServerContext> extends Observable<{
   broadcast: (message: Message<Context>) => void;
 }> {
   public readonly id: string;
+  private readonly uuid = "server-document-" + uuidv4();
   public readonly name: string;
   public logger: Logger;
   public readonly clients = new Set<Client<Context>>();
   private readonly storage: DocumentStorage;
+  private readonly pubSub: PubSub;
+  private readonly unsubscribe: Promise<() => Promise<void>>;
 
   constructor({
     name,
     id,
     logger,
     storage,
+    pubSub,
   }: {
     name: string;
     id: string;
     logger: Logger;
     storage: DocumentStorage;
+    pubSub: PubSub;
   }) {
     super();
     this.name = name;
@@ -57,6 +64,51 @@ export class Document<Context extends ServerContext> extends Observable<{
       .child()
       .withContext({ name: "document", documentId: id, document: name });
     this.storage = storage;
+    this.pubSub = pubSub;
+    this.unsubscribe = pubSub.subscribe(
+      `document/${id}`,
+      async (message, sourceId) => {
+        if (sourceId === this.uuid) {
+          this.logger
+            .withMetadata({
+              sourceId,
+              documentId: this.id,
+            })
+            .trace("received message from self, skipping");
+          return;
+        }
+        const rawMessage = decodeMessage(message);
+        if (!this.id.endsWith(rawMessage.document)) {
+          this.logger
+            .withMetadata({
+              sourceId,
+              messageId: rawMessage.id,
+              documentId: this.id,
+              document: rawMessage.document,
+            })
+            .trace("received message for wrong document, skipping");
+          return;
+        }
+        // TODO this is a hack to get the room context for the message
+        // Need to think of a better way to do this
+        Object.assign(rawMessage.context, {
+          room: this.getRoom(),
+        });
+        await this.handleMessage(rawMessage);
+      },
+    );
+  }
+
+  /**
+   * Document ID format: "room/document" or "document"
+   * This method returns the room part of the document ID
+   */
+  public getRoom() {
+    const lastSlashIndex = this.id.lastIndexOf("/");
+    if (lastSlashIndex !== -1) {
+      return this.id.slice(0, lastSlashIndex);
+    }
+    return "";
   }
 
   /**
@@ -112,6 +164,11 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
 
     await this.call("broadcast", message);
+    await this.pubSub.publish(
+      `document/${this.id}`,
+      message.encoded,
+      this.uuid,
+    );
   }
 
   /**
@@ -141,22 +198,6 @@ export class Document<Context extends ServerContext> extends Observable<{
     return message.context.room
       ? message.context.room + "/" + message.document
       : message.document;
-  }
-
-  /**
-   * Create a document from a message.
-   */
-  static fromMessage(ctx: {
-    message: Message<ServerContext>;
-    logger: Logger;
-    storage: DocumentStorage;
-  }) {
-    return new Document({
-      id: Document.getDocumentId(ctx.message),
-      name: ctx.message.document,
-      logger: ctx.logger,
-      storage: ctx.storage,
-    });
   }
 
   /**
@@ -234,9 +275,8 @@ export class Document<Context extends ServerContext> extends Observable<{
           switch (message.payload.type) {
             case "sync-step-1":
               if (!client) {
-                throw new Error(`Client not found`, {
-                  cause: { clientId: message.context.clientId },
-                });
+                logger.trace("client not found, skipping sync-step-1");
+                return;
               }
 
               const { update, stateVector } = await strategy.fetchUpdate(
@@ -301,9 +341,8 @@ export class Document<Context extends ServerContext> extends Observable<{
               logger.trace("update written");
 
               if (!client) {
-                throw new Error(`Client not found`, {
-                  cause: { clientId: message.context.clientId },
-                });
+                logger.trace("client not found, skipping sync-done");
+                return;
               }
               logger.trace("sending sync-done (clear text)");
               await client.send(
@@ -352,6 +391,12 @@ export class Document<Context extends ServerContext> extends Observable<{
 
     this.logger.trace("destroying document");
     await this.call("destroy", this);
+
+    this.logger.trace("unsubscribing from pubsub");
+    await (
+      await this.unsubscribe
+    )();
+    this.logger.trace("unsubscribed from pubsub");
 
     this.logger.trace("unloading storage");
     await this.storage.unload(this.id);
