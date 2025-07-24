@@ -259,8 +259,14 @@ export class Server<Context extends ServerContext> extends Observable<{
       )
       .finally(async () => {
         logger.trace("disconnecting client since stream is closed");
-        await this.disconnectClient(clientId);
-        logger.trace("client disconnected since stream is closed");
+        try {
+          await this.disconnectClient(clientId);
+          logger.trace("client disconnected since stream is closed");
+        } catch (e) {
+          logger
+            .withError(e)
+            .error("Failed to disconnect client in finally block");
+        }
       });
 
     this.clientManager.addClient(client);
@@ -272,18 +278,42 @@ export class Server<Context extends ServerContext> extends Observable<{
 
   public async disconnectClient(clientId: string) {
     this.logger.withMetadata({ clientId }).trace("disconnecting client");
-    await this.clientManager.removeClient(clientId);
-    this.logger.withMetadata({ clientId }).trace("client disconnected");
+    try {
+      await this.clientManager.removeClient(clientId);
+      this.logger.withMetadata({ clientId }).trace("client disconnected");
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .withMetadata({ clientId })
+        .error("Failed to disconnect client");
+      throw e; // Re-throw to allow caller to handle
+    }
   }
 
   public async destroy() {
     this.logger.trace("destroying server");
-    await this.documentManager.destroy();
-    this.logger.trace("document manager destroyed");
-    await this.clientManager.destroy();
-    this.logger.trace("client manager destroyed");
-    await this.pubsub.destroy?.();
-    this.logger.trace("pubsub destroyed");
+
+    try {
+      await this.documentManager.destroy();
+      this.logger.trace("document manager destroyed");
+    } catch (e) {
+      this.logger.withError(e).error("Failed to destroy document manager");
+    }
+
+    try {
+      await this.clientManager.destroy();
+      this.logger.trace("client manager destroyed");
+    } catch (e) {
+      this.logger.withError(e).error("Failed to destroy client manager");
+    }
+
+    try {
+      await this.pubsub.destroy?.();
+      this.logger.trace("pubsub destroyed");
+    } catch (e) {
+      this.logger.withError(e).error("Failed to destroy pubsub");
+    }
+
     super.destroy();
     this.logger.trace("server destroyed");
   }
