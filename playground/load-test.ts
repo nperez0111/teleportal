@@ -17,7 +17,7 @@ const token = await createTokenManager({
     .build(),
 );
 
-const websocketClient = new websocket.WebsocketConnection({
+const websocketClient = new websocket.WebSocketConnection({
   url: `ws://localhost:1234/?token=${token}`,
 });
 

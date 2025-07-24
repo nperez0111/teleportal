@@ -1,12 +1,11 @@
 
 - Could the client do the compaction? Is there a way to guarantee that the client's compaction did not add any additional state?
 - Sub document support: <https://github.com/toeverything/AFFiNE/blob/v0.9.0-canary.13/packages/y-provider/src/lazy-provider.ts>
-- query awareness (fetch awareness from a client (so we don't have to wait 30s))
-- better websocket connection management <https://github.com/jamsocket/y-sweet/blob/main/js-pkg/client/src/provider.ts#L580>
-- see if need check sync status? <https://github.com/jamsocket/y-sweet/blob/main/js-pkg/client/src/provider.ts#L356>
 - good example of how to split up a router for yjs docs: <https://github.com/jamsocket/y-sweet/blob/main/crates/y-sweet/src/server.rs#L338C46-L338C56>
-- can do compact on dispose of a doc (since it is async, latency is not a problem)
 - a message type for saving a snapshot of a doc
 - open telemetry tracing for the server
 - For an encrypted document, the client should probably compact the document updates on connection (sync-step-2). This would cause latency on the first sync, but it would be better than picking arbitrary points to compact at. Better to have a "loading" state which is a bit slower, but more predictable.
   - The server would probably still store the full document update, but only ever send the "milestone" updates to a client for efficiency.
+- implement sync-step-1 for encrypted documents
+  - Since each message has a hash, we can send an array of hashes and the server can send the messages that are missing. But, that could be a lot of messages, so maybe we should send the hashes of the last 100 messages and if none match, we ask the client to compact or we send the full document.
+- refactor the background sync to be based on the server's pubsub instance instead of being separately provided.

@@ -5,6 +5,7 @@ import {
   DecodedAwarenessUpdateMessage,
   DecodedSyncStep1,
   DecodedSyncStep2,
+  DecodedSyncDone,
   DecodedUpdateStep,
   DecodedAuthMessage,
   DocStep,
@@ -44,6 +45,7 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
   public type = "awareness" as const;
   public context: Context;
   #encoded: BinaryMessage | undefined;
+  #id: string | undefined;
 
   constructor(
     public document: string,
@@ -61,7 +63,12 @@ export class AwarenessMessage<Context extends Record<string, unknown>> {
   }
 
   public get id() {
-    return toBase64(digest(this.encoded));
+    return this.#id ?? (this.#id = toBase64(digest(this.encoded)));
+  }
+
+  public resetEncoded() {
+    this.#encoded = undefined;
+    this.#id = undefined;
   }
 }
 
@@ -74,12 +81,14 @@ export class DocMessage<Context extends Record<string, unknown>> {
   public type = "doc" as const;
   public context: Context;
   #encoded: BinaryMessage | undefined;
+  #id: string | undefined;
 
   constructor(
     public document: string,
     public payload:
       | DecodedSyncStep1
       | DecodedSyncStep2
+      | DecodedSyncDone
       | DecodedUpdateStep
       | DecodedAuthMessage,
     context?: Context,
@@ -95,6 +104,24 @@ export class DocMessage<Context extends Record<string, unknown>> {
   }
 
   public get id() {
-    return toBase64(digest(this.encoded));
+    return this.#id ?? (this.#id = toBase64(digest(this.encoded)));
+  }
+
+  public resetEncoded() {
+    this.#encoded = undefined;
+    this.#id = undefined;
   }
 }
+
+export const isBinaryMessage = (
+  message: Uint8Array,
+): message is BinaryMessage => {
+  return (
+    // Y
+    message[0] === 0x59 &&
+    // J
+    message[1] === 0x4a &&
+    // S
+    message[2] === 0x53
+  );
+};

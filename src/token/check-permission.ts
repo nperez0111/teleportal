@@ -7,6 +7,7 @@ export function checkPermissionWithTokenManager(
   return async ({ context, document, message }) => {
     if (message.type === "doc") {
       switch (message.payload.type) {
+        case "sync-done":
         case "sync-step-1":
           return tokenManager.hasDocumentPermission(context, document, "read");
         case "sync-step-2":

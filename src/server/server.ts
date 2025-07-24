@@ -1,10 +1,11 @@
-import { ObservableV2 } from "lib0/observable";
-import { uuidv4 } from "lib0/random";
 import {
-  fromBinaryTransport,
+  DocMessage,
+  InMemoryPubSub,
   Message,
+  Observable,
+  PubSub,
   ServerContext,
-  YBinaryTransport,
+  Transport,
 } from "teleportal";
 import { withMessageValidator } from "teleportal/transports";
 import { Client } from "./client";
@@ -12,7 +13,6 @@ import { ClientManager } from "./client-manager";
 import { Document } from "./document";
 import { DocumentManager } from "./document-manager";
 import { logger as defaultLogger, Logger } from "./logger";
-import { MessageHandler } from "./message-handler";
 
 import type { DocumentStorage } from "teleportal/storage";
 
@@ -33,6 +33,10 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     context: Context;
     /**
+     * Whether the document is encrypted
+     */
+    encrypted: boolean;
+    /**
      * The server instance.
      */
     server: Server<Context>;
@@ -43,7 +47,7 @@ export type ServerOptions<Context extends ServerContext> = {
    * @note This is called on every message sent, so it should be fast.
    * @returns True if the client has permission, false otherwise.
    */
-  checkPermission: (ctx: {
+  checkPermission?: (ctx: {
     /**
      * The context of the client.
      */
@@ -65,6 +69,11 @@ export type ServerOptions<Context extends ServerContext> = {
      */
     type: "read" | "write";
   }) => Promise<boolean>;
+  /**
+   * Optional pub/sub backend for cross-instance communication.
+   * If provided, the server will use this to publish and subscribe to messages across multiple server instances.
+   */
+  pubSub?: PubSub;
 };
 
 /**
@@ -72,56 +81,51 @@ export type ServerOptions<Context extends ServerContext> = {
  *
  * It is responsible for creating, destroying, and managing clients and documents.
  */
-export class Server<Context extends ServerContext> extends ObservableV2<{
-  "client-connected": (client: Client<Context>) => {};
-  "client-disconnected": (client: Client<Context>) => {};
-  "document-load": (document: Document<Context>) => {};
-  "document-unload": (document: Document<Context>) => {};
+export class Server<Context extends ServerContext> extends Observable<{
+  "client-connected": (client: Client<Context>) => void;
+  "client-disconnected": (client: Client<Context>) => void;
+  "document-load": (document: Document<Context>) => void;
+  "document-unload": (document: Document<Context>) => void;
 }> {
   public logger: Logger;
   private options: ServerOptions<Context>;
   private documentManager: DocumentManager<Context>;
   private clientManager: ClientManager<Context>;
-  private messageHandler: MessageHandler<Context>;
+  public pubsub: PubSub;
 
   constructor(options: ServerOptions<Context>) {
     super();
     this.options = options;
-    this.logger = (options.logger ?? defaultLogger).withContext({
+    this.logger = (options.logger ?? defaultLogger).child().withContext({
       name: "server",
     });
+    this.pubsub = options.pubSub ?? new InMemoryPubSub();
 
     // Initialize managers
     this.documentManager = new DocumentManager({
-      logger: this.logger,
+      logger: this.logger.child(),
       getStorage: async (ctx) => {
         return await this.options.getStorage({
           ...ctx,
           server: this,
         });
       },
+      pubSub: this.pubsub,
     });
 
-    this.documentManager.on("document-created", (document) =>
-      this.emit("document-load", [document]),
-    );
-    this.documentManager.on("document-destroyed", (document) =>
-      this.emit("document-unload", [document]),
-    );
-
-    this.messageHandler = new MessageHandler({
-      logger: this.logger,
-      checkPermission: this.options.checkPermission,
+    this.documentManager.addListeners({
+      "document-created": (document) => this.call("document-load", document),
+      "document-destroyed": (document) =>
+        this.call("document-unload", document),
     });
 
-    this.clientManager = new ClientManager({ logger: this.logger });
+    this.clientManager = new ClientManager({ logger: this.logger.child() });
 
-    this.clientManager.on("client-connected", (client) =>
-      this.emit("client-connected", [client]),
-    );
-    this.clientManager.on("client-disconnected", (client) =>
-      this.emit("client-disconnected", [client]),
-    );
+    this.clientManager.addListeners({
+      "client-connected": (client) => this.call("client-connected", client),
+      "client-disconnected": (client) =>
+        this.call("client-disconnected", client),
+    });
   }
 
   #clock = 0;
@@ -167,47 +171,74 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
    */
   public async createClient({
     transport,
-    context,
-    clientId = uuidv4(),
+    id: clientId,
   }: {
-    transport: YBinaryTransport;
-    context: Omit<Context, "clientId">;
-    clientId?: string;
-  }): Promise<Server<Context>> {
-    this.logger
-      .withMetadata({
-        clientId,
-        context: {
-          room: context.room,
-          userId: context.userId,
-        },
-      })
-      .trace("creating client");
+    transport: Transport<Context>;
+    id: string;
+  }): Promise<Client<Context>> {
+    const existingClient = this.clientManager.getClient(clientId);
+    if (existingClient) {
+      this.logger.withMetadata({ clientId }).trace("client already exists");
+      throw new Error("Client already exists", {
+        cause: { clientId },
+      });
+    }
 
-    const validatedTransport = withMessageValidator(
-      fromBinaryTransport(
-        transport,
-        Object.assign({ clientId }, context) as Context,
-      ),
-      {
-        isAuthorized: this.messageHandler.checkAuthorization.bind(
-          this.messageHandler,
-          clientId,
-        ),
+    const logger = this.logger.child().withContext({
+      clientId: clientId,
+    });
+
+    logger.trace("creating client");
+
+    const validatedTransport = withMessageValidator(transport, {
+      isAuthorized: async (message, type) => {
+        if (!this.options.checkPermission) {
+          logger.trace("no checkPermission function provided, allowing all");
+          return true;
+        }
+        logger.trace("checking permission");
+
+        const hasPermission = await this.options.checkPermission({
+          context: message.context,
+          document: message.document,
+          documentId: Document.getDocumentId(message),
+          message,
+          type,
+        });
+
+        if (!hasPermission) {
+          logger.trace("permission denied, sending auth-message");
+          await client.send(
+            new DocMessage(
+              message.document,
+              {
+                type: "auth-message",
+                permission: "denied",
+                reason: `Insufficient permissions to access document ${message.document}`,
+              },
+              message.context,
+              message.encrypted,
+            ),
+          );
+          return false;
+        }
+
+        logger.trace("permission granted");
+        return true;
       },
-    );
+    });
 
     const client = new Client({
       writable: validatedTransport.writable,
       id: clientId,
-      logger: this.logger,
+      logger: this.logger.child(),
     });
 
     validatedTransport.readable
       .pipeTo(
         new WritableStream({
           write: async (message) => {
-            const logger = this.logger.withContext({
+            const log = logger.child().withContext({
               clientId,
               context: message.context,
               document: message.document,
@@ -215,66 +246,45 @@ export class Server<Context extends ServerContext> extends ObservableV2<{
             });
 
             try {
-              logger.trace("getting document");
+              log.trace("getting document");
               const document = await this.getOrCreateDocument(message);
-              logger.trace("processing message");
-              await this.messageHandler.handleMessage(
-                message,
-                document,
-                client,
-              );
+              log.trace("processing message");
+              await document.handleMessage(message, client);
             } catch (e) {
-              logger.withError(e).error("Failed to process message");
+              console.error(e);
+              log.withError(e).error("Failed to process message");
             }
           },
         }),
       )
       .finally(async () => {
-        this.logger
-          .withMetadata({
-            clientId,
-            context: {
-              room: context.room,
-              userId: context.userId,
-            },
-          })
-          .trace("client disconnected");
+        logger.trace("disconnecting client since stream is closed");
         await this.disconnectClient(clientId);
+        logger.trace("client disconnected since stream is closed");
       });
 
     this.clientManager.addClient(client);
 
-    this.logger
-      .withMetadata({
-        clientId,
-        context: {
-          room: context.room,
-          userId: context.userId,
-        },
-      })
-      .trace("client created");
+    logger.trace("client created");
 
-    await client.ready;
-
-    this.logger
-      .withMetadata({
-        clientId,
-        context: {
-          room: context.room,
-          userId: context.userId,
-        },
-      })
-      .trace("client ready");
-
-    return this;
+    return client;
   }
 
   public async disconnectClient(clientId: string) {
+    this.logger.withMetadata({ clientId }).trace("disconnecting client");
     await this.clientManager.removeClient(clientId);
+    this.logger.withMetadata({ clientId }).trace("client disconnected");
   }
 
   public async destroy() {
+    this.logger.trace("destroying server");
     await this.documentManager.destroy();
+    this.logger.trace("document manager destroyed");
     await this.clientManager.destroy();
+    this.logger.trace("client manager destroyed");
+    await this.pubsub.destroy?.();
+    this.logger.trace("pubsub destroyed");
+    super.destroy();
+    this.logger.trace("server destroyed");
   }
 }

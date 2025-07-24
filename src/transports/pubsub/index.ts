@@ -1,104 +1,200 @@
-import { Redis, RedisOptions } from "ioredis";
 import {
   BinaryMessage,
-  compose,
-  decodeMessage,
   Message,
-  YSink,
-  YSource,
-  YTransport,
+  PubSub,
+  PubSubTopic,
+  RawReceivedMessage,
+  ServerContext,
+  Sink,
+  Source,
+  Transport,
 } from "teleportal";
+import { compose, getMessageReader } from "../utils";
 
 /**
- * TODO: what I'm unsure of here is how this connects to the document server
- * The thing about the document server is that it wasn't really built transport-first,
- * it sort of just has a bunch of events which it emits (which was done for simplicity)
- * so, it will likely require a re-architecture to get this to be a background sync option
+ * Generic publisher sink that publishes messages to a topic using the provided backend
  */
-
-export function getRedisSource<Context extends Record<string, unknown>>({
-  document,
-  context,
-  redisOptions,
+export function getPubSubSink<Context extends ServerContext>({
+  pubsub,
+  topicResolver,
+  sourceId,
 }: {
-  document: string;
-  context: Context;
-  redisOptions: {
-    path: string;
-    options?: RedisOptions;
-  };
-}): YSource<Context, {}> {
-  const redis = new Redis(redisOptions.path, redisOptions.options ?? {});
+  /**
+   * The {@link PubSub} to use for publishing {@link Message}s.
+   */
+  pubsub: PubSub;
+  /**
+   * A function that resolves the topic for a given {@link Message}.
+   */
+  topicResolver: (message: Message<Context>) => PubSubTopic;
+  /**
+   * The source ID to use for publishing {@link Message}s.
+   */
+  sourceId: string;
+}): Sink<
+  Context,
+  {
+    /**
+     * The {@link PubSub} to use for publishing {@link Message}s.
+     */
+    pubsub: PubSub;
+  }
+> {
   return {
-    readable: new ReadableStream({
-      async start(controller) {
-        await redis.subscribe(document);
-        redis.on("messageBuffer", (channel, message) => {
-          const decoded = decodeMessage(
-            new Uint8Array(message) as BinaryMessage,
-          );
-          Object.assign(decoded.context, context);
-          controller.enqueue(decoded as Message<Context>);
-        });
-      },
-      async cancel() {
-        await redis.unsubscribe(document);
-        await redis.quit();
-      },
-    }),
-  };
-}
-
-export function getRedisSink<Context extends Record<string, unknown>>({
-  document,
-  redisOptions,
-}: {
-  document: string;
-  redisOptions: {
-    path: string;
-    options?: RedisOptions;
-  };
-}): YSink<Context, { redis: Redis }> {
-  const redis = new Redis(redisOptions.path, redisOptions.options ?? {});
-  return {
-    redis,
+    pubsub,
     writable: new WritableStream({
       async write(chunk) {
-        if (chunk.document === document) {
-          await redis.publish(chunk.document, Buffer.from(chunk.encoded));
-        }
-      },
-      async close() {
-        await redis.quit();
-      },
-      abort() {
-        redis.disconnect(false);
+        const topic = topicResolver(chunk);
+        await pubsub.publish(topic, chunk.encoded, sourceId);
       },
     }),
   };
 }
 
-export function getRedisTransport<Context extends Record<string, unknown>>({
-  document,
-  context,
-  redisOptions,
+/**
+ * Generic consumer source that consumes messages from topics using the provided backend
+ */
+export function getPubSubSource<Context extends ServerContext>({
+  getContext,
+  pubsub,
+  sourceId,
 }: {
-  document: string;
-  context: Context;
-  redisOptions: {
-    path: string;
-    options?: RedisOptions;
+  /**
+   * The {@link ServerContext} to use for reading {@link Message}s from the {@link Source}.
+   */
+  getContext: Context | ((message: RawReceivedMessage) => Context);
+  /**
+   * The {@link PubSub} to use for consuming {@link Message}s.
+   */
+  pubsub: PubSub;
+  /**
+   * The source ID to use for consuming {@link Message}s.
+   *
+   * This will skip messages from the same source.
+   */
+  sourceId: string;
+}): Source<
+  Context,
+  {
+    /**
+     * Subscribe to a topic
+     */
+    subscribe: (topic: PubSubTopic) => Promise<void>;
+    /**
+     * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
+     */
+    unsubscribe: (topic?: PubSubTopic) => Promise<void>;
+    /**
+     * The {@link PubSub} to use for consuming {@link Message}s.
+     */
+    pubsub: PubSub;
+  }
+> {
+  const subscribedTopics = new Map<PubSubTopic, () => Promise<void>>();
+  let controller: ReadableStreamDefaultController<BinaryMessage>;
+
+  return {
+    pubsub,
+    async subscribe(topic) {
+      if (!subscribedTopics.has(topic)) {
+        const unsubscribe = await pubsub.subscribe(
+          topic,
+          (message, messageSourceId) => {
+            if (messageSourceId === sourceId) {
+              return;
+            }
+            controller.enqueue(message);
+          },
+        );
+        subscribedTopics.set(topic, unsubscribe);
+      }
+    },
+    async unsubscribe(topic) {
+      if (topic === undefined) {
+        await Promise.all(
+          Array.from(subscribedTopics.values()).map((unsubscribe) =>
+            unsubscribe(),
+          ),
+        );
+        subscribedTopics.clear();
+        return;
+      }
+      const unsubscribe = subscribedTopics.get(topic);
+      if (unsubscribe) {
+        await unsubscribe();
+        subscribedTopics.delete(topic);
+      }
+    },
+    readable: new ReadableStream<BinaryMessage>({
+      async start(_controller) {
+        controller = _controller;
+      },
+      async cancel() {
+        await Promise.all(
+          Array.from(subscribedTopics.values()).map((unsubscribe) =>
+            unsubscribe(),
+          ),
+        );
+        subscribedTopics.clear();
+      },
+    }).pipeThrough(getMessageReader(getContext)),
   };
-}): YTransport<Context, { redis: Redis }> {
-  return compose(
-    getRedisSource({
-      document,
-      context,
-      redisOptions,
+}
+
+/**
+ * Create a generic pub/sub transport that can work with any backend implementation
+ */
+export function getPubSubTransport<Context extends ServerContext>({
+  getContext,
+  pubsub,
+  topicResolver,
+  sourceId,
+}: {
+  /**
+   * The {@link ServerContext} to use for reading {@link Message}s from the {@link Source}.
+   */
+  getContext: Context | ((message: RawReceivedMessage) => Context);
+  /**
+   * The {@link PubSub} to use for consuming {@link Message}s.
+   */
+  pubsub: PubSub;
+  /**
+   * A function that resolves the topic for a given {@link Message}.
+   */
+  topicResolver: (message: Message<Context>) => PubSubTopic;
+  /**
+   * The source ID to use for publishing {@link Message}s.
+   */
+  sourceId: string;
+}): Transport<
+  Context,
+  {
+    /**
+     * Subscribe to a topic
+     */
+    subscribe: (topic: PubSubTopic) => Promise<void>;
+    /**
+     * Unsubscribe from a topic, if no topic is provided, unsubscribe from all topics
+     */
+    unsubscribe: (topic?: PubSubTopic) => Promise<void>;
+    /**
+     * The {@link PubSub} to use for consuming {@link Message}s.
+     */
+    pubsub: PubSub;
+  }
+> {
+  const transport = compose(
+    getPubSubSource({
+      getContext,
+      pubsub,
+      sourceId,
     }),
-    getRedisSink({
-      document,
-      redisOptions,
+    getPubSubSink({
+      pubsub,
+      topicResolver,
+      sourceId,
     }),
   );
+
+  return transport;
 }

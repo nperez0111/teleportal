@@ -7,7 +7,7 @@ import {
   decodeFauxUpdateList,
   encodeFauxStateVector,
   getEmptyFauxUpdateList,
-} from "./encoding";
+} from "teleportal/protocol/encryption";
 
 export class EncryptedDocumentStorage extends DocumentStorage {
   private readonly storage: Storage;

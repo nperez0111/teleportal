@@ -25,8 +25,8 @@ describe("TokenManager", () => {
       expect(result.payload?.userId).toBe("admin-789");
       expect(result.payload?.room).toBe("org-456");
       expect(result.payload?.documentAccess).toHaveLength(1);
-      expect(result.payload?.documentAccess[0].pattern).toBe("*");
-      expect(result.payload?.documentAccess[0].permissions).toEqual(["admin"]);
+      expect(result.payload?.documentAccess![0].pattern).toBe("*");
+      expect(result.payload?.documentAccess![0].permissions).toEqual(["admin"]);
     });
   });
 
@@ -46,15 +46,15 @@ describe("TokenManager", () => {
       const result = await tokenManager.verifyToken(token);
       expect(result.valid).toBe(true);
       expect(result.payload?.documentAccess).toHaveLength(2);
-      expect(result.payload?.documentAccess[0].pattern).toBe("shared/*");
-      expect(result.payload?.documentAccess[0].permissions).toEqual([
+      expect(result.payload?.documentAccess![0].pattern).toBe("shared/*");
+      expect(result.payload?.documentAccess![0].permissions).toEqual([
         "read",
         "comment",
       ]);
-      expect(result.payload?.documentAccess[1].pattern).toBe(
+      expect(result.payload?.documentAccess![1].pattern).toBe(
         "projects/my-project/*",
       );
-      expect(result.payload?.documentAccess[1].permissions).toEqual([
+      expect(result.payload?.documentAccess![1].permissions).toEqual([
         "read",
         "write",
         "comment",

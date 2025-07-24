@@ -1,18 +1,18 @@
 import { describe, expect, it } from "bun:test";
+import { toBase64 } from "lib0/buffer.js";
+import { digest } from "lib0/hash/sha256";
+import type { Update } from "teleportal";
 import {
-  decodeFauxStateVector,
-  encodeFauxStateVector,
-  getEmptyFauxUpdateList,
-  encodeFauxUpdateList,
-  decodeFauxUpdateList,
   appendFauxUpdateList,
+  decodeFauxStateVector,
+  decodeFauxUpdateList,
+  encodeFauxStateVector,
+  encodeFauxUpdateList,
+  getEmptyFauxUpdateList,
   type DecodedFauxStateVector,
   type DecodedUpdate,
   type DecodedUpdateList,
 } from "./encoding";
-import type { StateVector, Update } from "teleportal";
-import { digest } from "lib0/hash/sha256";
-import { toBase64 } from "lib0/buffer.js";
 
 function createUpdate(data: Uint8Array): Update {
   return data as Update;

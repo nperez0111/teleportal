@@ -7,13 +7,13 @@ import {
   type Message,
   type StateVector,
   type Update,
-  type YTransport,
+  type Transport,
 } from "teleportal";
 import { noopTransport, withPassthrough } from ".";
 
 export function generateTestTransport(
   type: "doc" | "awareness",
-): YTransport<{ test: string }, {}> {
+): Transport<{ test: string }> {
   if (type === "doc") {
     return {
       readable: new ReadableStream<Message<{ test: string }>>({

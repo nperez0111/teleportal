@@ -2,13 +2,8 @@ import { describe, expect, it, beforeEach } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import {
-  DocMessage,
-  StateVector,
-  toBinaryTransport,
-  Update,
-  YBinaryTransport,
-} from "teleportal";
+import { DocMessage, StateVector, Update, BinaryTransport } from "teleportal";
+import { toBinaryTransport } from "../utils";
 import { withEncryption } from ".";
 import {
   createEncryptionKey,
@@ -32,7 +27,7 @@ function getEncryptedYDocTransport({
   document: string;
   awareness?: Awareness;
   key: CryptoKey;
-}): YBinaryTransport<{
+}): BinaryTransport<{
   ydoc: Y.Doc;
   awareness: Awareness;
   synced: Promise<void>;
@@ -42,7 +37,6 @@ function getEncryptedYDocTransport({
     ydoc,
     document,
     awareness,
-    asClient: true,
   });
   const encryptedTransport = withEncryption(transport, { key, document });
 
@@ -101,6 +95,45 @@ describe("encrypted-transport", () => {
       const decrypted = await decryptUpdate(key1, encrypted);
 
       expect(decrypted).toEqual(emptyUpdate);
+    });
+  });
+
+  describe("protocol-level encryption", () => {
+    it("should use protocol-level encryption in transport", async () => {
+      const doc = new Y.Doc();
+      const awareness = new Awareness(doc);
+      const transport = getYTransportFromYDoc({
+        ydoc: doc,
+        document: "test-doc",
+        awareness,
+      });
+
+      const encryptedTransport = withEncryption(transport, {
+        key: key1,
+        document: "test-doc",
+      });
+
+      expect(encryptedTransport).toBeDefined();
+      expect(encryptedTransport.readable).toBeDefined();
+      expect(encryptedTransport.writable).toBeDefined();
+      expect(encryptedTransport.key).toBe(key1);
+    });
+
+    it("should handle messages through encrypted transport", async () => {
+      const doc = new Y.Doc();
+      const transport = getYTransportFromYDoc({
+        ydoc: doc,
+        document: "test",
+      });
+
+      const encryptedTransport = withEncryption(transport, {
+        key: key1,
+        document: "test",
+      });
+
+      expect(encryptedTransport).toBeDefined();
+      expect(encryptedTransport.readable).toBeDefined();
+      expect(encryptedTransport.writable).toBeDefined();
     });
   });
 
@@ -166,7 +199,6 @@ describe("encrypted-transport", () => {
       const transport = getYTransportFromYDoc({
         ydoc: doc,
         document: "test",
-        asClient: false,
       });
 
       const encryptedTransport = withEncryption(transport, {
@@ -177,6 +209,7 @@ describe("encrypted-transport", () => {
       expect(encryptedTransport).toBeDefined();
       expect(encryptedTransport.readable).toBeDefined();
       expect(encryptedTransport.writable).toBeDefined();
+      expect(encryptedTransport.key).toBe(key1);
     });
 
     it("should handle awareness messages through encrypted transport", async () => {
@@ -186,7 +219,6 @@ describe("encrypted-transport", () => {
         ydoc: doc,
         awareness,
         document: "test",
-        asClient: false,
       });
 
       const encryptedTransport = withEncryption(transport, {

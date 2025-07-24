@@ -1,35 +1,32 @@
 import {
-  compose,
   type Message,
-  type YSink,
-  type YSource,
-  type YTransport,
+  type Sink,
+  type Source,
+  type Transport,
 } from "teleportal";
+import { compose } from "teleportal/transports";
 
 /**
- * A {@link YSink} that wraps another sink and passes all updates through.
+ * A {@link Sink} that wraps another sink and passes all updates through.
  */
 export function withPassthroughSink<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  sink: YSink<Context, AdditionalProperties>,
+  sink: Sink<Context, AdditionalProperties>,
   options?: {
     onWrite?: (chunk: Message<Context>) => void;
   },
-): YSink<Context, AdditionalProperties> {
+): Sink<Context, AdditionalProperties> {
+  const writer = sink.writable.getWriter();
+
   return {
     ...sink,
     writable: new WritableStream({
       async write(chunk) {
         options?.onWrite?.(chunk);
 
-        const writer = sink.writable.getWriter();
-        try {
-          await writer.write(chunk);
-        } finally {
-          writer.releaseLock();
-        }
+        await writer.write(chunk);
       },
       close: sink.writable.close,
       abort: sink.writable.abort,
@@ -38,17 +35,17 @@ export function withPassthroughSink<
 }
 
 /**
- * A {@link YSource} that wraps another source and passes all updates through.
+ * A {@link Source} that wraps another source and passes all updates through.
  */
 export function withPassthroughSource<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  source: YSource<Context, AdditionalProperties>,
+  source: Source<Context, AdditionalProperties>,
   options?: {
     onRead?: (chunk: Message<Context>) => void;
   },
-): YSource<Context, AdditionalProperties> {
+): Source<Context, AdditionalProperties> {
   return {
     ...source,
     readable: source.readable.pipeThrough(
@@ -72,12 +69,12 @@ export function withPassthrough<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  transport: YTransport<Context, AdditionalProperties>,
+  transport: Transport<Context, AdditionalProperties>,
   options?: {
     onRead?: (chunk: Message<Context>) => void;
     onWrite?: (chunk: Message<Context>) => void;
   },
-): YTransport<Context, AdditionalProperties> {
+): Transport<Context, AdditionalProperties> {
   return compose(
     withPassthroughSource(transport, options),
     withPassthroughSink(transport, options),
@@ -89,7 +86,7 @@ export function withPassthrough<
  */
 export function noopTransport<
   Context extends Record<string, unknown>,
->(): YTransport<Context, {}> {
+>(): Transport<Context> {
   return {
     readable: new ReadableStream(),
     writable: new WritableStream(),

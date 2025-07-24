@@ -9,7 +9,7 @@ FROM base AS release
 RUN mkdir -p playground
 COPY playground/package.json playground/
 COPY package.json bun.lock bunfig.toml .
-RUN bun install --frozen-lockfile
+RUN bun install
 
 
 COPY . .

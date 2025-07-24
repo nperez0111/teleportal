@@ -5,42 +5,42 @@ import {
 } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { ObservableV2 } from "lib0/observable";
 import {
   AwarenessMessage,
   type AwarenessUpdateMessage,
   type ClientContext,
-  compose,
   DocMessage,
   Message,
   type Update,
-  type YSink,
-  type YSource,
-  type YTransport,
+  type Sink,
+  type Source,
+  type Transport,
+  Observable,
 } from "teleportal";
+import { compose } from "teleportal/transports";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";
 }
 
 /**
- * Makes a {@link YSource} from a {@link Y.Doc} and a document name
+ * Makes a {@link Source} from a {@link Y.Doc} and a document name
  */
 export function getYDocSource({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  observer = new ObservableV2<{
+  observer = new Observable<{
     message: (message: Message) => void;
   }>(),
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  observer?: ObservableV2<{
+  observer?: Observable<{
     message: (message: Message) => void;
   }>;
-}): YSource<
+}): Source<
   ClientContext,
   {
     ydoc: Y.Doc;
@@ -130,23 +130,23 @@ export function getYDocSource({
 }
 
 /**
- * Makes a {@link YSink} from a {@link Y.Doc} and a document name
+ * Makes a {@link Sink} from a {@link Y.Doc} and a document name
  */
 export function getYDocSink({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  observer = new ObservableV2<{
+  observer = new Observable<{
     message: (message: Message) => void;
   }>(),
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  observer?: ObservableV2<{
+  observer?: Observable<{
     message: (message: Message) => void;
   }>;
-}): YSink<
+}): Sink<
   ClientContext,
   {
     ydoc: Y.Doc;
@@ -193,7 +193,8 @@ export function getYDocSink({
                   break;
                 }
                 case "awareness-request": {
-                  observer.emit("message", [
+                  observer.call(
+                    "message",
                     new AwarenessMessage(
                       document,
                       {
@@ -206,7 +207,7 @@ export function getYDocSink({
                         clientId: "local",
                       },
                     ),
-                  ]);
+                  );
                   break;
                 }
                 default: {
@@ -222,7 +223,8 @@ export function getYDocSink({
             case "doc": {
               switch (chunk.payload.type) {
                 case "sync-step-1": {
-                  observer.emit("message", [
+                  observer.call(
+                    "message",
                     new DocMessage(
                       document,
                       {
@@ -236,7 +238,7 @@ export function getYDocSink({
                         clientId: "local",
                       },
                     ),
-                  ]);
+                  );
                   break;
                 }
                 case "update":
@@ -246,9 +248,13 @@ export function getYDocSink({
                     chunk.payload.update,
                     getSyncTransactionOrigin(ydoc),
                   );
+                  break;
+                case "sync-done": {
+                  // Only resolve synced promise when sync-done is received
                   onSynced(true);
                   onSynced = () => {};
                   break;
+                }
                 case "auth-message": {
                   controller.error(new Error(chunk.payload.reason));
                   break;
@@ -278,19 +284,17 @@ export function getYDocSink({
 }
 
 /**
- * Makes a {@link YTransport} from a {@link Y.Doc} and a document name
+ * Makes a {@link Transport} from a {@link Y.Doc} and a document name
  */
 export function getYTransportFromYDoc({
   ydoc,
   document,
   awareness = new Awareness(ydoc),
-  asClient = true,
 }: {
   ydoc: Y.Doc;
   document: string;
   awareness?: Awareness;
-  asClient?: boolean;
-}): YTransport<
+}): Transport<
   ClientContext,
   {
     ydoc: Y.Doc;
@@ -299,7 +303,7 @@ export function getYTransportFromYDoc({
   }
 > {
   // observer is used for cross communication between the source and sink
-  const observer = new ObservableV2<{
+  const observer = new Observable<{
     message: (message: Message) => void;
   }>();
   return compose(

@@ -4,9 +4,11 @@ import { Document, fileService } from "../services/fileService";
 interface SidebarProps {
   currentDocumentId: string | null;
   onDocumentSelect: (documentId: string) => void;
+  isMobile?: boolean;
+  onClose?: () => void;
 }
 
-export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
+export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false, onClose }: SidebarProps) {
   const documents = fileService.documents;
   const [, forceUpdate] = useState<number>(0);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -88,13 +90,36 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
   );
 
   return (
-    <div className="w-64 bg-gray-50 dark:bg-gray-950 border-r border-gray-200 dark:border-gray-800 flex flex-col h-full">
+    <div className={`${isMobile ? 'w-80' : 'w-64'} bg-gray-50 dark:bg-gray-950 border-r border-gray-200 dark:border-gray-800 flex flex-col h-full max-w-[calc(100vw-2rem)] md:max-w-none`}>
       {/* Header */}
       <div className="px-4 h-20 flex items-center justify-between border-b border-gray-200 dark:border-gray-800">
         <div className="flex items-center justify-between w-full">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
-            TelePortal
-          </h2>
+          <div className="flex items-center space-x-3">
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
+              TelePortal
+            </h2>
+            {isMobile && onClose && (
+              <button
+                onClick={onClose}
+                className="p-1 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg transition-colors ml-auto"
+                title="Close sidebar"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
           <div className="flex items-center space-x-1">
             <button
               onClick={handleCreateEncryptedDocument}
@@ -265,7 +290,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
                           </h3>
                           {Boolean(doc.encryptedKey) && (
                             <svg
-                              className="w-3 h-3 text-gray-500 dark:text-gray-400"
+                              className="w-3 h-3 text-gray-500 dark:text-gray-400 flex-shrink-0"
                               fill="none"
                               stroke="currentColor"
                               viewBox="0 0 24 24"
@@ -283,14 +308,14 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
                           Updated {formatDate(doc.updatedAt)}
                         </p>
                       </div>
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1">
+                      <div className={`${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity flex space-x-1`}>
                         <div className="relative">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleShare(doc);
                             }}
-                            className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded"
+                            className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded touch-manipulation"
                             title="Share document"
                           >
                             <svg
@@ -319,7 +344,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
                             e.stopPropagation();
                             startEditing(doc);
                           }}
-                          className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded"
+                          className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded touch-manipulation"
                           title="Edit name"
                         >
                           <svg
@@ -341,7 +366,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect }: SidebarProps) {
                             e.stopPropagation();
                             deleteDocument(doc.id);
                           }}
-                          className="p-1 text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 rounded"
+                          className="p-1 text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 rounded touch-manipulation"
                           title="Delete document"
                         >
                           <svg

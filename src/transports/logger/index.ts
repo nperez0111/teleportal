@@ -1,4 +1,4 @@
-import type { YTransport } from "teleportal";
+import type { Transport } from "teleportal";
 import { withPassthrough } from "../passthrough";
 
 /**
@@ -11,8 +11,8 @@ export function withLogger<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
 >(
-  transport: YTransport<Context, AdditionalProperties>,
-): YTransport<Context, AdditionalProperties> {
+  transport: Transport<Context, AdditionalProperties>,
+): Transport<Context, AdditionalProperties> {
   return withPassthrough(transport, {
     onWrite: (chunk) => {
       console.info(

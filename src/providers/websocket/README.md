@@ -33,9 +33,9 @@ This enhanced WebSocket connection manager provides robust reconnection capabili
 ### Basic Setup
 
 ```typescript
-import { WebsocketConnection } from "./connection-manager";
+import { WebSocketConnection } from "./connection";
 
-const connection = new WebsocketConnection({
+const connection = new WebSocketConnection({
   url: "ws://localhost:8080",
   maxReconnectAttempts: 10,
   initialReconnectDelay: 100, // Start with 100ms

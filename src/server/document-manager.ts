@@ -1,8 +1,12 @@
-import type { Message, ServerContext } from "teleportal";
+import {
+  Observable,
+  type PubSub,
+  type Message,
+  type ServerContext,
+} from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { Document } from "./document";
 import type { Logger } from "./logger";
-import { ObservableV2 } from "lib0/observable";
 
 export type DocumentManagerOptions<Context extends ServerContext> = {
   logger: Logger;
@@ -10,7 +14,9 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
     document: string;
     documentId: string;
     context: Context;
+    encrypted: boolean;
   }) => Promise<DocumentStorage>;
+  pubSub: PubSub;
 };
 
 /**
@@ -18,9 +24,7 @@ export type DocumentManagerOptions<Context extends ServerContext> = {
  *
  * It holds all open documents in memory, and provides a way to get or create documents.
  */
-export class DocumentManager<
-  Context extends ServerContext,
-> extends ObservableV2<{
+export class DocumentManager<Context extends ServerContext> extends Observable<{
   "document-created": (document: Document<Context>) => void;
   "document-destroyed": (document: Document<Context>) => void;
 }> {
@@ -31,7 +35,9 @@ export class DocumentManager<
   constructor(options: DocumentManagerOptions<Context>) {
     super();
     this.options = options;
-    this.logger = options.logger.withContext({ name: "document-manager" });
+    this.logger = options.logger
+      .child()
+      .withContext({ name: "document-manager" });
   }
 
   /**
@@ -59,6 +65,7 @@ export class DocumentManager<
       document,
       documentId,
       context,
+      encrypted,
     });
 
     if (!storage) {
@@ -67,11 +74,12 @@ export class DocumentManager<
       });
     }
 
-    const doc = new Document({
+    const doc = new Document<Context>({
       name: document,
       id: documentId,
-      logger: this.logger,
+      logger: this.logger.child(),
       storage: storage,
+      pubSub: this.options.pubSub,
     });
 
     doc.on("destroy", (document) => {
@@ -81,7 +89,7 @@ export class DocumentManager<
     this.documents.set(documentId, doc);
     this.logger.withMetadata({ documentId }).trace("document created");
 
-    this.emit("document-created", [doc]);
+    await this.call("document-created", doc);
 
     return doc;
   }
@@ -118,7 +126,7 @@ export class DocumentManager<
       .withMetadata({ documentId })
       .trace("document removed from manager");
 
-    this.emit("document-destroyed", [document]);
+    await this.call("document-destroyed", document);
   }
 
   /**
@@ -138,6 +146,7 @@ export class DocumentManager<
       ),
     );
     this.documents.clear();
+
     this.logger.trace("document manager destroyed");
     super.destroy();
   }

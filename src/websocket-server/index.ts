@@ -1,10 +1,12 @@
 import type * as crossws from "crossws";
 
-import type {
-  BinaryMessage,
-  ServerContext,
-  YBinaryTransport,
+import {
+  type BinaryMessage,
+  type ServerContext,
+  type BinaryTransport,
+  isBinaryMessage,
 } from "teleportal";
+import { fromBinaryTransport } from "../transports/utils";
 import type { Server } from "teleportal/server";
 import type { TokenManager } from "teleportal/token";
 import type { Logger } from "teleportal/server";
@@ -14,8 +16,8 @@ declare module "crossws" {
     room: string;
     userId: string;
     clientId: string;
-    transport: YBinaryTransport;
-    writable: WritableStream<BinaryMessage>;
+    transport: BinaryTransport;
+    writer: WritableStreamDefaultWriter<BinaryMessage>;
   }
 }
 
@@ -47,7 +49,7 @@ export function getWebsocketHandlers<
    * Called when a client has connected to the server.
    */
   onConnect?: (ctx: {
-    transport: YBinaryTransport;
+    transport: BinaryTransport;
     context: T;
     id: string;
     peer: crossws.Peer;
@@ -81,7 +83,7 @@ export function getWebsocketHandlers<
               ...context,
               clientId: "upgrade",
               transport: {} as any,
-              writable: {} as any,
+              writer: {} as any,
             },
             headers: {
               "x-powered-by": "teleportal",
@@ -112,7 +114,7 @@ export function getWebsocketHandlers<
         const transform = new TransformStream<BinaryMessage, BinaryMessage>();
 
         peer.context.clientId = peer.id;
-        peer.context.writable = transform.writable;
+        peer.context.writer = transform.writable.getWriter();
         peer.context.transport = {
           readable: transform.readable,
           writable: new WritableStream({
@@ -137,19 +139,21 @@ export function getWebsocketHandlers<
           peer.close();
         }
       },
-      async message(peer, message) {
+      async message(peer, msg) {
         logger
-          .withMetadata({ clientId: peer.id, messageId: message.id })
+          .withMetadata({ clientId: peer.id, messageId: msg.id })
           .trace("message");
-        const buff = message.uint8Array();
+        const message = msg.uint8Array();
+        if (!isBinaryMessage(message)) {
+          throw new Error("Invalid message");
+        }
         try {
           await onMessage?.({
-            message: buff as BinaryMessage,
+            message,
             peer,
           });
-          const writer = peer.context.writable.getWriter();
-          await writer.write(buff as BinaryMessage);
-          writer.releaseLock();
+          await peer.context.writer.ready;
+          await peer.context.writer.write(message);
         } catch (e) {
           new Error("Failed to write message", { cause: { err: e } });
         }
@@ -159,9 +163,7 @@ export function getWebsocketHandlers<
           .withMetadata({ clientId: peer.id })
           .info("close websocket connection");
         await onDisconnect?.(peer.id);
-        if (!peer.context.writable.locked) {
-          await peer.context.writable.close();
-        }
+        await peer.context.writer.close();
         if (!peer.context.transport.writable.locked) {
           await peer.context.transport.writable.close();
         }
@@ -171,7 +173,7 @@ export function getWebsocketHandlers<
           .withError(error)
           .withMetadata({ clientId: peer.id })
           .error("error");
-        await peer.context.writable.abort(error);
+        await peer.context.writer.abort(error);
         await peer.context.transport.writable.abort(error);
       },
     },
@@ -227,9 +229,11 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
     onConnect: async (ctx) => {
       await hooks.onConnect?.(ctx);
       await server.createClient({
-        transport: ctx.transport,
-        context: ctx.context,
-        clientId: ctx.id,
+        transport: fromBinaryTransport(
+          ctx.transport,
+          Object.assign({ clientId: ctx.id }, ctx.context) as T,
+        ),
+        id: ctx.id,
       });
     },
     onDisconnect: async (id) => {
