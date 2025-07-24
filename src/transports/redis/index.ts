@@ -61,13 +61,12 @@ export class RedisPubSub implements PubSub {
     const messageHandler = (channel: string | Buffer, rawMessage: Buffer) => {
       const channelStr =
         typeof channel === "string" ? channel : channel.toString();
-      const msg = this.decodeMessage(new Uint8Array(rawMessage));
 
       if (channelStr === topic) {
         try {
           const decoded = this.decodeMessage(new Uint8Array(rawMessage));
 
-          callback(decoded.message, msg.sourceId);
+          callback(decoded.message, decoded.sourceId);
         } catch (error) {
           console.error("Error decoding Redis message:", error);
         }
@@ -80,9 +79,9 @@ export class RedisPubSub implements PubSub {
       this.subscriberRedis.off("messageBuffer", messageHandler);
       this.subscribedTopics.set(
         topic,
-        (this.subscribedTopics.get(topic) ?? 1) - 1,
+        (this.subscribedTopics.get(topic) ?? 0) - 1,
       );
-      if (this.subscribedTopics.get(topic) === 0) {
+      if ((this.subscribedTopics.get(topic) ?? 0) <= 0) {
         await this.subscriberRedis.unsubscribe(topic);
       }
       this.subscriptions.delete(subscriptionId);
