@@ -16,6 +16,7 @@ import {
 } from "teleportal/transports";
 import { Connection } from "../connection";
 import { WebSocketConnection } from "./connection";
+import type { EncryptedClientContext } from "teleportal/protocol/encryption";
 
 export type ProviderOptions = {
   client: Connection<any>;
@@ -41,6 +42,7 @@ export type ProviderOptions = {
     {
       synced: Promise<void>;
       key?: CryptoKey;
+      encryptedClientContext?: EncryptedClientContext;
     }
   >;
 };
@@ -66,6 +68,7 @@ export class Provider extends Observable<{
     {
       synced: Promise<void>;
       key?: CryptoKey;
+      encryptedClientContext?: EncryptedClientContext;
     }
   >;
   public document: string;
@@ -73,6 +76,7 @@ export class Provider extends Observable<{
   #messageReader: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
+  #encryptedClientContext: EncryptedClientContext;
 
   // Local persistence properties
   #localPersistence?: IndexeddbPersistence;
@@ -94,6 +98,7 @@ export class Provider extends Observable<{
     this.awareness = awareness;
     this.document = document;
     this.#getTransport = getTransport;
+    this.#encryptedClientContext = { messageIds: new Set() };
     this.#enableOfflinePersistence = enableOfflinePersistence;
     this.#indexedDBPrefix = indexedDBPrefix;
     this.transport = getTransport({
@@ -106,6 +111,11 @@ export class Provider extends Observable<{
     });
     this.#underlyingConnection = client;
     this.#messageReader = this.#underlyingConnection.getReader();
+
+    // If the transport has encryption, store the context reference
+    if (this.transport.key) {
+      this.transport.encryptedClientContext = this.#encryptedClientContext;
+    }
 
     this.transport.readable.pipeTo(
       new WritableStream({

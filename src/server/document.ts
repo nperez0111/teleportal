@@ -11,14 +11,15 @@ import {
   type Update,
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
-import * as Y from "yjs";
-
 import {
   decodeFauxStateVector,
   decodeFauxUpdateList,
   encodeFauxUpdateList,
   getEmptyFauxUpdateList,
+  messageIdToString,
 } from "teleportal/protocol/encryption";
+import * as Y from "yjs";
+
 import type { Client } from "./client";
 import type { Logger } from "./logger";
 
@@ -502,17 +503,25 @@ class EncryptedMessageStrategy<Context extends ServerContext>
     }
 
     const fauxStateVector = decodeFauxStateVector(message.payload.sv);
-    const updates = decodeFauxUpdateList(update);
-    const updateIndex = updates.findIndex(
-      (update) => update.messageId === fauxStateVector.messageId,
+    const allUpdates = decodeFauxUpdateList(update);
+
+    // Convert Uint8Array message IDs to strings for Set operations
+    const clientMessageIds = new Set(
+      fauxStateVector.messageIds.map(messageIdToString),
     );
 
-    // Pick the updates that the client doesn't have
-    const sendUpdates = updates.slice(
-      0,
-      // Didn't find any? Send them all
-      updateIndex === -1 ? updates.length : updateIndex,
+    // Find updates that the client doesn't have
+    const sendUpdates = allUpdates.filter(
+      (update) => !clientMessageIds.has(messageIdToString(update.messageId)),
     );
+
+    document.logger
+      .withMetadata({
+        totalUpdates: allUpdates.length,
+        clientHasUpdates: clientMessageIds.size,
+        sendingUpdates: sendUpdates.length,
+      })
+      .trace("computed sync diff for encrypted document");
 
     return {
       update: encodeFauxUpdateList(sendUpdates),

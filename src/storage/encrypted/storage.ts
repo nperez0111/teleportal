@@ -72,7 +72,7 @@ export class EncryptedDocumentStorage extends DocumentStorage {
       get stateVector() {
         // TODO implement state vectors for encrypted updates
         return encodeFauxStateVector({
-          messageId: "implement",
+          messageIds: [],
         });
       },
     };

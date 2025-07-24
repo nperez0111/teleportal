@@ -3,6 +3,7 @@ import { sync, compose } from "teleportal/transports";
 import {
   createDecryptionTransform,
   createEncryptionTransform,
+  type EncryptedClientContext,
 } from "teleportal/protocol/encryption";
 
 /**
@@ -33,13 +34,27 @@ export function withEncryption<
   AdditionalProperties extends Record<string, unknown>,
 >(
   transport: Transport<Context, AdditionalProperties>,
-  options: { key: CryptoKey; document: string },
-): Transport<Context, AdditionalProperties & { key: CryptoKey }> {
+  options: {
+    key: CryptoKey;
+    document: string;
+    encryptedClientContext?: EncryptedClientContext;
+  },
+): Transport<
+  Context,
+  AdditionalProperties & {
+    key: CryptoKey;
+    encryptedClientContext?: EncryptedClientContext;
+  }
+> {
   const reader = createDecryptionTransform<Context>(
     options.key,
     options.document,
+    options.encryptedClientContext,
   );
-  const writer = createEncryptionTransform<Context>(options.key);
+  const writer = createEncryptionTransform<Context>(
+    options.key,
+    options.encryptedClientContext,
+  );
 
   const decryptedSource: Source<Context> = {
     readable: reader.readable,
@@ -54,6 +69,7 @@ export function withEncryption<
   return {
     ...transport,
     key: options.key,
+    encryptedClientContext: options.encryptedClientContext,
     readable: writer.readable,
     writable: reader.writable,
   };
