@@ -78,7 +78,18 @@ export class Document<Context extends ServerContext> extends Observable<{
           return;
         }
         const rawMessage = decodeMessage(message);
-        if (!this.id.endsWith(rawMessage.document)) {
+        const room = this.getRoom();
+        if (
+          this.id !==
+          Document.getDocumentId({
+            document: rawMessage.document,
+            context: {
+              userId: rawMessage.context.userId,
+              clientId: rawMessage.context.clientId,
+              room,
+            },
+          })
+        ) {
           this.logger
             .withMetadata({
               sourceId,
@@ -92,7 +103,7 @@ export class Document<Context extends ServerContext> extends Observable<{
         // TODO this is a hack to get the room context for the message
         // Need to think of a better way to do this
         Object.assign(rawMessage.context, {
-          room: this.getRoom(),
+          room,
         });
         await this.handleMessage(rawMessage);
       },
