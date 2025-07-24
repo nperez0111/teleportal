@@ -67,19 +67,48 @@ export class Document<Context extends ServerContext> extends Observable<{
     this.pubSub = pubSub;
     this.unsubscribe = pubSub.subscribe(
       `document/${id}`,
-      (message, sourceId) => {
+      async (message, sourceId) => {
         if (sourceId === this.uuid) {
+          this.logger
+            .withMetadata({
+              sourceId,
+              documentId: this.id,
+            })
+            .trace("received message from self, skipping");
           return;
         }
         const rawMessage = decodeMessage(message);
+        if (!this.id.endsWith(rawMessage.document)) {
+          this.logger
+            .withMetadata({
+              sourceId,
+              messageId: rawMessage.id,
+              documentId: this.id,
+              document: rawMessage.document,
+            })
+            .trace("received message for wrong document, skipping");
+          return;
+        }
         // TODO this is a hack to get the room context for the message
         // Need to think of a better way to do this
         Object.assign(rawMessage.context, {
-          room: this.id.slice(0, this.id.indexOf(rawMessage.document) - 1),
+          room: this.getRoom(),
         });
-        this.handleMessage(rawMessage);
+        await this.handleMessage(rawMessage);
       },
     );
+  }
+
+  /**
+   * Document ID format: "room/document" or "document"
+   * This method returns the room part of the document ID
+   */
+  public getRoom() {
+    const lastSlashIndex = this.id.lastIndexOf("/");
+    if (lastSlashIndex !== -1) {
+      return this.id.slice(0, lastSlashIndex);
+    }
+    return "";
   }
 
   /**
