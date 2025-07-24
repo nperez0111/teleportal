@@ -1,0 +1,28 @@
+{
+  "name": "excalidraw",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "PORT=1234 bun run --watch ./backend/server.ts",
+    "build": "bun run build.ts --target browser"
+  },
+  "keywords": [],
+  "author": "Nick the Sick",
+  "license": "MPL-2.0",
+  "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.0",
+    "bun-plugin-tailwind": "latest",
+    "crossws": "^0.4.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4",
+    "y-excalidraw": "^2.0.12",
+    "yjs": "^13.6.27"
+  },
+  "private": true,
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

@@ -18,7 +18,8 @@
   "sideEffects": false,
   "type": "module",
   "workspaces": [
-    "playground"
+    "playground",
+    "examples/*"
   ],
   "private": false,
   "publishConfig": {
