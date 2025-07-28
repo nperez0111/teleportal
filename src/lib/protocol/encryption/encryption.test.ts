@@ -7,7 +7,12 @@ import {
   createEncryptionTransform,
   createDecryptionTransform,
 } from "./index";
-import type { Update, StateVector, AwarenessUpdateMessage } from "../types";
+import type {
+  Update,
+  StateVector,
+  AwarenessUpdateMessage,
+  SyncStep2Update,
+} from "../types";
 
 // Helper function to create a proper Update type
 function createUpdate(data: Uint8Array): Update {
@@ -58,7 +63,7 @@ describe("protocol encryption", () => {
     });
 
     it("should encrypt doc sync-step-2 messages", async () => {
-      const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as SyncStep2Update;
       const message = new DocMessage(
         "test-doc",
         { type: "sync-step-2", update: testUpdate },
@@ -169,7 +174,7 @@ describe("protocol encryption", () => {
     });
 
     it("should decrypt doc sync-step-2 messages", async () => {
-      const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as SyncStep2Update;
       const message = new DocMessage(
         "test-doc",
         { type: "sync-step-2", update: testUpdate },

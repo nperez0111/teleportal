@@ -7,6 +7,7 @@ import {
   encodeFauxStateVector,
   encodeFauxUpdate,
 } from "./encoding";
+import { EncryptionClient } from "../../../encryption-state-vector/client";
 
 export * from "./encoding";
 
@@ -19,7 +20,7 @@ export type EncryptedMessage<Context extends Record<string, unknown>> =
  */
 export async function encryptMessage<Context extends Record<string, unknown>>(
   message: Message<Context>,
-  key: CryptoKey,
+  client: EncryptionClient,
 ): Promise<EncryptedMessage<Context>> {
   try {
     if (message.type !== "doc") {
@@ -34,29 +35,38 @@ export async function encryptMessage<Context extends Record<string, unknown>>(
 
     switch (message.payload.type) {
       case "sync-step-1": {
-        // For sync-step-1, we create a faux state vector
-        const fauxStateVector = encodeFauxStateVector({ messageId: "1" });
-
+        // For sync-step-1, we send the state vector
         return new DocMessage(
           message.document,
           {
             type: message.payload.type,
-            sv: fauxStateVector,
+            sv: client.getEncryptedStateVector(),
           },
           message.context,
           true,
         );
       }
-      case "sync-step-2":
+      case "sync-step-2": {
+        return new DocMessage(
+          message.document,
+          {
+            type: "sync-step-2",
+            // TODO how to handle sync-step-2? It responds to sync-step-1 ( this is a full sync)
+            update: await client.getEncryptedSyncStep2(),
+          },
+          message.context,
+          true,
+        );
+      }
       case "update": {
         const { update } = message.payload;
         const encryptedUpdate = await encryptUpdate(key, update);
         const fauxUpdate = encodeFauxUpdate(encryptedUpdate);
-
+        const encryptedUpdateMessage = await client.addMessage(message);
         return new DocMessage(
           message.document,
           {
-            type: message.payload.type as "sync-step-2" | "update",
+            type: message.payload.type,
             update: fauxUpdate,
           },
           message.context,

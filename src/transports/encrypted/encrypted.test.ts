@@ -1,15 +1,21 @@
-import { describe, expect, it, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { DocMessage, StateVector, Update, BinaryTransport } from "teleportal";
-import { toBinaryTransport } from "../utils";
+import {
+  BinaryTransport,
+  DocMessage,
+  StateVector,
+  SyncStep2Update,
+  Update,
+} from "teleportal";
 import { withEncryption } from ".";
 import {
   createEncryptionKey,
-  encryptUpdate,
   decryptUpdate,
+  encryptUpdate,
 } from "../../encryption-key";
+import { toBinaryTransport } from "../utils";
 import { getYTransportFromYDoc } from "../ydoc";
 
 // Helper function to create a proper Update type
@@ -255,7 +261,7 @@ describe("encrypted-transport", () => {
     });
 
     it("should create doc messages with sync-step-2 payload", () => {
-      const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as SyncStep2Update;
 
       const message = new DocMessage(
         "test-doc",

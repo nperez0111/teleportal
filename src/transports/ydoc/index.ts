@@ -11,11 +11,12 @@ import {
   type ClientContext,
   DocMessage,
   Message,
-  type Update,
+  Observable,
   type Sink,
   type Source,
+  type SyncStep2Update,
   type Transport,
-  Observable,
+  type Update,
 } from "teleportal";
 import { compose } from "teleportal/transports";
 
@@ -232,7 +233,7 @@ export function getYDocSink({
                         update: Y.diffUpdateV2(
                           Y.encodeStateAsUpdateV2(ydoc),
                           chunk.payload.sv,
-                        ) as Update,
+                        ) as SyncStep2Update,
                       },
                       {
                         clientId: "local",
