@@ -173,7 +173,7 @@ export function encodeEncryptedUpdateMessages(
       // counter
       encoding.writeVarUint(encoder, update.timestamp[1]);
       // payload
-      encoding.writeUint8Array(encoder, update.payload);
+      encoding.writeVarUint8Array(encoder, update.payload);
     }
   }) as EncryptedUpdate;
 }
@@ -213,7 +213,7 @@ export function decodeEncryptedUpdate(
       const clientId = decoding.readVarUint(decoder);
       const counter = decoding.readVarUint(decoder);
       // payload
-      const payload = decoding.readTailAsUint8Array(decoder) as Update;
+      const payload = decoding.readVarUint8Array(decoder) as Update;
 
       // create message instance
       messages.push(
