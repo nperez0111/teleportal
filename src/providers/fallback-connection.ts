@@ -62,6 +62,8 @@ export class FallbackConnection extends Connection<FallbackContext> {
   #currentConnection: WebSocketConnection | HttpConnection | null = null;
   #reader: FanOutReader<RawReceivedMessage> | null = null;
   #websocketConnectionStatus: "init" | "failed" | "success" = "init";
+  #isConnecting: boolean = false;
+  #connectionAttemptId: number = 0;
 
   constructor(options: FallbackConnectionOptions) {
     super(options);
@@ -99,37 +101,76 @@ export class FallbackConnection extends Connection<FallbackContext> {
     if (!this.shouldAttemptConnection()) {
       return;
     }
-    if (this.state.type === "connecting" || this.state.type === "connected") {
+
+    // Prevent concurrent connection attempts
+    if (this.#isConnecting || this.state.type === "connecting" || this.state.type === "connected") {
       return;
     }
 
-    // If WebSocket hasn't failed yet, try WebSocket first
-    if (this.#websocketConnectionStatus === "init") {
-      try {
-        await this.tryWebSocketConnection();
-        this.#websocketConnectionStatus = "success";
-        return;
-      } catch (error) {
-        console.warn(
-          "WebSocket connection failed, falling back to HTTP:",
-          error,
-        );
-        this.#websocketConnectionStatus = "failed";
-        // Continue to HTTP fallback
-      }
-    }
+    this.#isConnecting = true;
+    const currentAttemptId = ++this.#connectionAttemptId;
 
-    // Try HTTP connection
     try {
-      await this.tryHttpConnection();
-    } catch (error) {
-      this.handleConnectionError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      // Clean up any existing connection before starting new one
+      await this.cleanupCurrentConnection();
+
+      // If WebSocket hasn't failed yet, try WebSocket first
+      if (this.#websocketConnectionStatus === "init") {
+        try {
+          await this.tryWebSocketConnection(currentAttemptId);
+          if (currentAttemptId === this.#connectionAttemptId) {
+            this.#websocketConnectionStatus = "success";
+            return;
+          }
+        } catch (error) {
+          // Only handle the error if this is still the current attempt
+          if (currentAttemptId === this.#connectionAttemptId) {
+            console.warn(
+              "WebSocket connection failed, falling back to HTTP:",
+              error,
+            );
+            this.#websocketConnectionStatus = "failed";
+            // Continue to HTTP fallback
+          } else {
+            // This attempt was superseded, don't continue
+            return;
+          }
+        }
+      }
+
+      // Try HTTP connection only if this is still the current attempt
+      if (currentAttemptId === this.#connectionAttemptId) {
+        try {
+          await this.tryHttpConnection(currentAttemptId);
+        } catch (error) {
+          if (currentAttemptId === this.#connectionAttemptId) {
+            this.handleConnectionError(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
+        }
+      }
+    } finally {
+      // Only reset the connecting flag if this is still the current attempt
+      if (currentAttemptId === this.#connectionAttemptId) {
+        this.#isConnecting = false;
+      }
     }
   }
 
-  private async tryWebSocketConnection(): Promise<void> {
+  private async cleanupCurrentConnection(): Promise<void> {
+    if (this.#reader) {
+      this.#reader.unsubscribe();
+      this.#reader = null;
+    }
+
+    if (this.#currentConnection) {
+      await this.#currentConnection.destroy();
+      this.#currentConnection = null;
+    }
+  }
+
+  private async tryWebSocketConnection(attemptId: number): Promise<void> {
     const wsUrl = this.getWebSocketUrl(this.#baseUrl);
     const wsConnection = new WebSocketConnection({
       url: wsUrl,
@@ -137,6 +178,12 @@ export class FallbackConnection extends Connection<FallbackContext> {
       WebSocket: this.#websocketOptions.WebSocket,
       connect: false, // We'll connect manually
     });
+
+    // Check if attempt is still valid
+    if (attemptId !== this.#connectionAttemptId) {
+      await wsConnection.destroy();
+      throw new Error("Connection attempt superseded");
+    }
 
     this.setState({
       type: "connecting",
@@ -147,32 +194,51 @@ export class FallbackConnection extends Connection<FallbackContext> {
     });
 
     // Set up connection monitoring
-    this.setupConnectionEventHandlers(wsConnection, "websocket");
+    this.setupConnectionEventHandlers(wsConnection, "websocket", attemptId);
 
-    let timeout: ReturnType<typeof setTimeout>;
-    // Try to connect with timeout
-    const connectPromise = wsConnection.connect().catch((e) => {
-      // ignore websocket errors if we haven't failed it yet
-      return new Promise(() => {
-        // Purposefully never resolve so that we wait for the timeout
-      });
-    });
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        wsConnection.destroy().finally(() => {
-          reject(new Error("WebSocket connection timeout"));
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let isTimedOut = false;
+
+    try {
+      // Try to connect with timeout
+      const connectPromise = wsConnection.connect().catch((e) => {
+        // ignore websocket errors if we haven't failed it yet or if timed out
+        if (!isTimedOut && attemptId === this.#connectionAttemptId) {
+          throw e;
+        }
+        return new Promise(() => {
+          // Purposefully never resolve so that we wait for the timeout
         });
-      }, this.#websocketTimeout);
-    });
-    await Promise.race([connectPromise, timeoutPromise]);
-    clearTimeout(timeout!);
+      });
 
-    // If we get here, WebSocket connected successfully
-    this.#reader = wsConnection.getReader();
-    this.setupMessagePipe();
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          isTimedOut = true;
+          wsConnection.destroy().finally(() => {
+            reject(new Error("WebSocket connection timeout"));
+          });
+        }, this.#websocketTimeout);
+      });
+
+      await Promise.race([connectPromise, timeoutPromise]);
+
+      // Check if attempt is still valid after connection
+      if (attemptId !== this.#connectionAttemptId) {
+        await wsConnection.destroy();
+        throw new Error("Connection attempt superseded");
+      }
+
+      // If we get here, WebSocket connected successfully
+      this.#reader = wsConnection.getReader();
+      this.setupMessagePipe();
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
-  private async tryHttpConnection(): Promise<void> {
+  private async tryHttpConnection(attemptId: number): Promise<void> {
     const httpUrl = this.getHttpUrl(this.#baseUrl);
     const httpConnection = new HttpConnection({
       url: httpUrl,
@@ -180,6 +246,12 @@ export class FallbackConnection extends Connection<FallbackContext> {
       EventSource: this.#httpOptions.EventSource,
       connect: false, // We'll connect manually
     });
+
+    // Check if attempt is still valid
+    if (attemptId !== this.#connectionAttemptId) {
+      await httpConnection.destroy();
+      throw new Error("Connection attempt superseded");
+    }
 
     this.setState({
       type: "connecting",
@@ -190,9 +262,15 @@ export class FallbackConnection extends Connection<FallbackContext> {
     });
 
     // Set up connection monitoring
-    this.setupConnectionEventHandlers(httpConnection, "http");
+    this.setupConnectionEventHandlers(httpConnection, "http", attemptId);
 
     await httpConnection.connect();
+
+    // Check if attempt is still valid after connection
+    if (attemptId !== this.#connectionAttemptId) {
+      await httpConnection.destroy();
+      throw new Error("Connection attempt superseded");
+    }
 
     this.#reader = httpConnection.getReader();
     this.setupMessagePipe();
@@ -201,9 +279,15 @@ export class FallbackConnection extends Connection<FallbackContext> {
   private setupConnectionEventHandlers(
     connection: WebSocketConnection | HttpConnection,
     type: "websocket" | "http",
+    attemptId: number,
   ): void {
     connection.addListeners({
       update: (state) => {
+        // Only handle updates if this is still the current attempt
+        if (attemptId !== this.#connectionAttemptId) {
+          return;
+        }
+
         if (state.type === "errored") {
           if (
             this.#websocketConnectionStatus === "init" &&
@@ -229,22 +313,34 @@ export class FallbackConnection extends Connection<FallbackContext> {
         } as ConnectionState<FallbackContext>);
       },
       message: (message) => {
-        this.call("message", message);
+        // Only handle messages if this is still the current attempt
+        if (attemptId === this.#connectionAttemptId) {
+          this.call("message", message);
+        }
       },
       connected: () => {
-        this.#currentConnection = connection;
-        this.call("connected");
+        // Only handle connection if this is still the current attempt
+        if (attemptId === this.#connectionAttemptId) {
+          this.#currentConnection = connection;
+          this.call("connected");
+        }
       },
       disconnected: () => {
-        this.call("disconnected");
-        // Clean up the reader when disconnected
-        if (this.#reader) {
-          this.#reader.unsubscribe();
-          this.#reader = null;
+        // Only handle disconnection if this is still the current attempt
+        if (attemptId === this.#connectionAttemptId) {
+          this.call("disconnected");
+          // Clean up the reader when disconnected
+          if (this.#reader) {
+            this.#reader.unsubscribe();
+            this.#reader = null;
+          }
         }
       },
       ping: () => {
-        this.call("ping");
+        // Only handle ping if this is still the current attempt
+        if (attemptId === this.#connectionAttemptId) {
+          this.call("ping");
+        }
       },
     });
   }
@@ -276,15 +372,11 @@ export class FallbackConnection extends Connection<FallbackContext> {
   }
 
   protected async closeConnection(): Promise<void> {
-    if (this.#reader) {
-      this.#reader.unsubscribe();
-      this.#reader = null;
-    }
+    // Increment connection attempt ID to cancel any ongoing attempts
+    this.#connectionAttemptId++;
+    this.#isConnecting = false;
 
-    if (this.#currentConnection) {
-      await this.#currentConnection.destroy();
-      this.#currentConnection = null;
-    }
+    await this.cleanupCurrentConnection();
 
     this.setState({
       type: "disconnected",
@@ -300,15 +392,11 @@ export class FallbackConnection extends Connection<FallbackContext> {
       return;
     }
 
-    if (this.#currentConnection) {
-      await this.#currentConnection.destroy();
-      this.#currentConnection = null;
-    }
+    // Increment connection attempt ID to cancel any ongoing attempts
+    this.#connectionAttemptId++;
+    this.#isConnecting = false;
 
-    if (this.#reader) {
-      this.#reader.unsubscribe();
-      this.#reader = null;
-    }
+    await this.cleanupCurrentConnection();
 
     await super.destroy();
   }
@@ -325,5 +413,27 @@ export class FallbackConnection extends Connection<FallbackContext> {
       throw new Error("FallbackConnection is destroyed, create a new instance");
     }
     return super.connect();
+  }
+
+  /**
+   * Reset WebSocket connection status to allow retrying WebSocket on reconnection
+   */
+  public resetWebSocketStatus(): void {
+    this.#websocketConnectionStatus = "init";
+  }
+
+  /**
+   * Override disconnect to reset WebSocket status for fresh reconnection attempts
+   */
+  public async disconnect(): Promise<void> {
+    if (this.destroyed) {
+      throw new Error("Connection is destroyed, create a new instance");
+    }
+    
+    // Reset WebSocket status when explicitly disconnecting
+    this.#websocketConnectionStatus = "init";
+    
+    // Call parent disconnect method to handle base logic
+    await super.disconnect();
   }
 }
