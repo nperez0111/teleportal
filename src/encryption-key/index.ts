@@ -1,4 +1,8 @@
 import type { Update } from "teleportal";
+
+/**
+ * The Y.js update, encrypted with AES-GCM
+ */
 export type EncryptedUpdate = Update;
 
 /**
@@ -87,7 +91,7 @@ export async function encryptUpdate(
     result.set(iv, 0);
     result.set(new Uint8Array(encryptedData), iv.length);
 
-    return result as Update;
+    return result as EncryptedUpdate;
   } catch (error) {
     throw new Error(`Encryption failed: ${error}`);
   }

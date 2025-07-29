@@ -1,20 +1,19 @@
-import { Update } from "teleportal";
+import type {
+  DecodedEncryptedUpdatePayload,
+  EncryptedMessageId,
+  EncryptedStateVector,
+  EncryptedSyncStep2,
+  EncryptedUpdatePayload,
+  SeenMessageMapping,
+} from "teleportal/protocol/encryption";
 import {
   decodeEncryptedUpdate,
   decodeFromStateVector,
   decodeFromSyncStep2,
   encodeEncryptedUpdateMessages,
-  EncryptedMessageId,
-  EncryptedStateVector,
-  EncryptedSyncStep2,
-  EncryptedUpdate,
-  EncryptedUpdateMessage,
-} from "../../encryption-state-vector/encoding";
-import {
   getEncryptedStateVector,
   getEncryptedSyncStep2,
-  SeenMessageMapping,
-} from "../../encryption-state-vector/sync";
+} from "teleportal/protocol/encryption";
 import { DocumentStorage } from "../document-storage";
 
 export type DocumentMetadata = {
@@ -46,13 +45,13 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   abstract storeEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-    payload: EncryptedUpdate,
+    payload: EncryptedUpdatePayload,
   ): Promise<void>;
 
   abstract fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdate>;
+  ): Promise<EncryptedUpdatePayload | null>;
 
   async handleSyncStep1(
     key: string,
@@ -79,7 +78,7 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
 
   private updateSeenMessages(
     seenMessages: SeenMessageMapping,
-    message: EncryptedUpdateMessage,
+    message: DecodedEncryptedUpdatePayload,
   ): void {
     const [clientId, counter] = message.timestamp;
     if (!seenMessages[clientId]) {
@@ -106,7 +105,7 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
     });
   }
 
-  async write(key: string, update: EncryptedUpdate): Promise<void> {
+  async write(key: string, update: EncryptedUpdatePayload): Promise<void> {
     await this.transaction(key, async () => {
       const { seenMessages, ...rest } = await this.fetchDocumentMetadata(key);
       const encryptedUpdates = decodeEncryptedUpdate(update);
@@ -116,7 +115,7 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
         await this.storeEncryptedMessage(
           key,
           encryptedUpdate.id,
-          encryptedUpdate.encode(),
+          encodeEncryptedUpdateMessages([encryptedUpdate]),
         );
       }
       await this.writeDocumentMetadata(key, {
@@ -127,16 +126,18 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   }
 
   async fetch(key: string): Promise<{
-    update: EncryptedUpdate;
+    update: EncryptedUpdatePayload;
     stateVector: EncryptedStateVector;
   }> {
     // TODO maybe a more efficient way to do this?
     const { seenMessages } = await this.fetchDocumentMetadata(key);
-    const updates: EncryptedUpdateMessage[] = [];
+    const updates: DecodedEncryptedUpdatePayload[] = [];
     for (const clientId of Object.keys(seenMessages)) {
       for (const messageId of Object.keys(seenMessages[clientId as any])) {
         const update = await this.fetchEncryptedMessage(key, messageId);
-        updates.push(...EncryptedUpdateMessage.decode(update));
+        if (update) {
+          updates.push(...decodeEncryptedUpdate(update));
+        }
       }
     }
 

@@ -1,28 +1,25 @@
 import { Observable } from "teleportal";
 import type { Message, Update } from "teleportal/protocol";
-import type * as Y from "yjs";
-import {
+import type {
+  ClientId,
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
-  decodeFromSyncStep2,
   EncryptedMessageId,
   EncryptedStateVector,
   EncryptedSyncStep2,
-  EncryptedUpdateMessage,
-} from "./encoding";
-import type {
-  ClientId,
   LamportClockId,
   LamportClockValue,
-} from "./lamport-clock";
-import { LamportClock } from "./lamport-clock";
+  SeenMessageMapping,
+} from "teleportal/protocol/encryption";
 import {
+  decodeFromSyncStep2,
+  EncryptedUpdateMessage,
   getDecodedStateVector,
   getDecodedSyncStep2,
   getEncryptedStateVector,
   getEncryptedSyncStep2,
-  SeenMessageMapping,
-} from "./sync";
+  LamportClock,
+} from "teleportal/protocol/encryption";
 
 export abstract class EncryptionClient extends Observable<{
   "node-added": (node: EncryptedUpdateMessage) => void;
@@ -36,25 +33,18 @@ export abstract class EncryptionClient extends Observable<{
   /**
    * A mapping of seen messages by their {@link ClientId} to a mapping of {@link Counter} to their {@link EncryptedMessageId}
    */
-  private seenMessages: SeenMessageMapping = {};
+  public seenMessages: SeenMessageMapping = {};
 
   constructor(
     public document: string,
     public key: CryptoKey,
-    private getEncryptedMessageUpdate: (
+    public getEncryptedMessageUpdate: (
       messageId: EncryptedMessageId,
     ) => Promise<Update>,
-    clientId: ClientId,
+    public clientId: ClientId,
   ) {
     super();
     this.clock = new LamportClock(clientId);
-  }
-
-  /**
-   * Returns a serialized version of the seen messages by their {@link LamportClockId} to their {@link EncryptedMessageId}
-   */
-  public getSeenMessages(): SeenMessageMapping {
-    return this.seenMessages;
   }
 
   /**
@@ -121,7 +111,7 @@ export abstract class EncryptionClient extends Observable<{
       this.seenMessages[clientId] = {};
     }
     this.seenMessages[clientId][counter] = messageId;
-    this.call("update-seen-messages", this.getSeenMessages());
+    this.call("update-seen-messages", this.seenMessages);
 
     const node = EncryptedUpdateMessage.create(messageId, timestamp, payload);
 
@@ -134,14 +124,14 @@ export abstract class EncryptionClient extends Observable<{
    * Returns the {@link DecodedEncryptedStateVector} of the client.
    */
   public getDecodedStateVector(): DecodedEncryptedStateVector {
-    return getDecodedStateVector(this.getSeenMessages());
+    return getDecodedStateVector(this.seenMessages);
   }
 
   /**
    * Returns the {@link EncryptedStateVector} of the client.
    */
   public getEncryptedStateVector(): EncryptedStateVector {
-    return getEncryptedStateVector(this.getSeenMessages());
+    return getEncryptedStateVector(this.seenMessages);
   }
 
   /**
@@ -152,7 +142,7 @@ export abstract class EncryptionClient extends Observable<{
     syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
   ): Promise<DecodedEncryptedSyncStep2> {
     return getDecodedSyncStep2(
-      this.getSeenMessages(),
+      this.seenMessages,
       this.getEncryptedMessageUpdate,
       syncStep1,
     );
@@ -166,7 +156,7 @@ export abstract class EncryptionClient extends Observable<{
     syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
   ): Promise<EncryptedSyncStep2> {
     return getEncryptedSyncStep2(
-      this.getSeenMessages(),
+      this.seenMessages,
       this.getEncryptedMessageUpdate,
       syncStep1,
     );

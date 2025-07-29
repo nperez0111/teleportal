@@ -1,7 +1,7 @@
-import {
+import type {
   EncryptedMessageId,
-  EncryptedUpdate,
-} from "../../encryption-state-vector/encoding";
+  EncryptedUpdatePayload,
+} from "teleportal/protocol/encryption";
 import { DocumentMetadata, EncryptedDocumentStorage } from "../encrypted";
 
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
@@ -11,12 +11,12 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
         key: string,
         doc: {
           metadata: DocumentMetadata;
-          updates: Map<EncryptedMessageId, EncryptedUpdate>;
+          updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
         },
       ) => Promise<void>;
       fetch: (key: string) => Promise<{
         metadata: DocumentMetadata;
-        updates: Map<EncryptedMessageId, EncryptedUpdate>;
+        updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
       }>;
     } = {
       write: async (key, doc) => {
@@ -33,7 +33,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     string,
     {
       metadata: DocumentMetadata;
-      updates: Map<EncryptedMessageId, EncryptedUpdate>;
+      updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
     }
   >();
 
@@ -66,7 +66,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   async storeEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-    payload: EncryptedUpdate,
+    payload: EncryptedUpdatePayload,
   ): Promise<void> {
     let doc = await this.options.fetch(key);
     if (!doc) {
@@ -82,7 +82,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   async fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdate> {
+  ): Promise<EncryptedUpdatePayload> {
     const doc = await this.options.fetch(key);
     if (!doc) {
       throw new Error("Document not found");

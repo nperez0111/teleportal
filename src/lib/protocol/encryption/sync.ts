@@ -1,4 +1,4 @@
-import type { Update } from "teleportal/protocol";
+import { EncryptedUpdate } from "teleportal/encryption-key";
 import type {
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
@@ -7,9 +7,9 @@ import type {
   EncryptedSyncStep2,
 } from "./encoding";
 import {
+  DecodedEncryptedUpdatePayload,
   encodeToStateVector,
   encodeToSyncStep2,
-  EncryptedUpdateMessage,
 } from "./encoding";
 import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
 
@@ -58,10 +58,12 @@ export function getEncryptedStateVector(
  */
 export async function getDecodedSyncStep2(
   seenMessages: SeenMessageMapping,
-  getEncryptedMessageUpdate: (messageId: EncryptedMessageId) => Promise<Update>,
+  getEncryptedMessageUpdate: (
+    messageId: EncryptedMessageId,
+  ) => Promise<EncryptedUpdate | null>,
   syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
 ): Promise<DecodedEncryptedSyncStep2> {
-  const messages: Promise<EncryptedUpdateMessage>[] = [];
+  const messages: Promise<DecodedEncryptedUpdatePayload | null>[] = [];
   for (const [seenClientId, countToMessageMapping] of Object.entries(
     seenMessages,
   )) {
@@ -76,13 +78,23 @@ export async function getDecodedSyncStep2(
       if (counter === undefined || counter < timestamp[1]) {
         messages.push(
           getEncryptedMessageUpdate(messageId).then((payload) =>
-            EncryptedUpdateMessage.create(messageId, timestamp, payload),
+            payload
+              ? {
+                  id: messageId,
+                  timestamp,
+                  payload,
+                }
+              : null,
           ),
         );
       }
     }
   }
-  return { messages: await Promise.all(messages) };
+  return {
+    messages: (await Promise.all(messages)).filter(
+      (message) => message !== null,
+    ),
+  };
 }
 
 /**
@@ -91,7 +103,9 @@ export async function getDecodedSyncStep2(
  */
 export async function getEncryptedSyncStep2(
   seenMessages: SeenMessageMapping,
-  getEncryptedMessageUpdate: (messageId: EncryptedMessageId) => Promise<Update>,
+  getEncryptedMessageUpdate: (
+    messageId: EncryptedMessageId,
+  ) => Promise<EncryptedUpdate | null>,
   syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
 ): Promise<EncryptedSyncStep2> {
   return encodeToSyncStep2(
