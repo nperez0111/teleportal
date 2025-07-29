@@ -39,6 +39,9 @@ export class HttpConnection extends Connection<HttpConnectContext> {
   #url: string;
   #fetch: typeof fetch;
   #EventSource: typeof EventSource;
+  #source: ReturnType<typeof getSSESource> | undefined;
+  #isConnecting: boolean = false;
+  #streamAbortController: AbortController | undefined;
 
   constructor(options: HttpConnectionOptions) {
     super(options);
@@ -53,8 +56,6 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     };
   }
 
-  #source: ReturnType<typeof getSSESource> | undefined;
-
   protected async initConnection(): Promise<void> {
     if (this.destroyed) {
       throw new Error("HttpConnection is destroyed, create a new instance");
@@ -64,32 +65,44 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       return;
     }
 
-    if (this.state.type === "connected" || this.state.type === "connecting") {
+    // Prevent concurrent connection attempts
+    if (this.#isConnecting || this.state.type === "connected" || this.state.type === "connecting") {
       return;
     }
 
-    this.setState({
-      type: "connecting",
-      context: {
-        clientId: this.state.context.clientId,
-        lastEventId: this.state.context.lastEventId,
-      },
-    });
-
-    const sseSource = new URL(this.#url);
-    sseSource.pathname += sseSource.pathname.endsWith("/") ? "sse" : "/sse";
-
-    this.#source = getSSESource({
-      context: {} as ClientContext,
-      source: new this.#EventSource(sseSource.toString()),
-      onPing: () => {
-        this.call("ping");
-      },
-    });
+    this.#isConnecting = true;
 
     try {
+      // Clean up any existing resources
+      await this.#cleanupResources();
+
+      this.setState({
+        type: "connecting",
+        context: {
+          clientId: this.state.context.clientId,
+          lastEventId: this.state.context.lastEventId,
+        },
+      });
+
+      const sseSource = new URL(this.#url);
+      sseSource.pathname += sseSource.pathname.endsWith("/") ? "sse" : "/sse";
+
+      this.#source = getSSESource({
+        context: {} as ClientContext,
+        source: new this.#EventSource(sseSource.toString()),
+        onPing: () => {
+          this.call("ping");
+        },
+      });
+
       // Wait for the clientId to be set by the SSE source
       const clientId = await this.#source.clientId;
+
+      // Check if we're still connecting (not destroyed or disconnected)
+      if (!this.#isConnecting || this.destroyed) {
+        await this.#cleanupResources();
+        return;
+      }
 
       // Setup for the HTTP sink
       const context = { clientId } satisfies ClientContext;
@@ -102,62 +115,135 @@ export class HttpConnection extends Connection<HttpConnectContext> {
           // Send the message to the HTTP sink
           const resp = await this.#fetch(httpSink.toString(), requestOptions);
           if (!resp.ok) {
-            throw new Error("Failed to fetch");
+            throw new Error(`HTTP request failed with status ${resp.status}: ${resp.statusText}`);
           }
         },
       });
 
-      this.#source.readable
+      // Set up stream processing with abort controller
+      this.#streamAbortController = new AbortController();
+      const signal = this.#streamAbortController.signal;
+
+      // Set up the readable stream processing
+      const streamProcessingPromise = this.#source.readable
         .pipeTo(
           new WritableStream({
             write: async (chunk) => {
+              // Check if operation was aborted
+              if (signal.aborted) {
+                throw new Error("Stream processing aborted");
+              }
+
               this.updateLastMessageReceived();
-              this.setState({
-                type: "connected",
-                context: { clientId, lastEventId: chunk.id },
-              });
+              
+              // Only update state if we're still connecting
+              if (this.#isConnecting && !this.destroyed) {
+                this.setState({
+                  type: "connected",
+                  context: { clientId, lastEventId: chunk.id },
+                });
+              }
+              
               await this.writer.write(chunk);
             },
+            abort: (reason) => {
+              console.warn("HTTP stream processing aborted:", reason);
+            },
           }),
+          { signal }
         )
+        .catch((error) => {
+          // Only handle errors if we're still the active connection
+          if (this.#isConnecting && !this.destroyed && !signal.aborted) {
+            console.warn("HTTP stream processing error:", error);
+            this.handleConnectionError(
+              error instanceof Error ? error : new Error(String(error))
+            );
+          }
+        })
         .finally(() => {
-          // This will set the state to disconnected and trigger reconnection
-          this.closeConnection();
+          // Clean up and set disconnected state if this is still the active connection
+          if (this.#isConnecting && !this.destroyed) {
+            this.closeConnection();
+          }
         });
+
+      // Get the writer for sending messages
       this.#httpWriter = sink.writable.getWriter();
+
+      // Set connected state
       this.setState({
         type: "connected",
         context: { clientId, lastEventId: "client-id" },
       });
       this.updateLastMessageReceived();
+
     } catch (error) {
-      this.handleConnectionError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      if (this.#isConnecting && !this.destroyed) {
+        this.handleConnectionError(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    } finally {
+      this.#isConnecting = false;
+    }
+  }
+
+  async #cleanupResources(): Promise<void> {
+    // Abort any ongoing stream processing
+    if (this.#streamAbortController) {
+      this.#streamAbortController.abort("Connection cleanup");
+      this.#streamAbortController = undefined;
+    }
+
+    // Close and clean up HTTP writer
+    if (this.#httpWriter) {
+      try {
+        if (!this.#httpWriter.closed) {
+          await this.#httpWriter.close();
+        }
+      } catch (error) {
+        // Ignore errors when closing writer, it might already be closed
+      } finally {
+        try {
+          this.#httpWriter.releaseLock();
+        } catch (error) {
+          // Ignore errors when releasing lock
+        }
+        this.#httpWriter = undefined;
+      }
+    }
+
+    // Close and clean up EventSource
+    if (this.#source) {
+      try {
+        this.#source.eventSource.close();
+      } catch (error) {
+        // Ignore errors when closing EventSource
+      }
+      this.#source = undefined;
     }
   }
 
   protected async sendMessage(message: Message): Promise<void> {
-    if (this.state.type === "connected" && this.#httpWriter) {
-      await this.#httpWriter.write(message);
+    if (this.state.type === "connected" && this.#httpWriter && !this.#httpWriter.closed) {
+      try {
+        await this.#httpWriter.write(message);
+      } catch (error) {
+        // If it's a serious error, handle it
+        if (error instanceof Error && error.name !== "AbortError") {
+          this.handleConnectionError(error);
+        }
+        throw error; // Re-throw to let sendOrBuffer handle the buffering
+      }
     } else {
       await this.sendOrBuffer(message);
     }
   }
 
   protected async closeConnection(): Promise<void> {
-    if (this.#httpWriter) {
-      try {
-        await this.#httpWriter.close();
-      } catch (error) {
-        // Ignore errors when closing writer, it might already be closed
-      }
-      this.#httpWriter = undefined;
-    }
-    if (this.#source) {
-      this.#source.eventSource.close();
-      this.#source = undefined;
-    }
+    this.#isConnecting = false;
+    await this.#cleanupResources();
 
     this.setState({
       type: "disconnected",
@@ -172,13 +258,9 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     if (this.destroyed) {
       return;
     }
-    if (this.#httpWriter) {
-      try {
-        this.#httpWriter.releaseLock();
-      } catch (error) {
-        // Ignore errors when releasing lock, it might already be released
-      }
-    }
+
+    this.#isConnecting = false;
+    await this.#cleanupResources();
     await super.destroy();
   }
 }
