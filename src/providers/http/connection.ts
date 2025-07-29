@@ -40,7 +40,6 @@ export class HttpConnection extends Connection<HttpConnectContext> {
   #fetch: typeof fetch;
   #EventSource: typeof EventSource;
   #source: ReturnType<typeof getSSESource> | undefined;
-  #isConnecting: boolean = false;
   #streamAbortController: AbortController | undefined;
 
   constructor(options: HttpConnectionOptions) {
@@ -65,17 +64,16 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       return;
     }
 
-    // Prevent concurrent connection attempts
-    if (this.#isConnecting || this.state.type === "connected" || this.state.type === "connecting") {
+    // Prevent concurrent connection attempts - only use state
+    if (this.state.type === "connected" || this.state.type === "connecting") {
       return;
     }
-
-    this.#isConnecting = true;
 
     try {
       // Clean up any existing resources
       await this.#cleanupResources();
 
+      // Set state to connecting first
       this.setState({
         type: "connecting",
         context: {
@@ -99,7 +97,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       const clientId = await this.#source.clientId;
 
       // Check if we're still connecting (not destroyed or disconnected)
-      if (!this.#isConnecting || this.destroyed) {
+      if (this.state.type !== "connecting" || this.destroyed) {
         await this.#cleanupResources();
         return;
       }
@@ -137,7 +135,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
               this.updateLastMessageReceived();
               
               // Only update state if we're still connecting
-              if (this.#isConnecting && !this.destroyed) {
+              if (this.state.type === "connecting" && !this.destroyed) {
                 this.setState({
                   type: "connected",
                   context: { clientId, lastEventId: chunk.id },
@@ -154,7 +152,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         )
         .catch((error) => {
           // Only handle errors if we're still the active connection
-          if (this.#isConnecting && !this.destroyed && !signal.aborted) {
+          if (this.state.type === "connecting" && !this.destroyed && !signal.aborted) {
             console.warn("HTTP stream processing error:", error);
             this.handleConnectionError(
               error instanceof Error ? error : new Error(String(error))
@@ -163,7 +161,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         })
         .finally(() => {
           // Clean up and set disconnected state if this is still the active connection
-          if (this.#isConnecting && !this.destroyed) {
+          if ((this.state.type === "connecting" || this.state.type === "connected") && !this.destroyed) {
             this.closeConnection();
           }
         });
@@ -171,21 +169,21 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       // Get the writer for sending messages
       this.#httpWriter = sink.writable.getWriter();
 
-      // Set connected state
-      this.setState({
-        type: "connected",
-        context: { clientId, lastEventId: "client-id" },
-      });
-      this.updateLastMessageReceived();
+      // Only set connected state if we're still connecting
+      if (this.state.type === "connecting" && !this.destroyed) {
+        this.setState({
+          type: "connected",
+          context: { clientId, lastEventId: "client-id" },
+        });
+        this.updateLastMessageReceived();
+      }
 
     } catch (error) {
-      if (this.#isConnecting && !this.destroyed) {
+      if (this.state.type === "connecting" && !this.destroyed) {
         this.handleConnectionError(
           error instanceof Error ? error : new Error(String(error)),
         );
       }
-    } finally {
-      this.#isConnecting = false;
     }
   }
 
@@ -234,15 +232,14 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         if (error instanceof Error && error.name !== "AbortError") {
           this.handleConnectionError(error);
         }
-        throw error; // Re-throw to let sendOrBuffer handle the buffering
+        throw error; // Re-throw to let base class handle buffering
       }
     } else {
-      await this.sendOrBuffer(message);
+      throw new Error("Not connected - message should be buffered");
     }
   }
 
   protected async closeConnection(): Promise<void> {
-    this.#isConnecting = false;
     await this.#cleanupResources();
 
     this.setState({
@@ -259,7 +256,6 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       return;
     }
 
-    this.#isConnecting = false;
     await this.#cleanupResources();
     await super.destroy();
   }

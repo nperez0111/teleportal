@@ -62,7 +62,6 @@ export class FallbackConnection extends Connection<FallbackContext> {
   #currentConnection: WebSocketConnection | HttpConnection | null = null;
   #reader: FanOutReader<RawReceivedMessage> | null = null;
   #websocketConnectionStatus: "init" | "failed" | "success" = "init";
-  #isConnecting: boolean = false;
   #connectionAttemptId: number = 0;
 
   constructor(options: FallbackConnectionOptions) {
@@ -102,12 +101,11 @@ export class FallbackConnection extends Connection<FallbackContext> {
       return;
     }
 
-    // Prevent concurrent connection attempts
-    if (this.#isConnecting || this.state.type === "connecting" || this.state.type === "connected") {
+    // Prevent concurrent connection attempts - only use state
+    if (this.state.type === "connecting" || this.state.type === "connected") {
       return;
     }
 
-    this.#isConnecting = true;
     const currentAttemptId = ++this.#connectionAttemptId;
 
     try {
@@ -150,10 +148,11 @@ export class FallbackConnection extends Connection<FallbackContext> {
           }
         }
       }
-    } finally {
-      // Only reset the connecting flag if this is still the current attempt
+    } catch (error) {
       if (currentAttemptId === this.#connectionAttemptId) {
-        this.#isConnecting = false;
+        this.handleConnectionError(
+          error instanceof Error ? error : new Error(String(error)),
+        );
       }
     }
   }
@@ -374,7 +373,6 @@ export class FallbackConnection extends Connection<FallbackContext> {
   protected async closeConnection(): Promise<void> {
     // Increment connection attempt ID to cancel any ongoing attempts
     this.#connectionAttemptId++;
-    this.#isConnecting = false;
 
     await this.cleanupCurrentConnection();
 
@@ -394,7 +392,6 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
     // Increment connection attempt ID to cancel any ongoing attempts
     this.#connectionAttemptId++;
-    this.#isConnecting = false;
 
     await this.cleanupCurrentConnection();
 

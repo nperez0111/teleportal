@@ -42,7 +42,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
   #protocols: string[];
   #WebSocketImpl: typeof WebSocket;
   #currentWebSocket: WebSocket | null = null;
-  #isConnecting: boolean = false;
   #eventListeners: Map<WebSocket, {
     message: (event: MessageEvent) => void;
     error: (event: Event) => void;
@@ -84,12 +83,10 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       return;
     }
 
-    // Prevent concurrent connection attempts
-    if (this.#isConnecting || this.state.type === "connecting" || this.state.type === "connected") {
+    // Prevent concurrent connection attempts - only use state
+    if (this.state.type === "connecting" || this.state.type === "connected") {
       return;
     }
-
-    this.#isConnecting = true;
 
     try {
       // Clean up any existing WebSocket
@@ -99,6 +96,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       websocket.binaryType = "arraybuffer";
       this.#currentWebSocket = websocket;
 
+      // Set state to connecting first
       this.setState({ type: "connecting", context: { ws: websocket } });
 
       // Set up event listeners with proper cleanup tracking
@@ -160,8 +158,8 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
         },
 
         open: (event: Event) => {
-          // Only handle open if this is still the current WebSocket
-          if (websocket !== this.#currentWebSocket) {
+          // Only handle open if this is still the current WebSocket and we're still connecting
+          if (websocket !== this.#currentWebSocket || this.state.type !== "connecting") {
             return;
           }
 
@@ -182,8 +180,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       this.handleConnectionError(
         error instanceof Error ? error : new Error(String(error)),
       );
-    } finally {
-      this.#isConnecting = false;
     }
   }
 
@@ -227,11 +223,11 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       try {
         ws.send(message.encoded);
       } catch (error) {
-        // If send fails, buffer the message
-        await this.sendOrBuffer(message);
+        // Re-throw to let base class handle buffering
+        throw error;
       }
     } else {
-      await this.sendOrBuffer(message);
+      throw new Error("Not connected - message should be buffered");
     }
   }
 
@@ -260,7 +256,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       return;
     }
 
-    this.#isConnecting = false;
     await this.#cleanupCurrentWebSocket();
     
     // Clean up any remaining event listeners
