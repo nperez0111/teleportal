@@ -154,6 +154,7 @@ export function getYDocSource({
         observer.on("message", onMessage);
       },
       cancel() {
+        isDestroyed = true;
         ydoc.off("updateV2", onUpdate);
         ydoc.off("destroy", onDestroy);
         awareness.off("update", onAwarenessUpdate);
