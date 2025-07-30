@@ -24,6 +24,8 @@ export class Document<Context extends ServerContext> extends Observable<{
   destroy: (document: Document<Context>) => void;
   "client-connected": (client: Client<Context>) => void;
   "client-disconnected": (client: Client<Context>) => void;
+  "no-clients": (document: Document<Context>) => void;
+  "client-reconnected": (document: Document<Context>) => void;
   broadcast: (message: Message<Context>) => void;
 }> {
   public readonly id: string;
@@ -34,6 +36,7 @@ export class Document<Context extends ServerContext> extends Observable<{
   private readonly storage: DocumentStorage;
   private readonly pubSub: PubSub;
   private readonly unsubscribe: Promise<() => Promise<void>>;
+  #destroyed = false;
 
   constructor({
     name,
@@ -224,14 +227,6 @@ export class Document<Context extends ServerContext> extends Observable<{
       .trace("client removed from document");
 
     this.call("client-disconnected", client);
-
-    // If no clients remain, destroy the document
-    if (this.clients.size === 0) {
-      this.logger
-        .withMetadata({ documentId: this.id })
-        .trace("destroying document - no remaining clients");
-      this.destroy();
-    }
   }
 
   /**
@@ -360,7 +355,6 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
   }
 
-  #destroyed = false;
   /**
    * Destroy the document.
    */
@@ -372,20 +366,45 @@ export class Document<Context extends ServerContext> extends Observable<{
     this.#destroyed = true;
 
     this.logger.trace("destroying document");
-    await this.call("destroy", this);
 
+    // Emit destroy event
+    try {
+      await this.call("destroy", this);
+    } catch (e) {
+      this.logger.withError(e).error("Failed to emit destroy event");
+    }
+
+    // Unsubscribe from pubsub
     this.logger.trace("unsubscribing from pubsub");
-    await (
-      await this.unsubscribe
-    )();
-    this.logger.trace("unsubscribed from pubsub");
+    try {
+      await (
+        await this.unsubscribe
+      )();
+      this.logger.trace("unsubscribed from pubsub");
+    } catch (e) {
+      this.logger.withError(e).error("Failed to unsubscribe from pubsub");
+    }
 
+    // Unload storage
     this.logger.trace("unloading storage");
-    await this.storage.unload(this.id);
-    this.logger.trace("unloading storage done");
+    try {
+      await this.storage.unload(this.id);
+      this.logger.trace("unloading storage done");
+    } catch (e) {
+      this.logger.withError(e).error("Failed to unload storage");
+    }
 
+    // Unsubscribe all clients
     this.logger.trace("unsubscribing clients");
-    this.clients.forEach((client) => client.unsubscribeFromDocument(this));
+    for (const client of this.clients) {
+      try {
+        client.unsubscribeFromDocument(this);
+      } catch (e) {
+        this.logger
+          .withError(e)
+          .error("Failed to unsubscribe client from document");
+      }
+    }
     this.logger.trace("clients unsubscribed");
 
     this.clients.clear();

@@ -106,22 +106,41 @@ export class Client<Context extends ServerContext> extends Observable<{
     }
     this.#destroyed = true;
     this.logger.trace("disposing client");
+
+    // Unsubscribe from all documents
     for (const document of this.documents) {
-      this.unsubscribeFromDocument(document);
-    }
-    try {
-      await this.writer.releaseLock();
-    } catch (e) {
-      this.logger.withError(e).error("Failed to release lock, aborting client");
       try {
-        await this.writer.abort();
+        this.unsubscribeFromDocument(document);
       } catch (e) {
         this.logger
           .withError(e)
-          .error("Failed to abort client, ignoring error");
+          .error("Failed to unsubscribe from document during destroy");
       }
     }
-    await this.call("destroy", this);
+
+    // Handle writer cleanup
+    try {
+      await this.writer.releaseLock();
+    } catch (e) {
+      this.logger
+        .withError(e)
+        .error("Failed to release lock, attempting to abort");
+      try {
+        await this.writer.abort();
+      } catch (abortError) {
+        this.logger
+          .withError(abortError)
+          .error("Failed to abort writer, continuing with destroy");
+      }
+    }
+
+    // Emit destroy event
+    try {
+      await this.call("destroy", this);
+    } catch (e) {
+      this.logger.withError(e).error("Failed to emit destroy event");
+    }
+
     super.destroy();
   }
 }

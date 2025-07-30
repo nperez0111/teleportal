@@ -4,6 +4,7 @@ import { ConsoleTransport, LogLayer, type ILogLayer } from "loglayer";
 export const logger = new LogLayer({
   transport: new ConsoleTransport({
     logger: console,
+    level: "info",
   }),
 });
 
