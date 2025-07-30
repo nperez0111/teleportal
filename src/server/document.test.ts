@@ -2,7 +2,13 @@ import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { Document } from "./document";
 import { logger } from "./logger";
 import { DocMessage, InMemoryPubSub } from "teleportal";
-import type { ServerContext, Message, Update, StateVector } from "teleportal";
+import type {
+  ServerContext,
+  Message,
+  Update,
+  StateVector,
+  SyncStep2Update,
+} from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
 
 // Mock Client class for testing
@@ -35,6 +41,18 @@ class MockClient<Context extends ServerContext> {
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
+  handleSyncStep1(
+    key: string,
+    syncStep1: StateVector,
+  ): Promise<{ update: SyncStep2Update; stateVector: StateVector }> {
+    return Promise.resolve({
+      update: new Uint8Array() as SyncStep2Update,
+      stateVector: syncStep1,
+    });
+  }
+  handleSyncStep2(key: string, syncStep2: SyncStep2Update): Promise<void> {
+    return Promise.resolve();
+  }
   public encrypted = false;
   public mockFetch = false;
   public mockWrite = false;
