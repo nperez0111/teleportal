@@ -25,6 +25,23 @@ export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";
 }
 
+export interface YDocSourceHandler {
+  onUpdate(update: Update): Promise<Message>;
+  onAwarenessUpdate(update: AwarenessUpdateMessage): Promise<Message>;
+  start(): Promise<Message>;
+  destroy?: () => void;
+}
+
+export interface YDocSinkHandler {
+  handleSyncStep1(stateVector: StateVector): Promise<DocMessage<ClientContext>>;
+  handleSyncStep2(syncStep2: SyncStep2Update): Promise<void>;
+  handleUpdate(update: Update): Promise<void>;
+  handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void>;
+  handleAwarenessRequest(
+    update: AwarenessUpdateMessage,
+  ): Promise<AwarenessMessage<ClientContext>>;
+}
+
 /**
  * Makes a {@link Source} from a {@link Y.Doc} and a document name
  */
@@ -80,20 +97,13 @@ export function getYDocSource({
   observer?: Observable<{
     message: (message: Message) => void;
   }>;
-  client?: {
-    onUpdate: (update: Update) => Promise<Message>;
-    onAwarenessUpdate: (update: AwarenessUpdateMessage) => Promise<Message>;
-    start: () => Promise<Message>;
-    destroy?: () => void;
-  };
+  client?: YDocSourceHandler;
 }): Source<
   ClientContext,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
-    client: {
-      start: () => Promise<Message>;
-    };
+    client: YDocSourceHandler;
   }
 > {
   let onUpdate: (...args: any[]) => void;
@@ -220,17 +230,7 @@ export function getYDocSink({
   observer?: Observable<{
     message: (message: Message) => void;
   }>;
-  client?: {
-    handleSyncStep1: (
-      stateVector: StateVector,
-    ) => Promise<DocMessage<ClientContext>>;
-    handleSyncStep2: (syncStep2: SyncStep2Update) => Promise<void>;
-    handleUpdate: (update: Update) => Promise<void>;
-    handleAwarenessUpdate: (update: AwarenessUpdateMessage) => Promise<void>;
-    handleAwarenessRequest: (
-      update: AwarenessUpdateMessage,
-    ) => Promise<AwarenessMessage<ClientContext>>;
-  };
+  client?: YDocSinkHandler;
 }): Sink<
   ClientContext,
   {
@@ -362,9 +362,7 @@ export function getYTransportFromYDoc({
     ydoc: Y.Doc;
     awareness: Awareness;
     synced: Promise<void>;
-    client: {
-      start: () => Promise<Message>;
-    };
+    client: Pick<YDocSourceHandler, "start">;
   }
 > {
   // observer is used for cross communication between the source and sink

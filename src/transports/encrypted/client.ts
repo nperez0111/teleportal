@@ -44,13 +44,20 @@ import {
   encodeAwarenessUpdate,
 } from "y-protocols/awareness.js";
 import * as Y from "yjs";
-import { getSyncTransactionOrigin } from "../ydoc";
+import {
+  getSyncTransactionOrigin,
+  YDocSinkHandler,
+  YDocSourceHandler,
+} from "../ydoc";
 
-export class EncryptionClient extends Observable<{
-  "update-seen-messages": (seenMessages: SeenMessageMapping) => void;
-  "seen-update": (node: DecodedEncryptedUpdatePayload) => void;
-  "loaded-seen-messages": () => void;
-}> {
+export class EncryptionClient
+  extends Observable<{
+    "update-seen-messages": (seenMessages: SeenMessageMapping) => void;
+    "seen-update": (node: DecodedEncryptedUpdatePayload) => void;
+    "loaded-seen-messages": () => void;
+  }>
+  implements YDocSinkHandler, YDocSourceHandler
+{
   /**
    * A {@link LamportClock} to keep track of the message order
    */
@@ -159,7 +166,7 @@ export class EncryptionClient extends Observable<{
   /**
    * Applies a list of {@link DecryptedUpdate}s to the {@link Y.Doc}.
    */
-  public applyUpdates(updates: DecryptedUpdate[]): void {
+  private applyUpdates(updates: DecryptedUpdate[]): void {
     this.ydoc.transact((tr) => {
       for (const update of updates) {
         Y.applyUpdateV2(tr.doc, update, getSyncTransactionOrigin(this.ydoc));
@@ -370,14 +377,14 @@ export class EncryptionClient extends Observable<{
   /**
    * Returns the {@link DecodedEncryptedStateVector} of the client.
    */
-  public getDecodedStateVector(): DecodedEncryptedStateVector {
+  private getDecodedStateVector(): DecodedEncryptedStateVector {
     return getDecodedStateVector(this.seenMessages);
   }
 
   /**
    * Returns the {@link EncryptedStateVector} of the client.
    */
-  public getEncryptedStateVector(): EncryptedStateVector {
+  private getEncryptedStateVector(): EncryptedStateVector {
     return getEncryptedStateVector(this.seenMessages);
   }
 
@@ -385,7 +392,7 @@ export class EncryptionClient extends Observable<{
    * Given a {@link DecodedEncryptedStateVector} of the other client,
    * returns a {@link DecodedEncryptedSyncStep2} of the messages that the other client has not seen yet.
    */
-  public async getDecodedSyncStep2(
+  private async getDecodedSyncStep2(
     syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
   ): Promise<DecodedEncryptedSyncStep2> {
     return getDecodedSyncStep2(
@@ -399,7 +406,7 @@ export class EncryptionClient extends Observable<{
    * Given a {@link DecodedEncryptedStateVector} of the other client,
    * returns a {@link EncryptedSyncStep2} of the messages that the other client has not seen yet.
    */
-  public async getEncryptedSyncStep2(
+  private async getEncryptedSyncStep2(
     syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
   ): Promise<EncryptedSyncStep2> {
     return getEncryptedSyncStep2(
