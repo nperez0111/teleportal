@@ -1,277 +1,208 @@
-// import { describe, expect, it, beforeEach } from "bun:test";
-// import { DocMessage, AwarenessMessage } from "../message-types";
-// import { createEncryptionKey } from "../../../encryption-key";
-// import {
-//   encryptMessage,
-//   decryptMessage,
-//   createEncryptionTransform,
-//   createDecryptionTransform,
-// } from "./index.ts.bak";
-// import type {
-//   Update,
-//   StateVector,
-//   AwarenessUpdateMessage,
-//   SyncStep2Update,
-// } from "../types";
+import { describe, expect, it } from "bun:test";
+import { EncryptedUpdate } from "../../../encryption-key";
+import type {
+  DecodedEncryptedStateVector,
+  DecodedEncryptedSyncStep2,
+  DecodedEncryptedUpdatePayload,
+  EncryptedStateVector,
+  EncryptedSyncStep2,
+  EncryptedUpdatePayload,
+} from "./encoding";
+import {
+  decodeEncryptedUpdate,
+  decodeFromStateVector,
+  decodeFromSyncStep2,
+  encodeEncryptedUpdate,
+  encodeEncryptedUpdateMessages,
+  encodeToStateVector,
+  encodeToSyncStep2,
+  getEmptyEncryptedUpdate,
+  getEmptyStateVector,
+  getEmptySyncStep2,
+} from "./encoding";
+import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
 
-// // Helper function to create a proper Update type
-// function createUpdate(data: Uint8Array): Update {
-//   return data as Update;
-// }
+describe("protocol encryption encoding", () => {
+  describe("state vector encoding/decoding", () => {
+    it("should encode and decode empty state vector", () => {
+      const emptyState: DecodedEncryptedStateVector = { clocks: new Map() };
+      const encoded = encodeToStateVector(emptyState);
+      const decoded = decodeFromStateVector(encoded);
 
-// // Helper function to create a proper StateVector type
-// function createStateVector(data: Uint8Array): StateVector {
-//   return data as StateVector;
-// }
+      expect(decoded.clocks.size).toBe(0);
+    });
 
-// // Helper function to create a proper AwarenessUpdateMessage type
-// function createAwarenessUpdate(data: Uint8Array): AwarenessUpdateMessage {
-//   return data as AwarenessUpdateMessage;
-// }
+    it("should encode and decode state vector with clocks", () => {
+      const clocks = new Map<ClientId, Counter>([
+        [1, 5],
+        [2, 10],
+        [3, 15],
+      ]);
+      const state: DecodedEncryptedStateVector = { clocks };
+      const encoded = encodeToStateVector(state);
+      const decoded = decodeFromStateVector(encoded);
 
-// describe("protocol encryption", () => {
-//   let key1: CryptoKey;
-//   let key2: CryptoKey;
+      expect(decoded.clocks.size).toBe(3);
+      expect(decoded.clocks.get(1)).toBe(5);
+      expect(decoded.clocks.get(2)).toBe(10);
+      expect(decoded.clocks.get(3)).toBe(15);
+    });
 
-//   beforeEach(async () => {
-//     key1 = await createEncryptionKey();
-//     key2 = await createEncryptionKey();
-//   });
+    it("should throw error for invalid version", () => {
+      const invalidData = new Uint8Array([1, 0, 0]); // version 1 instead of 0
+      expect(() =>
+        decodeFromStateVector(invalidData as EncryptedStateVector),
+      ).toThrow("Failed to decode encrypted state vector");
+    });
 
-//   describe("encryptMessage", () => {
-//     it("should encrypt doc update messages", async () => {
-//       const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "update", update: testUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
+    it("should return empty state vector", () => {
+      const empty = getEmptyStateVector();
+      const decoded = decodeFromStateVector(empty);
+      expect(decoded.clocks.size).toBe(0);
+    });
+  });
 
-//       const encrypted = await encryptMessage(message, key1);
+  describe("encrypted update encoding/decoding", () => {
+    it("should encode and decode empty update messages", () => {
+      const emptyMessages: DecodedEncryptedUpdatePayload[] = [];
+      const encoded = encodeEncryptedUpdateMessages(emptyMessages);
+      const decoded = decodeEncryptedUpdate(encoded);
 
-//       expect(encrypted.encrypted).toBe(true);
-//       expect(encrypted.type).toBe("doc");
-//       expect(encrypted.document).toBe("test-doc");
-//       expect(encrypted.context.clientId).toBe("test");
-//       expect(encrypted.payload.type).toBe("update");
+      expect(decoded.length).toBe(0);
+    });
 
-//       // The update should be different (encrypted)
-//       if (encrypted.payload.type === "update") {
-//         expect(encrypted.payload.update).not.toEqual(testUpdate);
-//       }
-//     });
+    it("should encode and decode single update message", () => {
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedUpdate;
+      const timestamp: LamportClockValue = [1, 5];
+      const message: DecodedEncryptedUpdatePayload = {
+        id: "dGVzdC1tZXNzYWdlLWlk", // base64 encoded "test-message-id"
+        timestamp,
+        payload: testUpdate,
+      };
 
-//     it("should encrypt doc sync-step-2 messages", async () => {
-//       const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as SyncStep2Update;
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "sync-step-2", update: testUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
+      const encoded = encodeEncryptedUpdateMessages([message]);
+      const decoded = decodeEncryptedUpdate(encoded);
 
-//       const encrypted = await encryptMessage(message, key1);
+      expect(decoded.length).toBe(1);
+      expect(decoded[0].id).toBe("dGVzdC1tZXNzYWdlLWlk");
+      expect(decoded[0].timestamp).toEqual(timestamp);
+      expect(decoded[0].payload).toEqual(testUpdate);
+    });
 
-//       expect(encrypted.encrypted).toBe(true);
-//       expect(encrypted.payload.type).toBe("sync-step-2");
+    it("should encode and decode multiple update messages", () => {
+      const messages: DecodedEncryptedUpdatePayload[] = [
+        {
+          id: "bXNnMQ==", // base64 encoded "msg1"
+          timestamp: [1, 5],
+          payload: new Uint8Array([1, 2, 3]) as EncryptedUpdate,
+        },
+        {
+          id: "bXNnMg==", // base64 encoded "msg2"
+          timestamp: [2, 10],
+          payload: new Uint8Array([4, 5, 6]) as EncryptedUpdate,
+        },
+      ];
 
-//       // The update should be different (encrypted)
-//       if (encrypted.payload.type === "sync-step-2") {
-//         expect(encrypted.payload.update).not.toEqual(testUpdate);
-//       }
-//     });
+      const encoded = encodeEncryptedUpdateMessages(messages);
+      const decoded = decodeEncryptedUpdate(encoded);
 
-//     it("should handle sync-step-1 messages", async () => {
-//       const testStateVector = createStateVector(new Uint8Array([1, 2, 3]));
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "sync-step-1", sv: testStateVector },
-//         { clientId: "test" },
-//         false,
-//       );
+      expect(decoded.length).toBe(2);
+      expect(decoded[0].id).toBe("bXNnMQ==");
+      expect(decoded[1].id).toBe("bXNnMg==");
+    });
 
-//       const encrypted = await encryptMessage(message, key1);
+    it("should encode single encrypted update", () => {
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedUpdate;
+      const timestamp: LamportClockValue = [1, 5];
 
-//       expect(encrypted.encrypted).toBe(true);
-//       expect(encrypted.payload.type).toBe("sync-step-1");
+      const encoded = encodeEncryptedUpdate(testUpdate, timestamp);
+      const decoded = decodeEncryptedUpdate(encoded);
 
-//       // The state vector should be different (faux)
-//       if (encrypted.payload.type === "sync-step-1") {
-//         expect(encrypted.payload.sv).not.toEqual(testStateVector);
-//       }
-//     });
+      expect(decoded.length).toBe(1);
+      expect(decoded[0].timestamp).toEqual(timestamp);
+      expect(decoded[0].payload).toEqual(testUpdate);
+    });
 
-//     it("should pass through auth messages", async () => {
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "auth-message", permission: "denied", reason: "test" },
-//         { clientId: "test" },
-//         false,
-//       );
+    it("should throw error for invalid update version", () => {
+      const invalidData = new Uint8Array([1, 0, 0]); // version 1 instead of 0
+      expect(() =>
+        decodeEncryptedUpdate(invalidData as EncryptedUpdatePayload),
+      ).toThrow("Failed to decode encrypted update");
+    });
 
-//       const encrypted = await encryptMessage(message, key1);
+    it("should return empty encrypted update", () => {
+      const empty = getEmptyEncryptedUpdate();
+      const decoded = decodeEncryptedUpdate(empty);
+      expect(decoded.length).toBe(0);
+    });
+  });
 
-//       expect(encrypted.encrypted).toBe(true);
-//       expect(encrypted.payload.type).toBe("auth-message");
+  describe("sync step 2 encoding/decoding", () => {
+    it("should encode and decode empty sync step 2", () => {
+      const emptySync: DecodedEncryptedSyncStep2 = { messages: [] };
+      const encoded = encodeToSyncStep2(emptySync);
+      const decoded = decodeFromSyncStep2(encoded);
 
-//       // Auth messages should be passed through unchanged
-//       if (encrypted.payload.type === "auth-message") {
-//         expect(encrypted.payload.permission).toBe("denied");
-//         expect(encrypted.payload.reason).toBe("test");
-//       }
-//     });
+      expect(decoded.messages.length).toBe(0);
+    });
 
-//     it("should pass through awareness messages", async () => {
-//       const awarenessUpdate = createAwarenessUpdate(
-//         new Uint8Array([1, 2, 3, 4, 5]),
-//       );
-//       const message = new AwarenessMessage(
-//         "test-doc",
-//         { type: "awareness-update", update: awarenessUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
+    it("should encode and decode sync step 2 with messages", () => {
+      const messages: DecodedEncryptedUpdatePayload[] = [
+        {
+          id: "msg1",
+          timestamp: [1, 5],
+          payload: new Uint8Array([1, 2, 3]) as EncryptedUpdate,
+        },
+        {
+          id: "msg2",
+          timestamp: [2, 10],
+          payload: new Uint8Array([4, 5, 6]) as EncryptedUpdate,
+        },
+      ];
+      const sync: DecodedEncryptedSyncStep2 = { messages };
 
-//       const encrypted = await encryptMessage(message, key1);
+      const encoded = encodeToSyncStep2(sync);
+      const decoded = decodeFromSyncStep2(encoded);
 
-//       expect(encrypted.encrypted).toBe(true);
-//       expect(encrypted.type).toBe("awareness");
+      expect(decoded.messages.length).toBe(2);
+      expect(decoded.messages[0].id).toBe("msg1");
+      expect(decoded.messages[1].id).toBe("msg2");
+    });
 
-//       // Awareness messages should be passed through unchanged
-//       if (
-//         encrypted.type === "awareness" &&
-//         encrypted.payload.type === "awareness-update"
-//       ) {
-//         expect(encrypted.payload.update).toEqual(awarenessUpdate);
-//       }
-//     });
-//   });
+    it("should handle client id mapping correctly", () => {
+      const messages: DecodedEncryptedUpdatePayload[] = [
+        {
+          id: "msg1",
+          timestamp: [100, 5],
+          payload: new Uint8Array([1, 2, 3]) as EncryptedUpdate,
+        },
+        {
+          id: "msg2",
+          timestamp: [100, 10], // Same client id
+          payload: new Uint8Array([4, 5, 6]) as EncryptedUpdate,
+        },
+      ];
+      const sync: DecodedEncryptedSyncStep2 = { messages };
 
-//   describe("decryptMessage", () => {
-//     it("should decrypt doc update messages", async () => {
-//       const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "update", update: testUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
+      const encoded = encodeToSyncStep2(sync);
+      const decoded = decodeFromSyncStep2(encoded);
 
-//       const encrypted = await encryptMessage(message, key1);
-//       const decrypted = await decryptMessage(encrypted, key1);
+      expect(decoded.messages.length).toBe(2);
+      expect(decoded.messages[0].timestamp[0]).toBe(100);
+      expect(decoded.messages[1].timestamp[0]).toBe(100);
+    });
 
-//       expect(decrypted.encrypted).toBe(false);
-//       expect(decrypted.type).toBe("doc");
-//       expect(decrypted.document).toBe("test-doc");
-//       expect(decrypted.context.clientId).toBe("test");
-//       expect(decrypted.payload.type).toBe("update");
+    it("should throw error for invalid sync step 2 version", () => {
+      const invalidData = new Uint8Array([1, 0, 0]); // version 1 instead of 0
+      expect(() =>
+        decodeFromSyncStep2(invalidData as EncryptedSyncStep2),
+      ).toThrow("Failed to decode encrypted sync step 2 message");
+    });
 
-//       // The update should be restored to original
-//       if (decrypted.payload.type === "update") {
-//         expect(decrypted.payload.update).toEqual(testUpdate);
-//       }
-//     });
-
-//     it("should decrypt doc sync-step-2 messages", async () => {
-//       const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as SyncStep2Update;
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "sync-step-2", update: testUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
-
-//       const encrypted = await encryptMessage(message, key1);
-//       const decrypted = await decryptMessage(encrypted, key1);
-
-//       expect(decrypted.encrypted).toBe(false);
-//       expect(decrypted.payload.type).toBe("sync-step-2");
-
-//       // The update should be restored to original
-//       if (decrypted.payload.type === "sync-step-2") {
-//         expect(decrypted.payload.update).toEqual(testUpdate);
-//       }
-//     });
-
-//     it("should fail to decrypt with wrong key", async () => {
-//       const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "update", update: testUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
-
-//       const encrypted = await encryptMessage(message, key1);
-
-//       await expect(decryptMessage(encrypted, key2)).rejects.toThrow();
-//     });
-
-//     it("should handle awareness messages", async () => {
-//       const awarenessUpdate = createAwarenessUpdate(
-//         new Uint8Array([1, 2, 3, 4, 5]),
-//       );
-//       const message = new AwarenessMessage(
-//         "test-doc",
-//         { type: "awareness-update", update: awarenessUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
-
-//       const encrypted = await encryptMessage(message, key1);
-//       const decrypted = await decryptMessage(encrypted, key1);
-
-//       expect(decrypted.encrypted).toBe(false);
-//       expect(decrypted.type).toBe("awareness");
-
-//       // Awareness messages should be passed through unchanged
-//       if (
-//         decrypted.type === "awareness" &&
-//         decrypted.payload.type === "awareness-update"
-//       ) {
-//         expect(decrypted.payload.update).toEqual(awarenessUpdate);
-//       }
-//     });
-//   });
-
-//   describe("transform streams", () => {
-//     it("should create encryption transform stream", async () => {
-//       const encryptionTransform = createEncryptionTransform(key1);
-
-//       expect(encryptionTransform).toBeDefined();
-//       expect(encryptionTransform.readable).toBeDefined();
-//       expect(encryptionTransform.writable).toBeDefined();
-//     });
-
-//     it("should create decryption transform stream", async () => {
-//       const decryptionTransform = createDecryptionTransform(key1, "test-doc");
-
-//       expect(decryptionTransform).toBeDefined();
-//       expect(decryptionTransform.readable).toBeDefined();
-//       expect(decryptionTransform.writable).toBeDefined();
-//     });
-
-//     it("should handle individual encrypt/decrypt operations", async () => {
-//       const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
-//       const message = new DocMessage(
-//         "test-doc",
-//         { type: "update", update: testUpdate },
-//         { clientId: "test" },
-//         false,
-//       );
-
-//       // Test encryption
-//       const encrypted = await encryptMessage(message, key1);
-//       expect(encrypted.encrypted).toBe(true);
-
-//       // Test decryption
-//       const decrypted = await decryptMessage(encrypted, key1);
-//       expect(decrypted.encrypted).toBe(false);
-
-//       if (decrypted.payload.type === "update") {
-//         expect(decrypted.payload.update).toEqual(testUpdate);
-//       }
-//     });
-//   });
-// });
+    it("should return empty sync step 2", () => {
+      const empty = getEmptySyncStep2();
+      const decoded = decodeFromSyncStep2(empty);
+      expect(decoded.messages.length).toBe(0);
+    });
+  });
+});
