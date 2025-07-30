@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "react";
 
 import { Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { websocket } from "teleportal/providers";
+import { Provider } from "teleportal/providers";
 import { ExcalidrawBinding, yjsToExcalidraw } from "y-excalidraw";
 import * as Y from "yjs";
 
 import "@excalidraw/excalidraw/index.css";
 
 interface WhiteboardProps {
-  provider: websocket.Provider;
+  provider: Provider;
 }
 
 export function Whiteboard({ provider }: WhiteboardProps) {
