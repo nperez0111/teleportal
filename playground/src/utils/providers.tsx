@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FallbackConnection, websocket } from "teleportal/providers";
+import { websocket, Provider } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 
 import { getEncryptedTransport } from "./encrypted";
@@ -22,7 +22,7 @@ const websocketConnection = tokenManager
       .build(),
   )
   .then((token) => {
-    return new FallbackConnection({
+    return new websocket.WebSocketConnection({
       url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
     });
   });
@@ -31,9 +31,9 @@ export function useProvider(
   documentId: string | null | undefined,
   key: CryptoKey | undefined,
 ): {
-  provider: websocket.Provider | null;
+  provider: Provider | null;
 } {
-  const [provider, setProvider] = useState<websocket.Provider | null>(null);
+  const [provider, setProvider] = useState<Provider | null>(null);
 
   useEffect(() => {
     if (!documentId) {
@@ -45,7 +45,7 @@ export function useProvider(
         return p.switchDocument({
           document: documentId,
           getTransport: key
-            ? getEncryptedTransport(key, documentId)
+            ? getEncryptedTransport(key)
             : ({ getDefaultTransport }) => getDefaultTransport(),
         });
       }
@@ -53,12 +53,13 @@ export function useProvider(
       websocketConnection
         .then((client) => {
           // Create initial provider
-          return websocket.Provider.create({
+          return Provider.create({
             client,
             document: documentId,
             getTransport: key
-              ? getEncryptedTransport(key, documentId)
+              ? getEncryptedTransport(key)
               : ({ getDefaultTransport }) => getDefaultTransport(),
+            enableOfflinePersistence: false,
           });
         })
         .then((newProvider) => {
@@ -68,7 +69,7 @@ export function useProvider(
     });
 
     return () => {
-      provider?.destroy({ destroyWebSocket: false });
+      provider?.destroy({ destroyConnection: false });
     };
   }, [documentId, key]);
 

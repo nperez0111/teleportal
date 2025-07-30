@@ -15,6 +15,7 @@ import {
   getEncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
 import { DocumentStorage } from "../document-storage";
+import { EncryptedUpdate } from "teleportal/encryption-key";
 
 export type DocumentMetadata = {
   seenMessages: SeenMessageMapping;
@@ -45,13 +46,13 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   abstract storeEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-    payload: EncryptedUpdatePayload,
+    payload: EncryptedUpdate,
   ): Promise<void>;
 
   abstract fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdatePayload | null>;
+  ): Promise<EncryptedUpdate | null>;
 
   async handleSyncStep1(
     key: string,
@@ -115,7 +116,7 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
         await this.storeEncryptedMessage(
           key,
           encryptedUpdate.id,
-          encodeEncryptedUpdateMessages([encryptedUpdate]),
+          encryptedUpdate.payload,
         );
       }
       await this.writeDocumentMetadata(key, {
@@ -133,10 +134,15 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
     const { seenMessages } = await this.fetchDocumentMetadata(key);
     const updates: DecodedEncryptedUpdatePayload[] = [];
     for (const clientId of Object.keys(seenMessages)) {
-      for (const messageId of Object.keys(seenMessages[clientId as any])) {
-        const update = await this.fetchEncryptedMessage(key, messageId);
-        if (update) {
-          updates.push(...decodeEncryptedUpdate(update));
+      for (const counter of Object.keys(seenMessages[parseInt(clientId)])) {
+        const messageId = seenMessages[parseInt(clientId)][parseInt(counter)];
+        const message = await this.fetchEncryptedMessage(key, messageId);
+        if (message) {
+          updates.push({
+            id: messageId,
+            payload: message,
+            timestamp: [parseInt(clientId), parseInt(counter)],
+          });
         }
       }
     }

@@ -3,11 +3,10 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
-  DocMessage,
+  Message,
   Observable,
   RawReceivedMessage,
   type ClientContext,
-  type StateVector,
   type Transport,
 } from "teleportal";
 import {
@@ -34,13 +33,18 @@ export type ProviderOptions = {
       ClientContext,
       {
         synced: Promise<void>;
+        client: {
+          start: () => Promise<Message>;
+        };
       }
     >;
   }) => Transport<
     ClientContext,
     {
       synced: Promise<void>;
-      key?: CryptoKey;
+      client: {
+        start: () => Promise<Message>;
+      };
     }
   >;
 };
@@ -65,7 +69,9 @@ export class Provider extends Observable<{
     ClientContext,
     {
       synced: Promise<void>;
-      key?: CryptoKey;
+      client: {
+        start: () => Promise<Message>;
+      };
     }
   >;
   public document: string;
@@ -152,18 +158,12 @@ export class Provider extends Observable<{
     }
   }
 
-  private init = () => {
-    this.#underlyingConnection.send(
-      new DocMessage(
-        this.document,
-        {
-          type: "sync-step-1",
-          sv: Y.encodeStateVector(this.doc) as StateVector,
-        },
-        { clientId: "local" },
-        Boolean(this.transport.key),
-      ),
-    );
+  private init = async () => {
+    try {
+      this.#underlyingConnection.send(await this.transport.client.start());
+    } catch (error) {
+      console.error("Failed to send sync-step-1", error);
+    }
   };
 
   private subdocListener({
@@ -344,8 +344,8 @@ export class Provider extends Observable<{
    */
   static async create(
     options: (
-      | { 
-          url: string; 
+      | {
+          url: string;
           client?: undefined;
           /** Timeout for WebSocket connection attempts in milliseconds @default 5000 */
           websocketTimeout?: number;
@@ -362,7 +362,7 @@ export class Provider extends Observable<{
         }
       | { url?: undefined; client: Connection<any> }
     ) &
-      Omit<ProviderOptions, "client">
+      Omit<ProviderOptions, "client">,
   ) {
     const {
       url,
@@ -374,14 +374,18 @@ export class Provider extends Observable<{
       indexedDBPrefix,
       client,
     } = options;
-    
+
     // Create connection based on options
-    const connection = client ?? new FallbackConnection({
-      url: url!,
-      websocketTimeout: 'websocketTimeout' in options ? options.websocketTimeout : undefined,
-      websocketOptions: 'websocketOptions' in options ? options.websocketOptions : undefined,
-      httpOptions: 'httpOptions' in options ? options.httpOptions : undefined,
-    });
+    const connection =
+      client ??
+      new FallbackConnection({
+        url: url!,
+        websocketTimeout:
+          "websocketTimeout" in options ? options.websocketTimeout : undefined,
+        websocketOptions:
+          "websocketOptions" in options ? options.websocketOptions : undefined,
+        httpOptions: "httpOptions" in options ? options.httpOptions : undefined,
+      });
 
     // Wait for the connection to connect
     await connection.connected;

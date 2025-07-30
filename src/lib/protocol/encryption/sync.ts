@@ -63,7 +63,7 @@ export async function getDecodedSyncStep2(
   ) => Promise<EncryptedUpdate | null>,
   syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
 ): Promise<DecodedEncryptedSyncStep2> {
-  const messages: Promise<DecodedEncryptedUpdatePayload | null>[] = [];
+  const promiseMessages: Promise<DecodedEncryptedUpdatePayload | null>[] = [];
   for (const [seenClientId, countToMessageMapping] of Object.entries(
     seenMessages,
   )) {
@@ -76,7 +76,7 @@ export async function getDecodedSyncStep2(
       ] as LamportClockValue;
       const counter = syncStep1.clocks.get(timestamp[0]);
       if (counter === undefined || counter < timestamp[1]) {
-        messages.push(
+        promiseMessages.push(
           getEncryptedMessageUpdate(messageId).then((payload) =>
             payload
               ? {
@@ -90,10 +90,11 @@ export async function getDecodedSyncStep2(
       }
     }
   }
+  const messages = (await Promise.all(promiseMessages)).filter(
+    (message) => message !== null,
+  );
   return {
-    messages: (await Promise.all(messages)).filter(
-      (message) => message !== null,
-    ),
+    messages: messages,
   };
 }
 

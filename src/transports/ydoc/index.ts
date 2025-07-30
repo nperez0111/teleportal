@@ -14,6 +14,7 @@ import {
   Observable,
   type Sink,
   type Source,
+  type StateVector,
   type SyncStep2Update,
   type Transport,
   type Update,
@@ -34,6 +35,44 @@ export function getYDocSource({
   observer = new Observable<{
     message: (message: Message) => void;
   }>(),
+  client = {
+    async onUpdate(update) {
+      return new DocMessage(
+        document,
+        {
+          type: "update",
+          update: update as Update,
+        },
+        {
+          clientId: "local",
+        },
+      );
+    },
+    async onAwarenessUpdate(update) {
+      return new AwarenessMessage(
+        document,
+        {
+          type: "awareness-update",
+          update: update as AwarenessUpdateMessage,
+        },
+        {
+          clientId: "local",
+        },
+      );
+    },
+    async start() {
+      return new DocMessage(
+        document,
+        {
+          type: "sync-step-1",
+          sv: Y.encodeStateVector(ydoc) as StateVector,
+        },
+        {
+          clientId: "local",
+        },
+      );
+    },
+  },
 }: {
   ydoc: Y.Doc;
   document: string;
@@ -41,11 +80,20 @@ export function getYDocSource({
   observer?: Observable<{
     message: (message: Message) => void;
   }>;
+  client?: {
+    onUpdate: (update: Update) => Promise<Message>;
+    onAwarenessUpdate: (update: AwarenessUpdateMessage) => Promise<Message>;
+    start: () => Promise<Message>;
+    destroy?: () => void;
+  };
 }): Source<
   ClientContext,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
+    client: {
+      start: () => Promise<Message>;
+    };
   }
 > {
   let onUpdate: (...args: any[]) => void;
@@ -58,58 +106,44 @@ export function getYDocSource({
   return {
     ydoc,
     awareness,
+    client,
     readable: new ReadableStream({
-      start(controller) {
-        onUpdate = ydoc.on("updateV2", (update, origin) => {
+      async start(controller) {
+        onUpdate = ydoc.on("updateV2", async (update, origin) => {
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
-          controller.enqueue(
-            new DocMessage(
-              document,
-              {
-                type: "update",
-                update: update as Update,
-              },
-              {
-                clientId: "local",
-              },
-            ),
-          );
+          controller.enqueue(await client.onUpdate(update as Update));
         });
-        onDestroy = ydoc.on("destroy", () => {
+        onDestroy = ydoc.on("destroy", async () => {
           if (isDestroyed) {
             return;
           }
           isDestroyed = true;
+          if (client.destroy) {
+            await client.destroy();
+          }
           controller.close();
         });
-        onAwarenessUpdate = (_clients: any, origin: any) => {
+        onAwarenessUpdate = async (_clients: any, origin: any) => {
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
-          controller.enqueue(
-            new AwarenessMessage(
-              document,
-              {
-                type: "awareness-update",
-                update: encodeAwarenessUpdate(awareness, [
-                  awareness.clientID,
-                ]) as AwarenessUpdateMessage,
-              },
-              {
-                clientId: "local",
-              },
-            ),
-          );
+          const update = encodeAwarenessUpdate(awareness, [
+            awareness.clientID,
+          ]) as AwarenessUpdateMessage;
+          controller.enqueue(await client.onAwarenessUpdate(update));
         };
 
         awareness.on("update", onAwarenessUpdate);
-        onAwarenessDestroy = () => {
+        onAwarenessDestroy = async () => {
           if (isDestroyed) {
             return;
           }
           isDestroyed = true;
+          if (client.destroy) {
+            await client.destroy();
+          }
           controller.close();
         };
         awareness.on("destroy", onAwarenessDestroy);
@@ -140,6 +174,44 @@ export function getYDocSink({
   observer = new Observable<{
     message: (message: Message) => void;
   }>(),
+  client = {
+    async handleAwarenessUpdate(update) {
+      applyAwarenessUpdate(awareness, update, getSyncTransactionOrigin(ydoc));
+    },
+    async handleAwarenessRequest(update) {
+      return new AwarenessMessage(
+        document,
+        {
+          type: "awareness-update",
+          update,
+        },
+        {
+          clientId: "local",
+        },
+      );
+    },
+    async handleSyncStep1(stateVector) {
+      return new DocMessage(
+        document,
+        {
+          type: "sync-step-2",
+          update: Y.diffUpdateV2(
+            Y.encodeStateAsUpdateV2(ydoc),
+            stateVector,
+          ) as SyncStep2Update,
+        },
+        {
+          clientId: "local",
+        },
+      );
+    },
+    async handleSyncStep2(syncStep2) {
+      Y.applyUpdateV2(ydoc, syncStep2, getSyncTransactionOrigin(ydoc));
+    },
+    async handleUpdate(update) {
+      Y.applyUpdateV2(ydoc, update, getSyncTransactionOrigin(ydoc));
+    },
+  },
 }: {
   ydoc: Y.Doc;
   document: string;
@@ -147,6 +219,17 @@ export function getYDocSink({
   observer?: Observable<{
     message: (message: Message) => void;
   }>;
+  client?: {
+    handleSyncStep1: (
+      stateVector: StateVector,
+    ) => Promise<DocMessage<ClientContext>>;
+    handleSyncStep2: (syncStep2: SyncStep2Update) => Promise<void>;
+    handleUpdate: (update: Update) => Promise<void>;
+    handleAwarenessUpdate: (update: AwarenessUpdateMessage) => Promise<void>;
+    handleAwarenessRequest: (
+      update: AwarenessUpdateMessage,
+    ) => Promise<AwarenessMessage<ClientContext>>;
+  };
 }): Sink<
   ClientContext,
   {
@@ -170,7 +253,7 @@ export function getYDocSink({
     ydoc,
     awareness,
     writable: new WritableStream({
-      write(chunk, controller) {
+      async write(chunk, controller) {
         try {
           if (
             chunk.document !== document ||
@@ -186,28 +269,16 @@ export function getYDocSink({
             case "awareness": {
               switch (chunk.payload.type) {
                 case "awareness-update": {
-                  applyAwarenessUpdate(
-                    awareness,
-                    chunk.payload.update,
-                    getSyncTransactionOrigin(ydoc),
-                  );
+                  client.handleAwarenessUpdate(chunk.payload.update);
                   break;
                 }
                 case "awareness-request": {
+                  const update = encodeAwarenessUpdate(awareness, [
+                    awareness.clientID,
+                  ]) as AwarenessUpdateMessage;
                   observer.call(
                     "message",
-                    new AwarenessMessage(
-                      document,
-                      {
-                        type: "awareness-update",
-                        update: encodeAwarenessUpdate(awareness, [
-                          awareness.clientID,
-                        ]) as AwarenessUpdateMessage,
-                      },
-                      {
-                        clientId: "local",
-                      },
-                    ),
+                    await client.handleAwarenessRequest(update),
                   );
                   break;
                 }
@@ -226,30 +297,18 @@ export function getYDocSink({
                 case "sync-step-1": {
                   observer.call(
                     "message",
-                    new DocMessage(
-                      document,
-                      {
-                        type: "sync-step-2",
-                        update: Y.diffUpdateV2(
-                          Y.encodeStateAsUpdateV2(ydoc),
-                          chunk.payload.sv,
-                        ) as SyncStep2Update,
-                      },
-                      {
-                        clientId: "local",
-                      },
-                    ),
+                    await client.handleSyncStep1(chunk.payload.sv),
                   );
                   break;
                 }
-                case "update":
-                case "sync-step-2":
-                  Y.applyUpdateV2(
-                    ydoc,
-                    chunk.payload.update,
-                    getSyncTransactionOrigin(ydoc),
-                  );
+                case "sync-step-2": {
+                  await client.handleSyncStep2(chunk.payload.update);
                   break;
+                }
+                case "update": {
+                  await client.handleUpdate(chunk.payload.update);
+                  break;
+                }
                 case "sync-done": {
                   // Only resolve synced promise when sync-done is received
                   onSynced(true);
@@ -271,6 +330,7 @@ export function getYDocSink({
             }
           }
         } catch (e) {
+          console.error(e);
           onSynced(false);
           onSynced = () => {};
           controller.error(e);
@@ -301,12 +361,16 @@ export function getYTransportFromYDoc({
     ydoc: Y.Doc;
     awareness: Awareness;
     synced: Promise<void>;
+    client: {
+      start: () => Promise<Message>;
+    };
   }
 > {
   // observer is used for cross communication between the source and sink
   const observer = new Observable<{
     message: (message: Message) => void;
   }>();
+
   return compose(
     getYDocSource({ ydoc, awareness, document, observer }),
     getYDocSink({ ydoc, awareness, document, observer }),
