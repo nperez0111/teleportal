@@ -31,6 +31,10 @@ export type DocumentMetadata = {
  *  - The client can then use these milestones as a starting point for the next sync
  * 2. Introduce a "compact" operation which can be used to compact the seen messages, but initiated by the server
  * 3. Move to a different storage format, like a merkle tree which could express the seen messages in a more efficient way
+ *
+ * One thing to do would be to have a merkle tree represent all of the seen messages, and also have a "milestone" which is a compacted version of the merkle tree.
+ * If a client is paranoid, they can validate from the merkle tree, and if not they can use the milestone as a starting point. The client could even be smart
+ * and implement a "trust-but-verify" strategy, where they use the milestone, but verify against the merkle tree afterwards in the background. This might prove to be a good compromise of initial sync speed and security.
  */
 
 export abstract class EncryptedDocumentStorage extends DocumentStorage {
