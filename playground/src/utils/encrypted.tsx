@@ -47,6 +47,7 @@ export function getEncryptedTransport(key: CryptoKey) {
       );
     });
     client.on("update-seen-messages", (seenMessages) => {
+      // TODO instead of storing every seen message like this, we can compact them into a single update & store the un-encrypted version instead (+ metadata that we've seen this update)
       localStorage.setItem(
         prefix + "-seen-messages",
         JSON.stringify(seenMessages),
