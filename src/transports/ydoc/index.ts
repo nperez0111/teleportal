@@ -331,7 +331,6 @@ export function getYDocSink({
             }
           }
         } catch (e) {
-          console.error(e);
           onSynced(false);
           onSynced = () => {};
           controller.error(e);

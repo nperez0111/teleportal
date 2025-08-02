@@ -251,7 +251,6 @@ export class Server<Context extends ServerContext> extends Observable<{
               log.trace("processing message");
               await document.handleMessage(message, client);
             } catch (e) {
-              console.error(e);
               log.withError(e).error("Failed to process message");
             }
           },

@@ -200,7 +200,6 @@ export class EncryptionClient
     syncStep1: EncryptedStateVector,
   ): Promise<DocMessage<ClientContext>> {
     const decodedEncryptedStateVector = decodeFromStateVector(syncStep1);
-    console.log("got sync-step-1 from server", decodedEncryptedStateVector);
     const encryptedSyncStep2 = await this.getEncryptedSyncStep2(
       decodedEncryptedStateVector,
     );
@@ -223,7 +222,6 @@ export class EncryptionClient
    */
   public async handleSyncStep2(syncStep2: EncryptedSyncStep2): Promise<void> {
     const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
-    console.log(decodedSyncStep2);
     const updates = await Promise.all(
       decodedSyncStep2.messages
         .map(
@@ -301,7 +299,6 @@ export class EncryptionClient
     const encryptedUpdate = await this.encryptUpdate(payload);
     const messageId = toBase64(digest(encryptedUpdate));
     const decodedUpdate = this.createMessageNode(messageId, encryptedUpdate);
-    console.log("tracked update", messageId, encryptedUpdate);
 
     return encodeEncryptedUpdateMessages([decodedUpdate]);
   }
