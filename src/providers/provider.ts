@@ -33,7 +33,7 @@ export type ProviderOptions = {
       ClientContext,
       {
         synced: Promise<void>;
-        client: {
+        handler: {
           start: () => Promise<Message>;
         };
       }
@@ -42,7 +42,7 @@ export type ProviderOptions = {
     ClientContext,
     {
       synced: Promise<void>;
-      client: {
+      handler: {
         start: () => Promise<Message>;
       };
     }
@@ -69,7 +69,7 @@ export class Provider extends Observable<{
     ClientContext,
     {
       synced: Promise<void>;
-      client: {
+      handler: {
         start: () => Promise<Message>;
       };
     }
@@ -160,7 +160,7 @@ export class Provider extends Observable<{
 
   private init = async () => {
     try {
-      this.#underlyingConnection.send(await this.transport.client.start());
+      this.#underlyingConnection.send(await this.transport.handler.start());
     } catch (error) {
       console.error("Failed to send sync-step-1", error);
     }

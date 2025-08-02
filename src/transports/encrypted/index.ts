@@ -8,13 +8,13 @@ import { EncryptionClient } from "./client";
 /**
  * Wraps a transport in encryption, encrypting all document messages that are sent through the transport.
  */
-export function getEncryptedTransport(client: EncryptionClient): Transport<
+export function getEncryptedTransport(handler: EncryptionClient): Transport<
   ClientContext,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
     synced: Promise<void>;
-    client: EncryptionClient;
+    handler: EncryptionClient;
   }
 > {
   const observer = new Observable<{
@@ -22,24 +22,24 @@ export function getEncryptedTransport(client: EncryptionClient): Transport<
   }>();
 
   const source = getYDocSource({
-    ydoc: client.ydoc,
-    document: client.document,
-    awareness: client.awareness,
+    ydoc: handler.ydoc,
+    document: handler.document,
+    awareness: handler.awareness,
     observer,
-    client,
+    handler,
   });
   const sink = getYDocSink({
-    ydoc: client.ydoc,
-    document: client.document,
-    awareness: client.awareness,
+    ydoc: handler.ydoc,
+    document: handler.document,
+    awareness: handler.awareness,
     observer,
-    client,
+    handler,
   });
 
   const transport = compose(source, sink);
 
   return {
     ...transport,
-    client,
+    handler,
   };
 }
