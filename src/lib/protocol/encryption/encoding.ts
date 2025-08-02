@@ -300,14 +300,35 @@ export function decodeFromSyncStep2(
   }
 }
 
-export function getEmptyStateVector(): EncryptedStateVector {
+export function getEmptyEncryptedStateVector(): EncryptedStateVector {
   return encodeToStateVector({ clocks: new Map() });
 }
 
-export function getEmptySyncStep2(): EncryptedSyncStep2 {
+export function getEmptyEncryptedSyncStep2(): EncryptedSyncStep2 {
   return encodeToSyncStep2({ messages: [] });
 }
 
 export function getEmptyEncryptedUpdate(): EncryptedUpdatePayload {
   return encodeEncryptedUpdateMessages([]);
+}
+
+export function isEmptyEncryptedStateVector(
+  stateVector: EncryptedStateVector,
+): boolean {
+  const empty = getEmptyEncryptedStateVector();
+  return stateVector.every((value, index) => value === empty[index]);
+}
+
+export function isEmptyEncryptedSyncStep2(
+  syncStep2: EncryptedSyncStep2,
+): boolean {
+  const empty = getEmptyEncryptedSyncStep2();
+  return syncStep2.every((value, index) => value === empty[index]);
+}
+
+export function isEmptyEncryptedUpdate(
+  update: EncryptedUpdatePayload,
+): boolean {
+  const empty = getEmptyEncryptedUpdate();
+  return update.every((value, index) => value === empty[index]);
 }

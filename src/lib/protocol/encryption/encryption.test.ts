@@ -17,8 +17,8 @@ import {
   encodeToStateVector,
   encodeToSyncStep2,
   getEmptyEncryptedUpdate,
-  getEmptyStateVector,
-  getEmptySyncStep2,
+  getEmptyEncryptedStateVector,
+  getEmptyEncryptedSyncStep2,
 } from "./encoding";
 import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
 
@@ -56,7 +56,7 @@ describe("protocol encryption encoding", () => {
     });
 
     it("should return empty state vector", () => {
-      const empty = getEmptyStateVector();
+      const empty = getEmptyEncryptedStateVector();
       const decoded = decodeFromStateVector(empty);
       expect(decoded.clocks.size).toBe(0);
     });
@@ -200,7 +200,7 @@ describe("protocol encryption encoding", () => {
     });
 
     it("should return empty sync step 2", () => {
-      const empty = getEmptySyncStep2();
+      const empty = getEmptyEncryptedSyncStep2();
       const decoded = decodeFromSyncStep2(empty);
       expect(decoded.messages.length).toBe(0);
     });

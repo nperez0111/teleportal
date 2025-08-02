@@ -13,6 +13,7 @@ import type { DocumentStorage } from "teleportal/storage";
 import type { Client } from "./client";
 import type { Logger } from "./logger";
 
+const fromPubSub = Symbol("fromPubSub");
 /**
  * The Document class represents a document in the server.
  *
@@ -98,6 +99,7 @@ export class Document<Context extends ServerContext> extends Observable<{
         // Need to think of a better way to do this
         Object.assign(rawMessage.context, {
           room,
+          clientId: fromPubSub,
         });
         await this.handleMessage(rawMessage);
       },
@@ -169,11 +171,13 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
 
     await this.call("broadcast", message);
-    await this.pubSub.publish(
-      `document/${this.id}`,
-      message.encoded,
-      this.uuid,
-    );
+    if ((excludeClientId as unknown as symbol) !== fromPubSub) {
+      await this.pubSub.publish(
+        `document/${this.id}`,
+        message.encoded,
+        this.uuid,
+      );
+    }
   }
 
   /**

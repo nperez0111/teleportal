@@ -1,4 +1,4 @@
-import type { StateVector, Update } from "./types";
+import type { StateVector, SyncStep2Update, Update } from "./types";
 
 /**
  * An empty Update for use as a placeholder.
@@ -16,26 +16,31 @@ export const getEmptyStateVector = (): StateVector =>
  * Checks if an update is empty.
  */
 export function isEmptyUpdate(update: Update): boolean {
-  const empty = getEmptyUpdate();
-  // purposely over-scan by 1 to check for trailing values
-  for (let i = 0; i <= empty.length; i++) {
-    if (update[i] !== empty[i]) {
-      return false;
-    }
-  }
-  return true;
+  return (
+    update[0] === 0 &&
+    update[1] === 0 &&
+    update[2] === 0 &&
+    update[3] === 0 &&
+    update[4] === 0 &&
+    update[5] === 0 &&
+    update[6] === 1 &&
+    update[7] === 0 &&
+    update[8] === 0 &&
+    update[9] === 0 &&
+    update[10] === 0 &&
+    update[11] === 0 &&
+    update[12] === 0 &&
+    update.length === 13
+  );
+}
+
+export function isEmptySyncStep2(syncStep2: SyncStep2Update): boolean {
+  return isEmptyUpdate(syncStep2 as any);
 }
 
 /**
  * Checks if a state vector is empty.
  */
 export function isEmptyStateVector(stateVector: StateVector): boolean {
-  const empty = getEmptyStateVector();
-  // purposely over-scan by 1 to check for trailing values
-  for (let i = 0; i <= empty.length; i++) {
-    if (stateVector[i] !== empty[i]) {
-      return false;
-    }
-  }
-  return true;
+  return stateVector[0] === 0 && stateVector.length === 1;
 }

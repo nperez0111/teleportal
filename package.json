@@ -89,13 +89,14 @@
     "lint": "eslint . && prettier -c src playground",
     "lint:fix": "automd && eslint . --fix && prettier -w src playground",
     "prepack": "bun run build",
-    "dev": "PORT=1234 bun run --watch ./playground/bun/server.ts",
+    "dev": "PORT=1235 bun run --watch ./playground/bun/server.ts",
     "dev:encrypted": "PORT=1234 bun run --watch ./playground/bun/encrypted-server.ts",
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
     "test": "bun run test:types && bun test",
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
+    "@nats-io/transport-node": "^3.1.0",
     "crossws": "^0.4.1",
     "db0": "^0.3.2",
     "eventsource": "^4.0.0",
