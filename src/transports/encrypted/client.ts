@@ -1,4 +1,4 @@
-import { toBase64 } from "lib0/buffer.js";
+import { toBase64 } from "lib0/buffer";
 import { digest } from "lib0/hash/sha256";
 import { ClientContext, Observable } from "teleportal";
 import {
