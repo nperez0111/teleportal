@@ -1,5 +1,11 @@
-import type { Update } from "teleportal";
-export type EncryptedUpdate = Update;
+/**
+ * The Y.js update, decrypted with AES-GCM
+ */
+export type DecryptedUpdate = Uint8Array;
+/**
+ * The Y.js update, encrypted with AES-GCM
+ */
+export type EncryptedUpdate = Uint8Array;
 
 /**
  * Generate a new AES-GCM encryption key
@@ -66,7 +72,7 @@ export async function exportEncryptionKey(key: CryptoKey): Promise<string> {
  */
 export async function encryptUpdate(
   key: CryptoKey,
-  update: Update,
+  update: Uint8Array,
 ): Promise<EncryptedUpdate> {
   try {
     // Generate a random IV (Initialization Vector) for each encryption
@@ -87,7 +93,7 @@ export async function encryptUpdate(
     result.set(iv, 0);
     result.set(new Uint8Array(encryptedData), iv.length);
 
-    return result as Update;
+    return result as EncryptedUpdate;
   } catch (error) {
     throw new Error(`Encryption failed: ${error}`);
   }
@@ -102,7 +108,7 @@ export async function encryptUpdate(
 export async function decryptUpdate(
   key: CryptoKey,
   encryptedUpdate: EncryptedUpdate,
-): Promise<Update> {
+): Promise<Uint8Array> {
   try {
     // Extract IV (first 12 bytes) and encrypted data (which includes auth tag)
     const iv = encryptedUpdate.slice(0, 12);
@@ -115,7 +121,7 @@ export async function decryptUpdate(
       encryptedData,
     );
 
-    return new Uint8Array(decryptedData) as Update;
+    return new Uint8Array(decryptedData);
   } catch (error) {
     throw new Error(`Decryption failed: ${error}`);
   }

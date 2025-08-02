@@ -3,10 +3,28 @@ import { Server } from "./server";
 import { logger } from "./logger";
 import { InMemoryPubSub } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
-import type { ServerContext, Message, Transport } from "teleportal";
+import type {
+  ServerContext,
+  Message,
+  Transport,
+  StateVector,
+  SyncStep2Update,
+} from "teleportal";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
+  handleSyncStep1(
+    key: string,
+    syncStep1: StateVector,
+  ): Promise<{ update: SyncStep2Update; stateVector: StateVector }> {
+    return Promise.resolve({
+      update: new Uint8Array() as SyncStep2Update,
+      stateVector: syncStep1,
+    });
+  }
+  handleSyncStep2(key: string, syncStep2: SyncStep2Update): Promise<void> {
+    return Promise.resolve();
+  }
   public encrypted = false;
   public mockFetch = false;
   public mockWrite = false;

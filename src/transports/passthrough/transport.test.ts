@@ -3,11 +3,12 @@ import { describe, expect, it } from "bun:test";
 import {
   AwarenessMessage,
   DocMessage,
+  SyncStep2Update,
   type AwarenessUpdateMessage,
   type Message,
   type StateVector,
-  type Update,
   type Transport,
+  type Update,
 } from "teleportal";
 import { noopTransport, withPassthrough } from ".";
 
@@ -40,7 +41,7 @@ export function generateTestTransport(
                 type: "sync-step-2",
                 update: new Uint8Array([
                   0x01, 0x00, 0x01, 0x02, 0x03,
-                ]) as Update,
+                ]) as SyncStep2Update,
               },
               { test: "id-2" },
             ),
@@ -187,7 +188,9 @@ describe("transport", () => {
         "test",
         {
           type: "sync-step-2",
-          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as Update,
+          update: new Uint8Array([
+            0x00, 0x00, 0x01, 0x02, 0x03,
+          ]) as SyncStep2Update,
         },
         { test: "id-3" },
       ),

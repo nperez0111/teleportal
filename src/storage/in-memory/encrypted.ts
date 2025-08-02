@@ -1,49 +1,96 @@
-import type { StateVector, Update } from "teleportal";
-import {
-  appendFauxUpdateList,
-  decodeFauxUpdateList,
-  encodeFauxStateVector,
-  FauxUpdate,
-  getEmptyFauxUpdateList,
+import type {
+  EncryptedMessageId,
+  EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
-import { DocumentStorage } from "../document-storage";
+import { DocumentMetadata, EncryptedDocumentStorage } from "../encrypted";
 
-export class EncryptedMemoryStorage extends DocumentStorage {
-  public encrypted = true;
-
-  public static docs = new Map<string, FauxUpdate>();
-  /**
-   * Persist a Y.js update to storage
-   */
-  async write(key: string, update: Update): Promise<void> {
-    if (!EncryptedMemoryStorage.docs.has(key)) {
-      EncryptedMemoryStorage.docs.set(key, getEmptyFauxUpdateList());
+export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
+  constructor(
+    private options: {
+      write: (
+        key: string,
+        doc: {
+          metadata: DocumentMetadata;
+          updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
+        },
+      ) => Promise<void>;
+      fetch: (key: string) => Promise<{
+        metadata: DocumentMetadata;
+        updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
+      }>;
+    } = {
+      write: async (key, doc) => {
+        EncryptedMemoryStorage.docs.set(key, doc);
+      },
+      fetch: async (key) => {
+        return EncryptedMemoryStorage.docs.get(key)!;
+      },
+    },
+  ) {
+    super();
+  }
+  public static docs = new Map<
+    string,
+    {
+      metadata: DocumentMetadata;
+      updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
     }
-    const content = EncryptedMemoryStorage.docs.get(key)!;
+  >();
 
-    EncryptedMemoryStorage.docs.set(
-      key,
-      appendFauxUpdateList(content, decodeFauxUpdateList(update)),
-    );
+  async writeDocumentMetadata(
+    key: string,
+    metadata: DocumentMetadata,
+  ): Promise<void> {
+    let doc = await this.options.fetch(key);
+    if (!doc) {
+      doc = {
+        metadata,
+        updates: new Map(),
+      };
+    } else {
+      doc.metadata = metadata;
+    }
+    await this.options.write(key, doc);
   }
 
-  /**
-   * Retrieve a Y.js update from storage
-   */
-  async fetch(key: string): Promise<{
-    update: Update;
-    stateVector: StateVector;
-  } | null> {
-    if (!EncryptedMemoryStorage.docs.has(key)) {
-      EncryptedMemoryStorage.docs.set(key, getEmptyFauxUpdateList());
+  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
+    const doc = await this.options.fetch(key);
+    if (!doc) {
+      return {
+        seenMessages: {},
+      };
     }
-    const update = EncryptedMemoryStorage.docs.get(key)!;
+    return doc.metadata;
+  }
 
-    return {
-      update,
-      stateVector: encodeFauxStateVector({
-        messageId: "implement",
-      }),
-    };
+  async storeEncryptedMessage(
+    key: string,
+    messageId: EncryptedMessageId,
+    payload: EncryptedUpdatePayload,
+  ): Promise<void> {
+    let doc = await this.options.fetch(key);
+    if (!doc) {
+      doc = {
+        metadata: { seenMessages: {} },
+        updates: new Map(),
+      };
+    }
+    doc.updates.set(messageId, payload);
+    await this.options.write(key, doc);
+  }
+
+  async fetchEncryptedMessage(
+    key: string,
+    messageId: EncryptedMessageId,
+  ): Promise<EncryptedUpdatePayload> {
+    const doc = await this.options.fetch(key);
+    if (!doc) {
+      throw new Error("Document not found");
+    }
+    const update = doc.updates.get(messageId);
+    if (!update) {
+      throw new Error("Message not found");
+    }
+    return update;
   }
 }

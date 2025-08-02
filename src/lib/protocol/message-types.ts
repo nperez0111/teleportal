@@ -1,6 +1,6 @@
 import { digest } from "lib0/hash/sha256";
-import { encodeMessage } from ".";
-import {
+import { encodeMessage } from "./encode";
+import type {
   AwarenessUpdateMessage,
   DecodedAwarenessUpdateMessage,
   DecodedSyncStep1,
@@ -15,14 +15,14 @@ import {
 import { toBase64 } from "lib0/buffer";
 
 /**
- * A Y.js message which concerns a document or awareness update.
+ * A binary representation of a {@link Message} which concerns a document or awareness update.
  */
 export type BinaryMessage =
   | EncodedDocUpdateMessage<DocStep>
   | AwarenessUpdateMessage;
 
 /**
- * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
+ * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
  * Can apply to either a document or awareness update.
  */
 export type Message<Context extends Record<string, unknown> = any> =
@@ -30,7 +30,7 @@ export type Message<Context extends Record<string, unknown> = any> =
   | DocMessage<Context>;
 
 /**
- * A decoded Y.js document update, which was deserialized from a {@link Uint8Array}.
+ * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
  *
  * This is an untrusted update at this point, as it has not been validated by the server for access control rights.
  */

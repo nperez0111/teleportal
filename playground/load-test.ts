@@ -1,6 +1,6 @@
-import { websocket } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { withPassthrough } from "teleportal/transports";
+import { Provider, websocket } from "teleportal/providers";
 
 const token = await createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -23,7 +23,7 @@ const websocketClient = new websocket.WebSocketConnection({
 
 await websocketClient.connected;
 
-const provider = await websocket.Provider.create({
+const provider = await Provider.create({
   client: websocketClient,
   document: "test-load",
   getTransport({ getDefaultTransport }) {

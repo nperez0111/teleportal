@@ -1,16 +1,11 @@
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import { decodeMessage } from "./decode";
-import {
-  BinaryMessage,
-  isBinaryMessage,
-  Message,
-  RawReceivedMessage,
-} from "./message-types";
-import { Tag } from "./types";
+import { isBinaryMessage, Message, RawReceivedMessage } from "./message-types";
+import type { Tag } from "./types";
 
 /**
- * An array of messages encoded into a single binary message
+ * An array of {@link Message}s encoded into a single binary message
  */
 export type MessageArray = Tag<Uint8Array, "message-array">;
 

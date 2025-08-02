@@ -1,4 +1,4 @@
-import type { StateVector, Update } from "teleportal";
+import type { StateVector, SyncStep2Update, Update } from "teleportal";
 /**
  * A storage interface for a document.
  */
@@ -13,6 +13,25 @@ export abstract class DocumentStorage {
   abstract write(key: string, update: Update): Promise<void>;
 
   /**
+   * Implements synchronization with a client's state vector.
+   */
+  abstract handleSyncStep1(
+    key: string,
+    syncStep1: StateVector,
+  ): Promise<{
+    update: SyncStep2Update;
+    stateVector: StateVector;
+  }>;
+
+  /**
+   * Implements synchronization with a client's state vector.
+   */
+  abstract handleSyncStep2(
+    key: string,
+    syncStep2: SyncStep2Update,
+  ): Promise<void>;
+
+  /**
    * Fetches the update and computes a state vector for a document.
    */
   abstract fetch(key: string): Promise<{
@@ -25,6 +44,10 @@ export abstract class DocumentStorage {
    */
   unload(key: string): Promise<void> | void {
     return;
+  }
+
+  transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
   }
 
   // /**

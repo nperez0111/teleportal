@@ -4,7 +4,7 @@ import { createStorage } from "unstorage";
 import { getHTTPHandler } from "teleportal/http";
 import { Server } from "teleportal/server";
 import {
-  EncryptedDocumentStorage,
+  UnstorageEncryptedDocumentStorage,
   UnstorageDocumentStorage,
 } from "teleportal/storage";
 import {
@@ -26,7 +26,7 @@ const tokenManager = createTokenManager({
 const server = new Server({
   getStorage: async (ctx) => {
     if (ctx.document.includes("encrypted")) {
-      return new EncryptedDocumentStorage(memoryStorage);
+      return new UnstorageEncryptedDocumentStorage(memoryStorage);
     }
     return new UnstorageDocumentStorage(memoryStorage);
   },
