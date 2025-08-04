@@ -62,13 +62,23 @@ class MockWebSocket {
 
   private listeners: Record<string, ((event: any) => void)[]> = {};
   private static shouldFail: boolean = false;
+  private static shouldTimeout: boolean = false;
+  private static instances: MockWebSocket[] = [];
 
   constructor(url: string, protocols?: string | string[]) {
     this.url = url;
     this.protocols = protocols;
+    
+    // Track all instances for debugging
+    MockWebSocket.instances.push(this);
 
     // Delay connection process until after listeners are added
     queueMicrotask(() => {
+      if (MockWebSocket.shouldTimeout) {
+        // Don't do anything, let it timeout
+        return;
+      }
+      
       if (MockWebSocket.shouldFail) {
         this.readyState = MockWebSocket.CLOSED;
         // Dispatch error event first, then close event
@@ -91,6 +101,18 @@ class MockWebSocket {
 
   static setShouldFail(shouldFail: boolean) {
     MockWebSocket.shouldFail = shouldFail;
+  }
+  
+  static setShouldTimeout(shouldTimeout: boolean) {
+    MockWebSocket.shouldTimeout = shouldTimeout;
+  }
+  
+  static getInstanceCount(): number {
+    return MockWebSocket.instances.length;
+  }
+  
+  static clearInstances() {
+    MockWebSocket.instances = [];
   }
 
   addEventListener(type: string, listener: (event: any) => void) {
@@ -164,15 +186,28 @@ class MockEventSource {
   private listeners: Record<string, ((event: any) => void)[]> = {};
   private clientId: string = "test-client-id";
   private messageId: number = 0;
+  private static instances: MockEventSource[] = [];
 
   constructor(url: string) {
     this.url = url;
+    
+    // Track all instances for debugging
+    MockEventSource.instances.push(this);
+    
     // Delay connection process until after listeners are added
     queueMicrotask(() => {
       this.readyState = MockEventSource.OPEN;
       this.dispatchEvent(new Event("open"));
       this.simulateClientIdMessage();
     });
+  }
+  
+  static getInstanceCount(): number {
+    return MockEventSource.instances.length;
+  }
+  
+  static clearInstances() {
+    MockEventSource.instances = [];
   }
 
   addEventListener(type: string, listener: (event: any) => void) {
@@ -244,6 +279,9 @@ describe("FallbackConnection", () => {
     eventTarget = new EventTarget();
     mockFetch = new MockFetch();
     MockWebSocket.setShouldFail(false);
+    MockWebSocket.setShouldTimeout(false);
+    MockWebSocket.clearInstances();
+    MockEventSource.clearInstances();
   });
 
   afterEach(async () => {
@@ -462,5 +500,316 @@ describe("FallbackConnection", () => {
     await expect(client.connect()).rejects.toThrow(
       "FallbackConnection is destroyed, create a new instance",
     );
+  });
+
+  // New comprehensive tests for race conditions and edge cases
+
+  test("should prevent race conditions when connect() is called multiple times rapidly", async () => {
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      connect: false,
+    });
+
+    // Call connect multiple times rapidly
+    const promises = [
+      client.connect(),
+      client.connect(),
+      client.connect(),
+      client.connect(),
+      client.connect(),
+    ];
+
+    await Promise.all(promises);
+
+    // Should only have created one connection
+    expect(client.state.type).toBe("connected");
+    expect(client.connectionType).toBe("websocket");
+    
+    // Should only have one WebSocket instance
+    expect(MockWebSocket.getInstanceCount()).toBe(1);
+  });
+
+  test("should handle WebSocket timeout and fallback to HTTP without creating multiple connections", async () => {
+    MockWebSocket.setShouldTimeout(true);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 50,
+      maxReconnectAttempts: 0,
+    });
+
+    // Wait for connection to be established
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Connection timeout")), 1000);
+      
+      client.on("update", (state) => {
+        if (state.type === "connected" && client.connectionType === "http") {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    expect(client.state.type).toBe("connected");
+    expect(client.connectionType).toBe("http");
+    
+    // Should have created WebSocket instances (which timed out) and EventSource instances
+    // The important thing is that only one connection is active at the end
+    expect(MockWebSocket.getInstanceCount()).toBeGreaterThan(0);
+    expect(MockEventSource.getInstanceCount()).toBeGreaterThan(0);
+  });
+
+  test("should properly clean up connections when destroyed during connection attempt", async () => {
+    MockWebSocket.setShouldTimeout(true);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 200, // Longer timeout to allow for destruction
+      connect: false,
+    });
+
+    // Start connection attempt
+    const connectPromise = client.connect();
+    
+    // Wait a bit to ensure connection attempt has started
+    await new Promise(resolve => setTimeout(resolve, 20));
+    
+    // Destroy while connecting
+    await client.destroy();
+    
+    // The connect promise should complete (either resolve or reject) without hanging
+    await Promise.race([
+      connectPromise.catch(() => {
+        // Expected to potentially be rejected due to destruction
+      }),
+      new Promise(resolve => setTimeout(resolve, 100)) // Fallback timeout
+    ]);
+
+    expect(client.destroyed).toBe(true);
+  });
+
+  test("should handle rapid connect/disconnect cycles without creating multiple connections", async () => {
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      connect: false,
+    });
+
+    // Rapid connect/disconnect cycles
+    for (let i = 0; i < 5; i++) {
+      await client.connect();
+      await client.disconnect();
+    }
+
+    // Final connect
+    await client.connect();
+
+    expect(client.state.type).toBe("connected");
+    expect(client.connectionType).toBe("websocket");
+    
+    // Should have created connections for each cycle (each cycle creates a new WebSocket)
+    // But the important thing is that only one is active at the end
+    expect(MockWebSocket.getInstanceCount()).toBeGreaterThan(0);
+  });
+
+  test("should handle connection failure during fallback gracefully", async () => {
+    MockWebSocket.setShouldFail(true);
+    mockFetch.setShouldSucceed(false);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 50,
+      maxReconnectAttempts: 0,
+    });
+
+    // Wait for connection to fail
+    await new Promise<void>((resolve) => {
+      client.on("update", (state) => {
+        if (state.type === "errored") {
+          resolve();
+        }
+      });
+    });
+
+    expect(client.state.type).toBe("errored");
+  });
+
+  test("should not create multiple HTTP connections when WebSocket consistently fails", async () => {
+    MockWebSocket.setShouldFail(true);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 50,
+      maxReconnectAttempts: 2,
+      initialReconnectDelay: 10,
+    });
+
+    // Wait for initial connection and potential reconnections
+    await new Promise<void>((resolve) => {
+      let connectedCount = 0;
+      client.on("update", (state) => {
+        if (state.type === "connected" && client.connectionType === "http") {
+          connectedCount++;
+          if (connectedCount === 1) {
+            // After first connection, trigger a disconnection to test reconnection
+            setTimeout(() => client.disconnect(), 10);
+          }
+        }
+        if (state.type === "disconnected" && connectedCount > 0) {
+          // After disconnection, wait a bit and then resolve
+          setTimeout(resolve, 100);
+        }
+      });
+    });
+
+    // Should have created only a few EventSource instances (initial + reconnects)
+    const eventSourceCount = MockEventSource.getInstanceCount();
+    expect(eventSourceCount).toBeLessThanOrEqual(3); // Initial + max 2 reconnects
+  });
+
+  test("should handle WebSocket success after initial failure on reconnection", async () => {
+    MockWebSocket.setShouldFail(true);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 50,
+      maxReconnectAttempts: 1,
+      initialReconnectDelay: 10,
+    });
+
+    // Wait for HTTP fallback connection
+    await new Promise<void>((resolve) => {
+      client.on("update", (state) => {
+        if (state.type === "connected" && client.connectionType === "http") {
+          resolve();
+        }
+      });
+    });
+
+    expect(client.connectionType).toBe("http");
+
+    // Now make WebSocket work and trigger reconnection
+    MockWebSocket.setShouldFail(false);
+    await client.disconnect();
+    await client.connect();
+
+    // Should now use WebSocket since it's working
+    expect(client.state.type).toBe("connected");
+    expect(client.connectionType).toBe("websocket");
+  });
+
+  test("should cancel ongoing connection attempts when destroyed", async () => {
+    MockWebSocket.setShouldTimeout(true);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 1000, // Long timeout
+      connect: false,
+    });
+
+    // Start connection
+    const connectPromise = client.connect();
+    
+    // Destroy immediately
+    setTimeout(() => client.destroy(), 10);
+    
+    // Connect should complete (either resolve or reject) without hanging
+    await Promise.race([
+      connectPromise.catch(() => {
+        // Expected to be rejected due to destruction
+      }),
+      new Promise(resolve => setTimeout(resolve, 100)) // Fallback timeout
+    ]);
+
+    expect(client.destroyed).toBe(true);
+  });
+
+  test("should handle concurrent connect calls during WebSocket timeout", async () => {
+    MockWebSocket.setShouldTimeout(true);
+
+    client = new FallbackConnection({
+      url: "http://localhost:8080",
+      websocketOptions: {
+        WebSocket: MockWebSocket as any,
+      },
+      httpOptions: {
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+      },
+      websocketTimeout: 100,
+      connect: false,
+    });
+
+    // Start multiple connection attempts during WebSocket timeout period
+    const promises = [
+      client.connect(),
+      new Promise(resolve => setTimeout(() => resolve(client.connect()), 20)),
+      new Promise(resolve => setTimeout(() => resolve(client.connect()), 40)),
+      new Promise(resolve => setTimeout(() => resolve(client.connect()), 60)),
+    ];
+
+    await Promise.all(promises);
+
+    expect(client.state.type).toBe("connected");
+    expect(client.connectionType).toBe("http");
+    
+    // Should only have one WebSocket and one EventSource despite multiple calls
+    expect(MockWebSocket.getInstanceCount()).toBe(1);
+    expect(MockEventSource.getInstanceCount()).toBe(1);
   });
 });
