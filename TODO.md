@@ -12,3 +12,5 @@
 - key management, & rotation. Possibly store a crypto key in indexeddb like: <https://cfu288.github.io/web-crypto-indexed-db/>
   - Multiple keys per user, for multiple devices.
   - Key rotation.
+- Use NATS as the main server, clients will directly connect to NATS over websockets, changes get published by them, and there will be a worker which is listening for any messages that the client has sent. This worker can then either handle the message itself or forward to another consumer.
+  - Using NATS jetstream, we can have a stream per document, which actually stores the document content in the queue
