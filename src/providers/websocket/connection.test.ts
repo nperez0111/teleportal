@@ -631,17 +631,20 @@ describe("WebSocketConnection", () => {
     await client.connected;
     expect(client.state.type).toBe("connected");
 
+    // Prepare listener before sending to catch immediate errored update
+    const erroredPromise = new Promise<void>((resolve) => {
+      client.on("update", (state) => {
+        if (state.type === "errored") {
+          resolve();
+        }
+      });
+    });
+
     // Send message which will trigger invalid response
     await client.send({ encoded: new Uint8Array([1, 2, 3]) } as any);
 
     // Should handle error gracefully
-    await new Promise((resolve) => {
-      client.on("update", (state) => {
-        if (state.type === "errored") {
-          resolve(undefined);
-        }
-      });
-    });
+    await erroredPromise;
 
     expect(client.state.type).toBe("errored");
   });
