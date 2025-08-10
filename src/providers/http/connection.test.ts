@@ -57,12 +57,12 @@ class MockEventSource {
   url: string;
   withCredentials: boolean = false;
 
-  private listeners: Record<string, ((event: any) => void)[]> = {};
-  private shouldConnect: boolean = true;
-  private shouldError: boolean = false;
-  private closeAfterConnect: boolean = false;
-  private clientId: string = "test-client-id";
-  private messageId: number = 0;
+  protected listeners: Record<string, ((event: any) => void)[]> = {};
+  protected shouldConnect: boolean = true;
+  protected shouldError: boolean = false;
+  protected closeAfterConnect: boolean = false;
+  protected clientId: string = "test-client-id";
+  protected messageId: number = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -98,7 +98,7 @@ class MockEventSource {
     }
   }
 
-  private dispatchEvent(event: Event) {
+  protected dispatchEvent(event: Event) {
     if (this.listeners[event.type]) {
       this.listeners[event.type].forEach((listener) => listener(event));
     }
@@ -622,12 +622,10 @@ describe("HttpConnection", () => {
     expect(client.state.type).toBe("connected");
 
     await client.destroy();
-    
+
     expect(eventSourceClosed).toBe(true);
     expect(client.destroyed).toBe(true);
   });
-
-
 
   test("should handle fetch errors during message sending", async () => {
     mockFetch.setShouldSucceed(false);
@@ -643,7 +641,9 @@ describe("HttpConnection", () => {
     expect(client.state.type).toBe("connected");
 
     // Sending should handle fetch errors gracefully
-    await expect(client.send({ encoded: new Uint8Array([1, 2, 3]) } as any)).resolves.toBeUndefined();
+    await expect(
+      client.send({ encoded: new Uint8Array([1, 2, 3]) } as any),
+    ).resolves.toBeUndefined();
   });
 
   test("should handle rapid connect/disconnect cycles", async () => {
@@ -666,14 +666,12 @@ describe("HttpConnection", () => {
     expect(client.state.type).toBe("connected");
   });
 
-
-
   test("should handle destroy during connection attempt", async () => {
     class SlowEventSource extends MockEventSource {
       constructor(url: string) {
         super(url);
         this.shouldConnect = false;
-        
+
         // Connect after a long delay
         setTimeout(() => {
           this.readyState = MockEventSource.OPEN;
@@ -693,14 +691,14 @@ describe("HttpConnection", () => {
 
     // Start connection
     const connectPromise = client.connect();
-    
+
     // Destroy while connecting
     setTimeout(() => client.destroy(), 10);
-    
+
     // Should not hang
     await Promise.race([
       connectPromise.catch(() => {}), // Ignore potential rejection
-      new Promise(resolve => setTimeout(resolve, 100))
+      new Promise((resolve) => setTimeout(resolve, 100)),
     ]);
 
     expect(client.destroyed).toBe(true);
@@ -728,7 +726,7 @@ describe("HttpConnection", () => {
   test("should handle writer close errors gracefully", async () => {
     // Mock writer that throws on close
     const originalGetWriter = WritableStream.prototype.getWriter;
-    WritableStream.prototype.getWriter = function() {
+    WritableStream.prototype.getWriter = function () {
       const writer = originalGetWriter.call(this);
       const originalClose = writer.close.bind(writer);
       writer.close = async () => {
@@ -769,8 +767,8 @@ describe("HttpConnection", () => {
     expect(client.state.type).toBe("connected");
 
     // Send multiple messages concurrently
-    const messages = Array.from({ length: 10 }, (_, i) => 
-      client.send({ encoded: new Uint8Array([i]) } as any)
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      client.send({ encoded: new Uint8Array([i]) } as any),
     );
 
     // All sends should complete without error
@@ -783,7 +781,7 @@ describe("HttpConnection", () => {
     class AbortTrackingEventSource extends MockEventSource {
       simulateClientIdMessage() {
         super.simulateClientIdMessage();
-        
+
         // Simulate a long-running stream
         const interval = setInterval(() => {
           if (this.readyState === MockEventSource.CLOSED) {
@@ -806,10 +804,10 @@ describe("HttpConnection", () => {
 
     // Close connection should abort stream processing
     await client.disconnect();
-    
+
     // Wait a bit for cleanup
-    await new Promise(resolve => setTimeout(resolve, 20));
-    
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
     expect(streamProcessingAborted).toBe(true);
   });
 });

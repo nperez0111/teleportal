@@ -61,12 +61,12 @@ class MockWebSocket {
   bufferedAmount: number = 0;
   extensions: string = "";
 
-  private listeners: Record<string, ((event: any) => void)[]> = {};
-  private shouldConnect: boolean = true;
-  private shouldError: boolean = false;
-  private closeAfterConnect: boolean = false;
-  private closeCode: number = 1000;
-  private closeReason: string = "";
+  protected listeners: Record<string, ((event: any) => void)[]> = {};
+  protected shouldConnect: boolean = true;
+  protected shouldError: boolean = false;
+  protected closeAfterConnect: boolean = false;
+  protected closeCode: number = 1000;
+  protected closeReason: string = "";
 
   constructor(url: string, protocols?: string | string[]) {
     this.url = url;
@@ -102,7 +102,7 @@ class MockWebSocket {
     }
   }
 
-  private dispatchEvent(event: Event) {
+  protected dispatchEvent(event: Event) {
     if (this.listeners[event.type]) {
       this.listeners[event.type].forEach((listener) => listener(event));
     }
@@ -473,13 +473,13 @@ describe("WebSocketConnection", () => {
 
   test("should properly clean up event listeners on destroy", async () => {
     let eventListenerCount = 0;
-    
+
     class TrackingMockWebSocket extends MockWebSocket {
       addEventListener(type: string, listener: (event: any) => void) {
         eventListenerCount++;
         super.addEventListener(type, listener);
       }
-      
+
       removeEventListener(type: string, listener: (event: any) => void) {
         eventListenerCount--;
         super.removeEventListener(type, listener);
@@ -516,7 +516,9 @@ describe("WebSocketConnection", () => {
     expect(client.state.type).toBe("connected");
 
     // Send should not throw, but buffer the message
-    await expect(client.send({ encoded: new Uint8Array([1, 2, 3]) } as any)).resolves.toBeUndefined();
+    await expect(
+      client.send({ encoded: new Uint8Array([1, 2, 3]) } as any),
+    ).resolves.toBeUndefined();
   });
 
   test("should handle rapid connect/disconnect cycles", async () => {
@@ -540,7 +542,7 @@ describe("WebSocketConnection", () => {
 
   test("should ignore events from old WebSocket instances", async () => {
     let messageHandlerCallCount = 0;
-    
+
     client = new WebSocketConnection({
       url: "ws://localhost:8080",
       WebSocket: MockWebSocket as any,
@@ -565,7 +567,7 @@ describe("WebSocketConnection", () => {
 
     // Simulate message from new WebSocket
     client.send({ encoded: new Uint8Array([1, 2, 3]) } as any);
-    
+
     // Should only count messages from active WebSocket
     expect(messageHandlerCallCount).toBeLessThanOrEqual(1);
   });
@@ -575,7 +577,7 @@ describe("WebSocketConnection", () => {
       constructor(url: string, protocols?: string | string[]) {
         super(url, protocols);
         this.shouldConnect = false; // Don't auto-connect
-        
+
         // Connect after a delay, then immediately close
         setTimeout(() => {
           this.readyState = MockWebSocket.OPEN;
@@ -649,7 +651,7 @@ describe("WebSocketConnection", () => {
       constructor(url: string, protocols?: string | string[]) {
         super(url, protocols);
         this.shouldConnect = false;
-        
+
         // Never actually connect
         setTimeout(() => {
           this.readyState = MockWebSocket.OPEN;
@@ -667,14 +669,14 @@ describe("WebSocketConnection", () => {
 
     // Start connection
     const connectPromise = client.connect();
-    
+
     // Destroy while connecting
     setTimeout(() => client.destroy(), 10);
-    
+
     // Should not hang
     await Promise.race([
       connectPromise.catch(() => {}), // Ignore potential rejection
-      new Promise(resolve => setTimeout(resolve, 100))
+      new Promise((resolve) => setTimeout(resolve, 100)),
     ]);
 
     expect(client.destroyed).toBe(true);
