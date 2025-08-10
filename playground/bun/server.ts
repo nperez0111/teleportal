@@ -6,7 +6,7 @@ import dbDriver from "unstorage/drivers/db0";
 
 import { Server } from "teleportal/server";
 import {
-  EncryptedDocumentStorage,
+  UnstorageEncryptedDocumentStorage,
   UnstorageDocumentStorage,
 } from "teleportal/storage";
 import {
@@ -49,7 +49,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
     if (ctx.document.includes("encrypted")) {
-      return new EncryptedDocumentStorage(backingStorage);
+      return new UnstorageEncryptedDocumentStorage(backingStorage);
     }
     return new UnstorageDocumentStorage(backingStorage, {
       scanKeys: false,

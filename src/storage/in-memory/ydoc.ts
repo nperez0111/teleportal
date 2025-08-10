@@ -1,9 +1,9 @@
 import * as Y from "yjs";
 
 import type { StateVector, Update } from "teleportal";
-import { DocumentStorage } from "../document-storage";
+import { UnencryptedDocumentStorage } from "../unencrypted";
 
-export class YDocStorage extends DocumentStorage {
+export class YDocStorage extends UnencryptedDocumentStorage {
   public static docs = new Map<string, Y.Doc>();
   /**
    * Persist a Y.js update to storage

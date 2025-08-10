@@ -1,27 +1,19 @@
 import { uuidv4 } from "lib0/random";
-import type { PubSub, StateVector } from "teleportal";
+import type { PubSub } from "teleportal";
 import {
   decodeMessage,
   DocMessage,
-  getEmptyStateVector,
-  getEmptyUpdate,
   Observable,
   type Message,
   type ServerContext,
   type Update,
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
-import * as Y from "yjs";
 
-import {
-  decodeFauxStateVector,
-  decodeFauxUpdateList,
-  encodeFauxUpdateList,
-  getEmptyFauxUpdateList,
-} from "teleportal/protocol/encryption";
 import type { Client } from "./client";
 import type { Logger } from "./logger";
 
+const fromPubSub = Symbol("fromPubSub");
 /**
  * The Document class represents a document in the server.
  *
@@ -107,6 +99,7 @@ export class Document<Context extends ServerContext> extends Observable<{
         // Need to think of a better way to do this
         Object.assign(rawMessage.context, {
           room,
+          clientId: fromPubSub,
         });
         await this.handleMessage(rawMessage);
       },
@@ -178,11 +171,13 @@ export class Document<Context extends ServerContext> extends Observable<{
     }
 
     await this.call("broadcast", message);
-    await this.pubSub.publish(
-      `document/${this.id}`,
-      message.encoded,
-      this.uuid,
-    );
+    if ((excludeClientId as unknown as symbol) !== fromPubSub) {
+      await this.pubSub.publish(
+        `document/${this.id}`,
+        message.encoded,
+        this.uuid,
+      );
+    }
   }
 
   /**
@@ -272,10 +267,6 @@ export class Document<Context extends ServerContext> extends Observable<{
         );
       }
 
-      const strategy = message.encrypted
-        ? new EncryptedMessageStrategy<Context>()
-        : new ClearTextMessageStrategy<Context>();
-
       switch (message.type) {
         case "doc":
           switch (message.payload.type) {
@@ -285,10 +276,8 @@ export class Document<Context extends ServerContext> extends Observable<{
                 return;
               }
 
-              const { update, stateVector } = await strategy.fetchUpdate(
-                this,
-                message,
-              );
+              const { update, stateVector } =
+                await this.storage.handleSyncStep1(this.id, message.payload.sv);
 
               logger.trace("sending sync-step-2");
               await client.send(
@@ -304,33 +293,16 @@ export class Document<Context extends ServerContext> extends Observable<{
               );
               logger.trace("sync-step-2 sent");
 
-              // TODO not implemented for encrypted documents
-              if (!this.encrypted) {
-                logger.trace("sending sync-step-1");
-                await client.send(
-                  new DocMessage(
-                    this.name,
-                    { type: "sync-step-1", sv: stateVector },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                logger.trace("sync-step-1 sent");
-              } else {
-                // since we're encrypted, we can't send a sync-step-1, so we send a sync-done
-                logger.trace("sending sync-done (encrypted)");
-                await client.send(
-                  new DocMessage(
-                    this.name,
-                    {
-                      type: "sync-done",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                logger.trace("sync-done sent");
-              }
+              logger.trace("sending sync-step-1");
+              await client.send(
+                new DocMessage(
+                  this.name,
+                  { type: "sync-step-1", sv: stateVector },
+                  message.context,
+                  this.encrypted,
+                ),
+              );
+              logger.trace("sync-step-1 sent");
               return;
             case "update":
               logger.trace("broadcasting update");
@@ -343,7 +315,10 @@ export class Document<Context extends ServerContext> extends Observable<{
               logger.trace("broadcasting sync-step-2");
               await this.broadcast(message, client?.id);
               logger.trace("writing update");
-              await this.write(message.payload.update);
+              await this.storage.handleSyncStep2(
+                this.id,
+                message.payload.update,
+              );
               logger.trace("update written");
 
               if (!client) {
@@ -441,82 +416,5 @@ export class Document<Context extends ServerContext> extends Observable<{
 
     super.destroy();
     this.logger.trace("document destroyed");
-  }
-}
-
-/**
- * Strategy interface for handling different message types
- */
-interface MessageStrategy<Context extends ServerContext> {
-  fetchUpdate(
-    document: Document<Context>,
-    message: DocMessage<Context>,
-  ): Promise<{ update: Update; stateVector: StateVector }>;
-}
-
-/**
- * Strategy for handling clear text messages
- */
-class ClearTextMessageStrategy<Context extends ServerContext>
-  implements MessageStrategy<Context>
-{
-  async fetchUpdate(
-    document: Document<Context>,
-    message: DocMessage<Context>,
-  ): Promise<{ update: Update; stateVector: StateVector }> {
-    const { update, stateVector } = (await document.fetch()) ?? {
-      update: getEmptyUpdate(),
-      stateVector: getEmptyStateVector(),
-    };
-
-    // Type guard to ensure this is a sync-step-1 message
-    if (message.type !== "doc" || message.payload.type !== "sync-step-1") {
-      throw new Error("Expected sync-step-1 message");
-    }
-
-    return {
-      update: Y.diffUpdateV2(update, message.payload.sv) as Update,
-      stateVector,
-    };
-  }
-}
-
-/**
- * Strategy for handling encrypted messages
- */
-class EncryptedMessageStrategy<Context extends ServerContext>
-  implements MessageStrategy<Context>
-{
-  async fetchUpdate(
-    document: Document<Context>,
-    message: DocMessage<Context>,
-  ): Promise<{ update: Update; stateVector: StateVector }> {
-    const { update, stateVector } = (await document.fetch()) ?? {
-      update: getEmptyFauxUpdateList(),
-      stateVector: getEmptyStateVector(),
-    };
-
-    // Type guard to ensure this is a sync-step-1 message
-    if (message.payload.type !== "sync-step-1") {
-      throw new Error("Expected sync-step-1 message");
-    }
-
-    const fauxStateVector = decodeFauxStateVector(message.payload.sv);
-    const updates = decodeFauxUpdateList(update);
-    const updateIndex = updates.findIndex(
-      (update) => update.messageId === fauxStateVector.messageId,
-    );
-
-    // Pick the updates that the client doesn't have
-    const sendUpdates = updates.slice(
-      0,
-      // Didn't find any? Send them all
-      updateIndex === -1 ? updates.length : updateIndex,
-    );
-
-    return {
-      update: encodeFauxUpdateList(sendUpdates),
-      stateVector,
-    };
   }
 }

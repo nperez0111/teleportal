@@ -13,6 +13,7 @@ import {
   isPingMessage,
   isPongMessage,
   StateVector,
+  SyncStep2Update,
   Update,
 } from ".";
 
@@ -78,7 +79,7 @@ describe("can encode and decode", () => {
       decodeMessage(
         new DocMessage("test", {
           type: "sync-step-2",
-          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
         }).encoded,
       ),
     ).toMatchInlineSnapshot(`
@@ -246,7 +247,7 @@ describe("can encode", () => {
     expect(
       new DocMessage("test", {
         type: "sync-step-2",
-        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
       }).encoded,
     ).toMatchInlineSnapshot(`
       Uint8Array [

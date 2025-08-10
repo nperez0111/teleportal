@@ -36,6 +36,11 @@ export type Update = Tag<Uint8Array, "update">;
 export type StateVector = Tag<Uint8Array, "state-vector">;
 
 /**
+ * A Y.js SyncStep2 update, as an UpdateV2.
+ */
+export type SyncStep2Update = Tag<Uint8Array, "sync-step-2-update">;
+
+/**
  * A Y.js sync step 1 update as encoded by the y-protocols implementation.
  */
 export type SyncStep1 = Tag<Uint8Array, "sync-step-1">;
@@ -58,7 +63,7 @@ export type SyncStep2 = Tag<Uint8Array, "sync-step-2">;
  */
 export type DecodedSyncStep2 = {
   type: "sync-step-2";
-  update: Update;
+  update: SyncStep2Update;
 };
 
 /**

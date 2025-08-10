@@ -14,5 +14,6 @@ export * from "./encode";
 export * from "./message-types";
 export * from "./multi-message";
 export * from "./ping";
+export * from "./pubsub";
 export * from "./types";
 export * from "./utils";

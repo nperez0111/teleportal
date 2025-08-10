@@ -1,9 +1,8 @@
 import { Redis, RedisOptions } from "ioredis";
-import * as decoding from "lib0/decoding";
-import * as encoding from "lib0/encoding";
-import { uuidv4 } from "lib0/random";
 import {
   BinaryMessage,
+  decodePubSubMessage,
+  encodePubSubMessage,
   Message,
   PubSub,
   PubSubTopic,
@@ -24,11 +23,9 @@ export class RedisPubSub implements PubSub {
    * A map of topics to the number of subscribers
    */
   private subscribedTopics = new Map<PubSubTopic, number>();
-  /**
-   * A map of subscription IDs to unsubscribe functions
-   */
-  private subscriptions = new Map<string, () => Promise<void>>();
 
+  // TODO instead of actually creating the two connections, we could just have a callback that gives us a connection
+  // So we don't have to actually bundle in the redis client. See the NATS transport for an example.
   constructor(redisOptions: { path: string; options?: RedisOptions }) {
     // Use separate connections for publishing and subscribing
     this.publisherRedis = new Redis(
@@ -47,7 +44,7 @@ export class RedisPubSub implements PubSub {
     sourceId: string,
   ): Promise<void> {
     // Encode the message with instance ID to avoid loops
-    const encoded = this.encodeMessage(message, sourceId);
+    const encoded = encodePubSubMessage(message, sourceId);
     await this.publisherRedis.publish(topic, Buffer.from(encoded));
   }
 
@@ -55,7 +52,6 @@ export class RedisPubSub implements PubSub {
     topic: PubSubTopic,
     callback: (message: BinaryMessage, sourceId: string) => void,
   ): Promise<() => Promise<void>> {
-    const subscriptionId = uuidv4();
     await this.subscriberRedis.subscribe(topic);
 
     const messageHandler = (channel: string | Buffer, rawMessage: Buffer) => {
@@ -64,7 +60,7 @@ export class RedisPubSub implements PubSub {
 
       if (channelStr === topic) {
         try {
-          const decoded = this.decodeMessage(new Uint8Array(rawMessage));
+          const decoded = decodePubSubMessage(new Uint8Array(rawMessage));
 
           callback(decoded.message, decoded.sourceId);
         } catch (error) {
@@ -84,10 +80,8 @@ export class RedisPubSub implements PubSub {
       if ((this.subscribedTopics.get(topic) ?? 0) <= 0) {
         await this.subscriberRedis.unsubscribe(topic);
       }
-      this.subscriptions.delete(subscriptionId);
     };
 
-    this.subscriptions.set(subscriptionId, unsubscribe);
     this.subscribedTopics.set(
       topic,
       (this.subscribedTopics.get(topic) ?? 0) + 1,
@@ -96,36 +90,8 @@ export class RedisPubSub implements PubSub {
   }
 
   async destroy(): Promise<void> {
-    // Unsubscribe from all topics
-    await Promise.all(
-      Array.from(this.subscriptions.values()).map((unsubscribe) =>
-        unsubscribe(),
-      ),
-    );
-    this.subscriptions.clear();
     await this.publisherRedis.quit();
     await this.subscriberRedis.quit();
-  }
-
-  private encodeMessage(message: BinaryMessage, sourceId: string) {
-    return encoding.encode((encoder) => {
-      encoding.writeVarString(encoder, sourceId);
-      encoding.writeUint8Array(encoder, message);
-    });
-  }
-
-  private decodeMessage(message: Uint8Array) {
-    const decoder = decoding.createDecoder(message);
-
-    const sourceId = decoding.readVarString(decoder);
-    const decodedMessage = decoding.readTailAsUint8Array(
-      decoder,
-    ) as BinaryMessage;
-
-    return {
-      sourceId,
-      message: decodedMessage,
-    };
   }
 }
 

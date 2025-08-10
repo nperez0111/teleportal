@@ -120,6 +120,7 @@ describe("ydoc source", () => {
       test: "id-1",
     });
 
+    await new Promise((resolve) => setTimeout(resolve, 0));
     awareness.destroy();
 
     await source.readable.pipeTo(

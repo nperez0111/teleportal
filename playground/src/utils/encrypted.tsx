@@ -4,19 +4,60 @@ import {
   importEncryptionKey,
   createEncryptionKey,
 } from "teleportal/encryption-key";
-import { withEncryption } from "teleportal/transports";
+import { getEncryptedTransport as getEncryptedTransportBase } from "teleportal/transports";
 import { useEffect, useState } from "react";
+import { EncryptionClient } from "../../../src/transports/encrypted/client";
+import { Awareness } from "y-protocols/awareness.js";
+import * as Y from "yjs";
+import { fromBase64, toBase64 } from "lib0/buffer";
 
 /**
  * Wraps a transport with encryption secured by the provided key
  * @param key - The encryption key to use
  */
-export function getEncryptedTransport(key: CryptoKey, document: string) {
+export function getEncryptedTransport(key: CryptoKey) {
   return ({
-    getDefaultTransport,
+    document,
+    ydoc,
+    awareness,
   }: {
-    getDefaultTransport: () => Transport<any, { synced: Promise<void> }>;
-  }) => withEncryption(getDefaultTransport(), { key, document });
+    document: string;
+    ydoc: Y.Doc;
+    awareness: Awareness;
+  }) => {
+    const prefix = "teleportal-encrypted-" + document;
+    const client = new EncryptionClient({
+      document,
+      ydoc,
+      awareness,
+      key,
+      getEncryptedMessageUpdate: async (messageId) => {
+        const payload = localStorage.getItem(prefix + "-update-" + messageId);
+        if (!payload) {
+          throw new Error("Message not found");
+        }
+        return fromBase64(payload);
+      },
+    });
+    // TODO more convenient way to do this
+    client.on("seen-update", (update) => {
+      localStorage.setItem(
+        prefix + "-update-" + update.id,
+        toBase64(update.payload),
+      );
+    });
+    client.on("update-seen-messages", (seenMessages) => {
+      // TODO instead of storing every seen message like this, we can compact them into a single update & store the un-encrypted version instead (+ metadata that we've seen this update)
+      localStorage.setItem(
+        prefix + "-seen-messages",
+        JSON.stringify(seenMessages),
+      );
+    });
+    client.loadSeenMessages(
+      JSON.parse(localStorage.getItem(prefix + "-seen-messages") ?? "{}"),
+    );
+    return getEncryptedTransportBase(client);
+  };
 }
 
 /**
