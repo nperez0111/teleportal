@@ -123,10 +123,6 @@ export class FallbackConnection extends Connection<FallbackContext> {
         } catch (error) {
           // Only handle the error if this is still the current attempt
           if (currentAttemptId === this.#connectionAttemptId) {
-            console.warn(
-              "WebSocket connection failed, falling back to HTTP:",
-              error,
-            );
             this.#websocketConnectionStatus = "failed";
             // Continue to HTTP fallback
           } else {
@@ -344,11 +340,13 @@ export class FallbackConnection extends Connection<FallbackContext> {
     });
   }
 
-  private setupMessagePipe(): void {
-    if (!this.#reader) return;
+  private setupMessagePipe(): Promise<void> {
+    if (!this.#reader) {
+      return Promise.resolve();
+    }
 
     // Pipe messages from the underlying connection to our writer
-    this.#reader.readable
+    return this.#reader.readable
       .pipeTo(
         new WritableStream({
           write: async (message) => {
@@ -358,8 +356,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
         }),
       )
       .catch((error) => {
-        // Handle pipe errors
-        console.warn("Message pipe error:", error);
+        // no-op
       });
   }
 
@@ -426,10 +423,10 @@ export class FallbackConnection extends Connection<FallbackContext> {
     if (this.destroyed) {
       throw new Error("Connection is destroyed, create a new instance");
     }
-    
+
     // Reset WebSocket status when explicitly disconnecting
     this.#websocketConnectionStatus = "init";
-    
+
     // Call parent disconnect method to handle base logic
     await super.disconnect();
   }

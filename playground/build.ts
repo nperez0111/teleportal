@@ -7,7 +7,7 @@ import path from "path";
 
 // Print help text if requested
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
-  console.log(`
+  console.info(`
 🏗️  Bun Build Script
 
 Usage: bun run build.ts [options]
@@ -124,14 +124,14 @@ const formatFileSize = (bytes: number): string => {
   return `${size.toFixed(2)} ${units[unitIndex]}`;
 };
 
-console.log("\n🚀 Starting build process...\n");
+console.info("\n🚀 Starting build process...\n");
 
 // Parse CLI arguments with our magical parser
 const cliConfig = parseArgs();
 const outdir = cliConfig.outdir || path.join(process.cwd(), "dist");
 
 if (existsSync(outdir)) {
-  console.log(`🗑️ Cleaning previous build at ${outdir}`);
+  console.info(`🗑️ Cleaning previous build at ${outdir}`);
   await rm(outdir, { recursive: true, force: true });
 }
 
@@ -143,7 +143,7 @@ const entrypoints = [
 ]
   .map((a) => path.join(import.meta.dir, a))
   .filter((dir) => !dir.includes("node_modules"));
-console.log(
+console.info(
   `📄 Found ${entrypoints.length} HTML ${entrypoints.length === 1 ? "file" : "files"} to process\n`,
 );
 
@@ -173,4 +173,4 @@ const outputTable = result.outputs.map((output) => ({
 console.table(outputTable);
 const buildTime = (end - start).toFixed(2);
 
-console.log(`\n✅ Build completed in ${buildTime}ms\n`);
+console.info(`\n✅ Build completed in ${buildTime}ms\n`);

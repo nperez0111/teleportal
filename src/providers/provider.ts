@@ -153,7 +153,6 @@ export class Provider extends Observable<{
         this.#localLoaded = true;
       });
     } catch (error) {
-      console.warn("Failed to initialize offline persistence:", error);
       this.#enableOfflinePersistence = false;
     }
   }

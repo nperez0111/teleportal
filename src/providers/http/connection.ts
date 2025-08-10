@@ -132,7 +132,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         const signal = this.#streamAbortController.signal;
 
         // Set up the readable stream processing
-        const streamProcessingPromise = this.#source.readable
+        this.#source.readable
           .pipeTo(
             new WritableStream({
               write: async (chunk) => {
@@ -153,16 +153,12 @@ export class HttpConnection extends Connection<HttpConnectContext> {
 
                 await this.writer.write(chunk);
               },
-              abort: (reason) => {
-                console.warn("HTTP stream processing aborted:", reason);
-              },
             }),
             { signal },
           )
           .catch((error) => {
             // Only handle errors if we're still active
             if (!this.destroyed && !signal.aborted) {
-              console.warn("HTTP stream processing error:", error);
               this.handleConnectionError(
                 error instanceof Error ? error : new Error(String(error)),
               );
