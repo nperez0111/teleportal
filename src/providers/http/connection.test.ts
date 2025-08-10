@@ -698,7 +698,7 @@ describe("HttpConnection", () => {
     // Should not hang
     await Promise.race([
       connectPromise.catch(() => {}), // Ignore potential rejection
-      new Promise((resolve) => setTimeout(resolve, 100)),
+      new Promise((resolve) => setTimeout(resolve, 20)),
     ]);
 
     expect(client.destroyed).toBe(true);

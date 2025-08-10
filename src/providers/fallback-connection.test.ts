@@ -25,14 +25,14 @@ beforeAll(() => {
     delay: number = 0,
     ...args: any[]
   ) => {
-    return setTimeout(fn, Math.min(delay, 10)) as any;
+    return setTimeout(fn, Math.min(delay, 5)) as any;
   }) as any;
   Connection.setInterval = ((
     fn: Function,
     delay: number = 0,
     ...args: any[]
   ) => {
-    return setInterval(fn, Math.min(delay, 10)) as any;
+    return setInterval(fn, Math.min(delay, 5)) as any;
   }) as any;
   Connection.clearTimeout = clearTimeout;
   Connection.clearInterval = clearInterval;
@@ -68,7 +68,7 @@ class MockWebSocket {
   constructor(url: string, protocols?: string | string[]) {
     this.url = url;
     this.protocols = protocols;
-    
+
     // Track all instances for debugging
     MockWebSocket.instances.push(this);
 
@@ -78,7 +78,7 @@ class MockWebSocket {
         // Don't do anything, let it timeout
         return;
       }
-      
+
       if (MockWebSocket.shouldFail) {
         this.readyState = MockWebSocket.CLOSED;
         // Dispatch error event first, then close event
@@ -102,15 +102,15 @@ class MockWebSocket {
   static setShouldFail(shouldFail: boolean) {
     MockWebSocket.shouldFail = shouldFail;
   }
-  
+
   static setShouldTimeout(shouldTimeout: boolean) {
     MockWebSocket.shouldTimeout = shouldTimeout;
   }
-  
+
   static getInstanceCount(): number {
     return MockWebSocket.instances.length;
   }
-  
+
   static clearInstances() {
     MockWebSocket.instances = [];
   }
@@ -190,10 +190,10 @@ class MockEventSource {
 
   constructor(url: string) {
     this.url = url;
-    
+
     // Track all instances for debugging
     MockEventSource.instances.push(this);
-    
+
     // Delay connection process until after listeners are added
     queueMicrotask(() => {
       this.readyState = MockEventSource.OPEN;
@@ -201,11 +201,11 @@ class MockEventSource {
       this.simulateClientIdMessage();
     });
   }
-  
+
   static getInstanceCount(): number {
     return MockEventSource.instances.length;
   }
-  
+
   static clearInstances() {
     MockEventSource.instances = [];
   }
@@ -531,7 +531,7 @@ describe("FallbackConnection", () => {
     // Should only have created one connection
     expect(client.state.type).toBe("connected");
     expect(client.connectionType).toBe("websocket");
-    
+
     // Should only have one WebSocket instance
     expect(MockWebSocket.getInstanceCount()).toBe(1);
   });
@@ -554,8 +554,11 @@ describe("FallbackConnection", () => {
 
     // Wait for connection to be established
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("Connection timeout")), 1000);
-      
+      const timeout = setTimeout(
+        () => reject(new Error("Connection timeout")),
+        1000,
+      );
+
       client.on("update", (state) => {
         if (state.type === "connected" && client.connectionType === "http") {
           clearTimeout(timeout);
@@ -566,7 +569,7 @@ describe("FallbackConnection", () => {
 
     expect(client.state.type).toBe("connected");
     expect(client.connectionType).toBe("http");
-    
+
     // Should have created WebSocket instances (which timed out) and EventSource instances
     // The important thing is that only one connection is active at the end
     expect(MockWebSocket.getInstanceCount()).toBeGreaterThan(0);
@@ -591,19 +594,19 @@ describe("FallbackConnection", () => {
 
     // Start connection attempt
     const connectPromise = client.connect();
-    
+
     // Wait a bit to ensure connection attempt has started
-    await new Promise(resolve => setTimeout(resolve, 20));
-    
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
     // Destroy while connecting
     await client.destroy();
-    
+
     // The connect promise should complete (either resolve or reject) without hanging
     await Promise.race([
       connectPromise.catch(() => {
         // Expected to potentially be rejected due to destruction
       }),
-      new Promise(resolve => setTimeout(resolve, 100)) // Fallback timeout
+      new Promise((resolve) => setTimeout(resolve, 100)), // Fallback timeout
     ]);
 
     expect(client.destroyed).toBe(true);
@@ -633,7 +636,7 @@ describe("FallbackConnection", () => {
 
     expect(client.state.type).toBe("connected");
     expect(client.connectionType).toBe("websocket");
-    
+
     // Should have created connections for each cycle (each cycle creates a new WebSocket)
     // But the important thing is that only one is active at the end
     expect(MockWebSocket.getInstanceCount()).toBeGreaterThan(0);
@@ -764,16 +767,16 @@ describe("FallbackConnection", () => {
 
     // Start connection
     const connectPromise = client.connect();
-    
+
     // Destroy immediately
     setTimeout(() => client.destroy(), 10);
-    
+
     // Connect should complete (either resolve or reject) without hanging
     await Promise.race([
       connectPromise.catch(() => {
         // Expected to be rejected due to destruction
       }),
-      new Promise(resolve => setTimeout(resolve, 100)) // Fallback timeout
+      new Promise((resolve) => setTimeout(resolve, 100)), // Fallback timeout
     ]);
 
     expect(client.destroyed).toBe(true);
@@ -798,16 +801,16 @@ describe("FallbackConnection", () => {
     // Start multiple connection attempts during WebSocket timeout period
     const promises = [
       client.connect(),
-      new Promise(resolve => setTimeout(() => resolve(client.connect()), 20)),
-      new Promise(resolve => setTimeout(() => resolve(client.connect()), 40)),
-      new Promise(resolve => setTimeout(() => resolve(client.connect()), 60)),
+      new Promise((resolve) => setTimeout(() => resolve(client.connect()), 20)),
+      new Promise((resolve) => setTimeout(() => resolve(client.connect()), 40)),
+      new Promise((resolve) => setTimeout(() => resolve(client.connect()), 60)),
     ];
 
     await Promise.all(promises);
 
     expect(client.state.type).toBe("connected");
     expect(client.connectionType).toBe("http");
-    
+
     // Should only have one WebSocket and one EventSource despite multiple calls
     expect(MockWebSocket.getInstanceCount()).toBe(1);
     expect(MockEventSource.getInstanceCount()).toBe(1);

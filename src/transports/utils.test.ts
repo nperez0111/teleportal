@@ -15,7 +15,7 @@ function createTestMessage(data: number[]): BinaryMessage {
 async function collectMessages(
   readable: ReadableStream<BinaryMessage>,
   maxMessages = 10,
-  timeout = 500,
+  timeout = 100,
 ): Promise<BinaryMessage[]> {
   const messages: BinaryMessage[] = [];
   let reader: ReadableStreamDefaultReader<BinaryMessage> | null = null;
@@ -91,9 +91,9 @@ describe("FanOut Writer", () => {
 
       // Start collecting messages from all readers
       const [received1Promise, received2Promise, received3Promise] = [
-        collectMessages(reader1.readable, 3, 500),
-        collectMessages(reader2.readable, 3, 500),
-        collectMessages(reader3.readable, 3, 500),
+        collectMessages(reader1.readable, 3, 100),
+        collectMessages(reader2.readable, 3, 100),
+        collectMessages(reader3.readable, 3, 100),
       ];
 
       // Write messages
@@ -140,8 +140,8 @@ describe("FanOut Writer", () => {
 
       // Start collecting messages from new readers
       const [received1Promise, received2Promise] = [
-        collectMessages(reader1.readable, 1, 500),
-        collectMessages(reader2.readable, 1, 500),
+        collectMessages(reader1.readable, 1, 100),
+        collectMessages(reader2.readable, 1, 100),
       ];
 
       const message2 = createTestMessage([4, 5, 6]);
@@ -516,59 +516,12 @@ describe("Batching Transform", () => {
   }
 
   // Helper function to collect batched messages
-  async function collectBatchedMessages(
-    readable: ReadableStream<Message[]>,
-    maxBatches = 5,
-    timeout = 1000,
-  ): Promise<Message[][]> {
-    const batches: Message[][] = [];
-    let reader: ReadableStreamDefaultReader<Message[]> | null = null;
-
-    return new Promise<Message[][]>((resolve) => {
-      const timeoutId = setTimeout(() => {
-        if (reader) {
-          try {
-            reader.releaseLock();
-          } catch {}
-        }
-        resolve(batches);
-      }, timeout);
-
-      const collectAsync = async () => {
-        try {
-          reader = readable.getReader();
-
-          while (batches.length < maxBatches) {
-            const result = await reader.read();
-
-            if (result.done) {
-              break;
-            }
-
-            batches.push(result.value);
-          }
-        } catch (error) {
-          // Ignore errors during collection
-        } finally {
-          clearTimeout(timeoutId);
-          if (reader) {
-            try {
-              reader.releaseLock();
-            } catch {}
-          }
-          resolve(batches);
-        }
-      };
-
-      collectAsync();
-    });
-  }
 
   describe("Basic functionality", () => {
     it("should batch messages up to maxBatchSize", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 3,
-        maxBatchDelay: 50,
+        maxBatchDelay: 10,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -600,7 +553,7 @@ describe("Batching Transform", () => {
     it("should send partial batch after maxBatchDelay", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 5,
-        maxBatchDelay: 100,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -659,7 +612,7 @@ describe("Batching Transform", () => {
     it("should send batch immediately when maxBatchSize is reached", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 2,
-        maxBatchDelay: 1000,
+        maxBatchDelay: 200,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -694,7 +647,7 @@ describe("Batching Transform", () => {
     });
 
     it("should respect maxBatchDelay for partial batches", async () => {
-      const maxBatchDelay = 200;
+      const maxBatchDelay = 8;
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 5,
         maxBatchDelay,
@@ -718,7 +671,7 @@ describe("Batching Transform", () => {
       expect(result.value).toBeDefined();
       expect(result.value!).toHaveLength(1);
       expect(result.value![0]).toEqual(message);
-      expect(endTime - startTime).toBeGreaterThanOrEqual(maxBatchDelay - 50); // Allow some tolerance
+      expect(endTime - startTime).toBeGreaterThanOrEqual(maxBatchDelay - 2); // Allow some tolerance
 
       await writer.close();
       reader.releaseLock();
@@ -729,7 +682,7 @@ describe("Batching Transform", () => {
     it("should send multiple batches correctly", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 2,
-        maxBatchDelay: 50,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -757,7 +710,7 @@ describe("Batching Transform", () => {
     it("should handle rapid message writes", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 3,
-        maxBatchDelay: 100,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -788,7 +741,7 @@ describe("Batching Transform", () => {
     it("should flush remaining messages on close", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 5,
-        maxBatchDelay: 1000,
+        maxBatchDelay: 40,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -825,7 +778,7 @@ describe("Batching Transform", () => {
     it("should handle empty queue on close", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 5,
-        maxBatchDelay: 100,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -845,7 +798,7 @@ describe("Batching Transform", () => {
     it("should handle writer abort gracefully", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 3,
-        maxBatchDelay: 100,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -875,7 +828,7 @@ describe("Batching Transform", () => {
     it("should handle reader cancellation gracefully", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 3,
-        maxBatchDelay: 100,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -912,7 +865,7 @@ describe("Batching Transform", () => {
     it("should handle maxBatchSize of 1", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 1,
-        maxBatchDelay: 50,
+        maxBatchDelay: 2,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -939,7 +892,7 @@ describe("Batching Transform", () => {
     it("should handle very large maxBatchSize", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 1000,
-        maxBatchDelay: 50,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();

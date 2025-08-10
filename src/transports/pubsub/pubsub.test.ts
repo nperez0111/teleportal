@@ -274,7 +274,7 @@ describe("PubSub Source", () => {
     await pubsub.publish("client/test-topic", message, "test-client");
 
     // Wait a bit for the message to be processed
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Unsubscribe and close
     await source.unsubscribe("client/test-topic");
@@ -327,7 +327,7 @@ describe("PubSub Source", () => {
     await pubsub.publish("client/topic-1", message1, "test-client");
     await pubsub.publish("client/topic-2", message2, "test-client");
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await reader.cancel();
     await readPromise;
@@ -366,7 +366,7 @@ describe("PubSub Source", () => {
     ).encoded;
     await pubsub.publish("client/test-topic", message1, "test-client");
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await source.unsubscribe("client/test-topic");
 
@@ -377,7 +377,7 @@ describe("PubSub Source", () => {
     ).encoded;
     await pubsub.publish("client/test-topic", message2, "test-client");
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await reader.cancel();
     await readPromise;
@@ -476,7 +476,7 @@ describe("PubSub Transport", () => {
     );
 
     // Wait for the external message to be received
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Write a message to the transport
     const message = new DocMessage(
@@ -486,7 +486,7 @@ describe("PubSub Transport", () => {
     );
     await writer.write(message);
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await writer.close();
     await reader.cancel();
@@ -555,7 +555,7 @@ describe("PubSub Transport", () => {
       "external-source",
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Write a message (this will be inspected by passthrough)
     const message = new DocMessage(
@@ -565,7 +565,7 @@ describe("PubSub Transport", () => {
     );
     await writer.write(message);
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await writer.releaseLock();
     await reader.cancel();
@@ -645,7 +645,7 @@ describe("PubSub Transport", () => {
       "external-source",
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Write messages to different documents with different content
     const message1 = new DocMessage(
@@ -663,7 +663,7 @@ describe("PubSub Transport", () => {
     await writer.write(message1);
     await writer.write(message2);
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await writer.close();
     await reader.cancel();

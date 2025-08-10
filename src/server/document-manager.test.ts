@@ -49,7 +49,7 @@ describe("DocumentManager", () => {
       logger: logger.child().withContext({ name: "test" }),
       getStorage: mockGetStorage,
       pubSub,
-      cleanupDelay: 100, // Use a short delay for testing
+      cleanupDelay: 20,
     });
   });
 
@@ -316,7 +316,7 @@ describe("DocumentManager", () => {
       expect(documentManager.getStats().numDocuments).toBe(1);
 
       // Wait for cleanup delay
-      await new Promise((resolve) => setTimeout(resolve, 150)); // Wait longer than the 100ms delay
+      await new Promise((resolve) => setTimeout(resolve, 30));
 
       // Document should be removed after cleanup delay
       expect(documentManager.getStats().numDocuments).toBe(0);
@@ -341,13 +341,13 @@ describe("DocumentManager", () => {
       doc.removeClient(mockClient);
 
       // Wait a bit but not long enough for cleanup
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Reconnect client
       doc.addClient(mockClient);
 
       // Wait for the original cleanup time
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Document should still exist
       expect(documentManager.getStats().numDocuments).toBe(1);
