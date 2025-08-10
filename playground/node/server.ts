@@ -57,5 +57,5 @@ server.on("upgrade", ws.handleUpgrade);
 
 server.listen(process.env.PORT || 3000, () => {
   const addr = server.address() as { port: number };
-  console.log(`Server running at http://localhost:${addr.port}`);
+  console.info(`Server running at http://localhost:${addr.port}`);
 });

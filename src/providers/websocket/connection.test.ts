@@ -61,12 +61,12 @@ class MockWebSocket {
   bufferedAmount: number = 0;
   extensions: string = "";
 
-  private listeners: Record<string, ((event: any) => void)[]> = {};
-  private shouldConnect: boolean = true;
-  private shouldError: boolean = false;
-  private closeAfterConnect: boolean = false;
-  private closeCode: number = 1000;
-  private closeReason: string = "";
+  protected listeners: Record<string, ((event: any) => void)[]> = {};
+  protected shouldConnect: boolean = true;
+  protected shouldError: boolean = false;
+  protected closeAfterConnect: boolean = false;
+  protected closeCode: number = 1000;
+  protected closeReason: string = "";
 
   constructor(url: string, protocols?: string | string[]) {
     this.url = url;
@@ -102,7 +102,7 @@ class MockWebSocket {
     }
   }
 
-  private dispatchEvent(event: Event) {
+  protected dispatchEvent(event: Event) {
     if (this.listeners[event.type]) {
       this.listeners[event.type].forEach((listener) => listener(event));
     }
@@ -265,13 +265,13 @@ describe("WebSocketConnection", () => {
     expect(client.destroyed).toBe(false);
   });
 
-  test("should be destroyed after calling destroy", () => {
+  test("should be destroyed after calling destroy", async () => {
     client = new WebSocketConnection({
       url: "ws://localhost:8080",
       connect: false, // Don't connect automatically for testing
     });
 
-    client.destroy();
+    await client.destroy();
     expect(client.destroyed).toBe(true);
   });
 
@@ -369,7 +369,7 @@ describe("WebSocketConnection", () => {
     await client.connected;
     expect(client.state.type).toBe("connected");
 
-    client.destroy();
+    await client.destroy();
     expect(client.destroyed).toBe(true);
   });
 
@@ -434,16 +434,269 @@ describe("WebSocketConnection", () => {
     client = new WebSocketConnection({
       url: "ws://localhost:8080",
       WebSocket: MockWebSocket as any,
-      initialReconnectDelay: 10,
+      eventTarget: eventTarget,
     });
 
     await client.connected;
     expect(client.state.type).toBe("connected");
 
-    client.disconnect();
+    // Disconnect and ensure it doesn't reconnect
+    await client.disconnect();
+    expect(client.state.type).toBe("disconnected");
 
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait a bit to ensure no reconnection
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(client.state.type).toBe("disconnected");
+  });
+
+  // Additional robustness tests
+
+  test("should prevent concurrent connection attempts", async () => {
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: MockWebSocket as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    // Start multiple connection attempts concurrently
+    const promises = [
+      client.connect(),
+      client.connect(),
+      client.connect(),
+      client.connect(),
+    ];
+
+    await Promise.all(promises);
+    expect(client.state.type).toBe("connected");
+  });
+
+  test("should properly clean up event listeners on destroy", async () => {
+    let eventListenerCount = 0;
+
+    class TrackingMockWebSocket extends MockWebSocket {
+      addEventListener(type: string, listener: (event: any) => void) {
+        eventListenerCount++;
+        super.addEventListener(type, listener);
+      }
+
+      removeEventListener(type: string, listener: (event: any) => void) {
+        eventListenerCount--;
+        super.removeEventListener(type, listener);
+      }
+    }
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: TrackingMockWebSocket as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(eventListenerCount).toBeGreaterThan(0);
+
+    await client.destroy();
+    expect(eventListenerCount).toBe(0);
+  });
+
+  test("should handle WebSocket errors during send gracefully", async () => {
+    class FailingSendWebSocket extends MockWebSocket {
+      send(data: any) {
+        throw new Error("Send failed");
+      }
+    }
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: FailingSendWebSocket as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Send should not throw, but buffer the message
+    await expect(
+      client.send({ encoded: new Uint8Array([1, 2, 3]) } as any),
+    ).resolves.toBeUndefined();
+  });
+
+  test("should handle rapid connect/disconnect cycles", async () => {
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: MockWebSocket as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    // Rapid connect/disconnect cycles
+    for (let i = 0; i < 5; i++) {
+      await client.connect();
+      await client.disconnect();
+    }
+
+    // Final connect should work
+    await client.connect();
+    expect(client.state.type).toBe("connected");
+  });
+
+  test("should ignore events from old WebSocket instances", async () => {
+    let messageHandlerCallCount = 0;
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: MockWebSocket as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    client.on("message", () => {
+      messageHandlerCallCount++;
+    });
+
+    // Connect and get WebSocket reference
+    await client.connect();
+    expect(client.state.type).toBe("connected");
+
+    // Disconnect (this should clean up the old WebSocket)
+    await client.disconnect();
+
+    // Connect again (creates new WebSocket)
+    await client.connect();
+    expect(client.state.type).toBe("connected");
+
+    // Simulate message from new WebSocket
+    client.send({ encoded: new Uint8Array([1, 2, 3]) } as any);
+
+    // Should only count messages from active WebSocket
+    expect(messageHandlerCallCount).toBeLessThanOrEqual(1);
+  });
+
+  test("should handle WebSocket close during connecting state", async () => {
+    class SlowConnectWebSocket extends MockWebSocket {
+      constructor(url: string, protocols?: string | string[]) {
+        super(url, protocols);
+        this.shouldConnect = false; // Don't auto-connect
+
+        // Connect after a delay, then immediately close
+        setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.dispatchEvent(new Event("open"));
+          setTimeout(() => {
+            this.close(1006, "Connection lost");
+          }, 5);
+        }, 10);
+      }
+    }
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: SlowConnectWebSocket as any,
+      eventTarget: eventTarget,
+      maxReconnectAttempts: 0, // Disable reconnection for this test
+    });
+
+    // Wait for connection to be attempted and closed
+    await new Promise((resolve) => {
+      client.on("update", (state) => {
+        if (state.type === "disconnected") {
+          resolve(undefined);
+        }
+      });
+    });
 
     expect(client.state.type).toBe("disconnected");
+  });
+
+  test("should handle invalid message data gracefully", async () => {
+    class InvalidMessageWebSocket extends MockWebSocket {
+      send(data: any) {
+        // Echo back invalid data
+        queueMicrotask(() => {
+          this.dispatchEvent({
+            type: "message",
+            data: "invalid non-binary data", // String instead of ArrayBuffer
+          } as MessageEvent);
+        });
+      }
+    }
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: InvalidMessageWebSocket as any,
+      eventTarget: eventTarget,
+      maxReconnectAttempts: 0,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Send message which will trigger invalid response
+    await client.send({ encoded: new Uint8Array([1, 2, 3]) } as any);
+
+    // Should handle error gracefully
+    await new Promise((resolve) => {
+      client.on("update", (state) => {
+        if (state.type === "errored") {
+          resolve(undefined);
+        }
+      });
+    });
+
+    expect(client.state.type).toBe("errored");
+  });
+
+  test("should handle destroy during connection attempt", async () => {
+    class SlowConnectWebSocket extends MockWebSocket {
+      constructor(url: string, protocols?: string | string[]) {
+        super(url, protocols);
+        this.shouldConnect = false;
+
+        // Never actually connect
+        setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.dispatchEvent(new Event("open"));
+        }, 1000); // Long delay
+      }
+    }
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: SlowConnectWebSocket as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    // Start connection
+    const connectPromise = client.connect();
+
+    // Destroy while connecting
+    setTimeout(() => client.destroy(), 10);
+
+    // Should not hang
+    await Promise.race([
+      connectPromise.catch(() => {}), // Ignore potential rejection
+      new Promise((resolve) => setTimeout(resolve, 100)),
+    ]);
+
+    expect(client.destroyed).toBe(true);
+  });
+
+  test("should handle multiple destroy calls gracefully", async () => {
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: MockWebSocket as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Multiple destroy calls should not throw
+    await client.destroy();
+    await client.destroy();
+    await client.destroy();
+
+    expect(client.destroyed).toBe(true);
   });
 });

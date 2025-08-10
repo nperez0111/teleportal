@@ -57,12 +57,12 @@ class MockEventSource {
   url: string;
   withCredentials: boolean = false;
 
-  private listeners: Record<string, ((event: any) => void)[]> = {};
-  private shouldConnect: boolean = true;
-  private shouldError: boolean = false;
-  private closeAfterConnect: boolean = false;
-  private clientId: string = "test-client-id";
-  private messageId: number = 0;
+  protected listeners: Record<string, ((event: any) => void)[]> = {};
+  protected shouldConnect: boolean = true;
+  protected shouldError: boolean = false;
+  protected closeAfterConnect: boolean = false;
+  protected clientId: string = "test-client-id";
+  protected messageId: number = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -98,7 +98,7 @@ class MockEventSource {
     }
   }
 
-  private dispatchEvent(event: Event) {
+  protected dispatchEvent(event: Event) {
     if (this.listeners[event.type]) {
       this.listeners[event.type].forEach((listener) => listener(event));
     }
@@ -576,5 +576,238 @@ describe("HttpConnection", () => {
     await expect(client.connect()).rejects.toThrow(
       "Connection is destroyed, create a new instance",
     );
+  });
+
+  // Additional robustness tests
+
+  test("should prevent concurrent connection attempts", async () => {
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: MockEventSource as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    // Start multiple connection attempts concurrently
+    const promises = [
+      client.connect(),
+      client.connect(),
+      client.connect(),
+      client.connect(),
+    ];
+
+    await Promise.all(promises);
+    expect(client.state.type).toBe("connected");
+  });
+
+  test("should properly clean up resources on destroy", async () => {
+    let eventSourceClosed = false;
+
+    class TrackingMockEventSource extends MockEventSource {
+      close() {
+        eventSourceClosed = true;
+        super.close();
+      }
+    }
+
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: TrackingMockEventSource as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    await client.destroy();
+
+    expect(eventSourceClosed).toBe(true);
+    expect(client.destroyed).toBe(true);
+  });
+
+  test("should handle fetch errors during message sending", async () => {
+    mockFetch.setShouldSucceed(false);
+
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: MockEventSource as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Sending should handle fetch errors gracefully
+    await expect(
+      client.send({ encoded: new Uint8Array([1, 2, 3]) } as any),
+    ).resolves.toBeUndefined();
+  });
+
+  test("should handle rapid connect/disconnect cycles", async () => {
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: MockEventSource as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    // Rapid connect/disconnect cycles
+    for (let i = 0; i < 5; i++) {
+      await client.connect();
+      await client.disconnect();
+    }
+
+    // Final connect should work
+    await client.connect();
+    expect(client.state.type).toBe("connected");
+  });
+
+  test("should handle destroy during connection attempt", async () => {
+    class SlowEventSource extends MockEventSource {
+      constructor(url: string) {
+        super(url);
+        this.shouldConnect = false;
+
+        // Connect after a long delay
+        setTimeout(() => {
+          this.readyState = MockEventSource.OPEN;
+          this.dispatchEvent(new Event("open"));
+          this.simulateClientIdMessage();
+        }, 1000);
+      }
+    }
+
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: SlowEventSource as any,
+      eventTarget: eventTarget,
+      connect: false,
+    });
+
+    // Start connection
+    const connectPromise = client.connect();
+
+    // Destroy while connecting
+    setTimeout(() => client.destroy(), 10);
+
+    // Should not hang
+    await Promise.race([
+      connectPromise.catch(() => {}), // Ignore potential rejection
+      new Promise((resolve) => setTimeout(resolve, 100)),
+    ]);
+
+    expect(client.destroyed).toBe(true);
+  });
+
+  test("should handle multiple destroy calls gracefully", async () => {
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: MockEventSource as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Multiple destroy calls should not throw
+    await client.destroy();
+    await client.destroy();
+    await client.destroy();
+
+    expect(client.destroyed).toBe(true);
+  });
+
+  test("should handle writer close errors gracefully", async () => {
+    // Mock writer that throws on close
+    const originalGetWriter = WritableStream.prototype.getWriter;
+    WritableStream.prototype.getWriter = function () {
+      const writer = originalGetWriter.call(this);
+      const originalClose = writer.close.bind(writer);
+      writer.close = async () => {
+        throw new Error("Writer close failed");
+      };
+      return writer;
+    };
+
+    try {
+      client = new HttpConnection({
+        url: "http://localhost:8080",
+        fetch: createMockFetch(mockFetch),
+        EventSource: MockEventSource as any,
+        eventTarget: eventTarget,
+      });
+
+      await client.connected;
+      expect(client.state.type).toBe("connected");
+
+      // Should not throw despite writer close error
+      await expect(client.destroy()).resolves.toBeUndefined();
+      expect(client.destroyed).toBe(true);
+    } finally {
+      // Restore original method
+      WritableStream.prototype.getWriter = originalGetWriter;
+    }
+  });
+
+  test("should handle concurrent send operations safely", async () => {
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: MockEventSource as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Send multiple messages concurrently
+    const messages = Array.from({ length: 10 }, (_, i) =>
+      client.send({ encoded: new Uint8Array([i]) } as any),
+    );
+
+    // All sends should complete without error
+    await Promise.all(messages);
+  });
+
+  test("should abort stream processing when connection is cleaned up", async () => {
+    let streamProcessingAborted = false;
+
+    class AbortTrackingEventSource extends MockEventSource {
+      simulateClientIdMessage() {
+        super.simulateClientIdMessage();
+
+        // Simulate a long-running stream
+        const interval = setInterval(() => {
+          if (this.readyState === MockEventSource.CLOSED) {
+            clearInterval(interval);
+            streamProcessingAborted = true;
+          }
+        }, 5);
+      }
+    }
+
+    client = new HttpConnection({
+      url: "http://localhost:8080",
+      fetch: createMockFetch(mockFetch),
+      EventSource: AbortTrackingEventSource as any,
+      eventTarget: eventTarget,
+    });
+
+    await client.connected;
+    expect(client.state.type).toBe("connected");
+
+    // Close connection should abort stream processing
+    await client.disconnect();
+
+    // Wait a bit for cleanup
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(streamProcessingAborted).toBe(true);
   });
 });

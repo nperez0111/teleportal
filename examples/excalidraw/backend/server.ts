@@ -62,4 +62,4 @@ const instance = Bun.serve({
   },
 });
 
-console.log(`Server running on http://${instance.hostname}:${instance.port}`);
+console.info(`Server running on http://${instance.hostname}:${instance.port}`);
