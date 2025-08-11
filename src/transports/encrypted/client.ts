@@ -344,6 +344,19 @@ export class EncryptionClient
     );
   }
 
+  private markMessageAsSeen(
+    timestamp: LamportClockValue,
+    messageId: EncryptedMessageId,
+  ) {
+    const [clientId, counter] = timestamp;
+    if (!this.seenMessages[clientId]) {
+      this.seenMessages[clientId] = {};
+    }
+    this.seenMessages[clientId][counter] = messageId;
+
+    this.call("update-seen-messages", this.seenMessages);
+  }
+
   private createMessageNode(
     messageId: EncryptedMessageId,
     payload: EncryptedUpdate,
@@ -358,12 +371,7 @@ export class EncryptionClient
       throw new Error("Message ID mismatch");
     }
 
-    const [clientId, counter] = timestamp;
-    if (!this.seenMessages[clientId]) {
-      this.seenMessages[clientId] = {};
-    }
-    this.seenMessages[clientId][counter] = messageId;
-    this.call("update-seen-messages", this.seenMessages);
+    this.markMessageAsSeen(timestamp, messageId);
     const node = { id: messageId, timestamp, payload };
 
     this.call("seen-update", node);

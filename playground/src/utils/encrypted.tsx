@@ -1,15 +1,15 @@
-import { Transport } from "teleportal";
+import { fromBase64, toBase64 } from "lib0/buffer";
+import { useEffect, useState } from "react";
 import {
+  createEncryptionKey,
+  EncryptedUpdate,
   exportEncryptionKey,
   importEncryptionKey,
-  createEncryptionKey,
 } from "teleportal/encryption-key";
 import { getEncryptedTransport as getEncryptedTransportBase } from "teleportal/transports";
-import { useEffect, useState } from "react";
-import { EncryptionClient } from "../../../src/transports/encrypted/client";
 import { Awareness } from "y-protocols/awareness.js";
 import * as Y from "yjs";
-import { fromBase64, toBase64 } from "lib0/buffer";
+import { EncryptionClient } from "../../../src/transports/encrypted/client";
 
 /**
  * Wraps a transport with encryption secured by the provided key
@@ -36,7 +36,7 @@ export function getEncryptedTransport(key: CryptoKey) {
         if (!payload) {
           throw new Error("Message not found");
         }
-        return fromBase64(payload);
+        return fromBase64(payload) as EncryptedUpdate;
       },
     });
     // TODO more convenient way to do this
