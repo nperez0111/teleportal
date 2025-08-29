@@ -1,3 +1,4 @@
+import { uuidv4 } from "lib0/random";
 import {
   DocMessage,
   InMemoryPubSub,
@@ -7,14 +8,13 @@ import {
   ServerContext,
   Transport,
 } from "teleportal";
+import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { Client } from "./client";
 import { ClientManager } from "./client-manager";
 import { Document } from "./document";
 import { DocumentManager } from "./document-manager";
 import { logger as defaultLogger, Logger } from "./logger";
-
-import type { DocumentStorage } from "teleportal/storage";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -151,6 +151,11 @@ export class Server<Context extends ServerContext> extends Observable<{
   public async getOrCreateDocument(
     message: Pick<Message<Context>, "document" | "context" | "encrypted">,
   ): Promise<Document<Context>> {
+    if (!message.context.clientId) {
+      throw new Error("Client ID not found in message context", {
+        cause: { document: message.document, context: message.context },
+      });
+    }
     const client = this.clientManager.getClient(message.context.clientId);
     if (!client) {
       throw new Error("Client not found", {
@@ -171,10 +176,10 @@ export class Server<Context extends ServerContext> extends Observable<{
    */
   public async createClient({
     transport,
-    id: clientId,
+    id: clientId = uuidv4(),
   }: {
     transport: Transport<Context>;
-    id: string;
+    id?: string;
   }): Promise<Client<Context>> {
     const existingClient = this.clientManager.getClient(clientId);
     if (existingClient) {

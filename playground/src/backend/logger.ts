@@ -24,4 +24,10 @@ export const logger = new LogLayer({
       level: "info",
     }),
   ],
+  errorSerializer: (err) => ({
+    message: err.message,
+    stack: err.stack,
+    code: err.code,
+    cause: err.cause,
+  }),
 });

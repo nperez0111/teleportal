@@ -6,6 +6,12 @@ export const logger = new LogLayer({
     logger: console,
     level: "info",
   }),
+  errorSerializer: (err) => ({
+    message: err.message,
+    stack: err.stack,
+    code: err.code,
+    cause: err.cause,
+  }),
 });
 
 // Export the LogLayer type for use in other modules

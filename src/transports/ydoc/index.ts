@@ -45,8 +45,9 @@ export interface YDocSinkHandler {
 /**
  * Makes a {@link Source} from a {@link Y.Doc} and a document name
  */
-export function getYDocSource({
-  ydoc,
+export function getYDocSource<Context extends ClientContext>({
+  ydoc = new Y.Doc(),
+  context = { clientId: "local" } as Context,
   document,
   awareness = new Awareness(ydoc),
   observer = new Observable<{
@@ -60,9 +61,7 @@ export function getYDocSource({
           type: "update",
           update: update as Update,
         },
-        {
-          clientId: "local",
-        },
+        context,
       );
     },
     async onAwarenessUpdate(update) {
@@ -72,9 +71,7 @@ export function getYDocSource({
           type: "awareness-update",
           update: update as AwarenessUpdateMessage,
         },
-        {
-          clientId: "local",
-        },
+        context,
       );
     },
     async start() {
@@ -84,14 +81,13 @@ export function getYDocSource({
           type: "sync-step-1",
           sv: Y.encodeStateVector(ydoc) as StateVector,
         },
-        {
-          clientId: "local",
-        },
+        context,
       );
     },
   },
 }: {
-  ydoc: Y.Doc;
+  ydoc?: Y.Doc;
+  context?: Context;
   document: string;
   awareness?: Awareness;
   observer?: Observable<{
@@ -99,7 +95,7 @@ export function getYDocSource({
   }>;
   handler?: YDocSourceHandler;
 }): Source<
-  ClientContext,
+  Context,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
@@ -178,8 +174,9 @@ export function getYDocSource({
 /**
  * Makes a {@link Sink} from a {@link Y.Doc} and a document name
  */
-export function getYDocSink({
-  ydoc,
+export function getYDocSink<Context extends ClientContext>({
+  ydoc = new Y.Doc(),
+  context,
   document,
   awareness = new Awareness(ydoc),
   observer = new Observable<{
@@ -196,9 +193,7 @@ export function getYDocSink({
           type: "awareness-update",
           update,
         },
-        {
-          clientId: "local",
-        },
+        context,
       );
     },
     async handleSyncStep1(stateVector) {
@@ -211,9 +206,7 @@ export function getYDocSink({
             stateVector,
           ) as SyncStep2Update,
         },
-        {
-          clientId: "local",
-        },
+        context,
       );
     },
     async handleSyncStep2(syncStep2) {
@@ -224,7 +217,8 @@ export function getYDocSink({
     },
   },
 }: {
-  ydoc: Y.Doc;
+  ydoc?: Y.Doc;
+  context?: Context;
   document: string;
   awareness?: Awareness;
   observer?: Observable<{
@@ -232,7 +226,7 @@ export function getYDocSink({
   }>;
   handler?: YDocSinkHandler;
 }): Sink<
-  ClientContext,
+  Context,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
@@ -347,16 +341,29 @@ export function getYDocSink({
 /**
  * Makes a {@link Transport} from a {@link Y.Doc} and a document name
  */
-export function getYTransportFromYDoc({
-  ydoc,
+export function getYTransportFromYDoc<Context extends ClientContext>({
+  ydoc = new Y.Doc(),
+  context = { clientId: "local" } as Context,
   document,
   awareness = new Awareness(ydoc),
+  handler,
+  observer = new Observable<{
+    message: (message: Message) => void;
+  }>(),
 }: {
-  ydoc: Y.Doc;
+  ydoc?: Y.Doc;
+  context?: Context;
   document: string;
   awareness?: Awareness;
+  handler?: YDocSinkHandler & YDocSourceHandler;
+  /**
+   * An observer which can inject messages into the source stream.
+   */
+  observer?: Observable<{
+    message: (message: Message) => void;
+  }>;
 }): Transport<
-  ClientContext,
+  Context,
   {
     ydoc: Y.Doc;
     awareness: Awareness;
@@ -364,13 +371,22 @@ export function getYTransportFromYDoc({
     handler: Pick<YDocSourceHandler, "start">;
   }
 > {
-  // observer is used for cross communication between the source and sink
-  const observer = new Observable<{
-    message: (message: Message) => void;
-  }>();
-
   return compose(
-    getYDocSource({ ydoc, awareness, document, observer }),
-    getYDocSink({ ydoc, awareness, document, observer }),
+    getYDocSource<Context>({
+      ydoc,
+      awareness,
+      document,
+      observer,
+      handler,
+      context,
+    }),
+    getYDocSink<Context>({
+      ydoc,
+      awareness,
+      document,
+      observer,
+      handler,
+      context,
+    }),
   );
 }
