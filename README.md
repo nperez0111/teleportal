@@ -1,5 +1,7 @@
 # TelePortal
 
+<img align="right" src="./assets/pepper.png?raw=true" height="240" />
+
 > TelePortal: A storage, transport & runtime agnostic Y.js server/provider. Built on web primitives, supports subdocs, and handles everything without in-memory storage. Perfect for collaborative apps! 🚀
 
 This is a **Y.js Server & Provider** that aims to be storage, transport, and runtime agnostic.
