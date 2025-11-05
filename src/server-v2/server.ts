@@ -1,7 +1,7 @@
 import { uuidv4 } from "lib0/random";
 import { DocMessage, type Message, type ServerContext } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
-import { logger as defaultLogger, type Logger } from "teleportal/server/logger";
+import { logger as defaultLogger, type Logger } from "../server/logger";
 import type { ServerOptions } from "./api/types";
 import { Engine } from "./engine/engine";
 import { createInMemoryReplicator } from "./replication/inmemory";
