@@ -74,6 +74,14 @@ export class Server<Context extends ServerContext> {
       .withContext({ name: "server-v2" });
     this.#pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
+
+    this.logger
+      .withMetadata({
+        nodeId: this.#nodeId,
+        hasCustomPubSub: !!options.pubSub,
+        hasPermissionChecker: !!options.checkPermission,
+      })
+      .info("Server initialized");
   }
 
   /**
@@ -85,30 +93,66 @@ export class Server<Context extends ServerContext> {
    */
   async getOrOpenSession(
     documentId: string,
-    { encrypted, id = uuidv4() }: { encrypted: boolean; id?: string },
+    {
+      encrypted,
+      id = "session-" + uuidv4(),
+    }: { encrypted: boolean; id?: string },
   ) {
     const existing = this.#sessions.get(documentId);
-    if (existing) return existing;
+    if (existing) {
+      this.logger
+        .withMetadata({ documentId, sessionId: existing.id, encrypted })
+        .debug("Retrieved existing session");
+      return existing;
+    }
 
-    const storage = await this.#options.getStorage({
-      documentId,
-      context: { userId: "", room: "", clientId: "" } as any,
-      encrypted,
-    });
+    const sessionLogger = this.logger
+      .child()
+      .withContext({ documentId, sessionId: id, encrypted });
 
-    const session = new DocumentSession<Context>({
-      documentId,
-      id,
-      encrypted,
-      storage,
-      pubsub: this.#pubSub,
-      nodeId: this.#nodeId,
-      logger: this.logger,
-    });
+    sessionLogger
+      .withMetadata({ documentId, sessionId: id, encrypted })
+      .info("Creating new session");
 
-    await session.load();
-    this.#sessions.set(documentId, session);
-    return session;
+    try {
+      const storage = await this.#options.getStorage({
+        documentId,
+        context: { userId: "", room: "", clientId: "" } as any,
+        encrypted,
+      });
+
+      sessionLogger.debug("Storage retrieved for session");
+
+      const session = new DocumentSession<Context>({
+        documentId,
+        id,
+        encrypted,
+        storage,
+        pubsub: this.#pubSub,
+        nodeId: this.#nodeId,
+        logger: this.logger,
+      });
+
+      await session.load();
+      this.#sessions.set(documentId, session);
+
+      sessionLogger
+        .withMetadata({
+          documentId,
+          sessionId: id,
+          encrypted,
+          totalSessions: this.#sessions.size,
+        })
+        .info("Session created and loaded");
+
+      return session;
+    } catch (error) {
+      sessionLogger
+        .withError(error as Error)
+        .withMetadata({ documentId, sessionId: id, encrypted })
+        .error("Failed to create session");
+      throw error;
+    }
   }
 
   /**
@@ -119,12 +163,14 @@ export class Server<Context extends ServerContext> {
    */
   createClient({
     transport,
-    id = uuidv4(),
+    id = "client-" + uuidv4(),
   }: {
     transport: import("teleportal").Transport<Context>;
     id?: string;
   }) {
     const logger = this.logger.child().withContext({ clientId: id });
+
+    logger.withMetadata({ clientId: id }).info("Creating new client");
 
     const client = new Client<Context>({
       id,
@@ -134,55 +180,140 @@ export class Server<Context extends ServerContext> {
 
     withMessageValidator(transport, {
       isAuthorized: async (message, type) => {
-        if (!this.#options.checkPermission) return true;
+        if (!this.#options.checkPermission) {
+          logger
+            .withMetadata({
+              messageId: message.id,
+              documentId: message.document,
+              messageType: message.type,
+              permissionType: type,
+            })
+            .debug("No permission checker configured, allowing message");
+          return true;
+        }
+
         const msgLogger = logger.child().withContext({ messageId: message.id });
 
-        msgLogger.trace("checking permission");
+        msgLogger
+          .withMetadata({
+            messageId: message.id,
+            documentId: message.document,
+            messageType: message.type,
+            permissionType: type,
+            userId: message.context.userId,
+            clientId: message.context.clientId,
+          })
+          .debug("Checking permission");
 
-        const ok = await this.#options.checkPermission({
-          context: message.context,
-          documentId: message.document,
-          message,
-          type,
-        });
+        try {
+          const ok = await this.#options.checkPermission({
+            context: message.context,
+            documentId: message.document,
+            message,
+            type,
+          });
 
-        msgLogger.trace(`Message authorized: ${ok}`);
+          msgLogger
+            .withMetadata({
+              messageId: message.id,
+              documentId: message.document,
+              permissionType: type,
+              authorized: ok,
+            })
+            .info(ok ? "Message authorized" : "Message denied");
 
-        if (!ok) {
-          await client.send(
-            new DocMessage(
-              message.document,
-              {
-                type: "auth-message",
-                permission: "denied",
-                reason: `Insufficient permissions to access document ${message.document}`,
-              },
-              message.context,
-              message.encrypted,
-            ),
-          );
+          if (!ok) {
+            await client.send(
+              new DocMessage(
+                message.document,
+                {
+                  type: "auth-message",
+                  permission: "denied",
+                  reason: `Insufficient permissions to access document ${message.document}`,
+                },
+                message.context,
+                message.encrypted,
+              ),
+            );
+            return false;
+          }
+          return true;
+        } catch (error) {
+          msgLogger
+            .withError(error as Error)
+            .withMetadata({
+              messageId: message.id,
+              documentId: message.document,
+              permissionType: type,
+            })
+            .error("Permission check failed");
           return false;
         }
-        return true;
       },
     })
       .readable.pipeTo(
         new WritableStream<Message<Context>>({
           write: async (message) => {
-            const session = await this.getOrOpenSession(message.document, {
-              encrypted: message.encrypted,
+            const msgLogger = logger.child().withContext({
+              messageId: message.id,
+              documentId: message.document,
             });
-            session.addClient(client);
-            await session.apply(message, client);
+
+            msgLogger
+              .withMetadata({
+                messageId: message.id,
+                documentId: message.document,
+                messageType: message.type,
+                encrypted: message.encrypted,
+                payloadType: (message as any).payload?.type,
+              })
+              .debug("Processing incoming message");
+
+            try {
+              const session = await this.getOrOpenSession(message.document, {
+                encrypted: message.encrypted,
+              });
+
+              session.addClient(client);
+
+              msgLogger.debug("Client added to session, applying message");
+
+              await session.apply(message, client);
+
+              msgLogger
+                .withMetadata({
+                  messageId: message.id,
+                  documentId: message.document,
+                })
+                .debug("Message applied successfully");
+            } catch (error) {
+              msgLogger
+                .withError(error as Error)
+                .withMetadata({
+                  messageId: message.id,
+                  documentId: message.document,
+                  messageType: message.type,
+                })
+                .error("Failed to process message");
+              throw error;
+            }
           },
         }),
       )
       .catch((e) => {
-        logger.withError(e).error("client stream errored");
+        logger
+          .withError(e)
+          .withMetadata({ clientId: id })
+          .error("Client stream errored");
       })
       .finally(() => {
+        logger
+          .withMetadata({ clientId: id })
+          .info("Client stream ended, disconnecting client");
         this.disconnectClient(client.id);
       });
+
+    logger.withMetadata({ clientId: id }).info("Client created and connected");
 
     return client;
   }
@@ -192,18 +323,57 @@ export class Server<Context extends ServerContext> {
    * @param client - The client or client ID to disconnect.
    */
   disconnectClient(client: string | Client<Context>) {
+    const clientId = typeof client === "string" ? client : client.id;
+    const logger = this.logger.child().withContext({ clientId });
+
+    logger
+      .withMetadata({ clientId })
+      .info("Disconnecting client from all sessions");
+
     for (const s of this.#sessions.values()) {
       s.removeClient(client);
     }
+
+    logger
+      .withMetadata({
+        clientId,
+        totalSessions: this.#sessions.size,
+      })
+      .info("Client disconnected from sessions");
   }
 
   /**
    * Async dispose the server.
    */
   async [Symbol.asyncDispose](): Promise<void> {
+    this.logger
+      .withMetadata({
+        nodeId: this.#nodeId,
+        activeSessions: this.#sessions.size,
+      })
+      .info("Disposing server");
+
     for (const s of this.#sessions.values()) {
-      await s[Symbol.asyncDispose]();
+      try {
+        await s[Symbol.asyncDispose]();
+      } catch (error) {
+        this.logger
+          .withError(error as Error)
+          .withMetadata({ sessionId: s.id, documentId: s.documentId })
+          .error("Error disposing session");
+      }
     }
-    await this.#pubSub[Symbol.asyncDispose]?.();
+
+    try {
+      await this.#pubSub[Symbol.asyncDispose]?.();
+    } catch (error) {
+      this.logger.withError(error as Error).error("Error disposing pubsub");
+    }
+
+    this.logger
+      .withMetadata({
+        nodeId: this.#nodeId,
+      })
+      .info("Server disposed");
   }
 }
