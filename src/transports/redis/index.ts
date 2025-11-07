@@ -89,7 +89,7 @@ export class RedisPubSub implements PubSub {
     return unsubscribe;
   }
 
-  async destroy(): Promise<void> {
+  async [Symbol.asyncDispose](): Promise<void> {
     await this.publisherRedis.quit();
     await this.subscriberRedis.quit();
   }
@@ -156,7 +156,7 @@ export function getRedisTransport<Context extends ServerContext>({
       } catch (error) {
         // Stream might already be locked or closed
       }
-      await pubsub.destroy?.();
+      await pubsub[Symbol.asyncDispose]?.();
     },
   };
 }

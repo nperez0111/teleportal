@@ -102,10 +102,10 @@ describe("Redis Transport", () => {
       expect(pubsub).toBeDefined();
       expect(typeof pubsub.publish).toBe("function");
       expect(typeof pubsub.subscribe).toBe("function");
-      expect(typeof pubsub.destroy).toBe("function");
+      expect(typeof pubsub[Symbol.asyncDispose]).toBe("function");
 
       // Clean up
-      await pubsub.destroy?.();
+      await pubsub[Symbol.asyncDispose]?.();
     });
 
     test(
@@ -146,8 +146,10 @@ describe("Redis Transport", () => {
           // Cleanup
           if (unsubscribe) await unsubscribe();
         } finally {
-          if (publisher.destroy) await publisher.destroy();
-          if (subscriber.destroy) await subscriber.destroy();
+          if (publisher[Symbol.asyncDispose])
+            await publisher[Symbol.asyncDispose]();
+          if (subscriber[Symbol.asyncDispose])
+            await subscriber[Symbol.asyncDispose]();
         }
       },
       TEST_TIMEOUT,
@@ -197,9 +199,12 @@ describe("Redis Transport", () => {
           if (unsubscribe1) await unsubscribe1();
           if (unsubscribe2) await unsubscribe2();
         } finally {
-          if (pubsub1.destroy) await pubsub1.destroy();
-          if (pubsub2.destroy) await pubsub2.destroy();
-          if (publisher.destroy) await publisher.destroy();
+          if (pubsub1[Symbol.asyncDispose])
+            await pubsub1[Symbol.asyncDispose]();
+          if (pubsub2[Symbol.asyncDispose])
+            await pubsub2[Symbol.asyncDispose]();
+          if (publisher[Symbol.asyncDispose])
+            await publisher[Symbol.asyncDispose]();
         }
       },
       TEST_TIMEOUT,
@@ -239,7 +244,7 @@ describe("Redis Transport", () => {
           // Should not receive the message since we unsubscribed
           expect(messageReceived).toBe(false);
         } finally {
-          if (pubsub.destroy) await pubsub.destroy();
+          if (pubsub[Symbol.asyncDispose]) await pubsub[Symbol.asyncDispose]();
         }
       },
       TEST_TIMEOUT,
@@ -261,7 +266,7 @@ describe("Redis Transport", () => {
           await pubsub.subscribe(testTopic, () => {});
 
           // Destroy the pubsub
-          if (pubsub.destroy) await pubsub.destroy();
+          if (pubsub[Symbol.asyncDispose]) await pubsub[Symbol.asyncDispose]();
 
           // Should fail when trying to publish after destroy
           const testMessage = new Uint8Array([17, 18, 19, 20]) as any;

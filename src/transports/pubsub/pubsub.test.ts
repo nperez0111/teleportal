@@ -28,7 +28,7 @@ describe("PubSub pubsub", () => {
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubsub[Symbol.asyncDispose]();
   });
 
   it("can publish and subscribe to messages", async () => {
@@ -124,7 +124,7 @@ describe("PubSub pubsub", () => {
       callCount++;
     });
 
-    await pubsub.destroy();
+    await pubsub[Symbol.asyncDispose]();
 
     const docMessage = new DocMessage(
       "test-doc",
@@ -146,7 +146,7 @@ describe("PubSub Sink", () => {
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubsub[Symbol.asyncDispose]();
   });
 
   it("can publish messages to topics", async () => {
@@ -235,7 +235,7 @@ describe("PubSub Source", () => {
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubsub[Symbol.asyncDispose]();
   });
 
   it("can subscribe to topics and receive messages", async () => {
@@ -414,7 +414,7 @@ describe("PubSub Transport", () => {
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubsub[Symbol.asyncDispose]();
   });
 
   it("can create a complete transport", () => {

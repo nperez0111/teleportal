@@ -124,7 +124,7 @@ export interface PubSub {
   /**
    * Shutdown the backend
    */
-  destroy?: () => Promise<void>;
+  [Symbol.asyncDispose]?: () => Promise<void>;
 }
 
 /**

@@ -312,7 +312,7 @@ export class Server<Context extends ServerContext> extends Observable<{
     }
 
     try {
-      await this.pubsub.destroy?.();
+      await this.pubsub[Symbol.asyncDispose]?.();
       this.logger.trace("pubsub destroyed");
     } catch (e) {
       this.logger.withError(e).error("Failed to destroy pubsub");
