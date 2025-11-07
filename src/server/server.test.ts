@@ -407,6 +407,88 @@ describe("Server", () => {
       transport.closeReadable();
       await serverWithPermission[Symbol.asyncDispose]();
     });
+
+    it("should send sync-done when sync-step-2 is denied due to write permissions", async () => {
+      const checkPermission = async ({
+        message,
+        type,
+      }: {
+        message: Message<ServerContext>;
+        type: "read" | "write";
+      }) => {
+        // Deny write operations (sync-step-2 requires write)
+        if (
+          message.type === "doc" &&
+          message.payload.type === "sync-step-2" &&
+          type === "write"
+        ) {
+          return false;
+        }
+        // Allow read operations
+        return true;
+      };
+
+      const serverWithPermission = new Server({
+        logger: logger.child().withContext({ name: "test" }),
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission,
+      });
+
+      const transport = new MockTransport();
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Replace writable to capture messages
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = serverWithPermission.createClient({
+        transport: customTransport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Should send sync-done message (not auth-message)
+      expect(writtenMessages.length).toBeGreaterThan(0);
+      const syncDoneMessage = writtenMessages.find(
+        (m) => m.type === "doc" && m.payload.type === "sync-done",
+      );
+      expect(syncDoneMessage).toBeDefined();
+      if (syncDoneMessage && syncDoneMessage.type === "doc") {
+        expect(syncDoneMessage.payload.type).toBe("sync-done");
+        expect(syncDoneMessage.document).toBe("test-doc");
+      }
+
+      // Should NOT send auth-message
+      const authMessage = writtenMessages.find(
+        (m) => m.type === "doc" && m.payload.type === "auth-message",
+      );
+      expect(authMessage).toBeUndefined();
+
+      transport.closeReadable();
+      await serverWithPermission[Symbol.asyncDispose]();
+    });
   });
 
   describe("disconnectClient", () => {

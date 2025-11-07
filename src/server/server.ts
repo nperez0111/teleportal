@@ -223,6 +223,24 @@ export class Server<Context extends ServerContext> {
             .info(ok ? "Message authorized" : "Message denied");
 
           if (!ok) {
+            if (
+              message.type === "doc" &&
+              message.payload.type === "sync-step-2"
+            ) {
+              msgLogger.debug(
+                "Client tried to send sync-step-2 message but doesn't have write permissions, dropping message",
+              );
+              // Tell the client that they've successfully synced their state vector
+              await client.send(
+                new DocMessage(
+                  message.document,
+                  { type: "sync-done" },
+                  message.context,
+                  message.encrypted,
+                ),
+              );
+              return false;
+            }
             await client.send(
               new DocMessage(
                 message.document,
