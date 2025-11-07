@@ -13,6 +13,7 @@
       "teleportal/encryption-key": ["./src/encryption-key/index.ts"],
       "teleportal/storage": ["./src/storage/index.ts"],
       "teleportal/transports/redis": ["./src/transports/redis/index.ts"],
+      "teleportal/transports/nats": ["./src/transports/nats/index.ts"],
       "teleportal/transports": ["./src/transports/index.ts"],
       "teleportal/http": ["./src/http/index.ts"],
       "teleportal/server": ["./src/server/index.ts"],

@@ -54,6 +54,10 @@
       "types": "./dist/transports/redis/index.d.mts",
       "default": "./dist/transports/redis/index.mjs"
     },
+    "./transports/nats": {
+      "types": "./dist/transports/nats/index.d.mts",
+      "default": "./dist/transports/nats/index.mjs"
+    },
     "./transports": {
       "types": "./dist/transports/index.d.mts",
       "default": "./dist/transports/index.mjs"
@@ -96,32 +100,33 @@
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
-    "@nats-io/transport-node": "^3.1.0",
+    "@nats-io/transport-node": "^3.2.0",
     "crossws": "^0.4.1",
-    "db0": "^0.3.2",
+    "db0": "^0.3.4",
     "eventsource": "^4.0.0",
     "hookable": "^5.5.3",
-    "ioredis": "^5.6.1",
-    "jose": "^6.0.11",
-    "lib0": "^0.2.109",
-    "loglayer": "^6.4.3",
-    "srvx": "^0.8.1",
-    "unstorage": "^1.16.0",
+    "ioredis": "^5.8.2",
+    "jose": "^6.1.0",
+    "lib0": "^0.2.114",
+    "loglayer": "^6.10.0",
+    "srvx": "^0.8.16",
+    "unstorage": "^1.17.2",
     "y-indexeddb": "^9.0.12",
     "y-protocols": "^1.0.6",
     "yjs": "^13.6.27"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.17",
-    "@typescript-eslint/eslint-plugin": "^8.37.0",
-    "@typescript-eslint/parser": "^8.37.0",
-    "automd": "^0.3.12",
-    "changelogen": "^0.5.7",
-    "eslint": "^9.29.0",
-    "eslint-config-unjs": "^0.4.2",
+    "@types/bun": "^1.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.46.3",
+    "@typescript-eslint/parser": "^8.46.3",
+    "automd": "^0.4.2",
+    "bun-plugin-tailwind": "0.1.2",
+    "changelogen": "^0.6.2",
+    "eslint": "^9.39.1",
+    "eslint-config-unjs": "^0.5.0",
     "prettier": "^3.6.2",
-    "typescript": "^5.8.3",
-    "unbuild": "^3.5.0"
+    "typescript": "^5.9.3",
+    "unbuild": "^3.6.1"
   },
   "engines": {
     "node": ">=24"
