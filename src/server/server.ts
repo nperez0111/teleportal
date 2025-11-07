@@ -2,323 +2,378 @@ import { uuidv4 } from "lib0/random";
 import {
   DocMessage,
   InMemoryPubSub,
-  Message,
-  Observable,
-  PubSub,
-  ServerContext,
-  Transport,
+  type Message,
+  type PubSub,
+  type ServerContext,
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
+import { logger as defaultLogger, type Logger } from "./logger";
+import { Session as DocumentSession } from "./session";
 import { Client } from "./client";
-import { ClientManager } from "./client-manager";
-import { Document } from "./document";
-import { DocumentManager } from "./document-manager";
-import { logger as defaultLogger, Logger } from "./logger";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
-
+  /**
+   * Retrieve per-document storage.
+   */
   getStorage: (ctx: {
-    /**
-     * The name of the document.
-     */
-    document: string;
-    /**
-     * The unique identifier of the document.
-     */
     documentId: string;
-    /**
-     * The context of the server.
-     */
     context: Context;
-    /**
-     * Whether the document is encrypted
-     */
     encrypted: boolean;
-    /**
-     * The server instance.
-     */
-    server: Server<Context>;
   }) => Promise<DocumentStorage>;
 
   /**
-   * Check if a client has permission to access a document.
-   * @note This is called on every message sent, so it should be fast.
-   * @returns True if the client has permission, false otherwise.
+   * Optional permission checker for read/write.
    */
   checkPermission?: (ctx: {
-    /**
-     * The context of the client.
-     */
     context: Context;
-    /**
-     * The name of the document.
-     */
-    document: string;
-    /**
-     * The unique identifier of the document.
-     */
     documentId: string;
-    /**
-     * The message that is being sent.
-     */
     message: Message<Context>;
-    /**
-     * The type of the message.
-     */
     type: "read" | "write";
   }) => Promise<boolean>;
+
   /**
-   * Optional pub/sub backend for cross-instance communication.
-   * If provided, the server will use this to publish and subscribe to messages across multiple server instances.
+   * PubSub backend for cross-node fanout. Defaults to in-memory.
    */
   pubSub?: PubSub;
+
+  /**
+   * Node ID for this server instance. Used to filter out messages from the same node.
+   * Defaults to a random UUID.
+   */
+  nodeId?: string;
 };
 
-/**
- * The Server class represents a server that can be used to manage clients and documents.
- *
- * It is responsible for creating, destroying, and managing clients and documents.
- */
-export class Server<Context extends ServerContext> extends Observable<{
-  "client-connected": (client: Client<Context>) => void;
-  "client-disconnected": (client: Client<Context>) => void;
-  "document-load": (document: Document<Context>) => void;
-  "document-unload": (document: Document<Context>) => void;
-}> {
-  public logger: Logger;
-  private options: ServerOptions<Context>;
-  private documentManager: DocumentManager<Context>;
-  private clientManager: ClientManager<Context>;
-  public pubsub: PubSub;
+export class Server<Context extends ServerContext> {
+  /**
+   * The logger for the server.
+   */
+  readonly logger: Logger;
+  /**
+   * The options for the server.
+   */
+  #options: ServerOptions<Context>;
+  /**
+   * The pubsub for the server.
+   */
+  #pubSub: PubSub;
+  /**
+   * The node ID for the server.
+   */
+  #nodeId: string;
+  /**
+   * The active sessions for the server.
+   */
+  #sessions = new Map<string, DocumentSession<Context>>();
 
   constructor(options: ServerOptions<Context>) {
-    super();
-    this.options = options;
-    this.logger = (options.logger ?? defaultLogger).child().withContext({
-      name: "server",
-    });
-    this.pubsub = options.pubSub ?? new InMemoryPubSub();
+    this.#options = options;
+    this.logger = (options.logger ?? defaultLogger)
+      .child()
+      .withContext({ name: "server-v2" });
+    this.#pubSub = options.pubSub ?? new InMemoryPubSub();
+    this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
-    // Initialize managers
-    this.documentManager = new DocumentManager({
-      logger: this.logger.child(),
-      getStorage: async (ctx) => {
-        return await this.options.getStorage({
-          ...ctx,
-          server: this,
-        });
-      },
-      pubSub: this.pubsub,
-    });
-
-    this.documentManager.addListeners({
-      "document-created": (document) => this.call("document-load", document),
-      "document-destroyed": (document) =>
-        this.call("document-unload", document),
-    });
-
-    this.clientManager = new ClientManager({ logger: this.logger.child() });
-
-    this.clientManager.addListeners({
-      "client-connected": (client) => this.call("client-connected", client),
-      "client-disconnected": (client) =>
-        this.call("client-disconnected", client),
-    });
-  }
-
-  #clock = 0;
-
-  public getStats() {
-    const clientStats = this.clientManager.getStats();
-    const documentStats = this.documentManager.getStats();
-
-    return {
-      timestamp: new Date().toISOString(),
-      clock: this.#clock++,
-      numClients: clientStats.numClients,
-      numDocuments: documentStats.numDocuments,
-      clientIds: clientStats.clientIds,
-      documentIds: documentStats.documentIds,
-    };
-  }
-
-  public getDocument(documentId: string): Document<Context> | undefined {
-    return this.documentManager.getDocument(documentId);
-  }
-
-  public async getOrCreateDocument(
-    message: Pick<Message<Context>, "document" | "context" | "encrypted">,
-  ): Promise<Document<Context>> {
-    if (!message.context.clientId) {
-      throw new Error("Client ID not found in message context", {
-        cause: { document: message.document, context: message.context },
-      });
-    }
-    const client = this.clientManager.getClient(message.context.clientId);
-    if (!client) {
-      throw new Error("Client not found", {
-        cause: { clientId: message.context.clientId },
-      });
-    }
-
-    const document = await this.documentManager.getOrCreateDocument(message);
-
-    // Subscribe client to document
-    client.subscribeToDocument(document);
-
-    return document;
+    this.logger
+      .withMetadata({
+        nodeId: this.#nodeId,
+        hasCustomPubSub: !!options.pubSub,
+        hasPermissionChecker: !!options.checkPermission,
+      })
+      .info("Server initialized");
   }
 
   /**
-   * Create a new client on the server.
+   * Create or get a session for a document.
+   * @param documentId - The ID of the document.
+   * @param encrypted - Whether the document is encrypted.
+   * @param id - The ID of the session.
+   * @returns The session.
    */
-  public async createClient({
-    transport,
-    id: clientId = uuidv4(),
-  }: {
-    transport: Transport<Context>;
-    id?: string;
-  }): Promise<Client<Context>> {
-    const existingClient = this.clientManager.getClient(clientId);
-    if (existingClient) {
-      this.logger.withMetadata({ clientId }).trace("client already exists");
-      throw new Error("Client already exists", {
-        cause: { clientId },
-      });
+  async getOrOpenSession(
+    documentId: string,
+    {
+      encrypted,
+      id = "session-" + uuidv4(),
+    }: { encrypted: boolean; id?: string },
+  ) {
+    const existing = this.#sessions.get(documentId);
+    if (existing) {
+      this.logger
+        .withMetadata({ documentId, sessionId: existing.id, encrypted })
+        .debug("Retrieved existing session");
+      return existing;
     }
 
-    const logger = this.logger.child().withContext({
-      clientId: clientId,
+    const sessionLogger = this.logger
+      .child()
+      .withContext({ documentId, sessionId: id, encrypted });
+
+    sessionLogger
+      .withMetadata({ documentId, sessionId: id, encrypted })
+      .info("Creating new session");
+
+    try {
+      const storage = await this.#options.getStorage({
+        documentId,
+        context: { userId: "", room: "", clientId: "" } as any,
+        encrypted,
+      });
+
+      sessionLogger.debug("Storage retrieved for session");
+
+      const session = new DocumentSession<Context>({
+        documentId,
+        id,
+        encrypted,
+        storage,
+        pubsub: this.#pubSub,
+        nodeId: this.#nodeId,
+        logger: this.logger,
+      });
+
+      await session.load();
+      this.#sessions.set(documentId, session);
+
+      sessionLogger
+        .withMetadata({
+          documentId,
+          sessionId: id,
+          encrypted,
+          totalSessions: this.#sessions.size,
+        })
+        .info("Session created and loaded");
+
+      return session;
+    } catch (error) {
+      sessionLogger
+        .withError(error as Error)
+        .withMetadata({ documentId, sessionId: id, encrypted })
+        .error("Failed to create session");
+      throw error;
+    }
+  }
+
+  /**
+   * Create a client for a transport.
+   * @param transport - The transport to use for the client.
+   * @param id - The ID of the client.
+   * @returns The client.
+   */
+  createClient({
+    transport,
+    id = "client-" + uuidv4(),
+  }: {
+    transport: import("teleportal").Transport<Context>;
+    id?: string;
+  }) {
+    const logger = this.logger.child().withContext({ clientId: id });
+
+    logger.withMetadata({ clientId: id }).info("Creating new client");
+
+    const client = new Client<Context>({
+      id,
+      writable: transport.writable,
+      logger,
     });
 
-    logger.trace("creating client");
-
-    const validatedTransport = withMessageValidator(transport, {
+    withMessageValidator(transport, {
       isAuthorized: async (message, type) => {
-        if (!this.options.checkPermission) {
-          logger.trace("no checkPermission function provided, allowing all");
+        if (!this.#options.checkPermission) {
+          logger
+            .withMetadata({
+              messageId: message.id,
+              documentId: message.document,
+              messageType: message.type,
+              permissionType: type,
+            })
+            .debug("No permission checker configured, allowing message");
           return true;
         }
-        logger.trace("checking permission");
 
-        const hasPermission = await this.options.checkPermission({
-          context: message.context,
-          document: message.document,
-          documentId: Document.getDocumentId(message),
-          message,
-          type,
-        });
+        const msgLogger = logger.child().withContext({ messageId: message.id });
 
-        if (!hasPermission) {
-          logger.trace("permission denied, sending auth-message");
-          await client.send(
-            new DocMessage(
-              message.document,
-              {
-                type: "auth-message",
-                permission: "denied",
-                reason: `Insufficient permissions to access document ${message.document}`,
-              },
-              message.context,
-              message.encrypted,
-            ),
-          );
+        msgLogger
+          .withMetadata({
+            messageId: message.id,
+            documentId: message.document,
+            messageType: message.type,
+            permissionType: type,
+            userId: message.context.userId,
+            clientId: message.context.clientId,
+          })
+          .debug("Checking permission");
+
+        try {
+          const ok = await this.#options.checkPermission({
+            context: message.context,
+            documentId: message.document,
+            message,
+            type,
+          });
+
+          msgLogger
+            .withMetadata({
+              messageId: message.id,
+              documentId: message.document,
+              permissionType: type,
+              authorized: ok,
+            })
+            .info(ok ? "Message authorized" : "Message denied");
+
+          if (!ok) {
+            await client.send(
+              new DocMessage(
+                message.document,
+                {
+                  type: "auth-message",
+                  permission: "denied",
+                  reason: `Insufficient permissions to access document ${message.document}`,
+                },
+                message.context,
+                message.encrypted,
+              ),
+            );
+            return false;
+          }
+          return true;
+        } catch (error) {
+          msgLogger
+            .withError(error as Error)
+            .withMetadata({
+              messageId: message.id,
+              documentId: message.document,
+              permissionType: type,
+            })
+            .error("Permission check failed");
           return false;
         }
-
-        logger.trace("permission granted");
-        return true;
       },
-    });
-
-    const client = new Client({
-      writable: validatedTransport.writable,
-      id: clientId,
-      logger: this.logger.child(),
-    });
-
-    validatedTransport.readable
-      .pipeTo(
-        new WritableStream({
+    })
+      .readable.pipeTo(
+        new WritableStream<Message<Context>>({
           write: async (message) => {
-            const log = logger.child().withContext({
-              clientId,
-              context: message.context,
-              document: message.document,
-              documentId: Document.getDocumentId(message),
+            const msgLogger = logger.child().withContext({
+              messageId: message.id,
+              documentId: message.document,
             });
 
+            msgLogger
+              .withMetadata({
+                messageId: message.id,
+                documentId: message.document,
+                messageType: message.type,
+                encrypted: message.encrypted,
+                payloadType: (message as any).payload?.type,
+              })
+              .debug("Processing incoming message");
+
             try {
-              log.trace("getting document");
-              const document = await this.getOrCreateDocument(message);
-              log.trace("processing message");
-              await document.handleMessage(message, client);
-            } catch (e) {
-              log.withError(e).error("Failed to process message");
+              const session = await this.getOrOpenSession(message.document, {
+                encrypted: message.encrypted,
+              });
+
+              session.addClient(client);
+
+              msgLogger.debug("Client added to session, applying message");
+
+              await session.apply(message, client);
+
+              msgLogger
+                .withMetadata({
+                  messageId: message.id,
+                  documentId: message.document,
+                })
+                .debug("Message applied successfully");
+            } catch (error) {
+              msgLogger
+                .withError(error as Error)
+                .withMetadata({
+                  messageId: message.id,
+                  documentId: message.document,
+                  messageType: message.type,
+                })
+                .error("Failed to process message");
+              throw error;
             }
           },
         }),
       )
-      .finally(async () => {
-        logger.trace("disconnecting client since stream is closed");
-        try {
-          await this.disconnectClient(clientId);
-          logger.trace("client disconnected since stream is closed");
-        } catch (e) {
-          logger
-            .withError(e)
-            .error("Failed to disconnect client in finally block");
-        }
+      .catch((e) => {
+        logger
+          .withError(e)
+          .withMetadata({ clientId: id })
+          .error("Client stream errored");
+      })
+      .finally(() => {
+        logger
+          .withMetadata({ clientId: id })
+          .info("Client stream ended, disconnecting client");
+        this.disconnectClient(client.id);
       });
 
-    this.clientManager.addClient(client);
-
-    logger.trace("client created");
+    logger.withMetadata({ clientId: id }).info("Client created and connected");
 
     return client;
   }
 
-  public async disconnectClient(clientId: string) {
-    this.logger.withMetadata({ clientId }).trace("disconnecting client");
-    try {
-      await this.clientManager.removeClient(clientId);
-      this.logger.withMetadata({ clientId }).trace("client disconnected");
-    } catch (e) {
-      this.logger
-        .withError(e)
-        .withMetadata({ clientId })
-        .error("Failed to disconnect client");
-      throw e; // Re-throw to allow caller to handle
+  /**
+   * Disconnect a client from all sessions.
+   * @param client - The client or client ID to disconnect.
+   */
+  disconnectClient(client: string | Client<Context>) {
+    const clientId = typeof client === "string" ? client : client.id;
+    const logger = this.logger.child().withContext({ clientId });
+
+    logger
+      .withMetadata({ clientId })
+      .info("Disconnecting client from all sessions");
+
+    for (const s of this.#sessions.values()) {
+      s.removeClient(client);
     }
+
+    logger
+      .withMetadata({
+        clientId,
+        totalSessions: this.#sessions.size,
+      })
+      .info("Client disconnected from sessions");
   }
 
-  public async destroy() {
-    this.logger.trace("destroying server");
+  /**
+   * Async dispose the server.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    this.logger
+      .withMetadata({
+        nodeId: this.#nodeId,
+        activeSessions: this.#sessions.size,
+      })
+      .info("Disposing server");
 
-    try {
-      await this.documentManager.destroy();
-      this.logger.trace("document manager destroyed");
-    } catch (e) {
-      this.logger.withError(e).error("Failed to destroy document manager");
+    for (const s of this.#sessions.values()) {
+      try {
+        await s[Symbol.asyncDispose]();
+      } catch (error) {
+        this.logger
+          .withError(error as Error)
+          .withMetadata({ sessionId: s.id, documentId: s.documentId })
+          .error("Error disposing session");
+      }
     }
 
     try {
-      await this.clientManager.destroy();
-      this.logger.trace("client manager destroyed");
-    } catch (e) {
-      this.logger.withError(e).error("Failed to destroy client manager");
+      await this.#pubSub[Symbol.asyncDispose]?.();
+    } catch (error) {
+      this.logger.withError(error as Error).error("Error disposing pubsub");
     }
 
-    try {
-      await this.pubsub[Symbol.asyncDispose]?.();
-      this.logger.trace("pubsub destroyed");
-    } catch (e) {
-      this.logger.withError(e).error("Failed to destroy pubsub");
-    }
-
-    super.destroy();
-    this.logger.trace("server destroyed");
+    this.logger
+      .withMetadata({
+        nodeId: this.#nodeId,
+      })
+      .info("Server disposed");
   }
 }

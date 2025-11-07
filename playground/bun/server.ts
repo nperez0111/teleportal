@@ -48,7 +48,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
-    if (ctx.document.includes("encrypted")) {
+    if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(backingStorage);
     }
     return new UnstorageDocumentStorage(backingStorage, {

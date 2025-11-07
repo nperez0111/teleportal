@@ -10,7 +10,6 @@ import {
   ServerContext,
   Transport,
 } from "teleportal";
-import { Document } from "teleportal/server";
 import { getPubSubTransport } from "../pubsub";
 
 /**
@@ -102,6 +101,7 @@ export function getRedisTransport<Context extends ServerContext>({
   getContext,
   redisOptions,
   sourceId,
+  topicResolver = (m) => `document/${m.document}`,
 }: {
   getContext: Context | ((message: RawReceivedMessage) => Context);
   redisOptions: {
@@ -109,6 +109,7 @@ export function getRedisTransport<Context extends ServerContext>({
     options?: RedisOptions;
   };
   sourceId: string;
+  topicResolver?: (message: Message<Context>) => PubSubTopic;
 }): Transport<
   Context,
   {
@@ -131,10 +132,6 @@ export function getRedisTransport<Context extends ServerContext>({
   }
 > {
   const pubsub = new RedisPubSub(redisOptions);
-
-  const topicResolver = (message: Message<ServerContext>): PubSubTopic => {
-    return `document/${Document.getDocumentId(message)}`;
-  };
 
   const transport = getPubSubTransport({
     getContext,

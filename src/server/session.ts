@@ -7,7 +7,7 @@ import {
   type Update,
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
-import type { Logger } from "teleportal/server";
+import type { Logger } from "./logger";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 

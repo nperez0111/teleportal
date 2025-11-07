@@ -30,7 +30,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
     const backingStorage = memoryStorage;
 
-    if (ctx.document.includes("encrypted")) {
+    if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(backingStorage);
     }
     return new UnstorageDocumentStorage(backingStorage, {

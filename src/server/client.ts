@@ -1,146 +1,74 @@
-import { Observable, type Message, type ServerContext } from "teleportal";
-import { Document } from "./document";
+import type { ServerContext, Message } from "teleportal";
 import type { Logger } from "./logger";
 
-/**
- * The Client class represents a client connected to the server.
- *
- * It is responsible for sending and receiving messages to and from the client.
- *
- * It also provides a way to subscribe to and unsubscribe from documents.
- */
-export class Client<Context extends ServerContext> extends Observable<{
-  destroy: (client: Client<Context>) => void;
-  "document-added": (document: Document<Context>) => void;
-  "document-removed": (document: Document<Context>) => void;
-}> {
+export class Client<Context extends ServerContext> {
+  /**
+   * The ID of the client.
+   */
   public readonly id: string;
-  public readonly documents = new Set<Document<Context>>();
-  private readonly writer: WritableStreamDefaultWriter<Message<Context>>;
-  private readonly logger: Logger;
+  #writable: WritableStream<Message<Context>>;
+  #logger: Logger;
 
-  constructor({
-    id,
-    writable,
-    logger,
-  }: {
+  constructor(args: {
     id: string;
     writable: WritableStream<Message<Context>>;
     logger: Logger;
   }) {
-    super();
-    this.id = id;
-    this.writer = writable.getWriter();
-    this.logger = logger.child().withContext({ name: "client", clientId: id });
+    this.id = args.id;
+    this.#writable = args.writable;
+    this.#logger = args.logger
+      .child()
+      .withContext({ name: "client", clientId: this.id });
+
+    this.#logger
+      .withMetadata({ clientId: this.id })
+      .debug("Client instance created");
   }
 
-  public async send(message: Message<Context>) {
+  /**
+   * Send a message to the client.
+   * Direction: `Server -> Client`
+   * @param message - The message to send.
+   * @returns A promise that resolves when the message is sent.
+   */
+  async send(message: Message<Context>): Promise<void> {
+    const msgLogger = this.#logger.child().withContext({
+      messageId: message.id,
+      documentId: message.document,
+    });
+
+    msgLogger
+      .withMetadata({
+        messageId: message.id,
+        documentId: message.document,
+        messageType: message.type,
+        payloadType: message.payload?.type,
+      })
+      .trace("Sending message to client");
+
+    const writer = this.#writable.getWriter();
     try {
-      this.logger
+      await writer.ready;
+      await writer.write(message);
+
+      msgLogger
         .withMetadata({
           messageId: message.id,
-          payloadType: message.payload.type,
+          documentId: message.document,
         })
-        .trace("sending message");
-      await this.writer.ready;
-      await this.writer.write(message);
-      this.logger
+        .debug("Message sent successfully");
+    } catch (error) {
+      msgLogger
+        .withError(error as Error)
         .withMetadata({
           messageId: message.id,
-          payloadType: message.payload.type,
+          documentId: message.document,
+          messageType: message.type,
         })
-        .trace("message sent to client");
-    } catch (e) {
-      this.logger
-        .withError(e)
-        .error("Failed to send message, tearing down client");
-      await this.destroy();
+        .error("Failed to send message to client");
+      throw error;
+    } finally {
+      writer.releaseLock();
     }
-  }
-
-  /**
-   * Subscribe to a document
-   */
-  public subscribeToDocument(document: Document<Context>): void {
-    if (this.documents.has(document)) {
-      return;
-    }
-    this.documents.add(document);
-    document.addClient(this);
-    this.logger
-      .withMetadata({ documentId: document.id })
-      .trace("subscribed to document");
-    this.call("document-added", document);
-  }
-
-  /**
-   * Unsubscribe from a document
-   */
-  public unsubscribeFromDocument(document: Document<Context>): void {
-    if (!this.documents.has(document)) {
-      return;
-    }
-    this.logger
-      .withMetadata({ documentId: document.id })
-      .trace("unsubscribing from document");
-    this.documents.delete(document);
-    document.removeClient(this);
-    this.logger
-      .withMetadata({ documentId: document.id })
-      .trace("unsubscribed from document");
-    this.call("document-removed", document);
-  }
-
-  /**
-   * Get the number of documents this client is subscribed to
-   */
-  public getDocumentCount(): number {
-    return this.documents.size;
-  }
-
-  #destroyed = false;
-
-  public async destroy() {
-    if (this.#destroyed) {
-      return;
-    }
-    this.#destroyed = true;
-    this.logger.trace("disposing client");
-
-    // Unsubscribe from all documents
-    for (const document of this.documents) {
-      try {
-        this.unsubscribeFromDocument(document);
-      } catch (e) {
-        this.logger
-          .withError(e)
-          .error("Failed to unsubscribe from document during destroy");
-      }
-    }
-
-    // Handle writer cleanup
-    try {
-      await this.writer.releaseLock();
-    } catch (e) {
-      this.logger
-        .withError(e)
-        .error("Failed to release lock, attempting to abort");
-      try {
-        await this.writer.abort();
-      } catch (abortError) {
-        this.logger
-          .withError(abortError)
-          .error("Failed to abort writer, continuing with destroy");
-      }
-    }
-
-    // Emit destroy event
-    try {
-      await this.call("destroy", this);
-    } catch (e) {
-      this.logger.withError(e).error("Failed to emit destroy event");
-    }
-
-    super.destroy();
   }
 }

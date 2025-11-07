@@ -12,7 +12,7 @@ import {
   checkPermissionWithTokenManager,
   createTokenManager,
 } from "teleportal/token";
-import homepage from "../frontend/index.html";
+import homepage from "../src/index.html";
 
 const db = createDatabase(
   bunSqlite({
