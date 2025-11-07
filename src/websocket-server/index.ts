@@ -57,7 +57,10 @@ export function getWebsocketHandlers<
   /**
    * Called when a client has disconnected from the server.
    */
-  onDisconnect?: (id: string) => void | Promise<void>;
+  onDisconnect?: (ctx: {
+    id: string;
+    peer: crossws.Peer;
+  }) => void | Promise<void>;
   /**
    * Called when a client has sent a message to the server.
    */
@@ -162,7 +165,7 @@ export function getWebsocketHandlers<
         logger
           .withMetadata({ clientId: peer.id })
           .info("close websocket connection");
-        await onDisconnect?.(peer.id);
+        await onDisconnect?.({ id: peer.id, peer });
         await peer.context.writer.close();
         if (!peer.context.transport.writable.locked) {
           await peer.context.transport.writable.close();
@@ -236,8 +239,8 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
         id: ctx.id,
       });
     },
-    onDisconnect: async (id) => {
-      await hooks.onDisconnect?.(id);
+    onDisconnect: async ({ id, peer }) => {
+      await hooks.onDisconnect?.({ id, peer });
       await server.disconnectClient(id);
     },
     onMessage: async (ctx) => {
