@@ -75,4 +75,10 @@ export class Client<Context extends ServerContext> {
   toString() {
     return `Client(id: ${this.id})`;
   }
+
+  toJSON() {
+    return {
+      id: this.id,
+    };
+  }
 }

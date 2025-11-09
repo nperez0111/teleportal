@@ -422,4 +422,22 @@ export class Server<Context extends ServerContext> {
       })
       .info("Server disposed");
   }
+
+  toString() {
+    return `Server(nodeId: ${this.#nodeId}, activeSessions: ${this.#sessions
+      .values()
+      .map((s) => s.toString())
+      .toArray()
+      .join(", ")})`;
+  }
+
+  toJSON() {
+    return {
+      nodeId: this.#nodeId,
+      activeSessions: this.#sessions
+        .values()
+        .map((s) => s.toJSON())
+        .toArray(),
+    };
+  }
 }

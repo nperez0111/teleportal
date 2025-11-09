@@ -594,8 +594,18 @@ export class Session<Context extends ServerContext> {
       .info("Session disposed");
   }
 
+  toJSON() {
+    return {
+      documentId: this.documentId,
+      id: this.id,
+      encrypted: this.encrypted,
+      clients: Array.from(this.#clients.values()).map((client) =>
+        client.toJSON(),
+      ),
+    };
+  }
+
   toString() {
-    console.log(this.#clients);
     return `Session(documentId: ${this.documentId}, id: ${this.id}, encrypted: ${this.encrypted}, clients: ${this.#clients
       .values()
       .map((client) => client.toString())
