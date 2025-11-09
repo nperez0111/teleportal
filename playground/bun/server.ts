@@ -76,7 +76,7 @@ const instance = Bun.serve({
   },
   routes: {
     // In development, serve the homepage
-    "/": Bun.env.NODE_ENV === "production" ? undefined : homepage,
+    ...(Bun.env.NODE_ENV !== "production" && { "/": homepage }),
   },
   websocket: ws.websocket,
   async fetch(request, server) {
