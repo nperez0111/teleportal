@@ -1,5 +1,6 @@
 import crossws from "crossws/adapters/bun";
 import { createStorage } from "unstorage";
+// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
 import fsDriver from "unstorage/drivers/fs";
 
 import { Server } from "teleportal/server";

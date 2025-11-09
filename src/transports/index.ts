@@ -3,7 +3,7 @@ export * from "./http";
 export * from "./logger";
 export * from "./message-validator";
 export * from "./passthrough";
-export * from "./pubsub";
+export * from "./pubSub";
 export * from "./rate-limiter";
 export * from "./sse";
 export * from "./ydoc";

@@ -124,7 +124,7 @@ describe("Server", () => {
       await serverWithDefaultLogger[Symbol.asyncDispose]();
     });
 
-    it("should use default pubsub when not provided", async () => {
+    it("should use default pubSub when not provided", async () => {
       const serverWithDefaultPubSub = new Server({
         getStorage: mockGetStorage,
       });
@@ -572,7 +572,7 @@ describe("Server", () => {
       expect(server).toBeDefined();
     });
 
-    it("should dispose pubsub if it has asyncDispose", async () => {
+    it("should dispose pubSub if it has asyncDispose", async () => {
       await server[Symbol.asyncDispose]();
       // Should not throw
       expect(server).toBeDefined();

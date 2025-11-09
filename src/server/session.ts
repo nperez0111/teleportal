@@ -11,6 +11,9 @@ import type { Logger } from "./logger";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 
+/**
+ * A session is a collection of clients which are connected to a document.
+ */
 export class Session<Context extends ServerContext> {
   /**
    * The ID of the document.
@@ -26,15 +29,12 @@ export class Session<Context extends ServerContext> {
   public readonly encrypted: boolean;
 
   #storage: DocumentStorage;
-  #pubsub: PubSub;
+  #pubSub: PubSub;
   #nodeId: string;
   #logger: Logger;
   #dedupe: TtlDedupe;
   #loaded = false;
-  #clients = new Map<
-    string,
-    { send: (m: Message<Context>) => Promise<void> }
-  >();
+  #clients = new Map<string, Client<Context>>();
   #unsubscribe: Promise<() => Promise<void>> | null = null;
 
   constructor(args: {
@@ -42,7 +42,7 @@ export class Session<Context extends ServerContext> {
     id: string;
     encrypted: boolean;
     storage: DocumentStorage;
-    pubsub: PubSub;
+    pubSub: PubSub;
     nodeId: string;
     logger: Logger;
     dedupe?: TtlDedupe;
@@ -51,7 +51,7 @@ export class Session<Context extends ServerContext> {
     this.id = args.id;
     this.encrypted = args.encrypted;
     this.#storage = args.storage;
-    this.#pubsub = args.pubsub;
+    this.#pubSub = args.pubSub;
     this.#nodeId = args.nodeId;
     this.#logger = args.logger.child().withContext({
       name: "session",
@@ -87,7 +87,7 @@ export class Session<Context extends ServerContext> {
     this.#loaded = true;
 
     try {
-      this.#unsubscribe = this.#pubsub.subscribe(
+      this.#unsubscribe = this.#pubSub.subscribe(
         `document/${this.documentId}` as const,
         async (binary, sourceId) => {
           const replicationLogger = this.#logger.child().withContext({
@@ -171,7 +171,7 @@ export class Session<Context extends ServerContext> {
 
       this.#logger
         .withMetadata({ documentId: this.documentId, sessionId: this.id })
-        .info("Session loaded and pubsub subscription active");
+        .trace("Session loaded and pubSub subscription active");
     } catch (error) {
       this.#logger
         .withError(error as Error)
@@ -356,7 +356,7 @@ export class Session<Context extends ServerContext> {
                   messageId: message.id,
                   documentId: this.documentId,
                 })
-                .info("Processing sync-step-1");
+                .trace("Processing sync-step-1");
 
               const { update, stateVector } =
                 await this.#storage.handleSyncStep1(
@@ -401,7 +401,7 @@ export class Session<Context extends ServerContext> {
                   documentId: this.documentId,
                   clientId: client.id,
                 })
-                .info("Sync-step-1 completed, responses sent");
+                .trace("Sync-step-1 completed, responses sent");
 
               return;
             }
@@ -411,13 +411,13 @@ export class Session<Context extends ServerContext> {
                   messageId: message.id,
                   documentId: this.documentId,
                 })
-                .info("Processing update message");
+                .trace("Processing update message");
 
               await Promise.all([
                 this.write(message.payload.update).then(() =>
                   this.broadcast(message, client?.id),
                 ),
-                this.#pubsub.publish(
+                this.#pubSub.publish(
                   `document/${this.documentId}` as const,
                   message.encoded,
                   this.#nodeId,
@@ -430,7 +430,7 @@ export class Session<Context extends ServerContext> {
                   documentId: this.documentId,
                   clientId: client?.id,
                 })
-                .info("Update message processed and replicated");
+                .trace("Update message processed and replicated");
 
               return;
             }
@@ -440,7 +440,7 @@ export class Session<Context extends ServerContext> {
                   messageId: message.id,
                   documentId: this.documentId,
                 })
-                .info("Processing sync-step-2");
+                .trace("Processing sync-step-2");
 
               await Promise.all([
                 this.broadcast(message, client?.id),
@@ -468,7 +468,7 @@ export class Session<Context extends ServerContext> {
                     this.encrypted,
                   ),
                 ),
-                this.#pubsub.publish(
+                this.#pubSub.publish(
                   `document/${this.documentId}` as const,
                   message.encoded,
                   this.#nodeId,
@@ -481,7 +481,7 @@ export class Session<Context extends ServerContext> {
                   documentId: this.documentId,
                   clientId: client.id,
                 })
-                .info("Sync-step-2 completed");
+                .trace("Sync-step-2 completed");
 
               return;
             }
@@ -527,7 +527,7 @@ export class Session<Context extends ServerContext> {
 
           await Promise.all([
             this.broadcast(message, client?.id),
-            this.#pubsub.publish(
+            this.#pubSub.publish(
               `document/${this.documentId}` as const,
               message.encoded,
               this.#nodeId,
@@ -583,7 +583,7 @@ export class Session<Context extends ServerContext> {
       this.#logger
         .withError(error as Error)
         .withMetadata({ documentId: this.documentId, sessionId: this.id })
-        .error("Error unsubscribing from pubsub");
+        .error("Error unsubscribing from pubSub");
     }
 
     this.#logger
@@ -592,5 +592,18 @@ export class Session<Context extends ServerContext> {
         sessionId: this.id,
       })
       .info("Session disposed");
+  }
+
+  toString() {
+    console.log(this.#clients);
+    return `Session(documentId: ${this.documentId}, id: ${this.id}, encrypted: ${this.encrypted}, clients: ${this.#clients
+      .values()
+      .map((client) => client.toString())
+      .toArray()
+      .join(", ")})`;
+  }
+
+  public get shouldDispose(): boolean {
+    return this.#clients.size === 0;
   }
 }

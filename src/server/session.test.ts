@@ -85,7 +85,7 @@ describe("Session", () => {
       id: "session-1",
       encrypted: false,
       storage,
-      pubsub: pubSub,
+      pubSub: pubSub,
       nodeId,
       logger: logger.child().withContext({ name: "test" }),
     });
@@ -112,7 +112,7 @@ describe("Session", () => {
         id: "session-2",
         encrypted: false,
         storage,
-        pubsub: pubSub,
+        pubSub,
         nodeId,
         logger: logger.child().withContext({ name: "test" }),
         dedupe: customDedupe,
@@ -122,7 +122,7 @@ describe("Session", () => {
   });
 
   describe("load", () => {
-    it("should load the session and subscribe to pubsub", async () => {
+    it("should load the session and subscribe to pubSub", async () => {
       await session.load();
       // Session should be loaded (no way to directly check, but should not throw)
       expect(session).toBeDefined();
@@ -134,7 +134,7 @@ describe("Session", () => {
       expect(session).toBeDefined();
     });
 
-    it("should receive messages from pubsub", async () => {
+    it("should receive messages from pubSub", async () => {
       await session.load();
       session.addClient(client1AsClient);
 
@@ -308,7 +308,7 @@ describe("Session", () => {
         id: "session-encrypted",
         encrypted: true,
         storage,
-        pubsub: pubSub,
+        pubSub,
         nodeId,
         logger: logger.child().withContext({ name: "test" }),
       });
@@ -388,7 +388,7 @@ describe("Session", () => {
         expect(client1.sentMessages.length).toBe(0);
       });
 
-      it("should publish update to pubsub", async () => {
+      it("should publish update to pubSub", async () => {
         await session.load();
         session.addClient(client1 as any);
 
@@ -407,7 +407,7 @@ describe("Session", () => {
           id: "session-2",
           encrypted: false,
           storage,
-          pubsub: testPubSub,
+          pubSub: testPubSub,
           nodeId,
           logger: logger.child().withContext({ name: "test" }),
         });
@@ -528,7 +528,7 @@ describe("Session", () => {
   });
 
   describe("asyncDispose", () => {
-    it("should dispose session and unsubscribe from pubsub", async () => {
+    it("should dispose session and unsubscribe from pubSub", async () => {
       await session.load();
       await session[Symbol.asyncDispose]();
       // Should not throw
@@ -541,7 +541,7 @@ describe("Session", () => {
         id: "session-3",
         encrypted: false,
         storage,
-        pubsub: pubSub,
+        pubSub: pubSub,
         nodeId,
         logger: logger.child().withContext({ name: "test" }),
       });

@@ -44,7 +44,10 @@ export class Agent {
       .trace("client created");
 
     logger.trace("getting or creating document");
-    await this.server.getOrCreateDocument(message);
+    const session = await this.server.getOrOpenSession(message.document, {
+      encrypted: message.encrypted,
+      client,
+    });
     logger.trace("document created");
 
     await observer.call("message", await transport.handler.start());
@@ -60,8 +63,7 @@ export class Agent {
       ydoc: transport.ydoc,
       awareness: transport.awareness,
       destroy: async (): Promise<void> => {
-        // TODO properly close this?
-        await client.destroy();
+        session.removeClient(client);
         transport.ydoc.destroy();
       },
       clientId: client.id,

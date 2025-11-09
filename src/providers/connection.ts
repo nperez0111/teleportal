@@ -387,15 +387,15 @@ export abstract class Connection<
     }
 
     if (this.state.type === "connected") {
-      try {
-        await this.sendMessage(message);
-      } catch (err) {
+      this.sendMessage(message).catch(async (err) => {
+        // There is some bug with rejected promises in bun, so we need to wait a bit
+        await new Promise((resolve) => setTimeout(resolve, 1));
         const error =
           err instanceof Error
             ? err
             : new Error("Failed to send message", { cause: err });
         this.handleConnectionError(error);
-      }
+      });
     } else {
       // Buffer message if not connected
       this.#messageBuffer.push(message);

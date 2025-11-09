@@ -371,7 +371,7 @@ describe("FallbackConnection", () => {
     expect(client.connectionType).toBe("http");
   });
 
-  test("should handle state updates", (done) => {
+  test("should handle state updates", (done: () => void) => {
     client = new FallbackConnection({
       url: "http://localhost:8080",
       websocketOptions: {

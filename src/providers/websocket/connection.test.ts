@@ -297,7 +297,7 @@ describe("WebSocketConnection", () => {
     expect(typeof reader.readable).toBe("object");
   });
 
-  test("should handle state updates", (done) => {
+  test("should handle state updates", (done: () => void) => {
     client = new WebSocketConnection({
       url: "ws://localhost:8080",
       connect: false, // Don't connect automatically for testing

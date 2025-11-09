@@ -90,6 +90,6 @@ await yTransport.synced;
 
 yTransport.ydoc.getText("test").insert(1, "abc");
 
-setTimeout(() => {
+setInterval(() => {
   console.log(yTransport.ydoc.getText("test").toJSON());
-}, 100);
+}, 1000);

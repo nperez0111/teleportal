@@ -98,14 +98,14 @@ describe("Redis Transport", () => {
         return;
       }
 
-      const pubsub = new RedisPubSub({ path: REDIS_URL });
-      expect(pubsub).toBeDefined();
-      expect(typeof pubsub.publish).toBe("function");
-      expect(typeof pubsub.subscribe).toBe("function");
-      expect(typeof pubsub[Symbol.asyncDispose]).toBe("function");
+      const pubSub = new RedisPubSub({ path: REDIS_URL });
+      expect(pubSub).toBeDefined();
+      expect(typeof pubSub.publish).toBe("function");
+      expect(typeof pubSub.subscribe).toBe("function");
+      expect(typeof pubSub[Symbol.asyncDispose]).toBe("function");
 
       // Clean up
-      await pubsub[Symbol.asyncDispose]?.();
+      await pubSub[Symbol.asyncDispose]?.();
     });
 
     test(
@@ -163,21 +163,21 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const pubsub1 = new RedisPubSub({ path: REDIS_URL });
-        const pubsub2 = new RedisPubSub({ path: REDIS_URL });
+        const pubSub1 = new RedisPubSub({ path: REDIS_URL });
+        const pubSub2 = new RedisPubSub({ path: REDIS_URL });
         const publisher = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-multi-${Date.now()}`;
         const testMessage = new Uint8Array([5, 6, 7, 8]) as any;
         const receivedMessages: any[] = [];
 
         try {
-          // Subscribe with first pubsub
-          const unsubscribe1 = await pubsub1.subscribe(testTopic, (message) => {
+          // Subscribe with first pubSub
+          const unsubscribe1 = await pubSub1.subscribe(testTopic, (message) => {
             receivedMessages.push(message);
           });
 
-          // Subscribe with second pubsub
-          const unsubscribe2 = await pubsub2.subscribe(testTopic, (message) => {
+          // Subscribe with second pubSub
+          const unsubscribe2 = await pubSub2.subscribe(testTopic, (message) => {
             receivedMessages.push(message);
           });
 
@@ -199,10 +199,10 @@ describe("Redis Transport", () => {
           if (unsubscribe1) await unsubscribe1();
           if (unsubscribe2) await unsubscribe2();
         } finally {
-          if (pubsub1[Symbol.asyncDispose])
-            await pubsub1[Symbol.asyncDispose]();
-          if (pubsub2[Symbol.asyncDispose])
-            await pubsub2[Symbol.asyncDispose]();
+          if (pubSub1[Symbol.asyncDispose])
+            await pubSub1[Symbol.asyncDispose]();
+          if (pubSub2[Symbol.asyncDispose])
+            await pubSub2[Symbol.asyncDispose]();
           if (publisher[Symbol.asyncDispose])
             await publisher[Symbol.asyncDispose]();
         }
@@ -218,14 +218,14 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const pubsub = new RedisPubSub({ path: REDIS_URL });
+        const pubSub = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-unsub-${Date.now()}`;
         const testMessage = new Uint8Array([13, 14, 15, 16]) as any;
         let messageReceived = false;
 
         try {
           // Subscribe to the topic
-          const unsubscribe = await pubsub.subscribe(testTopic, (message) => {
+          const unsubscribe = await pubSub.subscribe(testTopic, (message) => {
             messageReceived = true;
           });
 
@@ -236,7 +236,7 @@ describe("Redis Transport", () => {
           if (unsubscribe) await unsubscribe();
 
           // Publish a message
-          await pubsub.publish(testTopic, testMessage, "test-publisher");
+          await pubSub.publish(testTopic, testMessage, "test-publisher");
 
           // Wait a bit
           await new Promise((resolve) => setTimeout(resolve, 0));
@@ -244,7 +244,7 @@ describe("Redis Transport", () => {
           // Should not receive the message since we unsubscribed
           expect(messageReceived).toBe(false);
         } finally {
-          if (pubsub[Symbol.asyncDispose]) await pubsub[Symbol.asyncDispose]();
+          if (pubSub[Symbol.asyncDispose]) await pubSub[Symbol.asyncDispose]();
         }
       },
       TEST_TIMEOUT,
@@ -258,20 +258,20 @@ describe("Redis Transport", () => {
           return;
         }
 
-        const pubsub = new RedisPubSub({ path: REDIS_URL });
+        const pubSub = new RedisPubSub({ path: REDIS_URL });
         const testTopic: PubSubTopic = `document/test-topic-destroy-${Date.now()}`;
 
         try {
           // Subscribe to a topic
-          await pubsub.subscribe(testTopic, () => {});
+          await pubSub.subscribe(testTopic, () => {});
 
-          // Destroy the pubsub
-          if (pubsub[Symbol.asyncDispose]) await pubsub[Symbol.asyncDispose]();
+          // Destroy the pubSub
+          if (pubSub[Symbol.asyncDispose]) await pubSub[Symbol.asyncDispose]();
 
           // Should fail when trying to publish after destroy
           const testMessage = new Uint8Array([17, 18, 19, 20]) as any;
           try {
-            await pubsub.publish(testTopic, testMessage, "test-publisher");
+            await pubSub.publish(testTopic, testMessage, "test-publisher");
             expect(true).toBe(false); // Should not reach here
           } catch (error) {
             // Expected to fail after destroy

@@ -9,7 +9,7 @@ import {
 import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { logger as defaultLogger, type Logger } from "./logger";
-import { Session as DocumentSession } from "./session";
+import { Session } from "./session";
 import { Client } from "./client";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -55,9 +55,9 @@ export class Server<Context extends ServerContext> {
    */
   #options: ServerOptions<Context>;
   /**
-   * The pubsub for the server.
+   * The pubSub for the server.
    */
-  #pubSub: PubSub;
+  readonly pubSub: PubSub;
   /**
    * The node ID for the server.
    */
@@ -65,14 +65,14 @@ export class Server<Context extends ServerContext> {
   /**
    * The active sessions for the server.
    */
-  #sessions = new Map<string, DocumentSession<Context>>();
+  #sessions = new Map<string, Session<Context>>();
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
     this.logger = (options.logger ?? defaultLogger)
       .child()
       .withContext({ name: "server-v2" });
-    this.#pubSub = options.pubSub ?? new InMemoryPubSub();
+    this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
     this.logger
@@ -82,6 +82,16 @@ export class Server<Context extends ServerContext> {
         hasPermissionChecker: !!options.checkPermission,
       })
       .info("Server initialized");
+
+    // TODO maybe make this smarter
+    setInterval(async () => {
+      for (const session of this.#sessions.values()) {
+        if (session.shouldDispose) {
+          this.#sessions.delete(session.documentId);
+          await session[Symbol.asyncDispose]();
+        }
+      }
+    }, 5000);
   }
 
   /**
@@ -96,13 +106,19 @@ export class Server<Context extends ServerContext> {
     {
       encrypted,
       id = "session-" + uuidv4(),
-    }: { encrypted: boolean; id?: string },
+      client,
+    }: { encrypted: boolean; id?: string; client?: Client<Context> },
   ) {
     const existing = this.#sessions.get(documentId);
     if (existing) {
       this.logger
         .withMetadata({ documentId, sessionId: existing.id, encrypted })
         .debug("Retrieved existing session");
+
+      if (client) {
+        existing.addClient(client);
+      }
+
       return existing;
     }
 
@@ -123,12 +139,12 @@ export class Server<Context extends ServerContext> {
 
       sessionLogger.debug("Storage retrieved for session");
 
-      const session = new DocumentSession<Context>({
+      const session = new Session<Context>({
         documentId,
         id,
         encrypted,
         storage,
-        pubsub: this.#pubSub,
+        pubSub: this.pubSub,
         nodeId: this.#nodeId,
         logger: this.logger,
       });
@@ -145,6 +161,9 @@ export class Server<Context extends ServerContext> {
         })
         .info("Session created and loaded");
 
+      if (client) {
+        session.addClient(client);
+      }
       return session;
     } catch (error) {
       sessionLogger
@@ -157,16 +176,20 @@ export class Server<Context extends ServerContext> {
 
   /**
    * Create a client for a transport.
-   * @param transport - The transport to use for the client.
+   * @param ctx - Context Object
+   * @param ctx.transport - The transport to use for the client.
    * @param id - The ID of the client.
+   * @param abortSignal - When the signal is aborted, the client will be removed from the server
    * @returns The client.
    */
   createClient({
     transport,
     id = "client-" + uuidv4(),
+    abortSignal,
   }: {
     transport: import("teleportal").Transport<Context>;
     id?: string;
+    abortSignal?: AbortSignal;
   }) {
     const logger = this.logger.child().withContext({ clientId: id });
 
@@ -220,7 +243,7 @@ export class Server<Context extends ServerContext> {
               permissionType: type,
               authorized: ok,
             })
-            .info(ok ? "Message authorized" : "Message denied");
+            .trace(ok ? "Message authorized" : "Message denied");
 
           if (!ok) {
             if (
@@ -290,9 +313,8 @@ export class Server<Context extends ServerContext> {
             try {
               const session = await this.getOrOpenSession(message.document, {
                 encrypted: message.encrypted,
+                client,
               });
-
-              session.addClient(client);
 
               msgLogger.debug("Client added to session, applying message");
 
@@ -332,6 +354,12 @@ export class Server<Context extends ServerContext> {
       });
 
     logger.withMetadata({ clientId: id }).info("Client created and connected");
+
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", () => {
+        this.disconnectClient(client.id);
+      });
+    }
 
     return client;
   }
@@ -383,9 +411,9 @@ export class Server<Context extends ServerContext> {
     }
 
     try {
-      await this.#pubSub[Symbol.asyncDispose]?.();
+      await this.pubSub[Symbol.asyncDispose]?.();
     } catch (error) {
-      this.logger.withError(error as Error).error("Error disposing pubsub");
+      this.logger.withError(error as Error).error("Error disposing pubSub");
     }
 
     this.logger

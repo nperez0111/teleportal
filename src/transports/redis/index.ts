@@ -10,7 +10,7 @@ import {
   ServerContext,
   Transport,
 } from "teleportal";
-import { getPubSubTransport } from "../pubsub";
+import { getPubSubTransport } from "../pubSub";
 
 /**
  * Redis implementation of the {@link PubSub} interface
@@ -116,7 +116,7 @@ export function getRedisTransport<Context extends ServerContext>({
     /**
      * The {@link PubSub} to use for consuming {@link Message}s.
      */
-    pubsub: PubSub;
+    pubSub: PubSub;
     /**
      * Subscribe to a topic
      */
@@ -131,11 +131,11 @@ export function getRedisTransport<Context extends ServerContext>({
     close: () => Promise<void>;
   }
 > {
-  const pubsub = new RedisPubSub(redisOptions);
+  const pubSub = new RedisPubSub(redisOptions);
 
   const transport = getPubSubTransport({
     getContext,
-    pubsub,
+    pubSub,
     topicResolver,
     sourceId,
   });
@@ -153,7 +153,7 @@ export function getRedisTransport<Context extends ServerContext>({
       } catch (error) {
         // Stream might already be locked or closed
       }
-      await pubsub[Symbol.asyncDispose]?.();
+      await pubSub[Symbol.asyncDispose]?.();
     },
   };
 }

@@ -25,7 +25,7 @@ const tokenManager = createTokenManager({
 
 const server = new Server({
   getStorage: async (ctx) => {
-    if (ctx.document.includes("encrypted")) {
+    if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(memoryStorage);
     }
     return new UnstorageDocumentStorage(memoryStorage);

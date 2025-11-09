@@ -71,4 +71,8 @@ export class Client<Context extends ServerContext> {
       writer.releaseLock();
     }
   }
+
+  toString() {
+    return `Client(id: ${this.id})`;
+  }
 }
