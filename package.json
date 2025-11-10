@@ -124,11 +124,17 @@
     "changelogen": "^0.6.2",
     "eslint": "^9.39.1",
     "eslint-config-unjs": "^0.5.0",
+    "msw": "2.12.1",
     "prettier": "^3.6.2",
     "typescript": "5.9.3",
     "unbuild": "^3.6.1"
   },
   "engines": {
     "node": ">=24"
+  },
+  "msw": {
+    "workerDirectory": [
+      "public"
+    ]
   }
 }

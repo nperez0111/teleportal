@@ -152,6 +152,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
                 }
 
                 await this.writer.write(chunk);
+                this.call("message", chunk);
               },
             }),
             { signal },
