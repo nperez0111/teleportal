@@ -17,6 +17,8 @@ import {
   getSSESink,
   pipe,
   toMessageArrayStream,
+  withAckSink,
+  withAckTrackingSink,
 } from "teleportal/transports";
 import { getDocumentsFromQueryParams } from "./utils";
 
@@ -76,13 +78,21 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
 
     logger.trace("sse request");
 
+    // Wrap the SSE sink to send ACKs after messages are sent
+    const sseSink = withAckSink(getSSESink({ context }), {
+      pubSub: server.pubSub,
+      ackTopic: `ack/${context.clientId}`,
+      sourceId: "sse-reader-" + context.clientId,
+      context,
+    });
+
     const sseTransport = compose(
       getPubSubSource({
         getContext: () => context,
         pubSub: server.pubSub,
         sourceId: "sse-" + context.clientId,
       }),
-      getSSESink({ context }),
+      sseSink,
     );
 
     logger.trace("creating client");
@@ -152,9 +162,15 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
 export function getSSEWriterEndpoint<Context extends ServerContext>({
   server,
   getContext,
+  ackTimeout = 5000,
 }: {
   server: Server<Context>;
   getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  /**
+   * Timeout in milliseconds for waiting for ACKs.
+   * @default 5000 (5 seconds)
+   */
+  ackTimeout?: number;
 }) {
   const baseLogger = server.logger.child().withContext({
     name: "sse-writer-endpoint",
@@ -201,16 +217,47 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
       },
       sourceId: "http-writer-" + context.clientId,
     });
-    req.signal.addEventListener("abort", async (e) => {
-      logger.trace("aborting");
-      await pubSubSink.writable.abort(e);
+
+    // Wrap the sink to track messages and wait for ACKs
+    const trackedSink = withAckTrackingSink(pubSubSink, {
+      pubSub: server.pubSub,
+      ackTopic: `ack/${context.clientId}`,
+      sourceId: "http-writer-" + context.clientId,
+      ackTimeout,
+      abortSignal: req.signal,
     });
 
     logger.trace("starting to publish");
     await Promise.all([
       httpSource.handleHTTPRequest(req),
-      pipe(httpSource, pubSubSink),
+      pipe(httpSource, trackedSink),
     ]);
+
+    // Wait for all ACKs
+    logger.trace("waiting for ACKs");
+    try {
+      await trackedSink.waitForAcks();
+      logger.trace("all ACKs received");
+    } catch (error) {
+      logger.withError(error as Error).warn("failed to receive ACK");
+      await trackedSink.unsubscribe();
+
+      return Response.json(
+        {
+          error: "Failed to receive acknowledgment",
+          message: (error as Error).message,
+        },
+        {
+          status: 504, // Gateway Timeout
+          headers: {
+            "x-teleportal-client-id": context.clientId,
+            "x-powered-by": "teleportal",
+          },
+        },
+      );
+    }
+
+    await trackedSink.unsubscribe();
     logger.trace("finished publishing");
 
     return Response.json(

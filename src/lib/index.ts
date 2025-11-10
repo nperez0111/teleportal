@@ -133,6 +133,7 @@ export interface PubSub {
 export type PubSubTopicTypes = {
   document: `document/${string}`;
   client: `client/${string}`;
+  ack: `ack/${string}`;
 };
 
 /**

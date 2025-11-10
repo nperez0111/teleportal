@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+  DocMessage,
   InMemoryPubSub,
   type ServerContext,
   type StateVector,
+  encodeMessageArray,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
 import { Server } from "../server/server";
@@ -483,6 +485,59 @@ describe("HTTP Handlers", () => {
       expect(capturedContext).toBeDefined();
       expect(capturedContext.userId).toBe("custom-user");
       expect(capturedContext.room).toBe("custom-room");
+    });
+  });
+
+  describe("ACK logic", () => {
+    describe("getSSEWriterEndpoint", () => {
+      // Note: The ACK transport wrappers (withAckSink and withAckTrackingSink) are
+      // thoroughly tested in src/transports/ack/ack.test.ts. These tests focus on
+      // integration-level behavior in the HTTP handlers.
+
+      it("should return 504 when ACK timeout occurs", async () => {
+        const clientId = "test-client-timeout";
+        const writerEndpoint = getSSEWriterEndpoint({
+          server,
+          getContext: mockGetContext,
+          ackTimeout: 100, // Use a short timeout for testing
+        });
+
+        // Don't set up a reader, so no ACK will be sent
+
+        // Create a test message
+        const testMessage = new DocMessage(
+          "test-doc",
+          { type: "sync-done" },
+          {
+            clientId,
+            userId: "user-1",
+            room: "room-1",
+          },
+        );
+
+        // Send message via writer endpoint
+        // Since there's no reader, ACK will timeout
+        const writerRequest = new Request("http://example.com/sse", {
+          method: "POST",
+          headers: {
+            "x-teleportal-client-id": clientId,
+          },
+          body: encodeMessageArray([testMessage]) as unknown as BodyInit,
+        });
+
+        const startTime = Date.now();
+        const writerResponse = await writerEndpoint(writerRequest);
+        const elapsed = Date.now() - startTime;
+
+        // Should return 504 Gateway Timeout when ACK is not received
+        // Should timeout after approximately 100ms (ackTimeout)
+        expect(writerResponse.status).toBe(504);
+        expect(elapsed).toBeGreaterThanOrEqual(90); // Allow some margin
+        expect(elapsed).toBeLessThan(500); // Should not take much longer
+        const json = await writerResponse.json();
+        expect(json.error).toBe("Failed to receive acknowledgment");
+        expect(json.message).toContain("ACK timeout");
+      });
     });
   });
 });
