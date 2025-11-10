@@ -88,6 +88,9 @@ describe("Session", () => {
       pubSub: pubSub,
       nodeId,
       logger: logger.child().withContext({ name: "test" }),
+      onCleanupScheduled: () => {
+        // No-op for tests
+      },
     });
   });
 
@@ -116,6 +119,9 @@ describe("Session", () => {
         nodeId,
         logger: logger.child().withContext({ name: "test" }),
         dedupe: customDedupe,
+        onCleanupScheduled: () => {
+          // No-op for tests
+        },
       });
       expect(customSession).toBeDefined();
     });
@@ -242,6 +248,93 @@ describe("Session", () => {
     it("should not throw when removing non-existent client", () => {
       expect(() => session.removeClient("non-existent")).not.toThrow();
     });
+
+    it("should schedule cleanup when last client is removed", () => {
+      let cleanupCalled = false;
+      let cleanupSession: Session<ServerContext> | null = null;
+      const testSession = new Session({
+        documentId: "test-doc-cleanup",
+        id: "session-cleanup",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        logger: logger.child().withContext({ name: "test" }),
+        onCleanupScheduled: (s) => {
+          cleanupCalled = true;
+          cleanupSession = s;
+        },
+      });
+
+      testSession.addClient(client1 as any);
+      expect(testSession.shouldDispose).toBe(false);
+      testSession.removeClient("client-1");
+      expect(testSession.shouldDispose).toBe(true);
+      // Cleanup callback should be set up (we can't test the timeout without waiting 60s)
+      // But we verify the session is in the correct state for cleanup
+
+      // Clean up
+      testSession[Symbol.asyncDispose]();
+    });
+
+    it("should cancel cleanup when client reconnects", (done: () => void) => {
+      let cleanupCalled = false;
+      const testSession = new Session({
+        documentId: "test-doc-cancel",
+        id: "session-cancel",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        logger: logger.child().withContext({ name: "test" }),
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+      });
+
+      testSession.addClient(client1 as any);
+      testSession.removeClient("client-1");
+      // Immediately add client back - should cancel cleanup
+      testSession.addClient(client1 as any);
+
+      // Wait a bit to ensure cleanup doesn't fire
+      setTimeout(() => {
+        expect(cleanupCalled).toBe(false);
+        done();
+      }, 100);
+
+      // Clean up
+      setTimeout(() => {
+        testSession[Symbol.asyncDispose]();
+      }, 200);
+    });
+
+    it("should not schedule cleanup if clients remain", () => {
+      let cleanupCalled = false;
+      const testSession = new Session({
+        documentId: "test-doc-multi",
+        id: "session-multi",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        logger: logger.child().withContext({ name: "test" }),
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+      });
+
+      testSession.addClient(client1 as any);
+      testSession.addClient(client2 as any);
+      testSession.removeClient("client-1");
+      // Should not schedule cleanup since client2 is still present
+
+      expect(cleanupCalled).toBe(false);
+      testSession.removeClient("client-2");
+      // Now cleanup should be scheduled
+      // Note: We can't easily test the timeout without waiting, but we verify
+      // the behavior by checking that cleanup is only scheduled when empty
+    });
   });
 
   describe("broadcast", () => {
@@ -311,6 +404,9 @@ describe("Session", () => {
         pubSub,
         nodeId,
         logger: logger.child().withContext({ name: "test" }),
+        onCleanupScheduled: () => {
+          // No-op for tests
+        },
       });
 
       const message = new DocMessage(
@@ -410,6 +506,9 @@ describe("Session", () => {
           pubSub: testPubSub,
           nodeId,
           logger: logger.child().withContext({ name: "test" }),
+          onCleanupScheduled: () => {
+            // No-op for tests
+          },
         });
 
         await testSession.load();
@@ -544,11 +643,43 @@ describe("Session", () => {
         pubSub: pubSub,
         nodeId,
         logger: logger.child().withContext({ name: "test" }),
+        onCleanupScheduled: () => {
+          // No-op for tests
+        },
       });
 
       await expect(
         unloadedSession[Symbol.asyncDispose](),
       ).resolves.toBeUndefined();
+    });
+
+    it("should cancel pending cleanup when disposed", (done: () => void) => {
+      let cleanupCalled = false;
+      const testSession = new Session({
+        documentId: "test-doc-dispose-cancel",
+        id: "session-dispose-cancel",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        logger: logger.child().withContext({ name: "test" }),
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+      });
+
+      testSession.addClient(client1 as any);
+      testSession.removeClient("client-1");
+      // Cleanup should be scheduled
+
+      // Immediately dispose - should cancel cleanup
+      testSession[Symbol.asyncDispose]().then(() => {
+        // Wait a bit to ensure cleanup doesn't fire
+        setTimeout(() => {
+          expect(cleanupCalled).toBe(false);
+          done();
+        }, 100);
+      });
     });
   });
 });

@@ -36,6 +36,9 @@ export class Session<Context extends ServerContext> {
   #loaded = false;
   #clients = new Map<string, Client<Context>>();
   #unsubscribe: Promise<() => Promise<void>> | null = null;
+  #cleanupTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  #onCleanupScheduled: (session: Session<Context>) => void;
+  readonly #CLEANUP_DELAY_MS = 60_000;
 
   constructor(args: {
     documentId: string;
@@ -46,6 +49,7 @@ export class Session<Context extends ServerContext> {
     nodeId: string;
     logger: Logger;
     dedupe?: TtlDedupe;
+    onCleanupScheduled: (session: Session<Context>) => void;
   }) {
     this.documentId = args.documentId;
     this.id = args.id;
@@ -59,6 +63,7 @@ export class Session<Context extends ServerContext> {
       sessionId: this.id,
     });
     this.#dedupe = args.dedupe ?? new TtlDedupe();
+    this.#onCleanupScheduled = args.onCleanupScheduled;
 
     this.#logger
       .withMetadata({
@@ -188,6 +193,11 @@ export class Session<Context extends ServerContext> {
     const hadClient = this.#clients.has(client.id);
     this.#clients.set(client.id, client);
 
+    // Cancel cleanup if a client reconnects
+    if (this.#cleanupTimeoutId !== undefined) {
+      this.#cancelCleanup();
+    }
+
     this.#logger
       .withMetadata({
         clientId: client.id,
@@ -218,6 +228,11 @@ export class Session<Context extends ServerContext> {
           totalClients: this.#clients.size,
         })
         .debug("Client removed from session");
+
+      // Schedule cleanup if no clients remain
+      if (this.#clients.size === 0) {
+        this.#scheduleCleanup();
+      }
     }
   }
 
@@ -571,6 +586,9 @@ export class Session<Context extends ServerContext> {
       })
       .info("Disposing session");
 
+    // Cancel any pending cleanup
+    this.#cancelCleanup();
+
     try {
       if (this.#unsubscribe) {
         const unsubscribeFn = await this.#unsubscribe;
@@ -592,6 +610,43 @@ export class Session<Context extends ServerContext> {
         sessionId: this.id,
       })
       .info("Session disposed");
+  }
+
+  /**
+   * Schedule cleanup of this session after the delay period.
+   */
+  #scheduleCleanup() {
+    // Clear any existing timeout first
+    this.#cancelCleanup();
+
+    this.#logger
+      .withMetadata({
+        documentId: this.documentId,
+        sessionId: this.id,
+        delayMs: this.#CLEANUP_DELAY_MS,
+      })
+      .debug("Scheduling session cleanup");
+
+    this.#cleanupTimeoutId = setTimeout(() => {
+      this.#cleanupTimeoutId = undefined;
+      this.#onCleanupScheduled(this);
+    }, this.#CLEANUP_DELAY_MS);
+  }
+
+  /**
+   * Cancel any pending cleanup timeout.
+   */
+  #cancelCleanup() {
+    if (this.#cleanupTimeoutId !== undefined) {
+      clearTimeout(this.#cleanupTimeoutId);
+      this.#cleanupTimeoutId = undefined;
+      this.#logger
+        .withMetadata({
+          documentId: this.documentId,
+          sessionId: this.id,
+        })
+        .debug("Cancelled scheduled session cleanup");
+    }
   }
 
   toJSON() {

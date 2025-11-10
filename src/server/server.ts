@@ -82,16 +82,6 @@ export class Server<Context extends ServerContext> {
         hasPermissionChecker: !!options.checkPermission,
       })
       .info("Server initialized");
-
-    // TODO maybe make this smarter
-    setInterval(async () => {
-      for (const session of this.#sessions.values()) {
-        if (session.shouldDispose) {
-          this.#sessions.delete(session.documentId);
-          await session[Symbol.asyncDispose]();
-        }
-      }
-    }, 5000);
   }
 
   /**
@@ -147,6 +137,7 @@ export class Server<Context extends ServerContext> {
         pubSub: this.pubSub,
         nodeId: this.#nodeId,
         logger: this.logger,
+        onCleanupScheduled: this.#handleSessionCleanup.bind(this),
       });
 
       await session.load();
@@ -386,6 +377,39 @@ export class Server<Context extends ServerContext> {
         totalSessions: this.#sessions.size,
       })
       .info("Client disconnected from sessions");
+  }
+
+  /**
+   * Handle cleanup of a session that was scheduled for disposal.
+   */
+  #handleSessionCleanup(session: Session<Context>) {
+    // Check if session still exists in our map
+    const existingSession = this.#sessions.get(session.documentId);
+    if (!existingSession || existingSession !== session) {
+      // Session was already removed or replaced
+      return;
+    }
+
+    // Verify session should still be disposed (has no clients)
+    if (session.shouldDispose) {
+      this.logger
+        .withMetadata({
+          documentId: session.documentId,
+          sessionId: session.id,
+        })
+        .info("Cleaning up session with no clients");
+
+      this.#sessions.delete(session.documentId);
+      session[Symbol.asyncDispose]().catch((error) => {
+        this.logger
+          .withError(error as Error)
+          .withMetadata({
+            documentId: session.documentId,
+            sessionId: session.id,
+          })
+          .error("Error disposing session during cleanup");
+      });
+    }
   }
 
   /**
