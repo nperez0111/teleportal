@@ -71,6 +71,26 @@ export abstract class CustomMessage<Context extends Record<string, unknown>> {
     this.#encoded = undefined;
     this.#id = undefined;
   }
+
+  public toJSON(): Record<string, unknown> {
+    return {
+      type: this.type,
+      document: this.document,
+      payload: this.payload,
+      context: this.context,
+      encrypted: this.encrypted,
+      id: this.id,
+      encoded: this.encoded,
+    };
+  }
+
+  public toString(): string {
+    return `Message(type: ${this.type}, document: ${this.document}, payload: ${JSON.stringify(this.payload)}, context: ${JSON.stringify(this.context)}, encrypted: ${this.encrypted}, id: ${this.id}, encoded: ${this.encoded})`;
+  }
+
+  public valueOf(): string {
+    return this.id;
+  }
 }
 
 /**
