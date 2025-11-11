@@ -12,7 +12,14 @@ import type {
   Update,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
+import { ConsoleTransport, LogLayer } from "loglayer";
 
+const emptyLogger = new LogLayer({
+  transport: new ConsoleTransport({
+    logger: console,
+    enabled: false,
+  }),
+});
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
   handleSyncStep1(
@@ -98,7 +105,7 @@ describe("Server", () => {
     mockGetStorage = () => Promise.resolve(new MockDocumentStorage());
 
     server = new Server({
-      logger: logger.child().withContext({ name: "test" }),
+      logger: emptyLogger,
       getStorage: mockGetStorage,
       pubSub,
     });
@@ -119,6 +126,7 @@ describe("Server", () => {
       const serverWithDefaultLogger = new Server({
         getStorage: mockGetStorage,
         pubSub,
+        logger: emptyLogger,
       });
       expect(serverWithDefaultLogger.logger).toBeDefined();
       await serverWithDefaultLogger[Symbol.asyncDispose]();
@@ -127,6 +135,7 @@ describe("Server", () => {
     it("should use default pubSub when not provided", async () => {
       const serverWithDefaultPubSub = new Server({
         getStorage: mockGetStorage,
+        logger: emptyLogger,
       });
       expect(serverWithDefaultPubSub.logger).toBeDefined();
       await serverWithDefaultPubSub[Symbol.asyncDispose]();
@@ -137,6 +146,7 @@ describe("Server", () => {
         getStorage: mockGetStorage,
         pubSub,
         nodeId: "custom-node-id",
+        logger: emptyLogger,
       });
       expect(serverWithNodeId).toBeDefined();
       await serverWithNodeId[Symbol.asyncDispose]();
@@ -146,10 +156,12 @@ describe("Server", () => {
       const server1 = new Server({
         getStorage: mockGetStorage,
         pubSub,
+        logger: emptyLogger,
       });
       const server2 = new Server({
         getStorage: mockGetStorage,
         pubSub,
+        logger: emptyLogger,
       });
       // Node IDs should be different
       expect(server1).toBeDefined();
@@ -233,7 +245,7 @@ describe("Server", () => {
       };
 
       const customServer = new Server({
-        logger: logger.child().withContext({ name: "test" }),
+        logger: emptyLogger,
         getStorage: customGetStorage,
         pubSub,
       });
@@ -247,6 +259,124 @@ describe("Server", () => {
       expect(calledWith.encrypted).toBe(false);
 
       await customServer[Symbol.asyncDispose]();
+    });
+
+    it("should call getStorage with composite documentId when room is provided", async () => {
+      let calledWith: any = null;
+      const customGetStorage = (ctx: any) => {
+        calledWith = ctx;
+        return Promise.resolve(new MockDocumentStorage());
+      };
+
+      const customServer = new Server({
+        logger: emptyLogger,
+        getStorage: customGetStorage,
+        pubSub,
+      });
+
+      const roomContext: ServerContext = {
+        userId: "user-1",
+        room: "room-1",
+        clientId: "client-1",
+      };
+
+      await customServer.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: roomContext,
+      });
+
+      expect(calledWith).toBeDefined();
+      expect(calledWith.documentId).toBe("room-1/test-doc");
+      expect(calledWith.encrypted).toBe(false);
+      expect(calledWith.context).toBe(roomContext);
+
+      await customServer[Symbol.asyncDispose]();
+    });
+
+    it("should create separate sessions for same document name in different rooms", async () => {
+      const room1Context: ServerContext = {
+        userId: "user-1",
+        room: "room-1",
+        clientId: "client-1",
+      };
+      const room2Context: ServerContext = {
+        userId: "user-2",
+        room: "room-2",
+        clientId: "client-2",
+      };
+
+      const session1 = await server.getOrOpenSession("same-doc", {
+        encrypted: false,
+        context: room1Context,
+      });
+      const session2 = await server.getOrOpenSession("same-doc", {
+        encrypted: false,
+        context: room2Context,
+      });
+
+      // Sessions should be different instances
+      expect(session1).not.toBe(session2);
+      // documentId should be the original client-facing name
+      expect(session1.documentId).toBe("same-doc");
+      expect(session2.documentId).toBe("same-doc");
+      // namespacedDocumentId should reflect the composite key
+      expect(session1.namespacedDocumentId).toBe("room-1/same-doc");
+      expect(session2.namespacedDocumentId).toBe("room-2/same-doc");
+    });
+
+    it("should return same session for same room and document", async () => {
+      const room1Context: ServerContext = {
+        userId: "user-1",
+        room: "room-1",
+        clientId: "client-1",
+      };
+
+      const session1 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: room1Context,
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: room1Context,
+      });
+
+      // Should return the same session instance
+      expect(session1).toBe(session2);
+      expect(session1.documentId).toBe("test-doc");
+      expect(session1.namespacedDocumentId).toBe("room-1/test-doc");
+    });
+
+    it("should use document name only when no room in context", async () => {
+      const session1 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+      });
+
+      // Should return the same session instance (backward compatibility)
+      expect(session1).toBe(session2);
+      expect(session1.documentId).toBe("test-doc");
+    });
+
+    it("should use document name only when room is empty string", async () => {
+      const contextWithoutRoom: ServerContext = {
+        userId: "user-1",
+        room: "",
+        clientId: "client-1",
+      };
+
+      const session1 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: contextWithoutRoom,
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+      });
+
+      // Should return the same session instance (empty room treated as no room)
+      expect(session1).toBe(session2);
+      expect(session1.documentId).toBe("test-doc");
     });
   });
 
@@ -347,7 +477,7 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        logger: logger.child().withContext({ name: "test" }),
+        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,
@@ -382,7 +512,7 @@ describe("Server", () => {
       const checkPermission = async () => false;
 
       const serverWithPermission = new Server({
-        logger: logger.child().withContext({ name: "test" }),
+        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,
@@ -454,7 +584,7 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        logger: logger.child().withContext({ name: "test" }),
+        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,

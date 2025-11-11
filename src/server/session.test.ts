@@ -11,6 +11,7 @@ import { DocumentStorage } from "teleportal/storage";
 import { logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
+import { ConsoleTransport, LogLayer } from "loglayer";
 
 // Mock Client class for testing
 class MockClient<Context extends ServerContext> {
@@ -82,12 +83,18 @@ describe("Session", () => {
 
     session = new Session({
       documentId: "test-doc",
+      namespacedDocumentId: "test-doc",
       id: "session-1",
       encrypted: false,
       storage,
       pubSub: pubSub,
       nodeId,
-      logger: logger.child().withContext({ name: "test" }),
+      logger: new LogLayer({
+        transport: new ConsoleTransport({
+          logger: console,
+          enabled: false,
+        }),
+      }),
       onCleanupScheduled: () => {
         // No-op for tests
       },
@@ -112,12 +119,18 @@ describe("Session", () => {
       const customDedupe = new TtlDedupe({ ttlMs: 60_000 });
       const customSession = new Session({
         documentId: "test-doc-2",
+        namespacedDocumentId: "test-doc-2",
         id: "session-2",
         encrypted: false,
         storage,
         pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         dedupe: customDedupe,
         onCleanupScheduled: () => {
           // No-op for tests
@@ -254,12 +267,18 @@ describe("Session", () => {
       let cleanupSession: Session<ServerContext> | null = null;
       const testSession = new Session({
         documentId: "test-doc-cleanup",
+        namespacedDocumentId: "test-doc-cleanup",
         id: "session-cleanup",
         encrypted: false,
         storage,
         pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         onCleanupScheduled: (s) => {
           cleanupCalled = true;
           cleanupSession = s;
@@ -281,12 +300,18 @@ describe("Session", () => {
       let cleanupCalled = false;
       const testSession = new Session({
         documentId: "test-doc-cancel",
+        namespacedDocumentId: "test-doc-cancel",
         id: "session-cancel",
         encrypted: false,
         storage,
         pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         onCleanupScheduled: () => {
           cleanupCalled = true;
         },
@@ -313,12 +338,18 @@ describe("Session", () => {
       let cleanupCalled = false;
       const testSession = new Session({
         documentId: "test-doc-multi",
+        namespacedDocumentId: "test-doc-multi",
         id: "session-multi",
         encrypted: false,
         storage,
         pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         onCleanupScheduled: () => {
           cleanupCalled = true;
         },
@@ -398,12 +429,18 @@ describe("Session", () => {
     it("should throw error for encryption mismatch", async () => {
       const encryptedSession = new Session({
         documentId: "encrypted-doc",
+        namespacedDocumentId: "encrypted-doc",
         id: "session-encrypted",
         encrypted: true,
         storage,
         pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         onCleanupScheduled: () => {
           // No-op for tests
         },
@@ -500,12 +537,18 @@ describe("Session", () => {
         const testPubSub = new InMemoryPubSub();
         const testSession = new Session({
           documentId: "test-doc-2",
+          namespacedDocumentId: "test-doc-2",
           id: "session-2",
           encrypted: false,
           storage,
           pubSub: testPubSub,
           nodeId,
-          logger: logger.child().withContext({ name: "test" }),
+          logger: new LogLayer({
+            transport: new ConsoleTransport({
+              logger: console,
+              enabled: false,
+            }),
+          }),
           onCleanupScheduled: () => {
             // No-op for tests
           },
@@ -637,12 +680,18 @@ describe("Session", () => {
     it("should work when not loaded", async () => {
       const unloadedSession = new Session({
         documentId: "test-doc-3",
+        namespacedDocumentId: "test-doc-3",
         id: "session-3",
         encrypted: false,
         storage,
         pubSub: pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         onCleanupScheduled: () => {
           // No-op for tests
         },
@@ -657,12 +706,18 @@ describe("Session", () => {
       let cleanupCalled = false;
       const testSession = new Session({
         documentId: "test-doc-dispose-cancel",
+        namespacedDocumentId: "test-doc-dispose-cancel",
         id: "session-dispose-cancel",
         encrypted: false,
         storage,
         pubSub,
         nodeId,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: new LogLayer({
+          transport: new ConsoleTransport({
+            logger: console,
+            enabled: false,
+          }),
+        }),
         onCleanupScheduled: () => {
           cleanupCalled = true;
         },

@@ -7,6 +7,8 @@ import {
 import { DocumentStorage } from "teleportal/storage";
 import { Server } from "../server/server";
 import { getHTTPHandler } from "./server";
+import { logger } from "teleportal/server";
+import { ConsoleTransport, LogLayer } from "loglayer";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
@@ -54,6 +56,12 @@ describe("getHTTPHandler", () => {
     server = new Server({
       getStorage: mockGetStorage,
       pubSub,
+      logger: new LogLayer({
+        transport: new ConsoleTransport({
+          logger: console,
+          enabled: false,
+        }),
+      }),
     });
 
     handler = getHTTPHandler({

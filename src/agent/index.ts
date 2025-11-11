@@ -47,6 +47,7 @@ export class Agent {
     const session = await this.server.getOrOpenSession(message.document, {
       encrypted: message.encrypted,
       client,
+      context: message.context,
     });
     logger.trace("document created");
 

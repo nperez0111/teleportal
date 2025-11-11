@@ -14,6 +14,7 @@ import {
   getSSEWriterEndpoint,
 } from "./handlers";
 import { getDocumentsFromQueryParams } from "./utils";
+import { ConsoleTransport, LogLayer } from "loglayer";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
@@ -60,6 +61,12 @@ describe("HTTP Handlers", () => {
     server = new Server({
       getStorage: mockGetStorage,
       pubSub,
+      logger: new LogLayer({
+        transport: new ConsoleTransport({
+          logger: console,
+          enabled: false,
+        }),
+      }),
     });
   });
 

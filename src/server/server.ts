@@ -85,10 +85,22 @@ export class Server<Context extends ServerContext> {
   }
 
   /**
+   * Create a composite document ID from room and document name.
+   * If room is provided, returns `${room}/${document}`, otherwise returns `document`.
+   */
+  #getCompositeDocumentId(document: string, context?: Context): string {
+    if (context && "room" in context && context.room) {
+      return `${context.room}/${document}`;
+    }
+    return document;
+  }
+
+  /**
    * Create or get a session for a document.
    * @param documentId - The ID of the document.
    * @param encrypted - Whether the document is encrypted.
    * @param id - The ID of the session.
+   * @param context - Optional context containing room information for multi-tenancy.
    * @returns The session.
    */
   async getOrOpenSession(
@@ -97,19 +109,29 @@ export class Server<Context extends ServerContext> {
       encrypted,
       id = "session-" + uuidv4(),
       client,
-    }: { encrypted: boolean; id?: string; client?: Client<Context> },
+      context,
+    }: {
+      encrypted: boolean;
+      id?: string;
+      client?: Client<Context>;
+      context?: Context;
+    },
   ) {
-    const existing = this.#sessions.get(documentId);
+    const compositeDocumentId = this.#getCompositeDocumentId(
+      documentId,
+      context,
+    );
+    const existing = this.#sessions.get(compositeDocumentId);
     if (existing) {
       // Validate that the encryption state matches the existing session
       if (existing.encrypted !== encrypted) {
         const error = new Error(
-          `Encryption state mismatch: existing session for document "${documentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
+          `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
         );
         this.logger
           .withError(error)
           .withMetadata({
-            documentId,
+            documentId: compositeDocumentId,
             sessionId: existing.id,
             existingEncrypted: existing.encrypted,
             requestedEncrypted: encrypted,
@@ -119,7 +141,11 @@ export class Server<Context extends ServerContext> {
       }
 
       this.logger
-        .withMetadata({ documentId, sessionId: existing.id, encrypted })
+        .withMetadata({
+          documentId: compositeDocumentId,
+          sessionId: existing.id,
+          encrypted,
+        })
         .debug("Retrieved existing session");
 
       if (client) {
@@ -129,18 +155,24 @@ export class Server<Context extends ServerContext> {
       return existing;
     }
 
-    const sessionLogger = this.logger
-      .child()
-      .withContext({ documentId, sessionId: id, encrypted });
+    const sessionLogger = this.logger.child().withContext({
+      documentId: compositeDocumentId,
+      sessionId: id,
+      encrypted,
+    });
 
     sessionLogger
-      .withMetadata({ documentId, sessionId: id, encrypted })
+      .withMetadata({
+        documentId: compositeDocumentId,
+        sessionId: id,
+        encrypted,
+      })
       .info("Creating new session");
 
     try {
       const storage = await this.#options.getStorage({
-        documentId,
-        context: { userId: "", room: "", clientId: "" } as any,
+        documentId: compositeDocumentId,
+        context: context ?? ({ userId: "", room: "", clientId: "" } as any),
         encrypted,
       });
 
@@ -148,6 +180,7 @@ export class Server<Context extends ServerContext> {
 
       const session = new Session<Context>({
         documentId,
+        namespacedDocumentId: compositeDocumentId,
         id,
         encrypted,
         storage,
@@ -158,11 +191,11 @@ export class Server<Context extends ServerContext> {
       });
 
       await session.load();
-      this.#sessions.set(documentId, session);
+      this.#sessions.set(compositeDocumentId, session);
 
       sessionLogger
         .withMetadata({
-          documentId,
+          documentId: compositeDocumentId,
           sessionId: id,
           encrypted,
           totalSessions: this.#sessions.size,
@@ -176,7 +209,11 @@ export class Server<Context extends ServerContext> {
     } catch (error) {
       sessionLogger
         .withError(error as Error)
-        .withMetadata({ documentId, sessionId: id, encrypted })
+        .withMetadata({
+          documentId: compositeDocumentId,
+          sessionId: id,
+          encrypted,
+        })
         .error("Failed to create session");
       throw error;
     }
@@ -261,6 +298,7 @@ export class Server<Context extends ServerContext> {
               msgLogger.debug(
                 "Client tried to send sync-step-2 message but doesn't have write permissions, dropping message",
               );
+              console.log("Sending sync-done message", message.document);
               // Tell the client that they've successfully synced their state vector
               await client.send(
                 new DocMessage(
@@ -322,6 +360,7 @@ export class Server<Context extends ServerContext> {
               const session = await this.getOrOpenSession(message.document, {
                 encrypted: message.encrypted,
                 client,
+                context: message.context,
               });
 
               msgLogger.debug("Client added to session, applying message");
@@ -400,8 +439,8 @@ export class Server<Context extends ServerContext> {
    * Handle cleanup of a session that was scheduled for disposal.
    */
   #handleSessionCleanup(session: Session<Context>) {
-    // Check if session still exists in our map
-    const existingSession = this.#sessions.get(session.documentId);
+    // Check if session still exists in our map (using namespacedDocumentId as key)
+    const existingSession = this.#sessions.get(session.namespacedDocumentId);
     if (!existingSession || existingSession !== session) {
       // Session was already removed or replaced
       return;
@@ -412,16 +451,18 @@ export class Server<Context extends ServerContext> {
       this.logger
         .withMetadata({
           documentId: session.documentId,
+          namespacedDocumentId: session.namespacedDocumentId,
           sessionId: session.id,
         })
         .info("Cleaning up session with no clients");
 
-      this.#sessions.delete(session.documentId);
+      this.#sessions.delete(session.namespacedDocumentId);
       session[Symbol.asyncDispose]().catch((error) => {
         this.logger
           .withError(error as Error)
           .withMetadata({
             documentId: session.documentId,
+            namespacedDocumentId: session.namespacedDocumentId,
             sessionId: session.id,
           })
           .error("Error disposing session during cleanup");

@@ -16,9 +16,13 @@ import { Client } from "./client";
  */
 export class Session<Context extends ServerContext> {
   /**
-   * The ID of the document.
+   * The client-facing document ID (original document name from client).
    */
   public readonly documentId: string;
+  /**
+   * The namespaced document ID used for storage and pubsub (includes room prefix if applicable).
+   */
+  public readonly namespacedDocumentId: string;
   /**
    * The ID of the session.
    */
@@ -42,6 +46,7 @@ export class Session<Context extends ServerContext> {
 
   constructor(args: {
     documentId: string;
+    namespacedDocumentId: string;
     id: string;
     encrypted: boolean;
     storage: DocumentStorage;
@@ -52,6 +57,7 @@ export class Session<Context extends ServerContext> {
     onCleanupScheduled: (session: Session<Context>) => void;
   }) {
     this.documentId = args.documentId;
+    this.namespacedDocumentId = args.namespacedDocumentId;
     this.id = args.id;
     this.encrypted = args.encrypted;
     this.#storage = args.storage;
@@ -60,6 +66,7 @@ export class Session<Context extends ServerContext> {
     this.#logger = args.logger.child().withContext({
       name: "session",
       documentId: this.documentId,
+      namespacedDocumentId: this.namespacedDocumentId,
       sessionId: this.id,
     });
     this.#dedupe = args.dedupe ?? new TtlDedupe();
@@ -68,6 +75,7 @@ export class Session<Context extends ServerContext> {
     this.#logger
       .withMetadata({
         documentId: this.documentId,
+        namespacedDocumentId: this.namespacedDocumentId,
         sessionId: this.id,
         encrypted: this.encrypted,
         nodeId: this.#nodeId,
@@ -93,7 +101,7 @@ export class Session<Context extends ServerContext> {
 
     try {
       this.#unsubscribe = this.#pubSub.subscribe(
-        `document/${this.documentId}` as const,
+        `document/${this.namespacedDocumentId}` as const,
         async (binary, sourceId) => {
           const replicationLogger = this.#logger.child().withContext({
             sourceNodeId: sourceId,
@@ -114,7 +122,7 @@ export class Session<Context extends ServerContext> {
             return;
           }
 
-          // Best-effort: ensure it matches the documentId
+          // Best-effort: ensure it matches the documentId (client-facing)
           if (message.document !== this.documentId) {
             replicationLogger
               .withMetadata({
@@ -137,7 +145,7 @@ export class Session<Context extends ServerContext> {
 
           try {
             const shouldAccept = this.#dedupe.shouldAccept(
-              this.documentId,
+              this.namespacedDocumentId,
               message.id,
             );
 
@@ -302,11 +310,12 @@ export class Session<Context extends ServerContext> {
       .debug("Writing update to storage");
 
     try {
-      await this.#storage.write(this.documentId, update);
+      await this.#storage.write(this.namespacedDocumentId, update);
 
       writeLogger
         .withMetadata({
           documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
         })
         .debug("Update written to storage successfully");
     } catch (error) {
@@ -375,7 +384,7 @@ export class Session<Context extends ServerContext> {
 
               const { update, stateVector } =
                 await this.#storage.handleSyncStep1(
-                  this.documentId,
+                  this.namespacedDocumentId,
                   message.payload.sv,
                 );
 
@@ -433,7 +442,7 @@ export class Session<Context extends ServerContext> {
                   this.broadcast(message, client?.id),
                 ),
                 this.#pubSub.publish(
-                  `document/${this.documentId}` as const,
+                  `document/${this.namespacedDocumentId}` as const,
                   message.encoded,
                   this.#nodeId,
                 ),
@@ -460,7 +469,7 @@ export class Session<Context extends ServerContext> {
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#storage.handleSyncStep2(
-                  this.documentId,
+                  this.namespacedDocumentId,
                   message.payload.update,
                 ),
               ]);
@@ -484,7 +493,7 @@ export class Session<Context extends ServerContext> {
                   ),
                 ),
                 this.#pubSub.publish(
-                  `document/${this.documentId}` as const,
+                  `document/${this.namespacedDocumentId}` as const,
                   message.encoded,
                   this.#nodeId,
                 ),
@@ -543,7 +552,7 @@ export class Session<Context extends ServerContext> {
           await Promise.all([
             this.broadcast(message, client?.id),
             this.#pubSub.publish(
-              `document/${this.documentId}` as const,
+              `document/${this.namespacedDocumentId}` as const,
               message.encoded,
               this.#nodeId,
             ),
@@ -652,6 +661,7 @@ export class Session<Context extends ServerContext> {
   toJSON() {
     return {
       documentId: this.documentId,
+      namespacedDocumentId: this.namespacedDocumentId,
       id: this.id,
       encrypted: this.encrypted,
       clients: Array.from(this.#clients.values()).map((client) =>
@@ -661,7 +671,7 @@ export class Session<Context extends ServerContext> {
   }
 
   toString() {
-    return `Session(documentId: ${this.documentId}, id: ${this.id}, encrypted: ${this.encrypted}, clients: ${this.#clients
+    return `Session(documentId: ${this.documentId}, namespacedDocumentId: ${this.namespacedDocumentId}, id: ${this.id}, encrypted: ${this.encrypted}, clients: ${this.#clients
       .values()
       .map((client) => client.toString())
       .toArray()

@@ -135,6 +135,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
             .getOrOpenSession(document, {
               encrypted,
               client,
+              context,
             })
             .then((session) => {
               logger
