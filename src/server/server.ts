@@ -101,6 +101,23 @@ export class Server<Context extends ServerContext> {
   ) {
     const existing = this.#sessions.get(documentId);
     if (existing) {
+      // Validate that the encryption state matches the existing session
+      if (existing.encrypted !== encrypted) {
+        const error = new Error(
+          `Encryption state mismatch: existing session for document "${documentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
+        );
+        this.logger
+          .withError(error)
+          .withMetadata({
+            documentId,
+            sessionId: existing.id,
+            existingEncrypted: existing.encrypted,
+            requestedEncrypted: encrypted,
+          })
+          .error("Encryption state mismatch detected");
+        throw error;
+      }
+
       this.logger
         .withMetadata({ documentId, sessionId: existing.id, encrypted })
         .debug("Retrieved existing session");

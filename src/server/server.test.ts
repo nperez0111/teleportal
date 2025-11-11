@@ -200,6 +200,31 @@ describe("Server", () => {
       expect(session.encrypted).toBe(true);
     });
 
+    it("should throw error when encryption state mismatches existing session", async () => {
+      // Create a session with encrypted: false
+      await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+      });
+
+      // Try to get the same session with encrypted: true - should throw
+      await expect(
+        server.getOrOpenSession("test-doc", {
+          encrypted: true,
+        }),
+      ).rejects.toThrow("Encryption state mismatch");
+
+      // Also test the reverse: create encrypted session, then try unencrypted
+      await server.getOrOpenSession("encrypted-test-doc", {
+        encrypted: true,
+      });
+
+      await expect(
+        server.getOrOpenSession("encrypted-test-doc", {
+          encrypted: false,
+        }),
+      ).rejects.toThrow("Encryption state mismatch");
+    });
+
     it("should call getStorage with correct parameters", async () => {
       let calledWith: any = null;
       const customGetStorage = (ctx: any) => {
