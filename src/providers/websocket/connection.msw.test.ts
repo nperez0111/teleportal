@@ -1,25 +1,17 @@
 import {
-  describe,
-  test,
-  expect,
-  beforeEach,
+  afterAll,
   afterEach,
   beforeAll,
-  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
 } from "bun:test";
-import { setupServer } from "msw/node";
 import { ws } from "msw";
-import { http, HttpResponse } from "msw";
-import { WebSocketConnection } from "./connection";
+import { setupServer } from "msw/node";
+import { DocMessage, encodePingMessage, isBinaryMessage } from "teleportal";
 import { ConnectionState } from "../connection";
-import {
-  DocMessage,
-  encodeMessage,
-  encodePingMessage,
-  isBinaryMessage,
-  isPongMessage,
-  decodeMessage,
-} from "teleportal";
+import { WebSocketConnection } from "./connection";
 
 process.on("uncaughtException", (err) => {
   console.error("[GLOBAL] Uncaught Exception:", err);
