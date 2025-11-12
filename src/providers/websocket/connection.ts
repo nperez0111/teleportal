@@ -143,8 +143,20 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
             return;
           }
 
-          const error = new Error("WebSocket error", { cause: event });
-          this.handleConnectionError(error);
+          // In MSW and some environments, error events can be fired during connection
+          // setup even if the connection will succeed. Only treat as fatal if the
+          // WebSocket is actually closed or closing. If still connecting, wait for
+          // the close event to confirm failure.
+          const readyState = websocket.readyState;
+          if (
+            readyState === this.#WebSocketImpl.CLOSED ||
+            readyState === this.#WebSocketImpl.CLOSING
+          ) {
+            const error = new Error("WebSocket error", { cause: event });
+            this.handleConnectionError(error);
+          }
+          // If still CONNECTING, ignore the error - the close event will handle it
+          // if the connection actually fails
         },
 
         close: (event: CloseEvent) => {
@@ -154,7 +166,16 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           }
 
           this.#cleanupWebSocketListeners(websocket);
-          this.closeConnection();
+          
+          // If we were still connecting when the connection closed, treat it as an error
+          if (this.state.type === "connecting") {
+            const error = new Error("WebSocket connection closed during handshake", {
+              cause: event,
+            });
+            this.handleConnectionError(error);
+          } else {
+            this.closeConnection();
+          }
         },
 
         open: (event: Event) => {
