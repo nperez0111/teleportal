@@ -68,10 +68,26 @@ export function withAckSink<
         }
       },
       async close() {
-        await writer.close();
+        try {
+          await writer.close();
+        } finally {
+          try {
+            writer.releaseLock();
+          } catch (error) {
+            // Ignore errors when releasing lock (it might already be released)
+          }
+        }
       },
       async abort(reason) {
-        await writer.abort(reason);
+        try {
+          await writer.abort(reason);
+        } finally {
+          try {
+            writer.releaseLock();
+          } catch (error) {
+            // Ignore errors when releasing lock (it might already be released)
+          }
+        }
       },
     }),
   };
@@ -224,10 +240,26 @@ export function withAckTrackingSink<
         await writer.write(message);
       },
       async close() {
-        await writer.close();
+        try {
+          await writer.close();
+        } finally {
+          try {
+            writer.releaseLock();
+          } catch (error) {
+            // Ignore errors when releasing lock (it might already be released)
+          }
+        }
       },
       async abort(reason) {
-        await writer.abort(reason);
+        try {
+          await writer.abort(reason);
+        } finally {
+          try {
+            writer.releaseLock();
+          } catch (error) {
+            // Ignore errors when releasing lock (it might already be released)
+          }
+        }
       },
     }),
   };
