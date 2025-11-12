@@ -474,6 +474,11 @@ export class Session<Context extends ServerContext> {
                   this.namespacedDocumentId,
                   message.payload.update,
                 ),
+                this.#pubSub.publish(
+                  `document/${this.namespacedDocumentId}` as const,
+                  message.encoded,
+                  this.#nodeId,
+                ),
               ]);
 
               if (!client) {
@@ -485,21 +490,14 @@ export class Session<Context extends ServerContext> {
                 return;
               }
 
-              await Promise.all([
-                client.send(
-                  new DocMessage(
-                    this.documentId,
-                    { type: "sync-done" },
-                    message.context,
-                    this.encrypted,
-                  ),
+              await client.send(
+                new DocMessage(
+                  this.documentId,
+                  { type: "sync-done" },
+                  message.context,
+                  this.encrypted,
                 ),
-                this.#pubSub.publish(
-                  `document/${this.namespacedDocumentId}` as const,
-                  message.encoded,
-                  this.#nodeId,
-                ),
-              ]);
+              );
 
               log
                 .withMetadata({
