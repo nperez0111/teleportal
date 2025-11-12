@@ -437,10 +437,12 @@ export class Session<Context extends ServerContext> {
                 })
                 .trace("Processing update message");
 
+              // wait for confirmed write
+              await this.write(message.payload.update);
+
+              // broadcast and replicate
               await Promise.all([
-                this.write(message.payload.update).then(() =>
-                  this.broadcast(message, client?.id),
-                ),
+                this.broadcast(message, client?.id),
                 this.#pubSub.publish(
                   `document/${this.namespacedDocumentId}` as const,
                   message.encoded,
