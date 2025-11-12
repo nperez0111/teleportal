@@ -354,7 +354,6 @@ export class Server<Context extends ServerContext> {
               msgLogger.debug(
                 "Client tried to send sync-step-2 message but doesn't have write permissions, dropping message",
               );
-              console.log("Sending sync-done message", message.document);
               // Tell the client that they've successfully synced their state vector
               await client.send(
                 new DocMessage(
