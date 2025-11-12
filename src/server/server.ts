@@ -66,6 +66,11 @@ export class Server<Context extends ServerContext> {
    * The active sessions for the server.
    */
   #sessions = new Map<string, Session<Context>>();
+  /**
+   * Pending session creation promises to prevent race conditions.
+   * Maps composite document ID to the promise that will resolve to the session.
+   */
+  #pendingSessions = new Map<string, Promise<Session<Context>>>();
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -121,6 +126,8 @@ export class Server<Context extends ServerContext> {
       documentId,
       context,
     );
+
+    // Check if session already exists
     const existing = this.#sessions.get(compositeDocumentId);
     if (existing) {
       // Validate that the encryption state matches the existing session
@@ -155,6 +162,42 @@ export class Server<Context extends ServerContext> {
       return existing;
     }
 
+    // Check if there's a pending session creation for this document
+    const pending = this.#pendingSessions.get(compositeDocumentId);
+    if (pending) {
+      this.logger
+        .withMetadata({
+          documentId: compositeDocumentId,
+        })
+        .debug("Waiting for pending session creation");
+
+      const session = await pending;
+
+      // Validate encryption state matches
+      if (session.encrypted !== encrypted) {
+        const error = new Error(
+          `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
+        );
+        this.logger
+          .withError(error)
+          .withMetadata({
+            documentId: compositeDocumentId,
+            sessionId: session.id,
+            existingEncrypted: session.encrypted,
+            requestedEncrypted: encrypted,
+          })
+          .error("Encryption state mismatch detected");
+        throw error;
+      }
+
+      if (client) {
+        session.addClient(client);
+      }
+
+      return session;
+    }
+
+    // Create a new session - wrap in a promise to prevent race conditions
     const sessionLogger = this.logger.child().withContext({
       documentId: compositeDocumentId,
       sessionId: id,
@@ -169,54 +212,67 @@ export class Server<Context extends ServerContext> {
       })
       .info("Creating new session");
 
-    try {
-      const storage = await this.#options.getStorage({
-        documentId: compositeDocumentId,
-        context,
-        encrypted,
-      });
-
-      sessionLogger.debug("Storage retrieved for session");
-
-      const session = new Session<Context>({
-        documentId,
-        namespacedDocumentId: compositeDocumentId,
-        id,
-        encrypted,
-        storage,
-        pubSub: this.pubSub,
-        nodeId: this.#nodeId,
-        logger: this.logger,
-        onCleanupScheduled: this.#handleSessionCleanup.bind(this),
-      });
-
-      await session.load();
-      this.#sessions.set(compositeDocumentId, session);
-
-      sessionLogger
-        .withMetadata({
+    const sessionPromise = (async (): Promise<Session<Context>> => {
+      try {
+        const storage = await this.#options.getStorage({
           documentId: compositeDocumentId,
-          sessionId: id,
+          context,
           encrypted,
-          totalSessions: this.#sessions.size,
-        })
-        .info("Session created and loaded");
+        });
 
-      if (client) {
-        session.addClient(client);
+        sessionLogger.debug("Storage retrieved for session");
+
+        const session = new Session<Context>({
+          documentId,
+          namespacedDocumentId: compositeDocumentId,
+          id,
+          encrypted,
+          storage,
+          pubSub: this.pubSub,
+          nodeId: this.#nodeId,
+          logger: this.logger,
+          onCleanupScheduled: this.#handleSessionCleanup.bind(this),
+        });
+
+        await session.load();
+        this.#sessions.set(compositeDocumentId, session);
+
+        sessionLogger
+          .withMetadata({
+            documentId: compositeDocumentId,
+            sessionId: id,
+            encrypted,
+            totalSessions: this.#sessions.size,
+          })
+          .info("Session created and loaded");
+
+        return session;
+      } catch (error) {
+        sessionLogger
+          .withError(error as Error)
+          .withMetadata({
+            documentId: compositeDocumentId,
+            sessionId: id,
+            encrypted,
+          })
+          .error("Failed to create session");
+        throw error;
+      } finally {
+        // Always remove from pending map, even on error
+        this.#pendingSessions.delete(compositeDocumentId);
       }
-      return session;
-    } catch (error) {
-      sessionLogger
-        .withError(error as Error)
-        .withMetadata({
-          documentId: compositeDocumentId,
-          sessionId: id,
-          encrypted,
-        })
-        .error("Failed to create session");
-      throw error;
+    })();
+
+    // Store the promise so concurrent calls can wait for it
+    this.#pendingSessions.set(compositeDocumentId, sessionPromise);
+
+    const session = await sessionPromise;
+
+    if (client) {
+      session.addClient(client);
     }
+
+    return session;
   }
 
   /**
@@ -478,8 +534,31 @@ export class Server<Context extends ServerContext> {
       .withMetadata({
         nodeId: this.#nodeId,
         activeSessions: this.#sessions.size,
+        pendingSessions: this.#pendingSessions.size,
       })
       .info("Disposing server");
+
+    // Wait for any pending session creations to complete (or fail)
+    // This prevents dangling promises and ensures we don't dispose while sessions are being created
+    if (this.#pendingSessions.size > 0) {
+      this.logger
+        .withMetadata({
+          pendingCount: this.#pendingSessions.size,
+        })
+        .debug("Waiting for pending session creations to complete");
+
+      await Promise.allSettled(
+        Array.from(this.#pendingSessions.values()).map(async (promise) => {
+          try {
+            await promise;
+          } catch (error) {
+            // Ignore errors from pending session creation - they're expected if creation fails
+          }
+        }),
+      );
+
+      this.#pendingSessions.clear();
+    }
 
     for (const s of this.#sessions.values()) {
       try {

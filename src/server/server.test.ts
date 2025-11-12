@@ -196,6 +196,31 @@ describe("Server", () => {
       expect(session1).toBe(session2);
     });
 
+    it("should handle concurrent calls and return the same session", async () => {
+      // Simulate race condition: multiple concurrent calls for the same document
+      const context = { userId: "user-1", room: "room", clientId: "client-1" };
+      
+      const [session1, session2, session3] = await Promise.all([
+        server.getOrOpenSession("concurrent-doc", {
+          encrypted: false,
+          context,
+        }),
+        server.getOrOpenSession("concurrent-doc", {
+          encrypted: false,
+          context,
+        }),
+        server.getOrOpenSession("concurrent-doc", {
+          encrypted: false,
+          context,
+        }),
+      ]);
+
+      // All concurrent calls should return the same session instance
+      expect(session1).toBe(session2);
+      expect(session2).toBe(session3);
+      expect(session1.documentId).toBe("concurrent-doc");
+    });
+
     it("should create session with custom id", async () => {
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
