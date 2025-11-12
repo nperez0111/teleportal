@@ -100,13 +100,15 @@ describe("Client", () => {
     });
 
     it("should handle concurrent send operations safely", async () => {
-      const messages = Array.from({ length: 10 }, (_, i) =>
-        new DocMessage(
-          "test-doc",
-          { type: "sync-done" },
-          { clientId: "test-client", userId: "test-user", room: "test-room" },
-          false,
-        ),
+      const messages = Array.from(
+        { length: 10 },
+        (_, i) =>
+          new DocMessage(
+            "test-doc",
+            { type: "sync-done" },
+            { clientId: "test-client", userId: "test-user", room: "test-room" },
+            false,
+          ),
       );
 
       // Send all messages concurrently

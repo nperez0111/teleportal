@@ -191,12 +191,13 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
           // If we were still connecting when the connection closed, check if the WebSocket
           // actually opened. If the WebSocket is OPEN, treat as normal close (open event
-          // might not have fired yet due to timing). If still CONNECTING, treat as error.
-          // MSW may close connections during handshake, but we should only error if the
-          // connection never actually opened.
+          // might not have fired yet due to timing). If not OPEN, treat as error since
+          // the connection never successfully opened.
+          // MSW may close connections during handshake, but we should only treat as normal
+          // close if the connection actually opened.
           if (
             this.state.type === "connecting" &&
-            websocket.readyState === this.#WebSocketImpl.CONNECTING
+            websocket.readyState !== this.#WebSocketImpl.OPEN
           ) {
             const error = new Error(
               "WebSocket connection closed during handshake",
