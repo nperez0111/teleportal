@@ -188,14 +188,26 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
           this.#cleanupWebSocketListeners(websocket);
 
-          // If we were still connecting when the connection closed, check if the WebSocket
-          // actually opened. If the WebSocket is OPEN, treat as normal close (open event
-          // might not have fired yet due to timing). If not OPEN, treat as error since
-          // the connection never successfully opened.
-          if (
-            this.state.type === "connecting" &&
-            websocket.readyState !== this.#WebSocketImpl.OPEN
-          ) {
+          // Capture the current state at the start to avoid race conditions where the open
+          // event fires after the close event but before we check the state. If the state
+          // is "connected", we know the connection was successfully opened, so treat as
+          // normal close. If the state is "connecting" and the WebSocket never opened
+          // (readyState is not OPEN/CLOSING), treat as error.
+          const currentState = this.state.type;
+          const readyState = websocket.readyState;
+          const wasOpenOrClosing =
+            readyState === this.#WebSocketImpl.OPEN ||
+            readyState === this.#WebSocketImpl.CLOSING;
+
+          // If the connection was successfully opened (state is connected OR readyState indicates
+          // it was open), treat as normal close
+          if (currentState === "connected" || wasOpenOrClosing) {
+            this.closeConnection();
+            return;
+          }
+
+          // If we were still connecting and the WebSocket never opened, treat as error
+          if (currentState === "connecting") {
             const error = new Error(
               "WebSocket connection closed during handshake",
               {
@@ -203,9 +215,11 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
               },
             );
             this.handleConnectionError(error);
-          } else {
-            this.closeConnection();
+            return;
           }
+
+          // Otherwise, treat as normal close (state is disconnected or errored)
+          this.closeConnection();
         },
 
         open: (event: Event) => {
