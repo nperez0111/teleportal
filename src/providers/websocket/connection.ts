@@ -52,6 +52,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     }
   > = new Map();
   #connectionTimeout: ReturnType<typeof setTimeout> | null = null;
+  #connectionStartTime: number | null = null;
 
   /**
    * A writable stream to send messages over the websocket connection
@@ -99,6 +100,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       const websocket = new this.#WebSocketImpl(this.#url, this.#protocols);
       websocket.binaryType = "arraybuffer";
       this.#currentWebSocket = websocket;
+      this.#connectionStartTime = Date.now();
 
       // Set state to connecting first
       this.setState({ type: "connecting", context: { ws: websocket } });
@@ -190,15 +192,23 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           // If we were still connecting when the connection closed, we need to check
           // if the connection actually opened. In CI environments (especially with MSW),
           // the close event may fire before the open event due to timing differences.
-          // We use a small delay to give the open event a chance to fire first.
+          // We use a delay to give the open event a chance to fire first.
           if (
             this.state.type === "connecting" &&
             websocket.readyState !== this.#WebSocketImpl.OPEN
           ) {
-            // Use a small timeout to allow the open event to fire first if it's pending
+            // Calculate how long since connection started. If it's very quick (likely MSW timing issue),
+            // we'll wait longer. Otherwise, we use a shorter delay.
+            const timeSinceStart = this.#connectionStartTime
+              ? Date.now() - this.#connectionStartTime
+              : Infinity;
+            // If close happens very quickly (< 20ms), it's likely a timing issue in CI/MSW
+            // and we should wait longer. Otherwise, use a shorter delay.
+            const delay = timeSinceStart < 20 ? 100 : 50;
+
+            // Use a timeout to allow the open event to fire first if it's pending
             // This is especially important in CI environments where timing can be different.
             // We don't clean up listeners immediately to allow the open event to be processed.
-            // Using 5ms to give enough time for the event loop to process the open event in slower CI environments.
             Connection.setTimeout(() => {
               // Double-check that this is still the current WebSocket and we're still connecting
               // If the state changed to connected, the open event fired and we should treat
@@ -222,7 +232,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
                 this.#cleanupWebSocketListeners(websocket);
                 this.closeConnection();
               }
-            }, 5);
+            }, delay);
           } else {
             // Connection was already open or in a different state, treat as normal close
             this.#cleanupWebSocketListeners(websocket);
@@ -246,6 +256,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           }
 
           this.updateLastMessageReceived();
+          this.#connectionStartTime = null; // Clear start time on successful connection
           this.setState({ type: "connected", context: { ws: websocket } });
         },
       };
@@ -281,6 +292,9 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       Connection.clearTimeout(this.#connectionTimeout);
       this.#connectionTimeout = null;
     }
+
+    // Clear connection start time
+    this.#connectionStartTime = null;
 
     if (this.#currentWebSocket) {
       const ws = this.#currentWebSocket;
