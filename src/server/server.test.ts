@@ -175,6 +175,7 @@ describe("Server", () => {
     it("should create a new session", async () => {
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       expect(session).toBeDefined();
@@ -185,9 +186,11 @@ describe("Server", () => {
     it("should return existing session when called twice", async () => {
       const session1 = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       const session2 = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       expect(session1).toBe(session2);
@@ -197,6 +200,7 @@ describe("Server", () => {
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
         id: "custom-session-id",
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       expect(session).toBeDefined();
@@ -206,6 +210,7 @@ describe("Server", () => {
     it("should create encrypted session", async () => {
       const session = await server.getOrOpenSession("encrypted-doc", {
         encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       expect(session).toBeDefined();
@@ -216,23 +221,27 @@ describe("Server", () => {
       // Create a session with encrypted: false
       await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Try to get the same session with encrypted: true - should throw
       await expect(
         server.getOrOpenSession("test-doc", {
           encrypted: true,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
         }),
       ).rejects.toThrow("Encryption state mismatch");
 
       // Also test the reverse: create encrypted session, then try unencrypted
       await server.getOrOpenSession("encrypted-test-doc", {
         encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       await expect(
         server.getOrOpenSession("encrypted-test-doc", {
           encrypted: false,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
         }),
       ).rejects.toThrow("Encryption state mismatch");
     });
@@ -252,6 +261,7 @@ describe("Server", () => {
 
       await customServer.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "", clientId: "client-1" },
       });
 
       expect(calledWith).toBeDefined();
@@ -349,12 +359,14 @@ describe("Server", () => {
     it("should use document name only when no room in context", async () => {
       const session1 = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "", clientId: "client-1" },
       });
       const session2 = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "", clientId: "client-1" },
       });
 
-      // Should return the same session instance (backward compatibility)
+      // Should return the same session instance since the rooms are the same
       expect(session1).toBe(session2);
       expect(session1.documentId).toBe("test-doc");
     });
@@ -372,11 +384,15 @@ describe("Server", () => {
       });
       const session2 = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
-      // Should return the same session instance (empty room treated as no room)
-      expect(session1).toBe(session2);
+      // Should return a different session instance, since the rooms are different
+      expect(session1).not.toBe(session2);
       expect(session1.documentId).toBe("test-doc");
+      expect(session1.namespacedDocumentId).toBe("test-doc");
+      expect(session2.documentId).toBe("test-doc");
+      expect(session2.namespacedDocumentId).toBe("room/test-doc");
     });
   });
 
@@ -429,6 +445,7 @@ describe("Server", () => {
       // Session should be created
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(session).toBeDefined();
 
@@ -657,6 +674,7 @@ describe("Server", () => {
       // Create a session and add client
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       session.addClient(client);
 
@@ -677,6 +695,7 @@ describe("Server", () => {
       // Create a session and add client
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       session.addClient(client);
 
@@ -696,9 +715,11 @@ describe("Server", () => {
       // Create multiple sessions
       const session1 = await server.getOrOpenSession("test-doc-1", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       const session2 = await server.getOrOpenSession("test-doc-2", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       session1.addClient(client);
@@ -719,6 +740,7 @@ describe("Server", () => {
     it("should handle cleanup callback when session has no clients", async () => {
       const session = await server.getOrOpenSession("test-doc-cleanup", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Manually trigger cleanup callback (simulating timeout firing)
@@ -733,6 +755,7 @@ describe("Server", () => {
       await server.getOrOpenSession("test-doc-cleanup", {
         encrypted: false,
         client,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Remove client to trigger cleanup scheduling
@@ -746,6 +769,7 @@ describe("Server", () => {
         "test-doc-cleanup",
         {
           encrypted: false,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
         },
       );
       expect(existingSession).toBeDefined();
@@ -765,6 +789,7 @@ describe("Server", () => {
       const session1 = await server.getOrOpenSession("test-doc-reconnect", {
         encrypted: false,
         client: client1,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Disconnect client
@@ -784,6 +809,7 @@ describe("Server", () => {
       const session2 = await server.getOrOpenSession("test-doc-reconnect", {
         encrypted: false,
         client: client2,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Session should still exist
@@ -804,6 +830,7 @@ describe("Server", () => {
       await server.getOrOpenSession("test-doc-delay", {
         encrypted: false,
         client,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Disconnect client
@@ -813,6 +840,7 @@ describe("Server", () => {
       // Session should still exist immediately
       const sessionImmediate = await server.getOrOpenSession("test-doc-delay", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(sessionImmediate).toBeDefined();
 
@@ -830,6 +858,7 @@ describe("Server", () => {
       const session = await server.getOrOpenSession("test-doc-handler", {
         encrypted: false,
         client,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Verify session exists
@@ -837,6 +866,7 @@ describe("Server", () => {
         "test-doc-handler",
         {
           encrypted: false,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
         },
       );
       expect(existingSession).toBeDefined();
@@ -868,6 +898,7 @@ describe("Server", () => {
       const session = await server.getOrOpenSession("test-doc-cancel-timeout", {
         encrypted: false,
         client: client1,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
       // Remove client
@@ -890,6 +921,7 @@ describe("Server", () => {
         {
           encrypted: false,
           client: client2,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
         },
       );
 
@@ -905,8 +937,14 @@ describe("Server", () => {
   describe("asyncDispose", () => {
     it("should dispose server and all sessions", async () => {
       // Create sessions
-      await server.getOrOpenSession("test-doc-1", { encrypted: false });
-      await server.getOrOpenSession("test-doc-2", { encrypted: false });
+      await server.getOrOpenSession("test-doc-1", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      await server.getOrOpenSession("test-doc-2", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
 
       await server[Symbol.asyncDispose]();
 
@@ -949,6 +987,7 @@ describe("Server", () => {
       // Session should be created
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(session).toBeDefined();
 
@@ -981,6 +1020,7 @@ describe("Server", () => {
       // Both clients connect to same document
       const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       session.addClient(client1);
       session.addClient(client2);

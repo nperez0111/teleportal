@@ -211,6 +211,7 @@ describe("getHTTPHandler", () => {
       // Verify session was created with custom document
       const session = await server.getOrOpenSession("custom-doc", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(session).toBeDefined();
     });

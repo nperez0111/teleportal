@@ -3,8 +3,14 @@ import type { StateVector, SyncStep2Update, Update } from "teleportal";
  * A storage interface for a document.
  */
 export abstract class DocumentStorage {
+  /**
+   * The type of the storage.
+   */
   public readonly type = "document-storage";
 
+  /**
+   * Whether the document is encrypted.
+   */
   public encrypted = false;
 
   /**

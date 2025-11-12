@@ -114,7 +114,7 @@ export class Server<Context extends ServerContext> {
       encrypted: boolean;
       id?: string;
       client?: Client<Context>;
-      context?: Context;
+      context: Context;
     },
   ) {
     const compositeDocumentId = this.#getCompositeDocumentId(
@@ -172,7 +172,7 @@ export class Server<Context extends ServerContext> {
     try {
       const storage = await this.#options.getStorage({
         documentId: compositeDocumentId,
-        context: context ?? ({ userId: "", room: "", clientId: "" } as any),
+        context,
         encrypted,
       });
 

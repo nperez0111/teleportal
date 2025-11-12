@@ -180,9 +180,11 @@ describe("HTTP Handlers", () => {
       // Verify sessions were created
       const session1 = await server.getOrOpenSession("doc-1", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       const session2 = await server.getOrOpenSession("doc-2", {
         encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(session1).toBeDefined();
       expect(session2).toBeDefined();
@@ -209,6 +211,7 @@ describe("HTTP Handlers", () => {
 
       const session = await server.getOrOpenSession("doc-1", {
         encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(session).toBeDefined();
       expect(session.encrypted).toBe(true);
@@ -257,6 +260,7 @@ describe("HTTP Handlers", () => {
 
       const session = await server.getOrOpenSession("custom-doc", {
         encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
       expect(session).toBeDefined();
     });
