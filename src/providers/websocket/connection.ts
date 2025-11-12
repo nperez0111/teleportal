@@ -52,8 +52,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     }
   > = new Map();
   #connectionTimeout: ReturnType<typeof setTimeout> | null = null;
-  #connectionStartTime: number | null = null;
-  #quickRetryCount = 0;
 
   /**
    * A writable stream to send messages over the websocket connection
@@ -101,15 +99,11 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       const websocket = new this.#WebSocketImpl(this.#url, this.#protocols);
       websocket.binaryType = "arraybuffer";
       this.#currentWebSocket = websocket;
-      this.#connectionStartTime = Date.now();
-      // Reset quick retry count for new connection attempt
-      this.#quickRetryCount = 0;
 
       // Set state to connecting first
       this.setState({ type: "connecting", context: { ws: websocket } });
 
       // Set up connection timeout (10 seconds) to handle cases where connection gets stuck
-      // This is especially important for MSW in CI environments
       this.#connectionTimeout = Connection.setTimeout(() => {
         if (
           this.#currentWebSocket === websocket &&
@@ -164,10 +158,10 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
             return;
           }
 
-          // In MSW and some environments, error events can be fired during connection
-          // setup even if the connection will succeed. Only treat as fatal if the
-          // WebSocket is actually closed or closing. If still connecting, the close
-          // event will handle it if the connection actually fails.
+          // Error events can be fired during connection setup even if the connection
+          // will succeed. Only treat as fatal if the WebSocket is actually closed or
+          // closing. If still connecting, the close event will handle it if the
+          // connection actually fails.
           const readyState = websocket.readyState;
           if (
             readyState === this.#WebSocketImpl.CLOSED ||
@@ -192,60 +186,24 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
             this.#connectionTimeout = null;
           }
 
-          // If we were still connecting when the connection closed, check if this
-          // is a transient issue (like MSW timing in CI) or a real error.
+          this.#cleanupWebSocketListeners(websocket);
+
+          // If we were still connecting when the connection closed, check if the WebSocket
+          // actually opened. If the WebSocket is OPEN, treat as normal close (open event
+          // might not have fired yet due to timing). If not OPEN, treat as error since
+          // the connection never successfully opened.
           if (
             this.state.type === "connecting" &&
             websocket.readyState !== this.#WebSocketImpl.OPEN
           ) {
-            // Calculate how long since connection started
-            const timeSinceStart = this.#connectionStartTime
-              ? Date.now() - this.#connectionStartTime
-              : Infinity;
-
-            // If the close happens very quickly (< 50ms) with a clean close code (1000),
-            // it's likely a timing issue in CI/MSW. In this case, we'll retry immediately
-            // without treating it as an error, as the connection may succeed on retry.
-            // This is a workaround for MSW WebSocket interception timing issues in CI.
-            const isQuickCleanClose =
-              timeSinceStart < 50 && event.code === 1000 && event.wasClean;
-
-            this.#cleanupWebSocketListeners(websocket);
-
-            if (isQuickCleanClose && this.#quickRetryCount < 3) {
-              // Quick clean close during handshake - likely MSW timing issue.
-              // Retry the connection immediately without treating as error.
-              // Limit to 3 quick retries to prevent infinite loops.
-              this.#quickRetryCount++;
-              // Use a microtask to allow the close event to fully process first.
-              queueMicrotask(() => {
-                // Only retry if we're still in a state that allows reconnection
-                if (
-                  !this.destroyed &&
-                  this.shouldAttemptConnection() &&
-                  this.state.type !== "connected"
-                ) {
-                  // Reset to disconnected state and retry
-                  this.setState({
-                    type: "disconnected",
-                    context: { ws: null },
-                  });
-                  this.initConnection();
-                }
-              });
-            } else {
-              // Real connection failure - treat as error
-              const error = new Error(
-                "WebSocket connection closed during handshake",
-                {
-                  cause: event,
-                },
-              );
-              this.handleConnectionError(error);
-            }
+            const error = new Error(
+              "WebSocket connection closed during handshake",
+              {
+                cause: event,
+              },
+            );
+            this.handleConnectionError(error);
           } else {
-            // Connection was already open or in a different state, treat as normal close
-            this.#cleanupWebSocketListeners(websocket);
             this.closeConnection();
           }
         },
@@ -266,8 +224,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           }
 
           this.updateLastMessageReceived();
-          this.#connectionStartTime = null; // Clear start time on successful connection
-          this.#quickRetryCount = 0; // Reset quick retry count on successful connection
           this.setState({ type: "connected", context: { ws: websocket } });
         },
       };
@@ -303,10 +259,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       Connection.clearTimeout(this.#connectionTimeout);
       this.#connectionTimeout = null;
     }
-
-    // Clear connection start time and retry count
-    this.#connectionStartTime = null;
-    this.#quickRetryCount = 0;
 
     if (this.#currentWebSocket) {
       const ws = this.#currentWebSocket;
