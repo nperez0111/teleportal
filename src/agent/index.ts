@@ -57,16 +57,14 @@ export class Agent {
     await transport.synced;
     logger.trace("transport synced");
 
-    // hand back the ydoc? What interface should we expose?
-
     return {
       ydoc: transport.ydoc,
       awareness: transport.awareness,
-      destroy: async (): Promise<void> => {
+      clientId: client.id,
+      [Symbol.asyncDispose]: async (): Promise<void> => {
         session.removeClient(client);
         transport.ydoc.destroy();
       },
-      clientId: client.id,
     };
   }
 }

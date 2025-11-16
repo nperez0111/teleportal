@@ -71,10 +71,10 @@ describe("Agent", () => {
       expect(result.ydoc).toBeInstanceOf(Y.Doc);
       expect(result.awareness).toBeInstanceOf(Awareness);
       expect(result.clientId).toBe("test-client");
-      expect(typeof result.destroy).toBe("function");
+      expect(typeof result[Symbol.asyncDispose]).toBe("function");
 
       // Clean up
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
 
     it("should create a client with the provided clientId", async () => {
@@ -90,7 +90,7 @@ describe("Agent", () => {
 
       expect(result.clientId).toBe("custom-client-id");
 
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
 
     it("should create a session for the document", async () => {
@@ -117,7 +117,7 @@ describe("Agent", () => {
       expect(session).toBeDefined();
       expect(session.documentId).toBe("test-doc-session");
 
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
 
     it("should sync the transport and wait for synced promise", async () => {
@@ -136,7 +136,7 @@ describe("Agent", () => {
       expect(result.ydoc).toBeDefined();
       // If we got here, the synced promise resolved successfully
 
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
 
     it("should accept optional custom handler", async () => {
@@ -155,7 +155,7 @@ describe("Agent", () => {
       expect(result).toBeDefined();
       expect(result.ydoc).toBeInstanceOf(Y.Doc);
 
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
 
     it("should allow modifying the ydoc after creation", async () => {
@@ -174,7 +174,7 @@ describe("Agent", () => {
 
       expect(text.toString()).toBe("Hello, World!");
 
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
 
     it("should properly destroy the agent and clean up resources", async () => {
@@ -202,7 +202,7 @@ describe("Agent", () => {
       expect(session).toBeDefined();
 
       // Destroy should not throw
-      await expect(result.destroy()).resolves.toBeUndefined();
+      await expect(result[Symbol.asyncDispose]()).resolves.toBeUndefined();
 
       // YDoc should be destroyed (we can't directly verify, but it shouldn't throw)
       expect(() => result.ydoc.getText("test")).not.toThrow();
@@ -226,8 +226,8 @@ describe("Agent", () => {
       expect(agent1.clientId).toBe("client-1");
       expect(agent2.clientId).toBe("client-2");
 
-      await agent1.destroy();
-      await agent2.destroy();
+      await agent1[Symbol.asyncDispose]();
+      await agent2[Symbol.asyncDispose]();
     }, 15000);
 
     it("should handle agents with different rooms", async () => {
@@ -258,8 +258,8 @@ describe("Agent", () => {
       expect(session1.namespacedDocumentId).toBe("room-1/same-doc");
       expect(session2.namespacedDocumentId).toBe("room-2/same-doc");
 
-      await agent1.destroy();
-      await agent2.destroy();
+      await agent1[Symbol.asyncDispose]();
+      await agent2[Symbol.asyncDispose]();
     }, 15000);
 
     it("should handle empty room in context", async () => {
@@ -278,7 +278,7 @@ describe("Agent", () => {
 
       expect(session.namespacedDocumentId).toBe("empty-room-doc");
 
-      await result.destroy();
+      await result[Symbol.asyncDispose]();
     }, 15000);
   });
 });
