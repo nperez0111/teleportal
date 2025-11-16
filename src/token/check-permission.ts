@@ -4,8 +4,11 @@ import type { TokenManager } from ".";
 export function checkPermissionWithTokenManager(
   tokenManager: TokenManager,
 ): ServerOptions<any>["checkPermission"] {
-  return async ({ context, documentId, message }) => {
+  return async ({ context, documentId, fileId, message }) => {
     if (message.type === "doc") {
+      if (!documentId) {
+        throw new Error("documentId is required for doc messages");
+      }
       switch (message.payload.type) {
         case "sync-done":
         case "sync-step-1":
@@ -31,6 +34,13 @@ export function checkPermissionWithTokenManager(
             `Unknown message type: ${(message.payload as any).type}`,
           );
       }
+    }
+
+    if (message.type === "file") {
+      // File messages use fileId instead of documentId
+      // For now, we allow all file messages through
+      // In the future, you could implement file-specific permission checks here
+      return true;
     }
 
     // we just allow all other message types through for now

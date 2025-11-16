@@ -28,10 +28,12 @@ export type ServerOptions<Context extends ServerContext> = {
 
   /**
    * Optional permission checker for read/write.
+   * Either documentId or fileId will be provided, but not both.
    */
   checkPermission?: (ctx: {
     context: Context;
-    documentId: string;
+    documentId?: string;
+    fileId?: string;
     message: Message<Context>;
     type: "read" | "write";
   }) => Promise<boolean>;
@@ -340,10 +342,19 @@ export class Server<Context extends ServerContext> {
 
         const msgLogger = logger.child().withContext({ messageId: message.id });
 
+        // Extract fileId from FileMessage payload if document is undefined
+        const fileId =
+          message.type === "file" &&
+          (message.payload.type === "file-request" ||
+            message.payload.type === "file-progress")
+            ? message.payload.fileId
+            : undefined;
+
         msgLogger
           .withMetadata({
             messageId: message.id,
             documentId: message.document,
+            fileId,
             messageType: message.type,
             permissionType: type,
             userId: message.context.userId,
@@ -352,9 +363,17 @@ export class Server<Context extends ServerContext> {
           .debug("Checking permission");
 
         try {
+          // Ensure at least one of documentId or fileId is provided
+          if (!message.document && !fileId) {
+            throw new Error(
+              `Message ${message.id} must have either documentId or fileId`,
+            );
+          }
+
           const ok = await this.#options.checkPermission({
             context: message.context,
-            documentId: message.document!,
+            documentId: message.document ?? undefined,
+            fileId,
             message,
             type,
           });
@@ -362,7 +381,8 @@ export class Server<Context extends ServerContext> {
           msgLogger
             .withMetadata({
               messageId: message.id,
-              documentId: message.document!,
+              documentId: message.document,
+              fileId,
               permissionType: type,
               authorized: ok,
             })
