@@ -90,17 +90,30 @@ export class InMemoryFileStorage extends FileStorage {
       throw new Error(`Upload session ${fileId} not found`);
     }
 
-    // Calculate total chunks expected
-    const totalChunks = Math.ceil(upload.metadata.size / (64 * 1024));
+    // Get all stored chunks in order
+    // We need to find the highest chunk index to know how many chunks there are
+    const chunkIndices = Array.from(upload.chunks.keys()).sort((a, b) => a - b);
+    if (chunkIndices.length === 0) {
+      throw new Error(`No chunks stored for file ${fileId}`);
+    }
 
-    // Verify we have all chunks
+    // Verify we have all chunks from 0 to maxIndex
+    const maxChunkIndex = chunkIndices[chunkIndices.length - 1];
     const chunks: Uint8Array[] = [];
-    for (let i = 0; i < totalChunks; i++) {
+    for (let i = 0; i <= maxChunkIndex; i++) {
       const chunk = upload.chunks.get(i);
       if (!chunk) {
         throw new Error(`Missing chunk ${i} for file ${fileId}`);
       }
       chunks.push(chunk);
+    }
+
+    // Verify total size matches
+    const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    if (totalSize !== upload.metadata.size) {
+      throw new Error(
+        `Size mismatch for file ${fileId}. Expected ${upload.metadata.size}, got ${totalSize}`,
+      );
     }
 
     // Build merkle tree from all chunks
