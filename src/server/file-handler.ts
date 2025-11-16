@@ -277,7 +277,11 @@ export class FileHandler<Context extends ServerContext> {
       }
 
       // Check if upload is complete
-      const totalChunks = Math.ceil(updatedUpload.metadata.size / (64 * 1024));
+      // Handle empty files: ensure at least one chunk
+      const totalChunks =
+        updatedUpload.metadata.size === 0
+          ? 1
+          : Math.ceil(updatedUpload.metadata.size / (64 * 1024));
       if (updatedUpload.chunks.size >= totalChunks) {
         // All chunks received - build merkle tree and complete upload
         const chunks: Uint8Array[] = [];

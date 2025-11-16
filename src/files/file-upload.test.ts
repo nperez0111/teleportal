@@ -32,6 +32,24 @@ describe("Merkle Tree", () => {
     expect(tree.nodes[0].hash).toBeDefined();
   });
 
+  it("should build a merkle tree from a single empty chunk (0-byte file)", () => {
+    const chunks = [new Uint8Array(0)];
+
+    const tree = buildMerkleTree(chunks);
+
+    expect(tree.leafCount).toBe(1);
+    expect(tree.nodes.length).toBe(1); // Single node is both leaf and root
+    expect(tree.nodes[0].hash).toBeDefined();
+    expect(tree.nodes[0].hash.length).toBe(32); // SHA-256 hash is 32 bytes
+
+    // Verify we can generate and verify a proof for the empty chunk
+    const proof = generateMerkleProof(tree, 0);
+    expect(proof.length).toBe(0); // Single chunk has no proof path
+    const root = tree.nodes[tree.nodes.length - 1].hash;
+    const isValid = verifyMerkleProof(chunks[0], proof, root, 0);
+    expect(isValid).toBe(true);
+  });
+
   it("should generate merkle proof for a chunk", () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),

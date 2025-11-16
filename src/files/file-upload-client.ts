@@ -42,6 +42,11 @@ export class FileUploader {
       chunks.push(dataToUpload.slice(i, i + CHUNK_SIZE));
     }
 
+    // Handle empty files: ensure at least one chunk (even if empty)
+    if (chunks.length === 0) {
+      chunks.push(new Uint8Array(0));
+    }
+
     // Build merkle tree
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
