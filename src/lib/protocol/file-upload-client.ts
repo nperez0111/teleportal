@@ -1,4 +1,3 @@
-import { uuidv4 } from "lib0/random";
 import type { ClientContext, Transport } from "teleportal";
 import {
   buildMerkleTree,
@@ -6,7 +5,6 @@ import {
   generateMerkleProof,
 } from "./file-upload";
 import { FileMessage } from "./message-types";
-import type { DecodedFileProgress, DecodedFileRequest } from "./types";
 
 /**
  * File uploader for streaming file uploads with merkle tree verification.

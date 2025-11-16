@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { decodeMessage, FileMessage } from "./message-types";
+import { decodeMessage } from "./decode";
+import { FileMessage } from "./message-types";
+import { CHUNK_SIZE } from "./file-upload";
 import type { DecodedFileProgress, DecodedFileRequest } from "./types";
 
 describe("File Message Encoding/Decoding", () => {

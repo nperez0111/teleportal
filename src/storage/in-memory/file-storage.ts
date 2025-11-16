@@ -1,7 +1,6 @@
 import {
   buildMerkleTree,
   type MerkleTree,
-  verifyMerkleProof,
 } from "../../lib/protocol/file-upload";
 import type {
   FileData,
