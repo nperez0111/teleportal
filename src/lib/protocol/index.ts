@@ -17,3 +17,5 @@ export * from "./ping";
 export * from "./pubSub";
 export * from "./types";
 export * from "./utils";
+export * from "./file-upload";
+export * from "./file-upload-client";

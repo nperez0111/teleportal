@@ -28,8 +28,8 @@ export function encodeMessage(update: Message): BinaryMessage {
     encoding.writeUint8(encoder, 0x53);
     // version
     encoding.writeUint8(encoder, 0x01);
-    // document name
-    encoding.writeVarString(encoder, update.document);
+    // document name (file messages may omit document, encode as empty string)
+    encoding.writeVarString(encoder, update.document ?? "");
 
     // encrypted or not
     encoding.writeUint8(encoder, update.encrypted ? 1 : 0);
@@ -111,8 +111,8 @@ export function encodeMessage(update: Message): BinaryMessage {
           }
         }
         break;
-      }
-      case "ack": {
+        }
+        case "ack": {
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 2);
         // message id
@@ -122,6 +122,85 @@ export function encodeMessage(update: Message): BinaryMessage {
         );
         break;
       }
+        case "file": {
+          // message type selector for file transfers
+          encoding.writeUint8(encoder, 3);
+
+          switch (update.payload.type) {
+            case "file-request": {
+              encoding.writeUint8(encoder, 0);
+              encoding.writeUint8(
+                encoder,
+                update.payload.direction === "upload" ? 0 : 1,
+              );
+              encoding.writeVarString(encoder, update.payload.fileId);
+              encoding.writeVarString(encoder, update.payload.filename);
+              encoding.writeVarUint(encoder, update.payload.size);
+              encoding.writeVarString(encoder, update.payload.mimeType);
+              if (update.payload.contentId) {
+                encoding.writeUint8(encoder, 1);
+                encoding.writeVarUint8Array(encoder, update.payload.contentId);
+              } else {
+                encoding.writeUint8(encoder, 0);
+              }
+              if (update.payload.status) {
+                encoding.writeUint8(encoder, 1);
+                encoding.writeUint8(
+                  encoder,
+                  update.payload.status === "accepted" ? 0 : 1,
+                );
+                if (update.payload.reason) {
+                  encoding.writeUint8(encoder, 1);
+                  encoding.writeVarString(encoder, update.payload.reason);
+                } else {
+                  encoding.writeUint8(encoder, 0);
+                }
+              } else {
+                encoding.writeUint8(encoder, 0);
+              }
+              if (
+                typeof update.payload.resumeFromChunk === "number" &&
+                update.payload.resumeFromChunk >= 0
+              ) {
+                encoding.writeUint8(encoder, 1);
+                encoding.writeVarUint(encoder, update.payload.resumeFromChunk);
+              } else {
+                encoding.writeUint8(encoder, 0);
+              }
+              if (
+                typeof update.payload.bytesUploaded === "number" &&
+                update.payload.bytesUploaded >= 0
+              ) {
+                encoding.writeUint8(encoder, 1);
+                encoding.writeVarUint(encoder, update.payload.bytesUploaded);
+              } else {
+                encoding.writeUint8(encoder, 0);
+              }
+              encoding.writeUint8(encoder, update.payload.encrypted ? 1 : 0);
+              break;
+            }
+            case "file-progress": {
+              encoding.writeUint8(encoder, 1);
+              encoding.writeVarString(encoder, update.payload.fileId);
+              encoding.writeVarUint(encoder, update.payload.chunkIndex);
+              encoding.writeVarUint(encoder, update.payload.totalChunks);
+              encoding.writeVarUint(encoder, update.payload.bytesUploaded);
+              encoding.writeUint8(encoder, update.payload.encrypted ? 1 : 0);
+              encoding.writeVarUint8Array(encoder, update.payload.chunkData);
+              encoding.writeVarUint(encoder, update.payload.merkleProof.length);
+              for (const proof of update.payload.merkleProof) {
+                encoding.writeVarUint8Array(encoder, proof);
+              }
+              break;
+            }
+            default: {
+              throw new Error("Invalid file payload type", {
+                cause: { update },
+              });
+            }
+          }
+          break;
+        }
       default: {
         // @ts-expect-error - this should be unreachable due to type checking
         update.type;
