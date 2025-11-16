@@ -2,11 +2,11 @@ import {
   buildMerkleTree,
   type MerkleTree,
 } from "../../lib/protocol/file-upload";
-import type {
-  FileData,
-  FileMetadata,
+import {
   FileStorage,
-  UploadProgress,
+  type FileData,
+  type FileMetadata,
+  type UploadProgress,
 } from "../file-storage";
 
 /**

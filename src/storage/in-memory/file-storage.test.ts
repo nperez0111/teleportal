@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { buildMerkleTree, CHUNK_SIZE } from "../../lib/protocol/file-upload";
-import { InMemoryFileStorage } from "./index";
+import { InMemoryFileStorage } from "./file-storage";
 
 describe("InMemoryFileStorage", () => {
   it("should initiate an upload", async () => {
