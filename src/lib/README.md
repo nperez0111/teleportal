@@ -35,6 +35,8 @@ After the header, a single byte indicates the message category:
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │ 0x00 = Document Message                                                         │
 │ 0x01 = Awareness Message                                                        │
+│ 0x02 = ACK Message                                                              │
+│ 0x03 = File Message                                                             │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -134,6 +136,115 @@ Awareness messages handle user presence and cursor information in collaborative 
 **Purpose**: Requests current awareness state
 **Payload**: None
 **Usage**: Client requests current user presence information
+
+## File Messages (Type 0x03)
+
+File messages handle file uploads and downloads with chunking and Merkle tree verification for integrity.
+
+### File Message Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            File Message Format                                  │
+├─────────────┬───────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                        │
+│ (1 byte)    │                  (variable)                                       │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x00 = File │ Direction (1 byte) + FileId (string) + Filename (string) +        │
+│ Request     │ Size (varint) + MimeType (string) + ContentId (optional)          │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x01 = File │ FileId (string) + ChunkIndex (varint) + ChunkData (varint array)  │
+│ Progress    │ + MerkleProof (array) + TotalChunks (varint) +                    │
+│             │ BytesUploaded (varint) + Encrypted (1 byte)                       │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x02 = File │ Reason (string)                                                   │
+│ Auth        │                                                                   │
+└─────────────┴───────────────────────────────────────────────────────────────────┘
+```
+
+### File Message Types
+
+#### 1. File Request (0x00)
+
+**Purpose**: Initiates file upload or download
+
+**Payload Structure**:
+
+- Direction (1 byte): `0x00` = upload, `0x01` = download
+- FileId (varint string): Client-generated UUID for this transfer
+- Filename (varint string): Original filename
+- Size (varint): File size in bytes
+- MimeType (varint string): MIME type of the file
+- HasContentId (1 byte): `0x00` = false, `0x01` = true
+- ContentId (varint array, optional): Merkle root hash (required for downloads)
+
+**Usage**:
+
+- **Upload**: Client sends file metadata to initiate upload session
+- **Download**: Client requests file by contentId (merkle root hash)
+
+#### 2. File Progress (0x01)
+
+**Purpose**: Sends file chunk data with Merkle proof for verification
+
+**Payload Structure**:
+
+- FileId (varint string): Client-generated UUID matching the file request
+- ChunkIndex (varint): Zero-based index of this chunk
+- ChunkData (varint array): Chunk data (typically 64KB)
+- MerkleProofLength (varint): Number of proof hashes
+- MerkleProof (array of varint arrays): Merkle proof path hashes
+- TotalChunks (varint): Total number of chunks in the file
+- BytesUploaded (varint): Cumulative bytes uploaded so far
+- Encrypted (1 byte): `0x00` = false, `0x01` = true
+
+**Usage**: Client sends chunks sequentially with Merkle proofs for server verification
+
+#### 3. File Auth Message (0x02)
+
+**Purpose**: Server response indicating permission denied
+
+**Payload Structure**:
+
+- Reason (varint string): Explanation for denial
+
+**Usage**: Server sends when file request is rejected (e.g., size limit exceeded, unauthorized)
+
+### File Chunking and Merkle Trees
+
+Files are split into **64KB chunks** for efficient transfer. Each chunk is hashed using SHA-256, and a Merkle tree is constructed to verify file integrity.
+
+#### Merkle Tree Structure
+
+```
+                    Root Hash (ContentId)
+                         /        \
+                    Hash 1        Hash 2
+                    /    \        /    \
+                Hash 3  Hash 4  Hash 5  Hash 6
+                /   \   /   \   /   \   /   \
+              Chunk Chunk Chunk Chunk Chunk Chunk Chunk Chunk
+               0     1     2     3     4     5     6     7
+```
+
+- **Leaf nodes**: SHA-256 hash of each 64KB chunk
+- **Internal nodes**: Hash of concatenated child hashes
+- **Root hash**: Content ID used to uniquely identify the file
+- **Merkle proof**: Path from chunk hash to root (sibling hashes at each level)
+
+#### Chunk Verification
+
+For each chunk, the client sends:
+
+1. Chunk data (64KB)
+2. Merkle proof (array of sibling hashes from leaf to root)
+3. Chunk index
+
+The server verifies by:
+
+1. Hashing the chunk data
+2. Reconstructing the path to root using the proof
+3. Comparing the computed root hash with the expected contentId
 
 ## Special Message Types
 
@@ -236,6 +347,59 @@ Client                           Server
   │◀────── Awareness Update ──────│  (other clients' user states)
 ```
 
+### File Upload Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── File Request ─────────▶│  (upload, metadata)
+  │      (direction: upload)       │
+  │                                │
+  │                                │  (creates upload session)
+  │                                │
+  │─────── File Progress ────────▶│  (chunk 0 + merkle proof)
+  │                                │
+  │                                │  (verifies chunk, stores)
+  │                                │
+  │─────── File Progress ────────▶│  (chunk 1 + merkle proof)
+  │                                │
+  │                                │  (verifies chunk, stores)
+  │                                │
+  │         ... (more chunks)      │
+  │                                │
+  │─────── File Progress ────────▶│  (final chunk + merkle proof)
+  │                                │
+  │                                │  (verifies all chunks,
+  │                                │   reconstructs merkle tree,
+  │                                │   stores file, removes session)
+```
+
+### File Download Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── File Request ─────────▶│  (download, contentId)
+  │     (direction: download)      │
+  │                                │
+  │                                │  (looks up file by contentId)
+  │                                │
+  │◀────── File Progress ─────────│  (chunk 0 + merkle proof)
+  │                                │
+  │                                │  (client verifies chunk)
+  │                                │
+  │◀────── File Progress ─────────│  (chunk 1 + merkle proof)
+  │                                │
+  │                                │  (client verifies chunk)
+  │                                │
+  │         ... (more chunks)      │
+  │                                │
+  │◀────── File Progress ─────────│  (final chunk + merkle proof)
+  │                                │
+  │                                │  (client verifies all chunks,
+  │                                │   reconstructs file)
+```
+
 ## Error Handling
 
 The protocol includes robust error handling:
@@ -274,6 +438,65 @@ const awarenessMessage = new AwarenessMessage("my-document", {
   type: "awareness-update",
   update: awarenessUpdate
 });
+
+// Initiating file upload
+const fileRequest = new FileMessage({
+  type: "file-request",
+  direction: "upload",
+  fileId: "unique-file-id",
+  filename: "document.pdf",
+  size: 1024000,
+  mimeType: "application/pdf"
+});
+
+// Sending file chunk with Merkle proof
+const fileProgress = new FileMessage({
+  type: "file-progress",
+  fileId: "unique-file-id",
+  chunkIndex: 0,
+  chunkData: chunkBytes,
+  merkleProof: [hash1, hash2, hash3], // Path to root
+  totalChunks: 16,
+  bytesUploaded: 65536,
+  encrypted: false
+});
+
+// Requesting file download
+const downloadRequest = new FileMessage({
+  type: "file-request",
+  direction: "download",
+  fileId: "download-session-id",
+  filename: "", // Not required for downloads
+  size: 0, // Not required for downloads
+  mimeType: "", // Not required for downloads
+  contentId: merkleRootHash // Required: identifies the file
+});
 ```
 
-This protocol ensures efficient, type-safe communication for collaborative editing applications while maintaining compatibility with the Y.js ecosystem.
+## File Transfer Details
+
+### Chunk Size
+
+Files are split into **64KB (65,536 bytes) chunks** for efficient transfer. This size balances:
+
+- Network efficiency (larger chunks reduce overhead)
+- Memory usage (smaller chunks reduce memory pressure)
+- Error recovery (smaller chunks enable partial retry)
+
+### Maximum File Size
+
+The protocol supports files up to **1GB (1,073,741,824 bytes)**. Files exceeding this limit are rejected with a file auth message.
+
+### Content-Addressable Storage
+
+Files are stored using their **Merkle root hash (contentId)** as the identifier. This provides:
+
+- **Deduplication**: Identical files share the same contentId
+- **Integrity**: ContentId changes if any chunk is modified
+- **Verification**: Clients can verify file integrity using Merkle proofs
+
+### Encryption Support
+
+Files can be encrypted before chunking. The encrypted flag in file progress messages indicates whether the chunk data is encrypted. Encryption is handled at the application layer before protocol encoding.
+
+This protocol ensures efficient, type-safe communication for collaborative editing applications while maintaining compatibility with the Y.js ecosystem and providing robust file transfer capabilities with integrity verification.
