@@ -135,3 +135,53 @@ export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
  * A Y.js message which concerns a document and encloses a {@link DocStep} and the document name.
  */
 export type EncodedDocUpdateMessage<T extends DocStep> = Tag<Uint8Array, T>;
+
+/**
+ * File transfer request message (upload/download negotiation).
+ */
+export type FileRequestMessage = Tag<Uint8Array, "file-request">;
+
+/**
+ * File transfer progress message containing binary chunk data.
+ */
+export type FileProgressMessage = Tag<Uint8Array, "file-progress">;
+
+/**
+ * A decoded file transfer request message.
+ */
+export type DecodedFileRequest = {
+  type: "file-request";
+  direction: "upload" | "download";
+  fileId: string;
+  filename: string;
+  size: number;
+  mimeType: string;
+  /**
+   * Optional content identifier (merkle root) when downloading an existing file.
+   */
+  contentId?: Uint8Array;
+  status?: "accepted" | "rejected";
+  reason?: string;
+  resumeFromChunk?: number;
+  bytesUploaded?: number;
+  encrypted?: boolean;
+};
+
+/**
+ * A decoded file transfer progress message.
+ */
+export type DecodedFileProgress = {
+  type: "file-progress";
+  fileId: string;
+  chunkIndex: number;
+  chunkData: Uint8Array;
+  merkleProof: Uint8Array[];
+  totalChunks: number;
+  bytesUploaded: number;
+  encrypted: boolean;
+};
+
+/**
+ * Any binary step associated with a file transfer.
+ */
+export type FileStep = FileRequestMessage | FileProgressMessage;

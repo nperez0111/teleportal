@@ -1,16 +1,19 @@
 import { uuidv4 } from "lib0/random";
 import {
   DocMessage,
+  FileMessage,
   InMemoryPubSub,
   type Message,
   type PubSub,
   type ServerContext,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage, FileStorage } from "teleportal/storage";
+import { InMemoryFileStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { logger as defaultLogger, type Logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
+import { FileTransferHandler } from "./file-handler";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -28,7 +31,7 @@ export type ServerOptions<Context extends ServerContext> = {
    */
   checkPermission?: (ctx: {
     context: Context;
-    documentId: string;
+    documentId?: string;
     message: Message<Context>;
     type: "read" | "write";
   }) => Promise<boolean>;
@@ -43,6 +46,16 @@ export type ServerOptions<Context extends ServerContext> = {
    * Defaults to a random UUID.
    */
   nodeId?: string;
+
+  /**
+   * Optional file storage backend for binary uploads.
+   */
+  fileStorage?: FileStorage;
+
+  /**
+   * Override maximum allowed file size in bytes (default 1 GiB).
+   */
+  maxFileSizeBytes?: number;
 };
 
 export class Server<Context extends ServerContext> {
@@ -66,6 +79,7 @@ export class Server<Context extends ServerContext> {
    * The active sessions for the server.
    */
   #sessions = new Map<string, Session<Context>>();
+  #fileHandler: FileTransferHandler<Context> | null;
   /**
    * Pending session creation promises to prevent race conditions.
    * Maps composite document ID to the promise that will resolve to the session.
@@ -79,6 +93,14 @@ export class Server<Context extends ServerContext> {
       .withContext({ name: "server-v2" });
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
+    const fileStorage =
+      options.fileStorage ??
+      new InMemoryFileStorage({ uploadTtlMs: 24 * 60 * 60 * 1000 });
+    this.#fileHandler = new FileTransferHandler<Context>({
+      storage: fileStorage,
+      logger: this.logger,
+      maxSizeBytes: options.maxFileSizeBytes,
+    });
 
     this.logger
       .withMetadata({
@@ -87,6 +109,26 @@ export class Server<Context extends ServerContext> {
         hasPermissionChecker: !!options.checkPermission,
       })
       .info("Server initialized");
+  }
+
+  async #handleFileMessage(
+    message: FileMessage<Context>,
+    client: Client<Context>,
+  ) {
+    if (!this.#fileHandler) {
+      this.logger
+        .withMetadata({
+          clientId: client.id,
+          messageId: message.id,
+          fileId:
+            message.payload.type === "file-request"
+              ? message.payload.fileId
+              : message.payload.fileId,
+        })
+        .warn("Received file message but no file handler is configured");
+      return;
+    }
+    await this.#fileHandler.handle(message, client);
   }
 
   /**
@@ -347,6 +389,32 @@ export class Server<Context extends ServerContext> {
             .trace(ok ? "Message authorized" : "Message denied");
 
           if (!ok) {
+            if (message.type === "file") {
+              const basePayload =
+                message.payload.type === "file-request"
+                  ? message.payload
+                  : {
+                      type: "file-request" as const,
+                      direction: "upload" as const,
+                      fileId: message.payload.fileId,
+                      filename: "",
+                      size: 0,
+                      mimeType: "",
+                      contentId: undefined,
+                    };
+              await client.send(
+                new FileMessage(
+                  {
+                    ...basePayload,
+                    status: "rejected",
+                    reason: `Insufficient permissions to transfer file ${basePayload.fileId}`,
+                  },
+                  message.context,
+                  message.encrypted,
+                ),
+              );
+              return false;
+            }
             if (
               message.type === "doc" &&
               message.payload.type === "sync-step-2"
@@ -412,15 +480,19 @@ export class Server<Context extends ServerContext> {
               .debug("Processing incoming message");
 
             try {
-              const session = await this.getOrOpenSession(message.document, {
-                encrypted: message.encrypted,
-                client,
-                context: message.context,
-              });
+              if (message.type === "file") {
+                await this.#handleFileMessage(message, client);
+              } else {
+                const session = await this.getOrOpenSession(message.document, {
+                  encrypted: message.encrypted,
+                  client,
+                  context: message.context,
+                });
 
-              msgLogger.debug("Client added to session, applying message");
+                msgLogger.debug("Client added to session, applying message");
 
-              await session.apply(message, client);
+                await session.apply(message, client);
+              }
 
               msgLogger
                 .withMetadata({

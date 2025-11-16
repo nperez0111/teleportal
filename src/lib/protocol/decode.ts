@@ -3,6 +3,7 @@ import * as decoding from "lib0/decoding";
 import {
   AckMessage,
   AwarenessMessage,
+  FileMessage,
   type BinaryMessage,
   DocMessage,
   type RawReceivedMessage,
@@ -16,6 +17,8 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedFileProgress,
+  DecodedFileRequest,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -80,6 +83,14 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           undefined,
         );
       }
+        case 0x03: {
+          return new FileMessage(
+            decodeFileStepWithDecoder(decoder),
+            undefined,
+            encrypted,
+            update,
+          );
+        }
       default:
         throw new Error("Invalid target type", {
           cause: { targetType },
@@ -182,6 +193,90 @@ function decodeAwarenessStepWithDecoder<
     }
   } catch (err) {
     throw new Error("Failed to decode awareness step", {
+      cause: { err },
+    });
+  }
+}
+
+function decodeFileStepWithDecoder(
+  decoder: decoding.Decoder,
+): DecodedFileRequest | DecodedFileProgress {
+  try {
+    const messageType = decoding.readUint8(decoder);
+    switch (messageType) {
+      case 0x00: {
+        const direction = decoding.readUint8(decoder) === 0 ? "upload" : "download";
+        const fileId = decoding.readVarString(decoder);
+        const filename = decoding.readVarString(decoder);
+        const size = decoding.readVarUint(decoder);
+        const mimeType = decoding.readVarString(decoder);
+        const hasContentId = decoding.readUint8(decoder) === 1;
+        const contentId = hasContentId
+          ? decoding.readVarUint8Array(decoder)
+          : undefined;
+        const hasStatus = decoding.readUint8(decoder) === 1;
+        let status: "accepted" | "rejected" | undefined;
+        let reason: string | undefined;
+        if (hasStatus) {
+          status = decoding.readUint8(decoder) === 0 ? "accepted" : "rejected";
+          const hasReason = decoding.readUint8(decoder) === 1;
+          if (hasReason) {
+            reason = decoding.readVarString(decoder);
+          }
+        }
+        const hasResume = decoding.readUint8(decoder) === 1;
+        const resumeFromChunk = hasResume ? decoding.readVarUint(decoder) : undefined;
+        const hasBytes = decoding.readUint8(decoder) === 1;
+        const bytesUploaded = hasBytes ? decoding.readVarUint(decoder) : undefined;
+        const isEncrypted = decoding.readUint8(decoder) === 1;
+        const result: DecodedFileRequest = {
+          type: "file-request",
+          direction,
+          fileId,
+          filename,
+          size,
+          mimeType,
+          contentId,
+          status,
+          reason,
+          resumeFromChunk,
+          bytesUploaded,
+          encrypted: isEncrypted || undefined,
+        };
+        return result;
+      }
+      case 0x01: {
+        const fileId = decoding.readVarString(decoder);
+        const chunkIndex = decoding.readVarUint(decoder);
+        const totalChunks = decoding.readVarUint(decoder);
+        const bytesUploaded = decoding.readVarUint(decoder);
+        const encrypted = decoding.readUint8(decoder) === 1;
+        const chunkData = decoding.readVarUint8Array(decoder);
+        const proofLength = decoding.readVarUint(decoder);
+        const merkleProof: Uint8Array[] = [];
+        for (let i = 0; i < proofLength; i++) {
+          merkleProof.push(decoding.readVarUint8Array(decoder));
+        }
+        const result: DecodedFileProgress = {
+          type: "file-progress",
+          fileId,
+          chunkIndex,
+          chunkData,
+          merkleProof,
+          totalChunks,
+          bytesUploaded,
+          encrypted,
+        };
+        return result;
+      }
+      default: {
+        throw new Error("Failed to decode file message, unexpected subtype", {
+          cause: { messageType },
+        });
+      }
+    }
+  } catch (err) {
+    throw new Error("Failed to decode file step", {
       cause: { err },
     });
   }
