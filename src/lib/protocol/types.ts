@@ -117,6 +117,43 @@ export type DecodedAckMessage = {
 };
 
 /**
+ * A file request message (upload or download request).
+ */
+export type FileRequestMessage = Tag<Uint8Array, "file-request">;
+
+/**
+ * A file progress message (chunk upload/download progress).
+ */
+export type FileProgressMessage = Tag<Uint8Array, "file-progress">;
+
+/**
+ * A decoded file request message.
+ */
+export type DecodedFileRequest = {
+  type: "file-request";
+  direction: "upload" | "download";
+  fileId: string; // UUID
+  filename: string;
+  size: number;
+  mimeType: string;
+  contentId?: Uint8Array; // Merkle root hash, optional for uploads, required for downloads
+};
+
+/**
+ * A decoded file progress message.
+ */
+export type DecodedFileProgress = {
+  type: "file-progress";
+  fileId: string; // UUID
+  chunkIndex: number;
+  chunkData: Uint8Array; // 64KB chunk
+  merkleProof: Uint8Array[]; // Array of hashes for merkle proof
+  totalChunks: number;
+  bytesUploaded: number;
+  encrypted: boolean;
+};
+
+/**
  * Any Y.js update which concerns a document.
  */
 export type DocStep =
@@ -130,6 +167,11 @@ export type DocStep =
  * Any Y.js update which contains awareness updates.
  */
 export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
+
+/**
+ * Any file-related message step.
+ */
+export type FileStep = FileRequestMessage | FileProgressMessage;
 
 /**
  * A Y.js message which concerns a document and encloses a {@link DocStep} and the document name.
