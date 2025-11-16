@@ -129,9 +129,9 @@ describe("InMemoryFileStorage", () => {
     const merkleTree = buildMerkleTree([chunk, new Uint8Array(CHUNK_SIZE)]);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
 
-    await expect(storage.completeUpload(fileId, contentId)).rejects.toThrow(
-      "Missing chunk",
-    );
+    await expect(
+      storage.completeUpload(fileId, contentId),
+    ).rejects.toThrow("Missing chunk 1 for file test-file-id");
   });
 
   it("should cleanup expired uploads", async () => {
