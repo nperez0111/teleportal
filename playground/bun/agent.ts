@@ -81,6 +81,6 @@ serverAgent
     agent.ydoc.getText("TEST").insert(0, "whoaaAoh");
     console.log(agent.ydoc.getText("TEST").toJSON());
     setTimeout(() => {
-      agent.destroy();
+      agent[Symbol.asyncDispose]();
     });
   });
