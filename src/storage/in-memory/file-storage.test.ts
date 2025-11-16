@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { buildMerkleTree, CHUNK_SIZE } from "../../lib/protocol/file-upload";
-import { InMemoryFileStorage } from "./file-storage";
+import { InMemoryFileStorage } from "./index";
 
 describe("InMemoryFileStorage", () => {
   it("should initiate an upload", async () => {
@@ -67,7 +67,7 @@ describe("InMemoryFileStorage", () => {
 
     // Store chunks
     for (let i = 0; i < chunks.length; i++) {
-      const proof = [];
+      const proof: Uint8Array[] = [];
       await storage.storeChunk(fileId, i, chunks[i], proof);
     }
 
