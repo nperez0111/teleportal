@@ -176,7 +176,7 @@ describe("can encode and decode", () => {
   it("can encode and decode an ack message", () => {
     expect(
       decodeMessage(
-        new AckMessage("test", {
+        new AckMessage({
           type: "ack",
           messageId: "dGVzdA==", // base64 for "test"
         }).encoded,
@@ -184,7 +184,7 @@ describe("can encode and decode", () => {
     ).toMatchInlineSnapshot(`
       AckMessage {
         "context": {},
-        "document": "test",
+        "document": undefined,
         "encrypted": false,
         "payload": {
           "messageId": "dGVzdA==",
@@ -206,7 +206,7 @@ describe("can encode and decode", () => {
 
   it("ack message gets it's id", () => {
     expect(
-      new AckMessage("test", {
+      new AckMessage({
         type: "ack",
         messageId: "dGVzdA==",
       }).id,
@@ -215,7 +215,7 @@ describe("can encode and decode", () => {
 
   it("ack message preserves messageId through encode/decode", () => {
     const originalMessageId = "dGVzdA==";
-    const ackMessage = new AckMessage("test", {
+    const ackMessage = new AckMessage({
       type: "ack",
       messageId: originalMessageId,
     });
@@ -228,7 +228,6 @@ describe("can encode and decode", () => {
 
   it("ack message can have context", () => {
     const ackMessage = new AckMessage(
-      "test",
       {
         type: "ack",
         messageId: "dGVzdA==",
@@ -416,7 +415,7 @@ describe("can encode", () => {
 
   it("ack message", () => {
     expect(
-      new AckMessage("test", {
+      new AckMessage({
         type: "ack",
         messageId: "dGVzdA==", // base64 for "test"
       }).encoded,
@@ -426,11 +425,7 @@ describe("can encode", () => {
         74,
         83,
         1,
-        4,
-        116,
-        101,
-        115,
-        116,
+        0,
         0,
         2,
         4,

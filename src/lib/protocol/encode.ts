@@ -28,8 +28,8 @@ export function encodeMessage(update: Message): BinaryMessage {
     encoding.writeUint8(encoder, 0x53);
     // version
     encoding.writeUint8(encoder, 0x01);
-    // document name
-    encoding.writeVarString(encoder, update.document);
+    // document name (empty string for file messages)
+    encoding.writeVarString(encoder, update.document ?? "");
 
     // encrypted or not
     encoding.writeUint8(encoder, update.encrypted ? 1 : 0);
@@ -120,6 +120,75 @@ export function encodeMessage(update: Message): BinaryMessage {
           encoder,
           fromBase64(update.payload.messageId),
         );
+        break;
+      }
+      case "file": {
+        // message type (file)
+        encoding.writeUint8(encoder, 3);
+
+        switch (update.payload.type) {
+          case "file-request": {
+            // message type (file-request)
+            encoding.writeUint8(encoder, 0);
+            // direction (0=upload, 1=download)
+            encoding.writeUint8(
+              encoder,
+              update.payload.direction === "upload" ? 0 : 1,
+            );
+            // fileId (UUID string)
+            encoding.writeVarString(encoder, update.payload.fileId);
+            // filename
+            encoding.writeVarString(encoder, update.payload.filename);
+            // size
+            encoding.writeVarUint(encoder, update.payload.size);
+            // mimeType
+            encoding.writeVarString(encoder, update.payload.mimeType);
+            // contentId (optional, only for downloads)
+            if (update.payload.contentId !== undefined) {
+              encoding.writeUint8(encoder, 1);
+              encoding.writeVarUint8Array(encoder, update.payload.contentId);
+            } else {
+              encoding.writeUint8(encoder, 0);
+            }
+            break;
+          }
+          case "file-progress": {
+            // message type (file-progress)
+            encoding.writeUint8(encoder, 1);
+            // fileId (UUID string)
+            encoding.writeVarString(encoder, update.payload.fileId);
+            // chunkIndex
+            encoding.writeVarUint(encoder, update.payload.chunkIndex);
+            // chunkData
+            encoding.writeVarUint8Array(encoder, update.payload.chunkData);
+            // merkleProof array
+            encoding.writeVarUint(encoder, update.payload.merkleProof.length);
+            for (const proofHash of update.payload.merkleProof) {
+              encoding.writeVarUint8Array(encoder, proofHash);
+            }
+            // totalChunks
+            encoding.writeVarUint(encoder, update.payload.totalChunks);
+            // bytesUploaded
+            encoding.writeVarUint(encoder, update.payload.bytesUploaded);
+            // encrypted flag
+            encoding.writeUint8(encoder, update.payload.encrypted ? 1 : 0);
+            break;
+          }
+          case "file-auth-message": {
+            // message type (file-auth-message)
+            encoding.writeUint8(encoder, 2);
+            // reason
+            encoding.writeVarString(encoder, update.payload.reason);
+            break;
+          }
+          default: {
+            // @ts-expect-error - this should be unreachable due to type checking
+            update.payload.type;
+            throw new Error("Invalid file.payload.type", {
+              cause: { update },
+            });
+          }
+        }
         break;
       }
       default: {

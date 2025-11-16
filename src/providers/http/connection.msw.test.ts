@@ -10,9 +10,20 @@ import {
 import { toBase64 } from "lib0/buffer";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { DocMessage } from "teleportal";
+import {
+  DocMessage,
+  type ClientContext,
+  type Message,
+  type Transport,
+  decodeMessageArray,
+} from "teleportal";
 import { ConnectionState } from "../connection";
 import { HttpConnection } from "./connection";
+import { FileUploader } from "../../files/file-upload-client";
+import { FileHandler } from "../../server/file-handler";
+import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
+import { ConsoleTransport, LogLayer } from "loglayer";
+import type { ServerContext } from "teleportal";
 
 /**
  * MSW SSE Testing Approach for Node.js
@@ -235,6 +246,61 @@ function createTestMessage(): DocMessage<any> {
     sv: new Uint8Array([1, 2, 3]) as any,
   });
 }
+
+// Helper to create a Transport from an HttpConnection
+function connectionToTransport(
+  connection: HttpConnection,
+): Transport<ClientContext> {
+  const writable = new (class extends WritableStream<Message<ClientContext>> {
+    constructor() {
+      super({
+        write: async (message) => {
+          await connection.send(message);
+        },
+      });
+    }
+
+    getWriter() {
+      // Always return a new writer that auto-releases
+      const writer = super.getWriter();
+      return {
+        ...writer,
+        write: async (chunk: Message<ClientContext>) => {
+          try {
+            await writer.write(chunk);
+          } finally {
+            writer.releaseLock();
+          }
+        },
+        releaseLock: writer.releaseLock.bind(writer),
+        close: writer.close.bind(writer),
+        abort: writer.abort.bind(writer),
+        desiredSize: writer.desiredSize,
+        ready: writer.ready,
+        closed: writer.closed,
+      };
+    }
+  })();
+
+  return {
+    readable: connection.getReader().readable.pipeThrough(
+      new TransformStream({
+        transform(chunk, controller) {
+          // Convert RawReceivedMessage to Message
+          controller.enqueue(chunk as Message<ClientContext>);
+        },
+      }),
+    ),
+    writable,
+  };
+}
+
+const emptyLogger = new LogLayer({
+  transport: new ConsoleTransport({
+    logger: console,
+    enabled: false,
+  }),
+});
 
 describe("HttpConnection with MSW", () => {
   const server = setupServer();
@@ -1054,6 +1120,159 @@ describe("HttpConnection with MSW", () => {
       expect(receivedMessages.length).toBeGreaterThan(0);
       // Connection should still be alive after ping
       expect(client.state.type).toBe("connected");
+    });
+  });
+
+  describe("File uploads", () => {
+    test("should upload file through HTTP connection", async () => {
+      const testClientId = "test-client-file";
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const receivedMessages: Message<ServerContext>[] = [];
+
+      server.use(
+        http.post(`${baseUrl}/sse`, async ({ request }) => {
+          const body = await request.arrayBuffer();
+          const data = new Uint8Array(body);
+
+          try {
+            // HTTP sink sends message arrays (batched)
+            const messages = decodeMessageArray(data);
+            for (const decoded of messages) {
+              const message = decoded as Message<ServerContext>;
+              receivedMessages.push(message);
+
+              // Process file messages
+              if (message.type === "file") {
+                await fileHandler.handle(
+                  message,
+                  async (response) => {
+                    // Responses are sent via SSE, but for testing we'll just verify
+                    // the message was processed
+                  },
+                );
+              }
+            }
+
+            return HttpResponse.json({ success: true });
+          } catch (error) {
+            // Return error response
+            return HttpResponse.json(
+              { error: "Failed to process message" },
+              { status: 500 },
+            );
+          }
+        }),
+      );
+
+      client = createHttpConnectionWithMockES({ testClientId });
+
+      await client.connected;
+
+      // Wait for connection to be fully ready
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Create a test file
+      const fileContent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      const file = new File([fileContent], "test.txt", {
+        type: "text/plain",
+      });
+
+      // Upload file
+      const uploader = new FileUploader();
+      const transport = connectionToTransport(client);
+      const context: ClientContext = { clientId: testClientId };
+      const fileId = "test-file-id";
+
+      const contentId = await uploader.upload(
+        file,
+        fileId,
+        transport,
+        context,
+      );
+
+      // Wait for upload to complete (HTTP batches messages with maxBatchDelay: 100ms)
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Verify file was stored
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("test.txt");
+      expect(storedFile!.metadata.size).toBe(fileContent.length);
+    });
+
+    test("should handle multiple chunk file upload via HTTP", async () => {
+      const testClientId = "test-client-large-file";
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+
+      server.use(
+        http.post(`${baseUrl}/sse`, async ({ request }) => {
+          const body = await request.arrayBuffer();
+          const data = new Uint8Array(body);
+
+          try {
+            // HTTP sink sends message arrays (batched)
+            const messages = decodeMessageArray(data);
+            for (const decoded of messages) {
+              const message = decoded as Message<ServerContext>;
+              if (message.type === "file") {
+                await fileHandler.handle(
+                  message,
+                  async (response) => {
+                    // Responses handled via SSE
+                  },
+                );
+              }
+            }
+
+            return HttpResponse.json({ success: true });
+          } catch (error) {
+            return HttpResponse.json(
+              { error: "Failed to process message" },
+              { status: 500 },
+            );
+          }
+        }),
+      );
+
+      client = createHttpConnectionWithMockES({ testClientId });
+
+      await client.connected;
+
+      // Wait for connection to be fully ready
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Create a larger file that will be split into multiple chunks
+      const fileSize = 100 * 1024; // 100KB
+      const fileContent = new Uint8Array(fileSize);
+      fileContent.fill(42);
+
+      const file = new File([fileContent], "large-test.txt", {
+        type: "text/plain",
+      });
+
+      const uploader = new FileUploader();
+      const transport = connectionToTransport(client);
+      const context: ClientContext = { clientId: testClientId };
+      const fileId = "test-large-file-id";
+
+      const contentId = await uploader.upload(
+        file,
+        fileId,
+        transport,
+        context,
+      );
+
+      // Wait for upload to complete (HTTP batches messages)
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Verify file was stored
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("large-test.txt");
+      expect(storedFile!.metadata.size).toBe(fileSize);
+      expect(storedFile!.chunks.length).toBeGreaterThan(1);
     });
   });
 });

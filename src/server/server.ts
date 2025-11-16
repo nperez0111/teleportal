@@ -1,6 +1,7 @@
 import { uuidv4 } from "lib0/random";
 import {
   DocMessage,
+  FileMessage,
   InMemoryPubSub,
   type Message,
   type PubSub,
@@ -11,6 +12,8 @@ import { withMessageValidator } from "teleportal/transports";
 import { logger as defaultLogger, type Logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
+import { FileHandler } from "./file-handler";
+import type { FileStorage } from "../storage/file-storage";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -43,6 +46,12 @@ export type ServerOptions<Context extends ServerContext> = {
    * Defaults to a random UUID.
    */
   nodeId?: string;
+
+  /**
+   * File storage for file upload/download operations.
+   * If not provided, file messages will be rejected.
+   */
+  fileStorage?: FileStorage;
 };
 
 export class Server<Context extends ServerContext> {
@@ -71,6 +80,10 @@ export class Server<Context extends ServerContext> {
    * Maps composite document ID to the promise that will resolve to the session.
    */
   #pendingSessions = new Map<string, Promise<Session<Context>>>();
+  /**
+   * File handler for file upload/download operations.
+   */
+  #fileHandler: FileHandler<Context> | null = null;
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -80,11 +93,16 @@ export class Server<Context extends ServerContext> {
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
+    if (options.fileStorage) {
+      this.#fileHandler = new FileHandler(options.fileStorage, this.logger);
+    }
+
     this.logger
       .withMetadata({
         nodeId: this.#nodeId,
         hasCustomPubSub: !!options.pubSub,
         hasPermissionChecker: !!options.checkPermission,
+        hasFileStorage: !!options.fileStorage,
       })
       .info("Server initialized");
   }
@@ -109,7 +127,7 @@ export class Server<Context extends ServerContext> {
    * @returns The session.
    */
   async getOrOpenSession(
-    documentId: string,
+    documentId: string | undefined,
     {
       encrypted,
       id = "session-" + uuidv4(),
@@ -122,6 +140,10 @@ export class Server<Context extends ServerContext> {
       context: Context;
     },
   ) {
+    if (!documentId) {
+      throw new Error("Document ID is required");
+    }
+
     const compositeDocumentId = this.#getCompositeDocumentId(
       documentId,
       context,
@@ -332,7 +354,7 @@ export class Server<Context extends ServerContext> {
         try {
           const ok = await this.#options.checkPermission({
             context: message.context,
-            documentId: message.document,
+            documentId: message.document!,
             message,
             type,
           });
@@ -340,7 +362,7 @@ export class Server<Context extends ServerContext> {
           msgLogger
             .withMetadata({
               messageId: message.id,
-              documentId: message.document,
+              documentId: message.document!,
               permissionType: type,
               authorized: ok,
             })
@@ -365,6 +387,28 @@ export class Server<Context extends ServerContext> {
               );
               return false;
             }
+
+            if (message.type === "file") {
+              if (message.payload.type === "file-auth-message") {
+                // Just ignore this message that's sent by the client
+                return false;
+              }
+              await client.send(
+                new FileMessage({
+                  type: "file-auth-message",
+                  permission: "denied",
+                  reason: `Insufficient permissions to access file ${message.payload.fileId}`,
+                }),
+              );
+              return false;
+            }
+
+            if (!message.document) {
+              // just ignore this message (it's an ack message)
+              return false;
+            }
+
+            // Otherwise, send a doc-auth-message
             await client.send(
               new DocMessage(
                 message.document,
@@ -412,22 +456,48 @@ export class Server<Context extends ServerContext> {
               .debug("Processing incoming message");
 
             try {
-              const session = await this.getOrOpenSession(message.document, {
-                encrypted: message.encrypted,
-                client,
-                context: message.context,
-              });
+              // File messages bypass document sessions
+              if (message.type === "file") {
+                if (!this.#fileHandler) {
+                  const error = new Error(
+                    "File storage not configured. File messages are not supported.",
+                  );
+                  msgLogger
+                    .withError(error)
+                    .error("File storage not available");
+                  throw error;
+                }
 
-              msgLogger.debug("Client added to session, applying message");
+                msgLogger.debug("Processing file message");
 
-              await session.apply(message, client);
+                await this.#fileHandler.handle(message, async (response) => {
+                  await client.send(response);
+                });
 
-              msgLogger
-                .withMetadata({
-                  messageId: message.id,
-                  documentId: message.document,
-                })
-                .debug("Message applied successfully");
+                msgLogger
+                  .withMetadata({
+                    messageId: message.id,
+                  })
+                  .debug("File message processed successfully");
+              } else {
+                // Document messages go through sessions
+                const session = await this.getOrOpenSession(message.document, {
+                  encrypted: message.encrypted,
+                  client,
+                  context: message.context,
+                });
+
+                msgLogger.debug("Client added to session, applying message");
+
+                await session.apply(message, client);
+
+                msgLogger
+                  .withMetadata({
+                    messageId: message.id,
+                    documentId: message.document,
+                  })
+                  .debug("Message applied successfully");
+              }
             } catch (error) {
               msgLogger
                 .withError(error as Error)

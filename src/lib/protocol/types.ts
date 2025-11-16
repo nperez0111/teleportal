@@ -135,3 +135,93 @@ export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
  * A Y.js message which concerns a document and encloses a {@link DocStep} and the document name.
  */
 export type EncodedDocUpdateMessage<T extends DocStep> = Tag<Uint8Array, T>;
+
+/**
+ * A file request message for initiating uploads or downloads.
+ */
+export type FileRequestMessage = Tag<Uint8Array, "file-request">;
+
+/**
+ * A file progress message containing chunk data and merkle proof.
+ */
+export type FileProgressMessage = Tag<Uint8Array, "file-progress">;
+
+/**
+ * A decoded file request message.
+ */
+export type DecodedFileRequest = {
+  type: "file-request";
+  /**
+   * Direction of the file transfer
+   */
+  direction: "upload" | "download";
+  /**
+   * Client-generated UUID identifying this file transfer
+   */
+  fileId: string;
+  /**
+   * Original filename
+   */
+  filename: string;
+  /**
+   * File size in bytes
+   */
+  size: number;
+  /**
+   * MIME type of the file
+   */
+  mimeType: string;
+  /**
+   * Content ID (merkle root hash) - required for downloads, optional for uploads
+   */
+  contentId?: Uint8Array;
+};
+
+/**
+ * A decoded file progress message.
+ */
+export type DecodedFileProgress = {
+  type: "file-progress";
+  /**
+   * Client-generated UUID identifying this file transfer
+   */
+  fileId: string;
+  /**
+   * Zero-based index of this chunk
+   */
+  chunkIndex: number;
+  /**
+   * Chunk data (64KB)
+   */
+  chunkData: Uint8Array;
+  /**
+   * Merkle proof path for this chunk
+   */
+  merkleProof: Uint8Array[];
+  /**
+   * Total number of chunks in the file
+   */
+  totalChunks: number;
+  /**
+   * Total bytes uploaded so far
+   */
+  bytesUploaded: number;
+  /**
+   * Whether the file is encrypted
+   */
+  encrypted: boolean;
+};
+
+/**
+ * A decoded file auth message.
+ */
+export type DecodedFileAuthMessage = {
+  type: "file-auth-message";
+  permission: "denied";
+  reason: string;
+};
+
+/**
+ * Any file-related message step.
+ */
+export type FileStep = FileRequestMessage | FileProgressMessage;

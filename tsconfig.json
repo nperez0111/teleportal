@@ -22,6 +22,7 @@
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
+      "teleportal/files": ["./src/files/index.ts"],
       "teleportal": ["./src/lib/index.ts"],
     },
     "jsx": "react-jsx"

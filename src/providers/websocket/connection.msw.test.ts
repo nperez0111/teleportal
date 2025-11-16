@@ -9,9 +9,22 @@ import {
 } from "bun:test";
 import { ws } from "msw";
 import { setupServer } from "msw/node";
-import { DocMessage, encodePingMessage, isBinaryMessage } from "teleportal";
+import {
+  DocMessage,
+  encodePingMessage,
+  isBinaryMessage,
+  type ClientContext,
+  type Message,
+  type Transport,
+  decodeMessage,
+} from "teleportal";
 import { ConnectionState } from "../connection";
 import { WebSocketConnection } from "./connection";
+import { FileUploader } from "../../files/file-upload-client";
+import { FileHandler } from "../../server/file-handler";
+import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
+import { ConsoleTransport, LogLayer } from "loglayer";
+import type { ServerContext } from "teleportal";
 
 process.on("uncaughtException", (err) => {
   console.error("[GLOBAL] Uncaught Exception:", err);
@@ -57,6 +70,61 @@ function createTestMessage(): DocMessage<any> {
     sv: new Uint8Array([1, 2, 3]) as any,
   });
 }
+
+// Helper to create a Transport from a Connection
+function connectionToTransport(
+  connection: WebSocketConnection,
+): Transport<ClientContext> {
+  const writable = new (class extends WritableStream<Message<ClientContext>> {
+    constructor() {
+      super({
+        write: async (message) => {
+          await connection.send(message);
+        },
+      });
+    }
+
+    getWriter() {
+      // Always return a new writer that auto-releases
+      const writer = super.getWriter();
+      return {
+        ...writer,
+        write: async (chunk: Message<ClientContext>) => {
+          try {
+            await writer.write(chunk);
+          } finally {
+            writer.releaseLock();
+          }
+        },
+        releaseLock: writer.releaseLock.bind(writer),
+        close: writer.close.bind(writer),
+        abort: writer.abort.bind(writer),
+        desiredSize: writer.desiredSize,
+        ready: writer.ready,
+        closed: writer.closed,
+      };
+    }
+  })();
+
+  return {
+    readable: connection.getReader().readable.pipeThrough(
+      new TransformStream({
+        transform(chunk, controller) {
+          // Convert RawReceivedMessage to Message
+          controller.enqueue(chunk as Message<ClientContext>);
+        },
+      }),
+    ),
+    writable,
+  };
+}
+
+const emptyLogger = new LogLayer({
+  transport: new ConsoleTransport({
+    logger: console,
+    enabled: false,
+  }),
+});
 
 // Skip MSW WebSocket tests in CI due to timing issues with MSW WebSocket interception
 // These tests are still valuable for local development
@@ -677,6 +745,137 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(receivedMessages.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("File uploads", () => {
+    test("should upload file through WebSocket connection", async () => {
+      const wsHandler = ws.link(wsUrl);
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const receivedMessages: Message<ServerContext>[] = [];
+
+      server.use(
+        wsHandler.addEventListener("connection", ({ client: wsClient }) => {
+          wsClient.addEventListener("message", async (event) => {
+            const data = new Uint8Array(event.data as ArrayBuffer);
+            try {
+              if (!isBinaryMessage(data)) {
+                return;
+              }
+
+              // Decode message
+              const decoded = decodeMessage(data);
+              const message = decoded as Message<ServerContext>;
+              receivedMessages.push(message);
+
+              // Process file messages
+              if (message.type === "file") {
+                await fileHandler.handle(message, async (response) => {
+                  // Send response back through WebSocket
+                  wsClient.send(response.encoded);
+                });
+              }
+            } catch (error) {
+              // Ignore decode errors for non-file messages
+            }
+          });
+        }),
+      );
+
+      client = new WebSocketConnection({
+        url: wsUrl,
+        connect: true,
+        eventTarget,
+      });
+
+      await client.connected;
+
+      // Create a test file
+      const fileContent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      const file = new File([fileContent], "test.txt", {
+        type: "text/plain",
+      });
+
+      // Upload file
+      const uploader = new FileUploader();
+      const transport = connectionToTransport(client);
+      const context: ClientContext = { clientId: "test-client" };
+      const fileId = "test-file-id";
+
+      const contentId = await uploader.upload(file, fileId, transport, context);
+
+      // Wait for upload to complete
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Verify file was stored
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("test.txt");
+      expect(storedFile!.metadata.size).toBe(fileContent.length);
+    });
+
+    test("should handle multiple chunk file upload", async () => {
+      const wsHandler = ws.link(wsUrl);
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+
+      server.use(
+        wsHandler.addEventListener("connection", ({ client: wsClient }) => {
+          wsClient.addEventListener("message", async (event) => {
+            const data = new Uint8Array(event.data as ArrayBuffer);
+            try {
+              if (!isBinaryMessage(data)) {
+                return;
+              }
+
+              const decoded = decodeMessage(data);
+              const message = decoded as Message<ServerContext>;
+              if (message.type === "file") {
+                await fileHandler.handle(message, async (response) => {
+                  wsClient.send(response.encoded);
+                });
+              }
+            } catch (error) {
+              // Ignore decode errors
+            }
+          });
+        }),
+      );
+
+      client = new WebSocketConnection({
+        url: wsUrl,
+        connect: true,
+        eventTarget,
+      });
+
+      await client.connected;
+
+      // Create a larger file that will be split into multiple chunks
+      const fileSize = 100 * 1024; // 100KB
+      const fileContent = new Uint8Array(fileSize);
+      fileContent.fill(42);
+
+      const file = new File([fileContent], "large-test.txt", {
+        type: "text/plain",
+      });
+
+      const uploader = new FileUploader();
+      const transport = connectionToTransport(client);
+      const context: ClientContext = { clientId: "test-client" };
+      const fileId = "test-large-file-id";
+
+      const contentId = await uploader.upload(file, fileId, transport, context);
+
+      // Wait for upload to complete
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Verify file was stored
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("large-test.txt");
+      expect(storedFile!.metadata.size).toBe(fileSize);
+      expect(storedFile!.chunks.length).toBeGreaterThan(1);
     });
   });
 });

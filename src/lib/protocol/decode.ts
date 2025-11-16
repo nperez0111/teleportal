@@ -5,6 +5,7 @@ import {
   AwarenessMessage,
   type BinaryMessage,
   DocMessage,
+  FileMessage,
   type RawReceivedMessage,
 } from "./message-types";
 import type {
@@ -16,6 +17,9 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedFileAuthMessage,
+  DecodedFileProgress,
+  DecodedFileRequest,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -74,10 +78,14 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
         );
       }
       case 0x02: {
-        return new AckMessage(
-          documentName,
-          decodeAckMessageWithDecoder(decoder),
+        return new AckMessage(decodeAckMessageWithDecoder(decoder), undefined);
+      }
+      case 0x03: {
+        return new FileMessage(
+          decodeFileStepWithDecoder(decoder),
           undefined,
+          encrypted,
+          update,
         );
       }
       default:
@@ -215,4 +223,78 @@ function decodeAckMessageWithDecoder(
     type: "ack",
     messageId: toBase64(decoding.readVarUint8Array(decoder)),
   };
+}
+
+function decodeFileStepWithDecoder(
+  decoder: decoding.Decoder,
+): DecodedFileRequest | DecodedFileProgress | DecodedFileAuthMessage {
+  try {
+    const messageType = decoding.readUint8(decoder);
+    switch (messageType) {
+      case 0x00: {
+        // file-request
+        const direction = decoding.readUint8(decoder) as 0 | 1;
+        const fileId = decoding.readVarString(decoder);
+        const filename = decoding.readVarString(decoder);
+        const size = decoding.readVarUint(decoder);
+        const mimeType = decoding.readVarString(decoder);
+        const hasContentId = decoding.readUint8(decoder) === 1;
+        const contentId = hasContentId
+          ? decoding.readVarUint8Array(decoder)
+          : undefined;
+
+        return {
+          type: "file-request",
+          direction: direction === 0 ? "upload" : "download",
+          fileId,
+          filename,
+          size,
+          mimeType,
+          contentId,
+        };
+      }
+      case 0x01: {
+        // file-progress
+        const fileId = decoding.readVarString(decoder);
+        const chunkIndex = decoding.readVarUint(decoder);
+        const chunkData = decoding.readVarUint8Array(decoder);
+        const merkleProofLength = decoding.readVarUint(decoder);
+        const merkleProof: Uint8Array[] = [];
+        for (let i = 0; i < merkleProofLength; i++) {
+          merkleProof.push(decoding.readVarUint8Array(decoder));
+        }
+        const totalChunks = decoding.readVarUint(decoder);
+        const bytesUploaded = decoding.readVarUint(decoder);
+        const encrypted = decoding.readUint8(decoder) === 1;
+
+        return {
+          type: "file-progress",
+          fileId,
+          chunkIndex,
+          chunkData,
+          merkleProof,
+          totalChunks,
+          bytesUploaded,
+          encrypted,
+        };
+      }
+      case 0x02: {
+        const reason = decoding.readVarString(decoder);
+        return {
+          type: "file-auth-message",
+          permission: "denied",
+          reason,
+        };
+      }
+      default: {
+        throw new Error(`Failed to decode file step, unexpected value`, {
+          cause: { messageType },
+        });
+      }
+    }
+  } catch (err) {
+    throw new Error("Failed to decode file step", {
+      cause: { err },
+    });
+  }
 }
