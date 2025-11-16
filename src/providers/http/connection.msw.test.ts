@@ -1137,20 +1137,17 @@ describe("HttpConnection with MSW", () => {
 
           try {
             // HTTP sink sends message arrays (batched)
-            const messages = decodeMessageArray(data);
+            const messages = decodeMessageArray(data as any);
             for (const decoded of messages) {
               const message = decoded as Message<ServerContext>;
               receivedMessages.push(message);
 
               // Process file messages
               if (message.type === "file") {
-                await fileHandler.handle(
-                  message,
-                  async (response) => {
-                    // Responses are sent via SSE, but for testing we'll just verify
-                    // the message was processed
-                  },
-                );
+                await fileHandler.handle(message, async (response) => {
+                  // Responses are sent via SSE, but for testing we'll just verify
+                  // the message was processed
+                });
               }
             }
 
@@ -1184,12 +1181,7 @@ describe("HttpConnection with MSW", () => {
       const context: ClientContext = { clientId: testClientId };
       const fileId = "test-file-id";
 
-      const contentId = await uploader.upload(
-        file,
-        fileId,
-        transport,
-        context,
-      );
+      const contentId = await uploader.upload(file, fileId, transport, context);
 
       // Wait for upload to complete (HTTP batches messages with maxBatchDelay: 100ms)
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -1213,16 +1205,13 @@ describe("HttpConnection with MSW", () => {
 
           try {
             // HTTP sink sends message arrays (batched)
-            const messages = decodeMessageArray(data);
+            const messages = decodeMessageArray(data as any);
             for (const decoded of messages) {
               const message = decoded as Message<ServerContext>;
               if (message.type === "file") {
-                await fileHandler.handle(
-                  message,
-                  async (response) => {
-                    // Responses handled via SSE
-                  },
-                );
+                await fileHandler.handle(message, async (response) => {
+                  // Responses handled via SSE
+                });
               }
             }
 
@@ -1257,12 +1246,7 @@ describe("HttpConnection with MSW", () => {
       const context: ClientContext = { clientId: testClientId };
       const fileId = "test-large-file-id";
 
-      const contentId = await uploader.upload(
-        file,
-        fileId,
-        transport,
-        context,
-      );
+      const contentId = await uploader.upload(file, fileId, transport, context);
 
       // Wait for upload to complete (HTTP batches messages)
       await new Promise((resolve) => setTimeout(resolve, 300));

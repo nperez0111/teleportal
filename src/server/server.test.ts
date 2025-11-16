@@ -199,7 +199,7 @@ describe("Server", () => {
     it("should handle concurrent calls and return the same session", async () => {
       // Simulate race condition: multiple concurrent calls for the same document
       const context = { userId: "user-1", room: "room", clientId: "client-1" };
-      
+
       const [session1, session2, session3] = await Promise.all([
         server.getOrOpenSession("concurrent-doc", {
           encrypted: false,
