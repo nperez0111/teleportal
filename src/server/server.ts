@@ -1,16 +1,18 @@
 import { uuidv4 } from "lib0/random";
 import {
   DocMessage,
+  FileMessage,
   InMemoryPubSub,
   type Message,
   type PubSub,
   type ServerContext,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage, FileStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { logger as defaultLogger, type Logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
+import { FileHandler } from "./file-handler";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -22,6 +24,12 @@ export type ServerOptions<Context extends ServerContext> = {
     context: Context;
     encrypted: boolean;
   }) => Promise<DocumentStorage>;
+
+  /**
+   * Optional file storage for file upload/download operations.
+   * If not provided, file messages will be rejected.
+   */
+  fileStorage?: FileStorage;
 
   /**
    * Optional permission checker for read/write.
@@ -71,6 +79,10 @@ export class Server<Context extends ServerContext> {
    * Maps composite document ID to the promise that will resolve to the session.
    */
   #pendingSessions = new Map<string, Promise<Session<Context>>>();
+  /**
+   * File handler for file upload/download operations.
+   */
+  #fileHandler?: FileHandler<Context>;
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -80,11 +92,16 @@ export class Server<Context extends ServerContext> {
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
+    if (options.fileStorage) {
+      this.#fileHandler = new FileHandler(options.fileStorage, this.logger);
+    }
+
     this.logger
       .withMetadata({
         nodeId: this.#nodeId,
         hasCustomPubSub: !!options.pubSub,
         hasPermissionChecker: !!options.checkPermission,
+        hasFileStorage: !!options.fileStorage,
       })
       .info("Server initialized");
   }
@@ -412,6 +429,50 @@ export class Server<Context extends ServerContext> {
               .debug("Processing incoming message");
 
             try {
+              // File messages bypass document sessions (document is undefined)
+              if (message.type === "file") {
+                if (!this.#fileHandler) {
+                  const error = new Error(
+                    "File storage not configured. File messages are not supported.",
+                  );
+                  msgLogger
+                    .withError(error)
+                    .withMetadata({
+                      messageId: message.id,
+                      messageType: message.type,
+                    })
+                    .error("File message rejected - no file storage");
+                  throw error;
+                }
+
+                msgLogger.debug("Handling file message");
+
+                await this.#fileHandler.handle(message as FileMessage<Context>, client);
+
+                msgLogger
+                  .withMetadata({
+                    messageId: message.id,
+                    fileId: (message as FileMessage<Context>).payload.fileId,
+                  })
+                  .debug("File message handled successfully");
+                return;
+              }
+
+              // Document messages require a document
+              if (!message.document) {
+                const error = new Error(
+                  "Message must have a document or be a file message",
+                );
+                msgLogger
+                  .withError(error)
+                  .withMetadata({
+                    messageId: message.id,
+                    messageType: message.type,
+                  })
+                  .error("Message rejected - no document");
+                throw error;
+              }
+
               const session = await this.getOrOpenSession(message.document, {
                 encrypted: message.encrypted,
                 client,
