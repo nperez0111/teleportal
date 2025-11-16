@@ -119,7 +119,17 @@ export function getYDocSource<Context extends ClientContext>({
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
-          controller.enqueue(await handler.onUpdate(update as Update));
+          try {
+            controller.enqueue(await handler.onUpdate(update as Update));
+          } catch (e: any) {
+            // Stream may be closed, ignore the error
+            if (
+              e?.code !== "ERR_INVALID_STATE" &&
+              e?.message !== "Invalid state: Controller is already closed"
+            ) {
+              throw e;
+            }
+          }
         });
         onDestroy = ydoc.on("destroy", async () => {
           if (isDestroyed) {
@@ -290,10 +300,10 @@ export function getYDocSink<Context extends ClientContext>({
             case "doc": {
               switch (chunk.payload.type) {
                 case "sync-step-1": {
-                  observer.call(
-                    "message",
-                    await handler.handleSyncStep1(chunk.payload.sv),
+                  const response = await handler.handleSyncStep1(
+                    chunk.payload.sv,
                   );
+                  observer.call("message", response);
                   break;
                 }
                 case "sync-step-2": {

@@ -32,7 +32,7 @@ export class Agent {
     });
     logger.trace("created transport");
 
-    const client = await this.server.createClient({
+    const client = this.server.createClient({
       transport,
       id: message.context.clientId,
     });
@@ -53,10 +53,9 @@ export class Agent {
 
     await observer.call("message", await transport.handler.start());
 
-    logger.trace("sync started");
+    logger.trace("waiting for transport to sync");
     await transport.synced;
-    console.log("synced", transport.ydoc.toJSON());
-    logger.trace("synced");
+    logger.trace("transport synced");
 
     // hand back the ydoc? What interface should we expose?
 
