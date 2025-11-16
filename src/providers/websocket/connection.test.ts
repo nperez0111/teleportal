@@ -297,7 +297,7 @@ describe("WebSocketConnection", () => {
     expect(typeof reader.readable).toBe("object");
   });
 
-  test("should handle state updates", (done) => {
+  test("should handle state updates", (done: () => void) => {
     client = new WebSocketConnection({
       url: "ws://localhost:8080",
       connect: false, // Don't connect automatically for testing
@@ -606,6 +606,73 @@ describe("WebSocketConnection", () => {
     });
 
     expect(client.state.type).toBe("disconnected");
+  });
+
+  test("should handle race condition where open fires after close event", async () => {
+    // This test verifies the fix for a race condition where:
+    // 1. Close event fires while state is "connecting"
+    // 2. Open event fires and sets state to "connected"
+    // 3. Close handler should treat it as normal close, not error
+    class RaceConditionWebSocket extends MockWebSocket {
+      constructor(url: string, protocols?: string | string[]) {
+        super(url, protocols);
+        this.shouldConnect = false; // Don't auto-connect
+
+        // Simulate the race condition: fire close event first, then open event
+        // This mimics the scenario where close fires during connection but
+        // the connection actually succeeds
+        setTimeout(() => {
+          // Fire close event first (while still connecting)
+          this.readyState = MockWebSocket.CLOSING;
+          this.dispatchEvent(
+            new CloseEvent("close", {
+              code: 1000,
+              reason: "Normal closure",
+            }),
+          );
+          // Immediately fire open event (simulating the race condition)
+          // The close handler should detect that the connection was opened
+          queueMicrotask(() => {
+            this.readyState = MockWebSocket.OPEN;
+            this.dispatchEvent(new Event("open"));
+          });
+        }, 10);
+      }
+    }
+
+    client = new WebSocketConnection({
+      url: "ws://localhost:8080",
+      WebSocket: RaceConditionWebSocket as any,
+      eventTarget: eventTarget,
+      maxReconnectAttempts: 0, // Disable reconnection for this test
+    });
+
+    // Start connection attempt
+    const connectPromise = client.connect();
+
+    // Wait for state to settle (either connected then disconnected, or errored)
+    await new Promise<void>((resolve) => {
+      let hasBeenConnected = false;
+      client.on("update", (state) => {
+        if (state.type === "connected") {
+          hasBeenConnected = true;
+        }
+        if (state.type === "disconnected" || state.type === "errored") {
+          resolve();
+        }
+      });
+      // Timeout after 100ms
+      setTimeout(() => resolve(), 100);
+    });
+
+    // The connection should have been treated as a normal close, not an error
+    // State should be disconnected (not errored)
+    expect(client.state.type).toBe("disconnected");
+
+    // Clean up the connect promise if it's still pending
+    connectPromise.catch(() => {
+      // Ignore connection errors
+    });
   });
 
   test("should handle invalid message data gracefully", async () => {

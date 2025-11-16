@@ -284,6 +284,10 @@ describe("HttpConnection", () => {
     if (client) {
       await client.destroy();
     }
+    // Reset mock fetch to prevent unhandled errors from lingering async operations
+    if (mockFetch) {
+      mockFetch.setShouldSucceed(true);
+    }
   });
 
   test("should implement the Connection interface", () => {
@@ -369,7 +373,7 @@ describe("HttpConnection", () => {
     expect(typeof reader.readable).toBe("object");
   });
 
-  test("should handle state updates", (done) => {
+  test("should handle state updates", (done: () => void) => {
     client = new HttpConnection({
       url: "http://localhost:8080",
       fetch: createMockFetch(mockFetch),

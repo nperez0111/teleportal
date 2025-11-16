@@ -124,7 +124,7 @@ export interface PubSub {
   /**
    * Shutdown the backend
    */
-  destroy?: () => Promise<void>;
+  [Symbol.asyncDispose]?: () => Promise<void>;
 }
 
 /**
@@ -133,6 +133,7 @@ export interface PubSub {
 export type PubSubTopicTypes = {
   document: `document/${string}`;
   client: `client/${string}`;
+  ack: `ack/${string}`;
 };
 
 /**

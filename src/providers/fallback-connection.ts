@@ -101,10 +101,20 @@ export class FallbackConnection extends Connection<FallbackContext> {
       return;
     }
 
-    // Prevent concurrent connection attempts - only use state
+    // Prevent concurrent connection attempts
     if (this.state.type === "connecting" || this.state.type === "connected") {
       return;
     }
+
+    // Set state to connecting immediately to prevent race conditions
+    // We'll update the connectionType when we know which transport we're using
+    this.setState({
+      type: "connecting",
+      context: {
+        connectionType: "websocket", // Temporary, will be updated by tryWebSocketConnection or tryHttpConnection
+        underlyingContext: null,
+      },
+    });
 
     const currentAttemptId = ++this.#connectionAttemptId;
 
@@ -174,7 +184,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
       connect: false, // We'll connect manually
     });
 
-    // Check if attempt is still valid
+    // Check if attempt is still valid after creating WebSocket
     if (attemptId !== this.#connectionAttemptId) {
       await wsConnection.destroy();
       throw new Error("Connection attempt superseded");
@@ -242,12 +252,13 @@ export class FallbackConnection extends Connection<FallbackContext> {
       connect: false, // We'll connect manually
     });
 
-    // Check if attempt is still valid
+    // Check if attempt is still valid after creating HttpConnection
     if (attemptId !== this.#connectionAttemptId) {
       await httpConnection.destroy();
       throw new Error("Connection attempt superseded");
     }
 
+    // Update state with connection type (state was already set to connecting in initConnection)
     this.setState({
       type: "connecting",
       context: {

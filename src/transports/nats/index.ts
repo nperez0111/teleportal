@@ -48,8 +48,8 @@ export class NatsPubSub implements PubSub {
     };
   }
 
-  async destroy(): Promise<void> {
-    (await this.nc).drain();
+  async [Symbol.asyncDispose](): Promise<void> {
+    await (await this.nc).drain();
     // Free the memory
     (this.nc as any) = null;
   }

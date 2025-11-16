@@ -10,8 +10,7 @@ import {
   ServerContext,
   Transport,
 } from "teleportal";
-import { Document } from "teleportal/server";
-import { getPubSubTransport } from "../pubsub";
+import { getPubSubTransport } from "../pubSub";
 
 /**
  * Redis implementation of the {@link PubSub} interface
@@ -89,7 +88,7 @@ export class RedisPubSub implements PubSub {
     return unsubscribe;
   }
 
-  async destroy(): Promise<void> {
+  async [Symbol.asyncDispose](): Promise<void> {
     await this.publisherRedis.quit();
     await this.subscriberRedis.quit();
   }
@@ -102,6 +101,7 @@ export function getRedisTransport<Context extends ServerContext>({
   getContext,
   redisOptions,
   sourceId,
+  topicResolver = (m) => `document/${m.document}`,
 }: {
   getContext: Context | ((message: RawReceivedMessage) => Context);
   redisOptions: {
@@ -109,13 +109,14 @@ export function getRedisTransport<Context extends ServerContext>({
     options?: RedisOptions;
   };
   sourceId: string;
+  topicResolver?: (message: Message<Context>) => PubSubTopic;
 }): Transport<
   Context,
   {
     /**
      * The {@link PubSub} to use for consuming {@link Message}s.
      */
-    pubsub: PubSub;
+    pubSub: PubSub;
     /**
      * Subscribe to a topic
      */
@@ -130,15 +131,11 @@ export function getRedisTransport<Context extends ServerContext>({
     close: () => Promise<void>;
   }
 > {
-  const pubsub = new RedisPubSub(redisOptions);
-
-  const topicResolver = (message: Message<ServerContext>): PubSubTopic => {
-    return `document/${Document.getDocumentId(message)}`;
-  };
+  const pubSub = new RedisPubSub(redisOptions);
 
   const transport = getPubSubTransport({
     getContext,
-    pubsub,
+    pubSub,
     topicResolver,
     sourceId,
   });
@@ -156,7 +153,7 @@ export function getRedisTransport<Context extends ServerContext>({
       } catch (error) {
         // Stream might already be locked or closed
       }
-      await pubsub.destroy?.();
+      await pubSub[Symbol.asyncDispose]?.();
     },
   };
 }

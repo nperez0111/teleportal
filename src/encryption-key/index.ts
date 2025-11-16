@@ -85,7 +85,7 @@ export async function encryptUpdate(
         iv: iv,
       },
       key,
-      update,
+      new Uint8Array(update),
     );
 
     // Combine IV and encrypted data (which includes the authentication tag)

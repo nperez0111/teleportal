@@ -2,6 +2,7 @@ import crossws from "crossws/adapters/bun";
 import { createDatabase } from "db0";
 import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
+// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
 
 import { Server } from "teleportal/server";
@@ -48,7 +49,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
-    if (ctx.document.includes("encrypted")) {
+    if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(backingStorage);
     }
     return new UnstorageDocumentStorage(backingStorage, {
@@ -73,10 +74,13 @@ const instance = Bun.serve({
   development: {
     // hmr: false,
   },
-  routes: {
-    // In development, serve the homepage
-    "/": Bun.env.NODE_ENV === "production" ? undefined : homepage,
-  },
+  routes:
+    Bun.env.NODE_ENV !== "production"
+      ? {
+          // In development, serve the homepage
+          "/": homepage,
+        }
+      : undefined,
   websocket: ws.websocket,
   async fetch(request, server) {
     if (request.headers.get("upgrade") === "websocket") {

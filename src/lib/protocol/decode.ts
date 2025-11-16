@@ -1,5 +1,7 @@
+import { toBase64 } from "lib0/buffer";
 import * as decoding from "lib0/decoding";
 import {
+  AckMessage,
   AwarenessMessage,
   type BinaryMessage,
   DocMessage,
@@ -10,17 +12,18 @@ import type {
   AwarenessRequestMessage,
   AwarenessStep,
   AwarenessUpdateMessage,
+  DecodedAckMessage,
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
-  DecodedSyncDone,
   DecodedUpdateStep,
   DocStep,
+  SyncDone,
   SyncStep1,
   SyncStep2,
-  SyncDone,
   UpdateStep,
 } from "./types";
 
@@ -68,6 +71,13 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           undefined,
           encrypted,
           update,
+        );
+      }
+      case 0x02: {
+        return new AckMessage(
+          documentName,
+          decodeAckMessageWithDecoder(decoder),
+          undefined,
         );
       }
       default:
@@ -196,4 +206,13 @@ export function decodeDocStep<
 >(update: D): E {
   const decoder = decoding.createDecoder(update);
   return decodeDocStepWithDecoder(decoder);
+}
+
+function decodeAckMessageWithDecoder(
+  decoder: decoding.Decoder,
+): DecodedAckMessage {
+  return {
+    type: "ack",
+    messageId: toBase64(decoding.readVarUint8Array(decoder)),
+  };
 }

@@ -33,7 +33,12 @@ export function getHTTPSource<Context extends ClientContext>({
     readable: transform.readable,
     handleHTTPRequest: async (request) => {
       await request
-        .body!.pipeThrough(fromMessageArrayStream(context))
+        .body!.pipeThrough(
+          fromMessageArrayStream(context) as TransformStream<
+            Uint8Array,
+            Message<Context>
+          >,
+        )
         .pipeTo(transform.writable);
       return;
     },
@@ -81,7 +86,7 @@ export function getHTTPSink<Context extends ClientContext>({
               "x-teleportal-client-id": context.clientId,
             },
             cache: "no-store",
-            body: encodeMessageArray(messages),
+            body: encodeMessageArray(messages) as unknown as BodyInit,
           },
         });
       },

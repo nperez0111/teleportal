@@ -32,7 +32,7 @@ export class Agent {
     });
     logger.trace("created transport");
 
-    const client = await this.server.createClient({
+    const client = this.server.createClient({
       transport,
       id: message.context.clientId,
     });
@@ -44,27 +44,27 @@ export class Agent {
       .trace("client created");
 
     logger.trace("getting or creating document");
-    await this.server.getOrCreateDocument(message);
+    const session = await this.server.getOrOpenSession(message.document, {
+      encrypted: message.encrypted,
+      client,
+      context: message.context,
+    });
     logger.trace("document created");
 
     await observer.call("message", await transport.handler.start());
 
-    logger.trace("sync started");
+    logger.trace("waiting for transport to sync");
     await transport.synced;
-    console.log("synced", transport.ydoc.toJSON());
-    logger.trace("synced");
-
-    // hand back the ydoc? What interface should we expose?
+    logger.trace("transport synced");
 
     return {
       ydoc: transport.ydoc,
       awareness: transport.awareness,
-      destroy: async (): Promise<void> => {
-        // TODO properly close this?
-        await client.destroy();
+      clientId: client.id,
+      [Symbol.asyncDispose]: async (): Promise<void> => {
+        session.removeClient(client);
         transport.ydoc.destroy();
       },
-      clientId: client.id,
     };
   }
 }

@@ -106,6 +106,17 @@ export type DecodedAuthMessage = {
 };
 
 /**
+ * An acknowledgement message
+ */
+export type DecodedAckMessage = {
+  type: "ack";
+  /**
+   * The id of the message that was acknowledged.
+   */
+  messageId: string;
+};
+
+/**
  * Any Y.js update which concerns a document.
  */
 export type DocStep =

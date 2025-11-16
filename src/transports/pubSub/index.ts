@@ -15,14 +15,14 @@ import { compose, getMessageReader } from "../utils";
  * Generic publisher sink that publishes messages to a topic using the provided backend
  */
 export function getPubSubSink<Context extends ServerContext>({
-  pubsub,
+  pubSub,
   topicResolver,
   sourceId,
 }: {
   /**
    * The {@link PubSub} to use for publishing {@link Message}s.
    */
-  pubsub: PubSub;
+  pubSub: PubSub;
   /**
    * A function that resolves the topic for a given {@link Message}.
    */
@@ -37,15 +37,15 @@ export function getPubSubSink<Context extends ServerContext>({
     /**
      * The {@link PubSub} to use for publishing {@link Message}s.
      */
-    pubsub: PubSub;
+    pubSub: PubSub;
   }
 > {
   return {
-    pubsub,
+    pubSub,
     writable: new WritableStream({
       async write(chunk) {
         const topic = topicResolver(chunk);
-        await pubsub.publish(topic, chunk.encoded, sourceId);
+        await pubSub.publish(topic, chunk.encoded, sourceId);
       },
     }),
   };
@@ -56,7 +56,7 @@ export function getPubSubSink<Context extends ServerContext>({
  */
 export function getPubSubSource<Context extends ServerContext>({
   getContext,
-  pubsub,
+  pubSub,
   sourceId,
 }: {
   /**
@@ -66,7 +66,7 @@ export function getPubSubSource<Context extends ServerContext>({
   /**
    * The {@link PubSub} to use for consuming {@link Message}s.
    */
-  pubsub: PubSub;
+  pubSub: PubSub;
   /**
    * The source ID to use for consuming {@link Message}s.
    *
@@ -87,17 +87,17 @@ export function getPubSubSource<Context extends ServerContext>({
     /**
      * The {@link PubSub} to use for consuming {@link Message}s.
      */
-    pubsub: PubSub;
+    pubSub: PubSub;
   }
 > {
   const subscribedTopics = new Map<PubSubTopic, () => Promise<void>>();
   let controller: ReadableStreamDefaultController<BinaryMessage>;
 
   return {
-    pubsub,
+    pubSub,
     async subscribe(topic) {
       if (!subscribedTopics.has(topic)) {
-        const unsubscribe = await pubsub.subscribe(
+        const unsubscribe = await pubSub.subscribe(
           topic,
           (message, messageSourceId) => {
             if (messageSourceId === sourceId) {
@@ -146,7 +146,7 @@ export function getPubSubSource<Context extends ServerContext>({
  */
 export function getPubSubTransport<Context extends ServerContext>({
   getContext,
-  pubsub,
+  pubSub,
   topicResolver,
   sourceId,
 }: {
@@ -157,7 +157,7 @@ export function getPubSubTransport<Context extends ServerContext>({
   /**
    * The {@link PubSub} to use for consuming {@link Message}s.
    */
-  pubsub: PubSub;
+  pubSub: PubSub;
   /**
    * A function that resolves the topic for a given {@link Message}.
    */
@@ -180,17 +180,17 @@ export function getPubSubTransport<Context extends ServerContext>({
     /**
      * The {@link PubSub} to use for consuming {@link Message}s.
      */
-    pubsub: PubSub;
+    pubSub: PubSub;
   }
 > {
   const transport = compose(
     getPubSubSource({
       getContext,
-      pubsub,
+      pubSub,
       sourceId,
     }),
     getPubSubSink({
-      pubsub,
+      pubSub,
       topicResolver,
       sourceId,
     }),

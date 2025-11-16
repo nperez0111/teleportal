@@ -81,7 +81,7 @@ export class InMemoryPubSub
     };
   }
 
-  async destroy(): Promise<void> {
-    super.destroy();
+  async [Symbol.asyncDispose](): Promise<void> {
+    this.destroy();
   }
 }

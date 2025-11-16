@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  AckMessage,
   AwarenessMessage,
   AwarenessUpdateMessage,
   decodeMessage,
@@ -172,6 +173,28 @@ describe("can encode and decode", () => {
     `);
   });
 
+  it("can encode and decode an ack message", () => {
+    expect(
+      decodeMessage(
+        new AckMessage("test", {
+          type: "ack",
+          messageId: "dGVzdA==", // base64 for "test"
+        }).encoded,
+      ),
+    ).toMatchInlineSnapshot(`
+      AckMessage {
+        "context": {},
+        "document": "test",
+        "encrypted": false,
+        "payload": {
+          "messageId": "dGVzdA==",
+          "type": "ack",
+        },
+        "type": "ack",
+      }
+    `);
+  });
+
   it("get it's id", () => {
     expect(
       new DocMessage("test", {
@@ -179,6 +202,42 @@ describe("can encode and decode", () => {
         update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
       }).id,
     ).toMatchInlineSnapshot(`"wo8phd40Cygbec6rdBODugYv9Vn4sF5pJreXrb8uYFw="`);
+  });
+
+  it("ack message gets it's id", () => {
+    expect(
+      new AckMessage("test", {
+        type: "ack",
+        messageId: "dGVzdA==",
+      }).id,
+    ).toBeDefined();
+  });
+
+  it("ack message preserves messageId through encode/decode", () => {
+    const originalMessageId = "dGVzdA==";
+    const ackMessage = new AckMessage("test", {
+      type: "ack",
+      messageId: originalMessageId,
+    });
+    const decoded = decodeMessage(ackMessage.encoded);
+    expect(decoded).toBeInstanceOf(AckMessage);
+    if (decoded instanceof AckMessage) {
+      expect(decoded.payload.messageId).toBe(originalMessageId);
+    }
+  });
+
+  it("ack message can have context", () => {
+    const ackMessage = new AckMessage(
+      "test",
+      {
+        type: "ack",
+        messageId: "dGVzdA==",
+      },
+      { userId: "123" },
+    );
+    expect(ackMessage.context).toEqual({ userId: "123" });
+    const decoded = decodeMessage(ackMessage.encoded);
+    expect(decoded.context).toEqual({});
   });
 });
 
@@ -346,6 +405,34 @@ describe("can encode", () => {
         0,
         4,
         0,
+        4,
+        116,
+        101,
+        115,
+        116,
+      ]
+    `);
+  });
+
+  it("ack message", () => {
+    expect(
+      new AckMessage("test", {
+        type: "ack",
+        messageId: "dGVzdA==", // base64 for "test"
+      }).encoded,
+    ).toMatchInlineSnapshot(`
+      Uint8Array [
+        89,
+        74,
+        83,
+        1,
+        4,
+        116,
+        101,
+        115,
+        116,
+        0,
+        2,
         4,
         116,
         101,

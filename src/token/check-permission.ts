@@ -4,15 +4,23 @@ import type { TokenManager } from ".";
 export function checkPermissionWithTokenManager(
   tokenManager: TokenManager,
 ): ServerOptions<any>["checkPermission"] {
-  return async ({ context, document, message }) => {
+  return async ({ context, documentId, message }) => {
     if (message.type === "doc") {
       switch (message.payload.type) {
         case "sync-done":
         case "sync-step-1":
-          return tokenManager.hasDocumentPermission(context, document, "read");
+          return tokenManager.hasDocumentPermission(
+            context,
+            documentId,
+            "read",
+          );
         case "sync-step-2":
         case "update":
-          return tokenManager.hasDocumentPermission(context, document, "write");
+          return tokenManager.hasDocumentPermission(
+            context,
+            documentId,
+            "write",
+          );
         case "auth-message":
           // TODO what should we do here?
           console.log("Got an auth message, denying it?");

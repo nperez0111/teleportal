@@ -1,2 +1,7 @@
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
+
+[install]
+# Use isolated installs to prevent dependency hoisting in workspaces
+# This ensures each workspace (like playground) has its own node_modules
+linker = "isolated"

@@ -2,16 +2,16 @@ import type { ServerContext, Message } from "teleportal";
 import type { Server } from "teleportal/server";
 import {
   getHTTPEndpoint,
-  getHTTPPublishSSEEndpoint,
-  getSSEEndpoint,
+  getSSEWriterEndpoint,
+  getSSEReaderEndpoint,
 } from "./handlers";
 
 /**
  * Creates an HTTP handler that can be used to handle HTTP requests to the {@link Server}.
  *
  * It sets up the following endpoints:
- * - GET `/sse` - SSE endpoint for streaming {@link Message}s to the client. (Based on {@link getSSEEndpoint})
- * - POST `/sse` - HTTP endpoint for pushing {@link Message}s to the {@link getSSEEndpoint}. (Based on {@link getHTTPPublishSSEEndpoint})
+ * - GET `/sse` - SSE endpoint for streaming {@link Message}s to the client. (Based on {@link getSSEReaderEndpoint})
+ * - POST `/sse` - HTTP endpoint for pushing {@link Message}s to the {@link getSSEReaderEndpoint}. (Based on {@link getSSEWriterEndpoint})
  * - POST `/message` - HTTP endpoint for directly handling {@link Message}s. (Based on {@link getHTTPEndpoint})
  *
  * @note if a request is not handled by any of the above endpoints, a `404` response is returned.
@@ -27,13 +27,13 @@ export function getHTTPHandler<Context extends ServerContext>({
     request: Request,
   ) => { document: string; encrypted?: boolean }[];
 }): (req: Request) => Response | Promise<Response> {
-  const sseEndpoint = getSSEEndpoint({
+  const sseReaderEndpoint = getSSEReaderEndpoint({
     server,
     getContext,
     getInitialDocuments,
   });
 
-  const httpPublishSSEEndpoint = getHTTPPublishSSEEndpoint({
+  const sseWriterEndpoint = getSSEWriterEndpoint({
     server,
     getContext,
   });
@@ -47,11 +47,11 @@ export function getHTTPHandler<Context extends ServerContext>({
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/sse") {
-      return await sseEndpoint(req);
+      return await sseReaderEndpoint(req);
     }
 
     if (req.method === "POST" && url.pathname === "/sse") {
-      return await httpPublishSSEEndpoint(req);
+      return await sseWriterEndpoint(req);
     }
 
     if (req.method === "POST" && url.pathname === "/message") {

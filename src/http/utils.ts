@@ -62,6 +62,6 @@ export function decodeHTTPRequest(
   return response.body!.pipeThrough(
     fromMessageArrayStream({
       clientId: response.headers.get("x-teleportal-client-id")!,
-    }),
+    }) as TransformStream<Uint8Array, Message<ClientContext>>,
   );
 }

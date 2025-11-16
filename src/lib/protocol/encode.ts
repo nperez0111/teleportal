@@ -1,11 +1,12 @@
+import { fromBase64 } from "lib0/buffer";
 import * as encoding from "lib0/encoding";
 import { type BinaryMessage, type Message } from "./message-types";
 import type {
   DocStep,
   StateVector,
+  SyncDone,
   SyncStep1,
   SyncStep2,
-  SyncDone,
   Update,
   UpdateStep,
 } from "./types";
@@ -109,6 +110,16 @@ export function encodeMessage(update: Message): BinaryMessage {
             });
           }
         }
+        break;
+      }
+      case "ack": {
+        // message type (doc/awareness)
+        encoding.writeUint8(encoder, 2);
+        // message id
+        encoding.writeVarUint8Array(
+          encoder,
+          fromBase64(update.payload.messageId),
+        );
         break;
       }
       default: {

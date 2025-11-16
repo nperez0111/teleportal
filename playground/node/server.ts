@@ -3,6 +3,7 @@ import crossws from "crossws/adapters/node";
 import { createDatabase } from "db0";
 import sqlite from "db0/connectors/node-sqlite";
 import { createStorage } from "unstorage";
+// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
 
 // Use the dist build, since node doesn't resolve the source very well

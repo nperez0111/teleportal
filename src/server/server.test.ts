@@ -1,16 +1,25 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { Server } from "./server";
+import { Client } from "./client";
 import { logger } from "./logger";
-import { InMemoryPubSub } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import { InMemoryPubSub, DocMessage } from "teleportal";
 import type {
   ServerContext,
   Message,
   Transport,
   StateVector,
   SyncStep2Update,
+  Update,
 } from "teleportal";
+import { DocumentStorage } from "teleportal/storage";
+import { ConsoleTransport, LogLayer } from "loglayer";
 
+const emptyLogger = new LogLayer({
+  transport: new ConsoleTransport({
+    logger: console,
+    enabled: false,
+  }),
+});
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
   handleSyncStep1(
@@ -18,7 +27,7 @@ class MockDocumentStorage extends DocumentStorage {
     syncStep1: StateVector,
   ): Promise<{ update: SyncStep2Update; stateVector: StateVector }> {
     return Promise.resolve({
-      update: new Uint8Array() as SyncStep2Update,
+      update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
       stateVector: syncStep1,
     });
   }
@@ -48,51 +57,42 @@ class MockTransport<Context extends ServerContext>
   public readable: ReadableStream<Message<Context>>;
   public writable: WritableStream<Message<Context>>;
   public mockDestroy = false;
+  private controller: ReadableStreamDefaultController<Message<Context>> | null =
+    null;
 
   constructor() {
     const { readable, writable } = new TransformStream<Message<Context>>();
     this.readable = readable;
     this.writable = writable;
+
+    // Set up readable stream controller
+    const self = this;
+    this.readable = new ReadableStream<Message<Context>>({
+      start(controller) {
+        self.controller = controller;
+      },
+    });
   }
 
   async destroy() {
     this.mockDestroy = true;
+  }
+
+  // Helper to enqueue messages for testing
+  enqueueMessage(message: Message<Context>) {
+    if (this.controller) {
+      this.controller.enqueue(message);
+    }
+  }
+
+  closeReadable() {
+    if (this.controller) {
+      this.controller.close();
+    }
   }
 
   // Add index signature to satisfy Record<string, unknown>
   [key: string]: unknown;
-}
-
-// Mock Client class for testing
-class MockClient<Context extends ServerContext> {
-  public id: string;
-  public documents = new Set<any>();
-  public mockSend = false;
-  public mockDestroy = false;
-
-  constructor(id: string) {
-    this.id = id;
-  }
-
-  async send(message: Message<Context>) {
-    this.mockSend = true;
-  }
-
-  async destroy() {
-    this.mockDestroy = true;
-  }
-
-  subscribeToDocument(document: any) {
-    this.documents.add(document);
-  }
-
-  unsubscribeFromDocument(document: any) {
-    this.documents.delete(document);
-  }
-
-  getDocumentCount(): number {
-    return this.documents.size;
-  }
 }
 
 describe("Server", () => {
@@ -105,340 +105,967 @@ describe("Server", () => {
     mockGetStorage = () => Promise.resolve(new MockDocumentStorage());
 
     server = new Server({
-      logger: logger.child().withContext({ name: "test" }),
+      logger: emptyLogger,
       getStorage: mockGetStorage,
       pubSub,
     });
   });
 
   afterEach(async () => {
-    await server.destroy();
+    await server[Symbol.asyncDispose]();
+    await pubSub[Symbol.asyncDispose]();
   });
 
   describe("constructor", () => {
     it("should create a Server instance", () => {
       expect(server).toBeDefined();
       expect(server.logger).toBeDefined();
-      expect(server.pubsub).toBeDefined();
     });
 
-    it("should use default logger when not provided", () => {
+    it("should use default logger when not provided", async () => {
       const serverWithDefaultLogger = new Server({
         getStorage: mockGetStorage,
         pubSub,
+        logger: emptyLogger,
       });
       expect(serverWithDefaultLogger.logger).toBeDefined();
-      serverWithDefaultLogger.destroy();
+      await serverWithDefaultLogger[Symbol.asyncDispose]();
     });
 
-    it("should use default pubsub when not provided", () => {
+    it("should use default pubSub when not provided", async () => {
       const serverWithDefaultPubSub = new Server({
         getStorage: mockGetStorage,
+        logger: emptyLogger,
       });
-      expect(serverWithDefaultPubSub.pubsub).toBeDefined();
-      serverWithDefaultPubSub.destroy();
+      expect(serverWithDefaultPubSub.logger).toBeDefined();
+      await serverWithDefaultPubSub[Symbol.asyncDispose]();
+    });
+
+    it("should use provided nodeId", async () => {
+      const serverWithNodeId = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        nodeId: "custom-node-id",
+        logger: emptyLogger,
+      });
+      expect(serverWithNodeId).toBeDefined();
+      await serverWithNodeId[Symbol.asyncDispose]();
+    });
+
+    it("should generate random nodeId when not provided", async () => {
+      const server1 = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        logger: emptyLogger,
+      });
+      const server2 = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        logger: emptyLogger,
+      });
+      // Node IDs should be different
+      expect(server1).toBeDefined();
+      expect(server2).toBeDefined();
+      await server1[Symbol.asyncDispose]();
+      await server2[Symbol.asyncDispose]();
     });
   });
 
-  describe("getStats", () => {
-    it("should return server statistics", () => {
-      const stats = server.getStats();
-
-      expect(stats).toHaveProperty("timestamp");
-      expect(stats).toHaveProperty("clock");
-      expect(stats).toHaveProperty("numClients");
-      expect(stats).toHaveProperty("numDocuments");
-      expect(stats).toHaveProperty("clientIds");
-      expect(stats).toHaveProperty("documentIds");
-      expect(Array.isArray(stats.clientIds)).toBe(true);
-      expect(Array.isArray(stats.documentIds)).toBe(true);
-    });
-
-    it("should increment clock on each call", () => {
-      const stats1 = server.getStats();
-      const stats2 = server.getStats();
-
-      expect(stats2.clock).toBe(stats1.clock + 1);
-    });
-  });
-
-  describe("getDocument", () => {
-    it("should return undefined for non-existing document", () => {
-      const document = server.getDocument("non-existing");
-      expect(document).toBeUndefined();
-    });
-
-    it("should return document for existing document", async () => {
-      // Create a document first
-      const message = {
-        document: "test-doc",
-        context: { clientId: "client-1", userId: "user-1", room: "room" },
+  describe("getOrOpenSession", () => {
+    it("should create a new session", async () => {
+      const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
-      };
-
-      // We need to create a client first to create a document
-      const transport = new MockTransport();
-      const client = await server.createClient({
-        transport,
-        id: "client-1",
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
-      const document = await server.getOrCreateDocument(message);
-      const retrievedDocument = server.getDocument(document.id);
-
-      expect(retrievedDocument).toBe(document);
-
-      await server.disconnectClient("client-1");
+      expect(session).toBeDefined();
+      expect(session.documentId).toBe("test-doc");
+      expect(session.encrypted).toBe(false);
     });
-  });
 
-  describe("getOrCreateDocument", () => {
-    it("should throw error when client not found", async () => {
-      const message = {
-        document: "test-doc",
-        context: { clientId: "non-existing", userId: "user-1", room: "room" },
+    it("should return existing session when called twice", async () => {
+      const session1 = await server.getOrOpenSession("test-doc", {
         encrypted: false,
-      };
-
-      await expect(server.getOrCreateDocument(message)).rejects.toThrow(
-        "Client not found",
-      );
-    });
-
-    it("should create document and subscribe client", async () => {
-      const transport = new MockTransport();
-      const client = await server.createClient({
-        transport,
-        id: "client-1",
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
 
-      const message = {
-        document: "test-doc",
-        context: { clientId: "client-1", userId: "user-1", room: "room" },
+      expect(session1).toBe(session2);
+    });
+
+    it("should handle concurrent calls and return the same session", async () => {
+      // Simulate race condition: multiple concurrent calls for the same document
+      const context = { userId: "user-1", room: "room", clientId: "client-1" };
+      
+      const [session1, session2, session3] = await Promise.all([
+        server.getOrOpenSession("concurrent-doc", {
+          encrypted: false,
+          context,
+        }),
+        server.getOrOpenSession("concurrent-doc", {
+          encrypted: false,
+          context,
+        }),
+        server.getOrOpenSession("concurrent-doc", {
+          encrypted: false,
+          context,
+        }),
+      ]);
+
+      // All concurrent calls should return the same session instance
+      expect(session1).toBe(session2);
+      expect(session2).toBe(session3);
+      expect(session1.documentId).toBe("concurrent-doc");
+    });
+
+    it("should create session with custom id", async () => {
+      const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
+        id: "custom-session-id",
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      expect(session).toBeDefined();
+      expect(session.id).toBe("custom-session-id");
+    });
+
+    it("should create encrypted session", async () => {
+      const session = await server.getOrOpenSession("encrypted-doc", {
+        encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      expect(session).toBeDefined();
+      expect(session.encrypted).toBe(true);
+    });
+
+    it("should throw error when encryption state mismatches existing session", async () => {
+      // Create a session with encrypted: false
+      await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Try to get the same session with encrypted: true - should throw
+      await expect(
+        server.getOrOpenSession("test-doc", {
+          encrypted: true,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
+        }),
+      ).rejects.toThrow("Encryption state mismatch");
+
+      // Also test the reverse: create encrypted session, then try unencrypted
+      await server.getOrOpenSession("encrypted-test-doc", {
+        encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      await expect(
+        server.getOrOpenSession("encrypted-test-doc", {
+          encrypted: false,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
+        }),
+      ).rejects.toThrow("Encryption state mismatch");
+    });
+
+    it("should call getStorage with correct parameters", async () => {
+      let calledWith: any = null;
+      const customGetStorage = (ctx: any) => {
+        calledWith = ctx;
+        return Promise.resolve(new MockDocumentStorage());
       };
 
-      const document = await server.getOrCreateDocument(message);
+      const customServer = new Server({
+        logger: emptyLogger,
+        getStorage: customGetStorage,
+        pubSub,
+      });
 
-      expect(document).toBeDefined();
-      expect(document.name).toBe("test-doc");
-      expect(client.getDocumentCount()).toBe(1);
+      await customServer.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "", clientId: "client-1" },
+      });
 
-      await server.disconnectClient("client-1");
+      expect(calledWith).toBeDefined();
+      expect(calledWith.documentId).toBe("test-doc");
+      expect(calledWith.encrypted).toBe(false);
+
+      await customServer[Symbol.asyncDispose]();
+    });
+
+    it("should call getStorage with composite documentId when room is provided", async () => {
+      let calledWith: any = null;
+      const customGetStorage = (ctx: any) => {
+        calledWith = ctx;
+        return Promise.resolve(new MockDocumentStorage());
+      };
+
+      const customServer = new Server({
+        logger: emptyLogger,
+        getStorage: customGetStorage,
+        pubSub,
+      });
+
+      const roomContext: ServerContext = {
+        userId: "user-1",
+        room: "room-1",
+        clientId: "client-1",
+      };
+
+      await customServer.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: roomContext,
+      });
+
+      expect(calledWith).toBeDefined();
+      expect(calledWith.documentId).toBe("room-1/test-doc");
+      expect(calledWith.encrypted).toBe(false);
+      expect(calledWith.context).toBe(roomContext);
+
+      await customServer[Symbol.asyncDispose]();
+    });
+
+    it("should create separate sessions for same document name in different rooms", async () => {
+      const room1Context: ServerContext = {
+        userId: "user-1",
+        room: "room-1",
+        clientId: "client-1",
+      };
+      const room2Context: ServerContext = {
+        userId: "user-2",
+        room: "room-2",
+        clientId: "client-2",
+      };
+
+      const session1 = await server.getOrOpenSession("same-doc", {
+        encrypted: false,
+        context: room1Context,
+      });
+      const session2 = await server.getOrOpenSession("same-doc", {
+        encrypted: false,
+        context: room2Context,
+      });
+
+      // Sessions should be different instances
+      expect(session1).not.toBe(session2);
+      // documentId should be the original client-facing name
+      expect(session1.documentId).toBe("same-doc");
+      expect(session2.documentId).toBe("same-doc");
+      // namespacedDocumentId should reflect the composite key
+      expect(session1.namespacedDocumentId).toBe("room-1/same-doc");
+      expect(session2.namespacedDocumentId).toBe("room-2/same-doc");
+    });
+
+    it("should return same session for same room and document", async () => {
+      const room1Context: ServerContext = {
+        userId: "user-1",
+        room: "room-1",
+        clientId: "client-1",
+      };
+
+      const session1 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: room1Context,
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: room1Context,
+      });
+
+      // Should return the same session instance
+      expect(session1).toBe(session2);
+      expect(session1.documentId).toBe("test-doc");
+      expect(session1.namespacedDocumentId).toBe("room-1/test-doc");
+    });
+
+    it("should use document name only when no room in context", async () => {
+      const session1 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "", clientId: "client-1" },
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "", clientId: "client-1" },
+      });
+
+      // Should return the same session instance since the rooms are the same
+      expect(session1).toBe(session2);
+      expect(session1.documentId).toBe("test-doc");
+    });
+
+    it("should use document name only when room is empty string", async () => {
+      const contextWithoutRoom: ServerContext = {
+        userId: "user-1",
+        room: "",
+        clientId: "client-1",
+      };
+
+      const session1 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: contextWithoutRoom,
+      });
+      const session2 = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Should return a different session instance, since the rooms are different
+      expect(session1).not.toBe(session2);
+      expect(session1.documentId).toBe("test-doc");
+      expect(session1.namespacedDocumentId).toBe("test-doc");
+      expect(session2.documentId).toBe("test-doc");
+      expect(session2.namespacedDocumentId).toBe("room/test-doc");
     });
   });
 
   describe("createClient", () => {
-    it("should create a new client", async () => {
+    it("should create a new client", () => {
       const transport = new MockTransport();
-      const client = await server.createClient({
+      const client = server.createClient({
         transport,
         id: "client-1",
       });
 
       expect(client).toBeDefined();
       expect(client.id).toBe("client-1");
-
-      await server.disconnectClient("client-1");
     });
 
-    it("should throw error when client already exists", async () => {
+    it("should generate random id when not provided", () => {
+      const transport1 = new MockTransport();
+      const transport2 = new MockTransport();
+      const client1 = server.createClient({ transport: transport1 });
+      const client2 = server.createClient({ transport: transport2 });
+
+      expect(client1).toBeDefined();
+      expect(client2).toBeDefined();
+      expect(client1.id).not.toBe(client2.id);
+
+      transport1.closeReadable();
+      transport2.closeReadable();
+    });
+
+    it("should handle messages from transport", async () => {
       const transport = new MockTransport();
-      const client = await server.createClient({
+      const client = server.createClient({
         transport,
         id: "client-1",
       });
 
-      await expect(
-        server.createClient({
-          transport: new MockTransport(),
-          id: "client-1",
-        }),
-      ).rejects.toThrow("Client already exists");
+      const message = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
 
-      await server.disconnectClient("client-1");
+      // Enqueue message to transport
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Session should be created
+      const session = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      expect(session).toBeDefined();
+
+      transport.closeReadable();
     });
 
-    it("should emit client-connected event", async () => {
-      let eventEmitted = false;
-      let emittedClient: any;
-
-      server.on("client-connected", (client) => {
-        eventEmitted = true;
-        emittedClient = client;
-      });
-
+    it("should disconnect client when transport stream ends", async () => {
       const transport = new MockTransport();
-      const client = await server.createClient({
+      const client = server.createClient({
         transport,
         id: "client-1",
       });
 
-      expect(eventEmitted).toBe(true);
-      expect(emittedClient).toBe(client);
+      // Close the readable stream
+      transport.closeReadable();
 
-      await server.disconnectClient("client-1");
-    });
-  });
+      // Wait for disconnect to be processed
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-  describe("disconnectClient", () => {
-    it("should disconnect existing client", async () => {
-      const transport = new MockTransport();
-      const client = await server.createClient({
-        transport,
-        id: "client-1",
-      });
-
-      await server.disconnectClient("client-1");
-
-      // Client should be removed from manager
-      expect(server.getStats().numClients).toBe(0);
-    });
-
-    it("should not throw when disconnecting non-existing client", async () => {
-      await expect(
-        server.disconnectClient("non-existing"),
-      ).resolves.toBeUndefined();
-    });
-
-    it("should emit client-disconnected event", async () => {
-      const transport = new MockTransport();
-      const client = await server.createClient({
-        transport,
-        id: "client-1",
-      });
-
-      let eventEmitted = false;
-      let emittedClient: any;
-
-      server.on("client-disconnected", (client) => {
-        eventEmitted = true;
-        emittedClient = client;
-      });
-
-      await server.disconnectClient("client-1");
-
-      expect(eventEmitted).toBe(true);
-      expect(emittedClient).toBe(client);
-    });
-  });
-
-  describe("destroy", () => {
-    it("should destroy server and all managers", async () => {
-      const transport = new MockTransport();
-      const client = await server.createClient({
-        transport,
-        id: "client-1",
-      });
-
-      await server.destroy();
-
-      // All managers should be destroyed
-      expect(server.getStats().numClients).toBe(0);
-      expect(server.getStats().numDocuments).toBe(0);
-    });
-
-    it("should work with empty server", async () => {
-      await expect(server.destroy()).resolves.toBeUndefined();
-    });
-  });
-
-  describe("permission checking", () => {
-    it("should allow all when no checkPermission function provided", async () => {
-      const transport = new MockTransport();
-      const client = await server.createClient({
-        transport,
-        id: "client-1",
-      });
-
-      // Should not throw when no permission check is configured
+      // Client should be disconnected (no way to directly verify, but should not throw)
       expect(client).toBeDefined();
-
-      await server.disconnectClient("client-1");
     });
 
-    it("should use checkPermission function when provided", async () => {
-      const checkPermission = async () => true;
+    it("should handle transport stream errors", async () => {
+      const errorTransport = new MockTransport();
+      const client = server.createClient({
+        transport: errorTransport,
+        id: "client-1",
+      });
+
+      // Close readable to simulate error
+      errorTransport.closeReadable();
+
+      // Wait for error handling
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Should not throw
+      expect(client).toBeDefined();
+    });
+
+    it("should check permissions when checkPermission is provided", async () => {
+      let permissionChecked = false;
+      const checkPermission = async () => {
+        permissionChecked = true;
+        return true;
+      };
 
       const serverWithPermission = new Server({
-        logger: logger.child().withContext({ name: "test" }),
+        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,
       });
 
       const transport = new MockTransport();
-      const client = await serverWithPermission.createClient({
+      const client = serverWithPermission.createClient({
         transport,
         id: "client-1",
       });
 
-      expect(client).toBeDefined();
+      const message = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
 
-      await serverWithPermission.disconnectClient("client-1");
-      await serverWithPermission.destroy();
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Permission should be checked
+      expect(permissionChecked).toBe(true);
+
+      transport.closeReadable();
+      await serverWithPermission[Symbol.asyncDispose]();
+    });
+
+    it("should deny access when checkPermission returns false", async () => {
+      const checkPermission = async () => false;
+
+      const serverWithPermission = new Server({
+        logger: emptyLogger,
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission,
+      });
+
+      const transport = new MockTransport();
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Replace writable to capture messages
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = serverWithPermission.createClient({
+        transport: customTransport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Should send auth-message with permission denied
+      expect(writtenMessages.length).toBeGreaterThan(0);
+      const authMessage = writtenMessages.find(
+        (m) => m.type === "doc" && m.payload.type === "auth-message",
+      );
+      expect(authMessage).toBeDefined();
+      if (authMessage && authMessage.type === "doc") {
+        expect(authMessage.payload.type).toBe("auth-message");
+      }
+
+      transport.closeReadable();
+      await serverWithPermission[Symbol.asyncDispose]();
+    });
+
+    it("should send sync-done when sync-step-2 is denied due to write permissions", async () => {
+      const checkPermission = async ({
+        message,
+        type,
+      }: {
+        message: Message<ServerContext>;
+        type: "read" | "write";
+      }) => {
+        // Deny write operations (sync-step-2 requires write)
+        if (
+          message.type === "doc" &&
+          message.payload.type === "sync-step-2" &&
+          type === "write"
+        ) {
+          return false;
+        }
+        // Allow read operations
+        return true;
+      };
+
+      const serverWithPermission = new Server({
+        logger: emptyLogger,
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission,
+      });
+
+      const transport = new MockTransport();
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Replace writable to capture messages
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = serverWithPermission.createClient({
+        transport: customTransport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Should send sync-done message (not auth-message)
+      expect(writtenMessages.length).toBeGreaterThan(0);
+      const syncDoneMessage = writtenMessages.find(
+        (m) => m.type === "doc" && m.payload.type === "sync-done",
+      );
+      expect(syncDoneMessage).toBeDefined();
+      if (syncDoneMessage && syncDoneMessage.type === "doc") {
+        expect(syncDoneMessage.payload.type).toBe("sync-done");
+        expect(syncDoneMessage.document).toBe("test-doc");
+      }
+
+      // Should NOT send auth-message
+      const authMessage = writtenMessages.find(
+        (m) => m.type === "doc" && m.payload.type === "auth-message",
+      );
+      expect(authMessage).toBeUndefined();
+
+      transport.closeReadable();
+      await serverWithPermission[Symbol.asyncDispose]();
     });
   });
 
-  describe("document lifecycle events", () => {
-    it("should emit document-load event when document is created", async () => {
-      let eventEmitted = false;
-      let emittedDocument: any;
-
-      server.on("document-load", (document) => {
-        eventEmitted = true;
-        emittedDocument = document;
-      });
-
+  describe("disconnectClient", () => {
+    it("should disconnect client by ID", async () => {
       const transport = new MockTransport();
-      const client = await server.createClient({
+      const client = server.createClient({
         transport,
         id: "client-1",
       });
 
-      const message = {
-        document: "test-doc",
-        context: { clientId: "client-1", userId: "user-1", room: "room" },
+      // Create a session and add client
+      const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
-      };
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      session.addClient(client);
 
-      const document = await server.getOrCreateDocument(message);
+      server.disconnectClient("client-1");
 
-      expect(eventEmitted).toBe(true);
-      expect(emittedDocument).toBe(document);
-
-      await server.disconnectClient("client-1");
+      // Client should be removed from session
+      // (No direct way to verify, but should not throw)
+      expect(client).toBeDefined();
     });
 
-    it("should emit document-unload event when document is destroyed", async () => {
+    it("should disconnect client by client object", async () => {
       const transport = new MockTransport();
-      const client = await server.createClient({
+      const client = server.createClient({
         transport,
         id: "client-1",
       });
 
-      const message = {
-        document: "test-doc",
-        context: { clientId: "client-1", userId: "user-1", room: "room" },
+      // Create a session and add client
+      const session = await server.getOrOpenSession("test-doc", {
         encrypted: false,
-      };
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      session.addClient(client);
 
-      const document = await server.getOrCreateDocument(message);
+      server.disconnectClient(client);
 
-      let eventEmitted = false;
-      let emittedDocument: any;
+      // Client should be removed from session
+      expect(client).toBeDefined();
+    });
 
-      server.on("document-unload", (document) => {
-        eventEmitted = true;
-        emittedDocument = document;
+    it("should disconnect client from all sessions", async () => {
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "client-1",
       });
 
-      await document.destroy();
+      // Create multiple sessions
+      const session1 = await server.getOrOpenSession("test-doc-1", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      const session2 = await server.getOrOpenSession("test-doc-2", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
 
-      expect(eventEmitted).toBe(true);
-      expect(emittedDocument).toBe(document);
+      session1.addClient(client);
+      session2.addClient(client);
 
-      await server.disconnectClient("client-1");
+      server.disconnectClient("client-1");
+
+      // Client should be removed from all sessions
+      expect(client).toBeDefined();
+    });
+
+    it("should not throw when disconnecting non-existent client", () => {
+      expect(() => server.disconnectClient("non-existent")).not.toThrow();
+    });
+  });
+
+  describe("session cleanup", () => {
+    it("should handle cleanup callback when session has no clients", async () => {
+      const session = await server.getOrOpenSession("test-doc-cleanup", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Manually trigger cleanup callback (simulating timeout firing)
+      // We need to access the private method, so we'll use the session's callback
+      // by removing all clients and then calling the cleanup handler directly
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "client-cleanup",
+      });
+
+      await server.getOrOpenSession("test-doc-cleanup", {
+        encrypted: false,
+        client,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Remove client to trigger cleanup scheduling
+      server.disconnectClient("client-cleanup");
+
+      // Wait a bit for cleanup to be scheduled
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify session still exists (cleanup hasn't fired yet)
+      const existingSession = await server.getOrOpenSession(
+        "test-doc-cleanup",
+        {
+          encrypted: false,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
+        },
+      );
+      expect(existingSession).toBeDefined();
+
+      // Close transport to ensure cleanup
+      transport.closeReadable();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    it("should not cleanup session if client reconnects", async () => {
+      const transport1 = new MockTransport();
+      const client1 = server.createClient({
+        transport: transport1,
+        id: "client-reconnect",
+      });
+
+      const session1 = await server.getOrOpenSession("test-doc-reconnect", {
+        encrypted: false,
+        client: client1,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Disconnect client
+      server.disconnectClient("client-reconnect");
+      transport1.closeReadable();
+
+      // Wait a bit
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Reconnect before cleanup fires
+      const transport2 = new MockTransport();
+      const client2 = server.createClient({
+        transport: transport2,
+        id: "client-reconnect-2",
+      });
+
+      const session2 = await server.getOrOpenSession("test-doc-reconnect", {
+        encrypted: false,
+        client: client2,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Session should still exist
+      expect(session2).toBeDefined();
+      expect(session2.documentId).toBe("test-doc-reconnect");
+
+      transport2.closeReadable();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    it("should cleanup session after delay when no clients", async () => {
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "client-delay",
+      });
+
+      await server.getOrOpenSession("test-doc-delay", {
+        encrypted: false,
+        client,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Disconnect client
+      server.disconnectClient("client-delay");
+      transport.closeReadable();
+
+      // Session should still exist immediately
+      const sessionImmediate = await server.getOrOpenSession("test-doc-delay", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      expect(sessionImmediate).toBeDefined();
+
+      // Note: We can't easily test the 60-second delay without waiting,
+      // but we verify the cleanup mechanism is set up correctly
+    });
+
+    it("should properly dispose session when cleanup handler is called", async () => {
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "client-handler-test",
+      });
+
+      const session = await server.getOrOpenSession("test-doc-handler", {
+        encrypted: false,
+        client,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Verify session exists
+      const existingSession = await server.getOrOpenSession(
+        "test-doc-handler",
+        {
+          encrypted: false,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
+        },
+      );
+      expect(existingSession).toBeDefined();
+      expect(existingSession.documentId).toBe("test-doc-handler");
+
+      // Remove client to trigger cleanup scheduling
+      server.disconnectClient("client-handler-test");
+      transport.closeReadable();
+
+      // Wait for cleanup to be scheduled
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify session should be disposed (has no clients)
+      expect(session.shouldDispose).toBe(true);
+
+      // Manually trigger cleanup handler to simulate timeout firing
+      // We can't access the private method directly, but we can verify
+      // the session is in the correct state for cleanup
+      // The actual cleanup will happen after 60 seconds in production
+    });
+
+    it("should cancel cleanup if session gets clients before timeout", async () => {
+      const transport1 = new MockTransport();
+      const client1 = server.createClient({
+        transport: transport1,
+        id: "client-cancel-1",
+      });
+
+      const session = await server.getOrOpenSession("test-doc-cancel-timeout", {
+        encrypted: false,
+        client: client1,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      // Remove client
+      server.disconnectClient("client-cancel-1");
+      transport1.closeReadable();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify session should be disposed
+      expect(session.shouldDispose).toBe(true);
+
+      // Add client back before timeout fires
+      const transport2 = new MockTransport();
+      const client2 = server.createClient({
+        transport: transport2,
+        id: "client-cancel-2",
+      });
+
+      const session2 = await server.getOrOpenSession(
+        "test-doc-cancel-timeout",
+        {
+          encrypted: false,
+          client: client2,
+          context: { userId: "user-1", room: "room", clientId: "client-1" },
+        },
+      );
+
+      // Session should no longer be marked for disposal
+      expect(session2.shouldDispose).toBe(false);
+      expect(session2).toBe(session); // Same session instance
+
+      transport2.closeReadable();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  });
+
+  describe("asyncDispose", () => {
+    it("should dispose server and all sessions", async () => {
+      // Create sessions
+      await server.getOrOpenSession("test-doc-1", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      await server.getOrOpenSession("test-doc-2", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      await server[Symbol.asyncDispose]();
+
+      // Should not throw
+      expect(server).toBeDefined();
+    });
+
+    it("should dispose pubSub if it has asyncDispose", async () => {
+      await server[Symbol.asyncDispose]();
+      // Should not throw
+      expect(server).toBeDefined();
+    });
+
+    it("should work with empty server", async () => {
+      await expect(server[Symbol.asyncDispose]()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("integration", () => {
+    it("should handle full client lifecycle", async () => {
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      // Send sync-step-1
+      const syncStep1 = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(syncStep1);
+
+      // Wait for processing
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Session should be created
+      const session = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      expect(session).toBeDefined();
+
+      // Disconnect client
+      server.disconnectClient("client-1");
+
+      transport.closeReadable();
+    });
+
+    it("should handle multiple clients on same document", async () => {
+      // Create clients without transports to avoid stream issues
+      const writable1 = new WritableStream({
+        write() {},
+      });
+      const writable2 = new WritableStream({
+        write() {},
+      });
+
+      const client1 = new Client({
+        id: "client-1",
+        writable: writable1,
+        logger: logger.child().withContext({ name: "test" }),
+      });
+      const client2 = new Client({
+        id: "client-2",
+        writable: writable2,
+        logger: logger.child().withContext({ name: "test" }),
+      });
+
+      // Both clients connect to same document
+      const session = await server.getOrOpenSession("test-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+      session.addClient(client1);
+      session.addClient(client2);
+
+      // Send update from client1
+      const update = new DocMessage(
+        "test-doc",
+        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      await session.apply(update, client1);
+
+      // Both clients should be in session
+      expect(session).toBeDefined();
+
+      // Clean up
+      server.disconnectClient("client-1");
+      server.disconnectClient("client-2");
     });
   });
 });

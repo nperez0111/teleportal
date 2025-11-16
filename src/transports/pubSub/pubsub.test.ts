@@ -20,15 +20,15 @@ function createUpdate(data: Uint8Array) {
 // Mock context for testing
 type TestContext = ServerContext;
 
-describe("PubSub pubsub", () => {
-  let pubsub: InMemoryPubSub;
+describe("PubSub pubSub", () => {
+  let pubSub: InMemoryPubSub;
 
   beforeEach(() => {
-    pubsub = new InMemoryPubSub();
+    pubSub = new InMemoryPubSub();
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubSub[Symbol.asyncDispose]();
   });
 
   it("can publish and subscribe to messages", async () => {
@@ -41,11 +41,11 @@ describe("PubSub pubsub", () => {
     const message = docMessage.encoded;
     let receivedMessage: BinaryMessage | null = null;
 
-    const unsubscribe = await pubsub.subscribe(topic, (msg) => {
+    const unsubscribe = await pubSub.subscribe(topic, (msg) => {
       receivedMessage = msg;
     });
 
-    await pubsub.publish(topic, message, "test-client");
+    await pubSub.publish(topic, message, "test-client");
 
     expect(receivedMessage as BinaryMessage | null).toEqual(message);
     await unsubscribe();
@@ -61,15 +61,15 @@ describe("PubSub pubsub", () => {
     const message = docMessage.encoded;
     const receivedMessages: BinaryMessage[] = [];
 
-    const unsubscribe1 = await pubsub.subscribe(topic, (msg) => {
+    const unsubscribe1 = await pubSub.subscribe(topic, (msg) => {
       receivedMessages.push(msg);
     });
 
-    const unsubscribe2 = await pubsub.subscribe(topic, (msg) => {
+    const unsubscribe2 = await pubSub.subscribe(topic, (msg) => {
       receivedMessages.push(msg);
     });
 
-    await pubsub.publish(topic, message, "test-client");
+    await pubSub.publish(topic, message, "test-client");
 
     expect(receivedMessages).toHaveLength(2);
     expect(receivedMessages[0]).toEqual(message);
@@ -89,15 +89,15 @@ describe("PubSub pubsub", () => {
     const message = docMessage.encoded;
     let callCount = 0;
 
-    const unsubscribe = await pubsub.subscribe(topic, () => {
+    const unsubscribe = await pubSub.subscribe(topic, () => {
       callCount++;
     });
 
-    await pubsub.publish(topic, message, "test-client");
+    await pubSub.publish(topic, message, "test-client");
     expect(callCount).toBe(1);
 
     await unsubscribe();
-    await pubsub.publish(topic, message, "test-client");
+    await pubSub.publish(topic, message, "test-client");
     expect(callCount).toBe(1); // Should not increase
   });
 
@@ -112,7 +112,7 @@ describe("PubSub pubsub", () => {
 
     // Should not throw - publishing to non-existent topics is valid
     await expect(
-      pubsub.publish(topic, message, "test-client"),
+      pubSub.publish(topic, message, "test-client"),
     ).resolves.toBeUndefined();
   });
 
@@ -120,11 +120,11 @@ describe("PubSub pubsub", () => {
     const topic: PubSubTopic = "client/cleanup-topic";
     let callCount = 0;
 
-    await pubsub.subscribe(topic, () => {
+    await pubSub.subscribe(topic, () => {
       callCount++;
     });
 
-    await pubsub.destroy();
+    await pubSub[Symbol.asyncDispose]();
 
     const docMessage = new DocMessage(
       "test-doc",
@@ -132,21 +132,21 @@ describe("PubSub pubsub", () => {
       { clientId: "test-client", userId: "test-user", room: "test-room" },
     );
     const message = docMessage.encoded;
-    await pubsub.publish(topic, message, "test-client");
+    await pubSub.publish(topic, message, "test-client");
 
     expect(callCount).toBe(0); // Should not be called after close
   });
 });
 
 describe("PubSub Sink", () => {
-  let pubsub: InMemoryPubSub;
+  let pubSub: InMemoryPubSub;
 
   beforeEach(() => {
-    pubsub = new InMemoryPubSub();
+    pubSub = new InMemoryPubSub();
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubSub[Symbol.asyncDispose]();
   });
 
   it("can publish messages to topics", async () => {
@@ -158,12 +158,12 @@ describe("PubSub Sink", () => {
     );
 
     let receivedMessage: BinaryMessage | null = null;
-    await pubsub.subscribe(topic, (msg) => {
+    await pubSub.subscribe(topic, (msg) => {
       receivedMessage = msg;
     });
 
     const sink = getPubSubSink<TestContext>({
-      pubsub,
+      pubSub,
       topicResolver: (msg: Message<TestContext>) => topic,
       sourceId: "test-source",
     });
@@ -177,11 +177,11 @@ describe("PubSub Sink", () => {
 
   it("can resolve topics dynamically", async () => {
     const messages: BinaryMessage[] = [];
-    await pubsub.subscribe("client/topic-1", (msg) => messages.push(msg));
-    await pubsub.subscribe("client/topic-2", (msg) => messages.push(msg));
+    await pubSub.subscribe("client/topic-1", (msg) => messages.push(msg));
+    await pubSub.subscribe("client/topic-2", (msg) => messages.push(msg));
 
     const sink = getPubSubSink<TestContext>({
-      pubsub,
+      pubSub,
       topicResolver: (msg: Message<TestContext>) =>
         msg.context.clientId === "client-1"
           ? "client/topic-1"
@@ -212,9 +212,9 @@ describe("PubSub Sink", () => {
     expect(messages[1]).toEqual(message2.encoded);
   });
 
-  it("can close the pubsub on sink close", async () => {
+  it("can close the pubSub on sink close", async () => {
     const sink = getPubSubSink<TestContext>({
-      pubsub,
+      pubSub,
       topicResolver: () => "client/test",
       sourceId: "test-source",
     });
@@ -222,20 +222,20 @@ describe("PubSub Sink", () => {
     const writer = sink.writable.getWriter();
     await writer.close();
 
-    // pubsub should be closed
-    expect(pubsub).toBeDefined();
+    // pubSub should be closed
+    expect(pubSub).toBeDefined();
   });
 });
 
 describe("PubSub Source", () => {
-  let pubsub: InMemoryPubSub;
+  let pubSub: InMemoryPubSub;
 
   beforeEach(() => {
-    pubsub = new InMemoryPubSub();
+    pubSub = new InMemoryPubSub();
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubSub[Symbol.asyncDispose]();
   });
 
   it("can subscribe to topics and receive messages", async () => {
@@ -245,7 +245,7 @@ describe("PubSub Source", () => {
         userId: "test-user",
         room: "test-room",
       },
-      pubsub,
+      pubSub,
       sourceId: "test-source",
     });
 
@@ -271,7 +271,7 @@ describe("PubSub Source", () => {
       { clientId: "test-client", userId: "test-user", room: "test-room" },
     );
     const message = docMessage.encoded;
-    await pubsub.publish("client/test-topic", message, "test-client");
+    await pubSub.publish("client/test-topic", message, "test-client");
 
     // Wait a bit for the message to be processed
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -293,7 +293,7 @@ describe("PubSub Source", () => {
         userId: "test-user",
         room: "test-room",
       },
-      pubsub,
+      pubSub,
       sourceId: "test-source",
     });
 
@@ -324,8 +324,8 @@ describe("PubSub Source", () => {
       { clientId: "test-client", userId: "test-user", room: "test-room" },
     ).encoded;
 
-    await pubsub.publish("client/topic-1", message1, "test-client");
-    await pubsub.publish("client/topic-2", message2, "test-client");
+    await pubSub.publish("client/topic-1", message1, "test-client");
+    await pubSub.publish("client/topic-2", message2, "test-client");
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -342,7 +342,7 @@ describe("PubSub Source", () => {
         userId: "test-user",
         room: "test-room",
       },
-      pubsub,
+      pubSub,
       sourceId: "test-source",
     });
 
@@ -364,7 +364,7 @@ describe("PubSub Source", () => {
       { type: "sync-done" },
       { clientId: "test-client", userId: "test-user", room: "test-room" },
     ).encoded;
-    await pubsub.publish("client/test-topic", message1, "test-client");
+    await pubSub.publish("client/test-topic", message1, "test-client");
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -375,7 +375,7 @@ describe("PubSub Source", () => {
       { type: "sync-done" },
       { clientId: "test-client", userId: "test-user", room: "test-room" },
     ).encoded;
-    await pubsub.publish("client/test-topic", message2, "test-client");
+    await pubSub.publish("client/test-topic", message2, "test-client");
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -394,7 +394,7 @@ describe("PubSub Source", () => {
         userId: "test-user",
         room: "test-room",
       },
-      pubsub,
+      pubSub,
       sourceId: "test-source",
     });
 
@@ -402,19 +402,19 @@ describe("PubSub Source", () => {
     await reader.cancel();
 
     // Should not throw
-    expect(pubsub).toBeDefined();
+    expect(pubSub).toBeDefined();
   });
 });
 
 describe("PubSub Transport", () => {
-  let pubsub: InMemoryPubSub;
+  let pubSub: InMemoryPubSub;
 
   beforeEach(() => {
-    pubsub = new InMemoryPubSub();
+    pubSub = new InMemoryPubSub();
   });
 
   afterEach(async () => {
-    await pubsub.destroy();
+    await pubSub[Symbol.asyncDispose]();
   });
 
   it("can create a complete transport", () => {
@@ -424,7 +424,7 @@ describe("PubSub Transport", () => {
         userId: "test-user",
         room: "test-room",
       },
-      pubsub,
+      pubSub,
       topicResolver: (msg: Message<TestContext>) =>
         msg.document ? `document/${msg.document}` : "client/default",
       sourceId: "test-source",
@@ -437,7 +437,7 @@ describe("PubSub Transport", () => {
   it("can send and receive messages through the transport", async () => {
     const transport = getPubSubTransport<TestContext>({
       getContext: (message: any) => message.context, // Preserve original message context
-      pubsub,
+      pubSub,
       topicResolver: (msg: Message<TestContext>) =>
         msg.document ? `document/${msg.document}` : "client/default",
       sourceId: "test-source",
@@ -469,7 +469,7 @@ describe("PubSub Transport", () => {
         room: "external-room",
       },
     );
-    await pubsub.publish(
+    await pubSub.publish(
       "document/test-doc",
       externalMessage.encoded,
       "external-source",
@@ -503,7 +503,7 @@ describe("PubSub Transport", () => {
   it("can be inspected with passthrough", async () => {
     const transport = getPubSubTransport<TestContext>({
       getContext: (message: any) => message.context, // Preserve original message context
-      pubsub,
+      pubSub,
       topicResolver: (msg: Message<TestContext>) =>
         msg.document ? `document/${msg.document}` : "client/default",
       sourceId: "test-source",
@@ -549,7 +549,7 @@ describe("PubSub Transport", () => {
         room: "external-room",
       },
     );
-    await pubsub.publish(
+    await pubSub.publish(
       "document/test-doc",
       externalMessage.encoded,
       "external-source",
@@ -591,7 +591,7 @@ describe("PubSub Transport", () => {
   it("can handle multiple documents with different topics", async () => {
     const transport = getPubSubTransport<TestContext>({
       getContext: (message: any) => message.context, // Preserve original message context
-      pubsub,
+      pubSub,
       topicResolver: (msg: Message<TestContext>) =>
         msg.document ? `document/${msg.document}` : "client/default",
       sourceId: "test-source",
@@ -634,12 +634,12 @@ describe("PubSub Transport", () => {
       },
     );
 
-    await pubsub.publish(
+    await pubSub.publish(
       "document/doc-1",
       externalMessage1.encoded,
       "external-source",
     );
-    await pubsub.publish(
+    await pubSub.publish(
       "document/doc-2",
       externalMessage2.encoded,
       "external-source",

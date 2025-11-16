@@ -1,5 +1,6 @@
 import crossws from "crossws/adapters/bun";
 import { createStorage } from "unstorage";
+// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
 import fsDriver from "unstorage/drivers/fs";
 
 import { Server } from "teleportal/server";
@@ -30,7 +31,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
     const backingStorage = memoryStorage;
 
-    if (ctx.document.includes("encrypted")) {
+    if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(backingStorage);
     }
     return new UnstorageDocumentStorage(backingStorage, {
@@ -80,6 +81,6 @@ serverAgent
     agent.ydoc.getText("TEST").insert(0, "whoaaAoh");
     console.log(agent.ydoc.getText("TEST").toJSON());
     setTimeout(() => {
-      agent.destroy();
+      agent[Symbol.asyncDispose]();
     });
   });
