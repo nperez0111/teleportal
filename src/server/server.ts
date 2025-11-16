@@ -11,6 +11,8 @@ import { withMessageValidator } from "teleportal/transports";
 import { logger as defaultLogger, type Logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
+import { FileHandler } from "./file-handler";
+import type { FileStorage } from "../storage/file-storage";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -43,6 +45,12 @@ export type ServerOptions<Context extends ServerContext> = {
    * Defaults to a random UUID.
    */
   nodeId?: string;
+
+  /**
+   * File storage for file upload/download operations.
+   * If not provided, file messages will be rejected.
+   */
+  fileStorage?: FileStorage;
 };
 
 export class Server<Context extends ServerContext> {
@@ -71,6 +79,10 @@ export class Server<Context extends ServerContext> {
    * Maps composite document ID to the promise that will resolve to the session.
    */
   #pendingSessions = new Map<string, Promise<Session<Context>>>();
+  /**
+   * File handler for file upload/download operations.
+   */
+  #fileHandler: FileHandler<Context> | null = null;
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -80,11 +92,16 @@ export class Server<Context extends ServerContext> {
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
+    if (options.fileStorage) {
+      this.#fileHandler = new FileHandler(options.fileStorage, this.logger);
+    }
+
     this.logger
       .withMetadata({
         nodeId: this.#nodeId,
         hasCustomPubSub: !!options.pubSub,
         hasPermissionChecker: !!options.checkPermission,
+        hasFileStorage: !!options.fileStorage,
       })
       .info("Server initialized");
   }
@@ -412,22 +429,46 @@ export class Server<Context extends ServerContext> {
               .debug("Processing incoming message");
 
             try {
-              const session = await this.getOrOpenSession(message.document, {
-                encrypted: message.encrypted,
-                client,
-                context: message.context,
-              });
+              // File messages bypass document sessions
+              if (message.type === "file") {
+                if (!this.#fileHandler) {
+                  const error = new Error(
+                    "File storage not configured. File messages are not supported.",
+                  );
+                  msgLogger.withError(error).error("File storage not available");
+                  throw error;
+                }
 
-              msgLogger.debug("Client added to session, applying message");
+                msgLogger.debug("Processing file message");
 
-              await session.apply(message, client);
+                await this.#fileHandler.handle(message, async (response) => {
+                  await client.send(response);
+                });
 
-              msgLogger
-                .withMetadata({
-                  messageId: message.id,
-                  documentId: message.document,
-                })
-                .debug("Message applied successfully");
+                msgLogger
+                  .withMetadata({
+                    messageId: message.id,
+                  })
+                  .debug("File message processed successfully");
+              } else {
+                // Document messages go through sessions
+                const session = await this.getOrOpenSession(message.document, {
+                  encrypted: message.encrypted,
+                  client,
+                  context: message.context,
+                });
+
+                msgLogger.debug("Client added to session, applying message");
+
+                await session.apply(message, client);
+
+                msgLogger
+                  .withMetadata({
+                    messageId: message.id,
+                    documentId: message.document,
+                  })
+                  .debug("Message applied successfully");
+              }
             } catch (error) {
               msgLogger
                 .withError(error as Error)

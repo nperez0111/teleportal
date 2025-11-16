@@ -11,6 +11,8 @@
 
 export * from "./decode";
 export * from "./encode";
+export * from "./file-upload";
+export * from "./file-upload-client";
 export * from "./message-types";
 export * from "./multi-message";
 export * from "./ping";

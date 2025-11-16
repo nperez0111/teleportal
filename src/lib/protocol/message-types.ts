@@ -7,12 +7,17 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedFileProgress,
+  DecodedFileRequest,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
   DocStep,
   EncodedDocUpdateMessage,
+  FileProgressMessage,
+  FileRequestMessage,
+  FileStep,
 } from "./types";
 
 /**
@@ -20,7 +25,9 @@ import type {
  */
 export type BinaryMessage =
   | EncodedDocUpdateMessage<DocStep>
-  | AwarenessUpdateMessage;
+  | AwarenessUpdateMessage
+  | FileRequestMessage
+  | FileProgressMessage;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
@@ -29,7 +36,8 @@ export type BinaryMessage =
 export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>
-  | AckMessage<Context>;
+  | AckMessage<Context>
+  | FileMessage<Context>;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
@@ -160,6 +168,27 @@ export class AckMessage<
     context?: Context,
   ) {
     super();
+    this.context = context ?? ({} as Context);
+  }
+}
+
+/**
+ * A file message for upload/download operations.
+ */
+export class FileMessage<
+  Context extends Record<string, unknown>,
+> extends CustomMessage<Context> {
+  public type = "file" as const;
+  public context: Context;
+  public document: string | undefined = undefined;
+
+  constructor(
+    public payload: DecodedFileRequest | DecodedFileProgress,
+    context?: Context,
+    public encrypted: boolean = false,
+    encoded?: BinaryMessage,
+  ) {
+    super(encoded);
     this.context = context ?? ({} as Context);
   }
 }
