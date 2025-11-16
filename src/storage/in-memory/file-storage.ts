@@ -90,17 +90,13 @@ export class InMemoryFileStorage extends FileStorage {
       throw new Error(`Upload session ${fileId} not found`);
     }
 
-    // Get all stored chunks in order
-    // We need to find the highest chunk index to know how many chunks there are
-    const chunkIndices = Array.from(upload.chunks.keys()).sort((a, b) => a - b);
-    if (chunkIndices.length === 0) {
-      throw new Error(`No chunks stored for file ${fileId}`);
-    }
-
-    // Verify we have all chunks from 0 to maxIndex
-    const maxChunkIndex = chunkIndices[chunkIndices.length - 1];
+    // Calculate expected number of chunks based on file size
+    // Chunks are 64KB, so we need to determine how many chunks should exist
+    const expectedChunks = Math.ceil(upload.metadata.size / (64 * 1024));
+    
+    // Verify we have all chunks from 0 to expectedChunks-1
     const chunks: Uint8Array[] = [];
-    for (let i = 0; i <= maxChunkIndex; i++) {
+    for (let i = 0; i < expectedChunks; i++) {
       const chunk = upload.chunks.get(i);
       if (!chunk) {
         throw new Error(`Missing chunk ${i} for file ${fileId}`);
@@ -108,7 +104,7 @@ export class InMemoryFileStorage extends FileStorage {
       chunks.push(chunk);
     }
 
-    // Verify total size matches
+    // Verify total size matches (this catches cases where chunks don't add up correctly)
     const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     if (totalSize !== upload.metadata.size) {
       throw new Error(
