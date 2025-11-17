@@ -32,6 +32,7 @@ interface FileDownloadHandler {
   receivedChunks: number;
   fileId: string;
   timeout: number;
+  timeoutId: ReturnType<typeof setTimeout> | null;
 }
 
 /**
@@ -520,8 +521,9 @@ export function getFileTransport<Context extends ClientContext>({
     },
     async download(fileId, encrypted = false, timeout = 60000) {
       // Set up timeout
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           const handler = activeDownloads.get(fileId);
           if (handler) {
             handler.reject(new Error(`Download timeout after ${timeout}ms`));
@@ -542,6 +544,7 @@ export function getFileTransport<Context extends ClientContext>({
           receivedChunks: 0,
           fileId,
           timeout,
+          timeoutId,
         });
       });
 
@@ -568,7 +571,14 @@ export function getFileTransport<Context extends ClientContext>({
 
       // Wait for download to complete or timeout
       // The source will resolve the downloadPromise when all chunks are received
-      return await Promise.race([downloadPromise, timeoutPromise]);
+      try {
+        return await Promise.race([downloadPromise, timeoutPromise]);
+      } finally {
+        // Clean up timeout when promise resolves or rejects
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+      }
     },
   };
 }
