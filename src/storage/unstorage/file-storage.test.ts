@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import { createStorage } from "unstorage";
-import { buildMerkleTree, CHUNK_SIZE } from "../../files/file-upload";
+import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import { UnstorageFileStorage } from "./file-storage";
 
 describe("UnstorageFileStorage", () => {

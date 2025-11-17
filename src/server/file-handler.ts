@@ -6,7 +6,7 @@ import type {
   DecodedFileProgress,
   DecodedFileRequest,
 } from "../lib/protocol/types";
-import { buildMerkleTree } from "teleportal/files";
+import { buildMerkleTree } from "teleportal/merkle-tree";
 
 /**
  * Maximum file size in bytes (1GB)

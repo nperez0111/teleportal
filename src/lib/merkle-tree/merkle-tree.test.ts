@@ -5,7 +5,7 @@ import {
   generateMerkleProof,
   serializeMerkleTree,
   verifyMerkleProof,
-} from "./file-upload";
+} from "./merkle-tree";
 
 describe("Merkle Tree", () => {
   it("should build a merkle tree from chunks", () => {

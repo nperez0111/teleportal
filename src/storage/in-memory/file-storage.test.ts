@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildMerkleTree, CHUNK_SIZE } from "../../files/file-upload";
+import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "./file-storage";
 
 describe("InMemoryFileStorage", () => {

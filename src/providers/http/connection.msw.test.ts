@@ -17,9 +17,9 @@ import {
   type Transport,
   decodeMessageArray,
 } from "teleportal";
+import { getFileTransport } from "../../transports/send-file";
 import { ConnectionState } from "../connection";
 import { HttpConnection } from "./connection";
-import { FileUploader } from "../../files/file-upload-client";
 import { FileHandler } from "../../server/file-handler";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { ConsoleTransport, LogLayer } from "loglayer";
@@ -1176,12 +1176,15 @@ describe("HttpConnection with MSW", () => {
       });
 
       // Upload file
-      const uploader = new FileUploader();
       const transport = connectionToTransport(client);
       const context: ClientContext = { clientId: testClientId };
+      const fileTransport = getFileTransport({
+        transport,
+        context,
+      });
       const fileId = "test-file-id";
 
-      const contentId = await uploader.upload(file, fileId, transport, context);
+      const contentId = await fileTransport.upload(file, fileId);
 
       // Wait for upload to complete (HTTP batches messages with maxBatchDelay: 100ms)
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -1241,12 +1244,15 @@ describe("HttpConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const uploader = new FileUploader();
       const transport = connectionToTransport(client);
       const context: ClientContext = { clientId: testClientId };
+      const fileTransport = getFileTransport({
+        transport,
+        context,
+      });
       const fileId = "test-large-file-id";
 
-      const contentId = await uploader.upload(file, fileId, transport, context);
+      const contentId = await fileTransport.upload(file, fileId);
 
       // Wait for upload to complete (HTTP batches messages)
       await new Promise((resolve) => setTimeout(resolve, 300));

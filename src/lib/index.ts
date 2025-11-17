@@ -2,6 +2,7 @@ import { type BinaryMessage, type Message } from "./protocol";
 
 export * from "./protocol";
 export * from "./utils";
+export * from "./merkle-tree";
 
 export type ClientContext = {
   /**

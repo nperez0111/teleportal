@@ -6,7 +6,7 @@ import type {
   Transport,
 } from "teleportal";
 import { FileMessage } from "../lib/protocol/message-types";
-import { FileUploader } from "../files/file-upload-client";
+import { getFileTransport } from "../transports/send-file";
 import { FileHandler } from "./file-handler";
 import { InMemoryFileStorage } from "../storage/in-memory/file-storage";
 import { logger } from "./logger";
@@ -21,7 +21,7 @@ const emptyLogger = new LogLayer({
 
 /**
  * Mock bidirectional transport for testing
- * Connects FileUploader (client) and FileHandler (server) together
+ * Connects file transport (client) and FileHandler (server) together
  */
 class MockBidirectionalTransport<Context extends Record<string, unknown>>
   implements Transport<Context>
@@ -126,7 +126,7 @@ class MockBidirectionalTransport<Context extends Record<string, unknown>>
     };
   }
 
-  // Helper to get client-side transport for FileUploader
+  // Helper to get client-side transport for file transport
   getClientTransport(): Transport<Context> {
     return {
       readable: this.clientReadable,
@@ -140,7 +140,7 @@ class MockBidirectionalTransport<Context extends Record<string, unknown>>
   }
 }
 
-describe("FileHandler integration with FileUploader", () => {
+describe("FileHandler integration with file transport", () => {
   let fileStorage: InMemoryFileStorage;
   let fileHandler: FileHandler<ServerContext>;
   let transport: MockBidirectionalTransport<ClientContext>;
@@ -151,7 +151,7 @@ describe("FileHandler integration with FileUploader", () => {
     transport = new MockBidirectionalTransport<ClientContext>();
   });
 
-  it("should handle file upload from FileUploader", async () => {
+  it("should handle file upload from file transport", async () => {
     const fileId = "test-file-id";
     const context: ClientContext = { clientId: "client-1" };
     const serverContext: ServerContext = {
@@ -192,15 +192,13 @@ describe("FileHandler integration with FileUploader", () => {
     // Start handling messages
     const handlePromise = handleMessages();
 
-    // Use FileUploader to upload the file
-    const uploader = new FileUploader();
+    // Wrap transport with file transport and upload the file
     const clientTransport = transport.getClientTransport();
-    const contentId = await uploader.upload(
-      file,
-      fileId,
-      clientTransport,
+    const fileTransport = getFileTransport({
+      transport: clientTransport,
       context,
-    );
+    });
+    const contentId = await fileTransport.upload(file, fileId);
 
     // Wait a bit for all messages to be processed
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -265,15 +263,13 @@ describe("FileHandler integration with FileUploader", () => {
     // Start handling messages
     const handlePromise = handleMessages();
 
-    // Use FileUploader to upload the file
-    const uploader = new FileUploader();
+    // Wrap transport with file transport and upload the file
     const clientTransport = transport.getClientTransport();
-    const contentId = await uploader.upload(
-      file,
-      fileId,
-      clientTransport,
+    const fileTransport = getFileTransport({
+      transport: clientTransport,
       context,
-    );
+    });
+    const contentId = await fileTransport.upload(file, fileId);
 
     // Wait a bit for all messages to be processed
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -331,14 +327,12 @@ describe("FileHandler integration with FileUploader", () => {
     const handlePromise = handleMessages();
 
     // Upload file
-    const uploader = new FileUploader();
     const clientTransport = transport.getClientTransport();
-    const contentId = await uploader.upload(
-      file,
-      uploadFileId,
-      clientTransport,
+    const fileTransport = getFileTransport({
+      transport: clientTransport,
       context,
-    );
+    });
+    const contentId = await fileTransport.upload(file, uploadFileId);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 

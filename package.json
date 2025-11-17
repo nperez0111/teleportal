@@ -58,6 +58,10 @@
       "types": "./dist/transports/nats/index.d.mts",
       "default": "./dist/transports/nats/index.mjs"
     },
+    "./transports/send-file": {
+      "types": "./dist/transports/send-file/index.d.mts",
+      "default": "./dist/transports/send-file/index.mjs"
+    },
     "./transports": {
       "types": "./dist/transports/index.d.mts",
       "default": "./dist/transports/index.mjs"
@@ -78,9 +82,9 @@
       "types": "./dist/token/index.d.mts",
       "default": "./dist/token/index.mjs"
     },
-    "./files": {
-      "types": "./dist/files/index.d.mts",
-      "default": "./dist/files/index.mjs"
+    "./merkle-tree": {
+      "types": "./dist/lib/merkle-tree/index.d.mts",
+      "default": "./dist/lib/merkle-tree/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",

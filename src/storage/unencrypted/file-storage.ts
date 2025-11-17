@@ -1,4 +1,4 @@
-import { buildMerkleTree, CHUNK_SIZE } from "../../files/file-upload";
+import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import {
   FileStorage,
   type FileData,

@@ -1,4 +1,4 @@
-import type { MerkleTree } from "../files/file-upload";
+import type { MerkleTree } from "../lib/merkle-tree/merkle-tree";
 
 /**
  * Metadata for a file upload

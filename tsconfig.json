@@ -14,6 +14,7 @@
       "teleportal/storage": ["./src/storage/index.ts"],
       "teleportal/transports/redis": ["./src/transports/redis/index.ts"],
       "teleportal/transports/nats": ["./src/transports/nats/index.ts"],
+      "teleportal/transports/send-file": ["./src/transports/send-file/index.ts"],
       "teleportal/transports": ["./src/transports/index.ts"],
       "teleportal/http": ["./src/http/index.ts"],
       "teleportal/server": ["./src/server/index.ts"],
@@ -22,7 +23,7 @@
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
-      "teleportal/files": ["./src/files/index.ts"],
+      "teleportal/merkle-tree": ["./src/lib/merkle-tree/index.ts"],
       "teleportal": ["./src/lib/index.ts"],
     },
     "jsx": "react-jsx"

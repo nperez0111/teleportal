@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { decodeMessage } from "./decode";
 import { FileMessage } from "./message-types";
-import { CHUNK_SIZE } from "../../files/file-upload";
+import { CHUNK_SIZE } from "../merkle-tree/merkle-tree";
 import type {
   DecodedFileAuthMessage,
   DecodedFileProgress,

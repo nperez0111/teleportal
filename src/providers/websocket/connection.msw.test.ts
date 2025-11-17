@@ -18,9 +18,9 @@ import {
   type Transport,
   decodeMessage,
 } from "teleportal";
+import { getFileTransport } from "../../transports/send-file";
 import { ConnectionState } from "../connection";
 import { WebSocketConnection } from "./connection";
-import { FileUploader } from "../../files/file-upload-client";
 import { FileHandler } from "../../server/file-handler";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { ConsoleTransport, LogLayer } from "loglayer";
@@ -798,12 +798,15 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       });
 
       // Upload file
-      const uploader = new FileUploader();
       const transport = connectionToTransport(client);
       const context: ClientContext = { clientId: "test-client" };
+      const fileTransport = getFileTransport({
+        transport,
+        context,
+      });
       const fileId = "test-file-id";
 
-      const contentId = await uploader.upload(file, fileId, transport, context);
+      const contentId = await fileTransport.upload(file, fileId);
 
       // Wait for upload to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -860,12 +863,15 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const uploader = new FileUploader();
       const transport = connectionToTransport(client);
       const context: ClientContext = { clientId: "test-client" };
+      const fileTransport = getFileTransport({
+        transport,
+        context,
+      });
       const fileId = "test-large-file-id";
 
-      const contentId = await uploader.upload(file, fileId, transport, context);
+      const contentId = await fileTransport.upload(file, fileId);
 
       // Wait for upload to complete
       await new Promise((resolve) => setTimeout(resolve, 200));
