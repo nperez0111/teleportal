@@ -238,10 +238,6 @@ function decodeFileStepWithDecoder(
         const filename = decoding.readVarString(decoder);
         const size = decoding.readVarUint(decoder);
         const mimeType = decoding.readVarString(decoder);
-        const hasContentId = decoding.readUint8(decoder) === 1;
-        const contentId = hasContentId
-          ? decoding.readVarUint8Array(decoder)
-          : undefined;
 
         return {
           type: "file-request",
@@ -250,7 +246,6 @@ function decodeFileStepWithDecoder(
           filename,
           size,
           mimeType,
-          contentId,
         };
       }
       case 0x01: {

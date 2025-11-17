@@ -151,7 +151,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 │ (1 byte)    │                  (variable)                                       │
 ├─────────────┼───────────────────────────────────────────────────────────────────┤
 │ 0x00 = File │ Direction (1 byte) + FileId (string) + Filename (string) +        │
-│ Request     │ Size (varint) + MimeType (string) + ContentId (optional)          │
+│ Request     │ Size (varint) + MimeType (string)                                │
 ├─────────────┼───────────────────────────────────────────────────────────────────┤
 │ 0x01 = File │ FileId (string) + ChunkIndex (varint) + ChunkData (varint array)  │
 │ Progress    │ + MerkleProof (array) + TotalChunks (varint) +                    │
@@ -171,17 +171,17 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 **Payload Structure**:
 
 - Direction (1 byte): `0x00` = upload, `0x01` = download
-- FileId (varint string): Client-generated UUID for this transfer
+- FileId (varint string):
+  - For uploads: Client-generated UUID for this transfer
+  - For downloads: Merkle root hash (hex string) identifying the file to download
 - Filename (varint string): Original filename
 - Size (varint): File size in bytes
 - MimeType (varint string): MIME type of the file
-- HasContentId (1 byte): `0x00` = false, `0x01` = true
-- ContentId (varint array, optional): Merkle root hash (required for downloads)
 
 **Usage**:
 
-- **Upload**: Client sends file metadata to initiate upload session
-- **Download**: Client requests file by contentId (merkle root hash)
+- **Upload**: Client sends file metadata with a client-generated UUID as fileId to initiate upload session. After upload completes, the client receives the merkle root hash (hex string) which should be used as the fileId for future downloads.
+- **Download**: Client requests file by providing the merkle root hash (hex string) as the fileId
 
 #### 2. File Progress (0x01)
 

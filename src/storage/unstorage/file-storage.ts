@@ -1,6 +1,7 @@
 import type { Storage } from "unstorage";
 import type { FileData, FileMetadata, UploadProgress } from "../file-storage";
 import { UnencryptedFileStorage } from "../unencrypted/file-storage";
+import { toBase64 } from "lib0/buffer";
 
 /**
  * Default upload timeout in milliseconds (24 hours)
@@ -48,17 +49,7 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
    * Get the storage key for a completed file
    */
   #getFileKey(contentId: Uint8Array): string {
-    const contentIdHex = this.#contentIdToKey(contentId);
-    return `${this.keyPrefix}:file:${contentIdHex}`;
-  }
-
-  /**
-   * Convert contentId (Uint8Array) to a hex string key
-   */
-  #contentIdToKey(contentId: Uint8Array): string {
-    return Array.from(contentId)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    return `${this.keyPrefix}:file:${toBase64(contentId)}`;
   }
 
   protected async createUploadSession(

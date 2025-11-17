@@ -156,7 +156,8 @@ export type DecodedFileRequest = {
    */
   direction: "upload" | "download";
   /**
-   * Client-generated UUID identifying this file transfer
+   * For uploads: Client-generated UUID identifying this file transfer.
+   * For downloads: Merkle root hash (hex string) identifying the file to download.
    */
   fileId: string;
   /**
@@ -171,10 +172,6 @@ export type DecodedFileRequest = {
    * MIME type of the file
    */
   mimeType: string;
-  /**
-   * Content ID (merkle root hash) - required for downloads, optional for uploads
-   */
-  contentId?: Uint8Array;
 };
 
 /**

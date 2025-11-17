@@ -7,6 +7,7 @@ import type {
   DecodedFileRequest,
 } from "../lib/protocol/types";
 import { buildMerkleTree } from "teleportal/merkle-tree";
+import { fromBase64 } from "lib0/buffer";
 
 /**
  * Maximum file size in bytes (1GB)
@@ -167,23 +168,18 @@ export class FileHandler<Context extends ServerContext> {
       }
     } else {
       // Download request
-      if (!payload.contentId) {
-        const error = new Error("contentId required for download requests");
-        log.withError(error).error("Download request missing contentId");
-        throw error;
-      }
-
+      // For downloads, fileId is the merkle root hash (hex string)
       try {
-        const file = await this.#fileStorage.getFile(payload.contentId);
+        // Convert fileId (hex string) to Uint8Array for file lookup
+        const contentId = fromBase64(payload.fileId);
+        const file = await this.#fileStorage.getFile(contentId);
         if (!file) {
           const error = new Error(
-            `File not found for contentId: ${Array.from(payload.contentId)
-              .map((b) => b.toString(16).padStart(2, "0"))
-              .join("")}`,
+            `File not found for fileId: ${payload.fileId}`,
           );
           log
             .withError(error)
-            .withMetadata({ contentId: payload.contentId })
+            .withMetadata({ fileId: payload.fileId })
             .error("File not found for download");
           throw error;
         }
@@ -191,7 +187,6 @@ export class FileHandler<Context extends ServerContext> {
         log
           .withMetadata({
             fileId: payload.fileId,
-            contentId: payload.contentId,
             filename: file.metadata.filename,
           })
           .debug("File found for download");
@@ -204,11 +199,10 @@ export class FileHandler<Context extends ServerContext> {
               {
                 type: "file-request",
                 direction: "download",
-                fileId: payload.fileId,
+                fileId: payload.fileId, // Merkle root hash as hex string
                 filename: file.metadata.filename,
                 size: file.metadata.size,
                 mimeType: file.metadata.mimeType,
-                contentId: payload.contentId,
               },
               context,
               encrypted,

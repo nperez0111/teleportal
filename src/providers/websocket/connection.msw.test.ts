@@ -25,6 +25,7 @@ import { FileHandler } from "../../server/file-handler";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { ConsoleTransport, LogLayer } from "loglayer";
 import type { ServerContext } from "teleportal";
+import { fromBase64 } from "lib0/buffer";
 
 process.on("uncaughtException", (err) => {
   console.error("[GLOBAL] Uncaught Exception:", err);
@@ -804,14 +805,14 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         transport,
         context,
       });
-      const fileId = "test-file-id";
 
-      const contentId = await fileTransport.upload(file, fileId);
+      const fileId = await fileTransport.upload(file, "test-file-id");
 
       // Wait for upload to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Verify file was stored
+      const contentId = fromBase64(fileId);
       const storedFile = await fileStorage.getFile(contentId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
@@ -877,7 +878,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(contentId);
+      const storedFile = await fileStorage.getFile(fromBase64(contentId));
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("large-test.txt");
       expect(storedFile!.metadata.size).toBe(fileSize);

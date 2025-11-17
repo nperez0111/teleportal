@@ -7,7 +7,7 @@ import {
   expect,
   test,
 } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { fromBase64, toBase64 } from "lib0/buffer";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import {
@@ -1182,14 +1182,14 @@ describe("HttpConnection with MSW", () => {
         transport,
         context,
       });
-      const fileId = "test-file-id";
 
-      const contentId = await fileTransport.upload(file, fileId);
+      const fileId = await fileTransport.upload(file, "test-file-id");
 
       // Wait for upload to complete (HTTP batches messages with maxBatchDelay: 100ms)
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       // Verify file was stored
+      const contentId = fromBase64(fileId);
       const storedFile = await fileStorage.getFile(contentId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
@@ -1258,7 +1258,7 @@ describe("HttpConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(contentId);
+      const storedFile = await fileStorage.getFile(fromBase64(contentId));
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("large-test.txt");
       expect(storedFile!.metadata.size).toBe(fileSize);

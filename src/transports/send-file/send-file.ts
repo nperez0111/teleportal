@@ -18,6 +18,7 @@ import {
   generateMerkleProof,
   verifyMerkleProof,
 } from "../../lib/merkle-tree/merkle-tree";
+import { fromBase64, toBase64 } from "lib0/buffer";
 
 /**
  * Handler for file download operations
@@ -29,7 +30,7 @@ interface FileDownloadHandler {
   chunks: Map<number, Uint8Array>;
   totalChunks: number;
   receivedChunks: number;
-  contentId: Uint8Array;
+  fileId: string;
   timeout: number;
 }
 
@@ -37,7 +38,7 @@ interface FileDownloadHandler {
  * Handler for file upload operations
  */
 interface FileUploadHandler {
-  resolve: (contentId: Uint8Array) => void;
+  resolve: (fileId: string) => void;
   reject: (error: Error) => void;
   fileId: string;
 }
@@ -131,11 +132,13 @@ export function getFileSource<Context extends ClientContext>({
           const payload = fileMessage.payload as DecodedFileProgress;
           const handler = activeDownloads.get(payload.fileId);
           if (handler) {
+            // Convert fileId (hex string) to Uint8Array for merkle proof verification
+            const contentId = fromBase64(handler.fileId);
             // Verify chunk using merkle proof
             const isValid = verifyMerkleProof(
               payload.chunkData,
               payload.merkleProof,
-              handler.contentId,
+              contentId,
               payload.chunkIndex,
             );
 
@@ -347,7 +350,7 @@ export type FileTransportMethods = {
   /**
    * Upload a file in chunks with merkle tree verification.
    *
-   * @returns The contentId (merkle root hash) of the uploaded file
+   * @returns The merkle root hash (hex string) of the uploaded file, which should be used as the fileId for future downloads
    */
   upload: (
     /**
@@ -363,18 +366,14 @@ export type FileTransportMethods = {
      * @default false
      */
     encrypted?: boolean,
-  ) => Promise<Uint8Array>;
+  ) => Promise<string>;
   /**
-   * Download a file by contentId.
+   * Download a file by merkle root hash.
    * @returns The downloaded file
    */
   download: (
     /**
-     * The contentId of the file, this is the merkle root hash of the file.
-     */
-    contentId: Uint8Array,
-    /**
-     * The fileId of the file, this is a client-generated UUID for this download.
+     * The merkle root hash (hex string) of the file to download. This is the fileId returned from upload().
      */
     fileId: string,
     /**
@@ -452,9 +451,10 @@ export function getFileTransport<Context extends ClientContext>({
       // Build merkle tree
       const merkleTree = buildMerkleTree(chunks);
       const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+      const contentIdKey = toBase64(contentId);
 
       // Set up upload handler
-      const uploadPromise = new Promise<Uint8Array>((resolve, reject) => {
+      const uploadPromise = new Promise<string>((resolve, reject) => {
         activeUploads.set(fileId, {
           resolve,
           reject,
@@ -513,13 +513,12 @@ export function getFileTransport<Context extends ClientContext>({
         bytesUploaded += chunk.length;
       }
 
-      // Resolve with contentId (server will verify and complete)
-      activeUploads.get(fileId)?.resolve(contentId);
+      activeUploads.get(fileId)?.resolve(contentIdKey);
       activeUploads.delete(fileId);
 
       return uploadPromise;
     },
-    async download(contentId, fileId, encrypted = false, timeout = 60000) {
+    async download(fileId, encrypted = false, timeout = 60000) {
       // Set up timeout
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
@@ -541,12 +540,12 @@ export function getFileTransport<Context extends ClientContext>({
           chunks: new Map(),
           totalChunks: 0,
           receivedChunks: 0,
-          contentId,
+          fileId,
           timeout,
         });
       });
 
-      // Send download request
+      // Send download request - fileId is the merkle root hash (hex string)
       const requestMessage = new FileMessage<Context>(
         {
           type: "file-request",
@@ -555,7 +554,6 @@ export function getFileTransport<Context extends ClientContext>({
           filename: "", // Will be filled by server
           size: 0, // Will be filled by server
           mimeType: "", // Will be filled by server
-          contentId,
         },
         context,
         encrypted,

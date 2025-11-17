@@ -11,6 +11,7 @@ import {
   CHUNK_SIZE,
   generateMerkleProof,
 } from "../../lib/merkle-tree/merkle-tree";
+import { toBase64 } from "lib0/buffer";
 
 /**
  * Mock bidirectional transport for testing FileDownloader
@@ -94,7 +95,6 @@ describe("FileDownloader", () => {
   });
 
   it("should download a single-chunk file successfully", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
     const filename = "test.txt";
     const mimeType = "text/plain";
@@ -103,9 +103,10 @@ describe("FileDownloader", () => {
     const chunks = [fileContent];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -114,11 +115,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -132,7 +132,7 @@ describe("FileDownloader", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId,
+          fileId: fileId,
           chunkIndex: 0,
           chunkData: fileContent,
           merkleProof: proof,
@@ -162,7 +162,6 @@ describe("FileDownloader", () => {
   });
 
   it("should download a multi-chunk file successfully", async () => {
-    const fileId = "test-file-id";
     // Create a file larger than CHUNK_SIZE to ensure multiple chunks
     const fileSize = CHUNK_SIZE + 1000;
     const fileContent = new Uint8Array(fileSize);
@@ -179,9 +178,10 @@ describe("FileDownloader", () => {
     // Build merkle tree
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -190,11 +190,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -209,7 +208,7 @@ describe("FileDownloader", () => {
         new FileMessage<ClientContext>(
           {
             type: "file-progress",
-            fileId,
+            fileId: fileId,
             chunkIndex: i,
             chunkData: chunks[i],
             merkleProof: proof,
@@ -242,7 +241,6 @@ describe("FileDownloader", () => {
   });
 
   it("should handle out-of-order chunks", async () => {
-    const fileId = "test-file-id";
     const fileSize = CHUNK_SIZE * 3;
     const fileContent = new Uint8Array(fileSize);
     fileContent.fill(99);
@@ -258,9 +256,10 @@ describe("FileDownloader", () => {
     // Build merkle tree
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -269,11 +268,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -289,7 +287,7 @@ describe("FileDownloader", () => {
         new FileMessage<ClientContext>(
           {
             type: "file-progress",
-            fileId,
+            fileId: fileId,
             chunkIndex: i,
             chunkData: chunks[i],
             merkleProof: proof,
@@ -315,7 +313,6 @@ describe("FileDownloader", () => {
   });
 
   it("should handle empty file", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array(0);
     const filename = "empty.txt";
     const mimeType = "text/plain";
@@ -324,9 +321,10 @@ describe("FileDownloader", () => {
     const chunks = [fileContent];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -335,11 +333,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: 0,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -356,7 +353,6 @@ describe("FileDownloader", () => {
   });
 
   it("should reject download with invalid merkle proof", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
     const filename = "test.txt";
     const mimeType = "text/plain";
@@ -365,9 +361,10 @@ describe("FileDownloader", () => {
     const chunks = [fileContent];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -376,11 +373,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -394,7 +390,7 @@ describe("FileDownloader", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId,
+          fileId: fileId,
           chunkIndex: 0,
           chunkData: fileContent,
           merkleProof: wrongProof,
@@ -414,7 +410,6 @@ describe("FileDownloader", () => {
   });
 
   it("should reject download with modified chunk data", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
     const modifiedContent = new Uint8Array([9, 9, 9, 9, 9]); // Modified
     const filename = "test.txt";
@@ -424,9 +419,10 @@ describe("FileDownloader", () => {
     const chunks = [fileContent];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -435,11 +431,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -453,7 +448,7 @@ describe("FileDownloader", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId,
+          fileId: fileId,
           chunkIndex: 0,
           chunkData: modifiedContent, // Modified data
           merkleProof: proof, // Proof for original data
@@ -473,7 +468,6 @@ describe("FileDownloader", () => {
   });
 
   it("should reject download with missing chunks", async () => {
-    const fileId = "test-file-id";
     const fileSize = CHUNK_SIZE * 3;
     const fileContent = new Uint8Array(fileSize);
     fileContent.fill(42);
@@ -489,9 +483,10 @@ describe("FileDownloader", () => {
     // Build merkle tree
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -500,11 +495,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -519,7 +513,7 @@ describe("FileDownloader", () => {
         new FileMessage<ClientContext>(
           {
             type: "file-progress",
-            fileId,
+            fileId: fileId,
             chunkIndex: i,
             chunkData: chunks[i],
             merkleProof: proof,
@@ -543,12 +537,11 @@ describe("FileDownloader", () => {
   });
 
   it("should handle timeout", async () => {
-    const fileId = "test-file-id";
     const contentId = new Uint8Array(32).fill(1);
+    const fileId = toBase64(contentId);
 
     // Start download with short timeout
     const downloadPromise = fileTransport.download(
-      contentId,
       fileId,
       false,
       100, // 100ms timeout
@@ -561,12 +554,11 @@ describe("FileDownloader", () => {
   });
 
   it("should handle transport closure", async () => {
-    const fileId = "test-file-id";
     const contentId = new Uint8Array(32).fill(1);
+    const fileId = toBase64(contentId);
 
     // Start download with short timeout
     const downloadPromise = fileTransport.download(
-      contentId,
       fileId,
       false,
       100, // 100ms timeout
@@ -582,7 +574,6 @@ describe("FileDownloader", () => {
   });
 
   it("should ignore messages for different fileId", async () => {
-    const fileId = "test-file-id";
     const otherFileId = "other-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
     const filename = "test.txt";
@@ -592,9 +583,10 @@ describe("FileDownloader", () => {
     const chunks = [fileContent];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata for correct fileId
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -603,11 +595,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -640,7 +631,7 @@ describe("FileDownloader", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId, // Correct fileId
+          fileId: fileId, // Correct fileId (fileId)
           chunkIndex: 0,
           chunkData: fileContent,
           merkleProof: proof,
@@ -660,7 +651,6 @@ describe("FileDownloader", () => {
   });
 
   it("should handle chunks arriving before metadata", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
     const filename = "test.txt";
     const mimeType = "text/plain";
@@ -669,9 +659,10 @@ describe("FileDownloader", () => {
     const chunks = [fileContent];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const fileId = toBase64(contentId);
 
-    // Start download in background
-    const downloadPromise = fileTransport.download(contentId, fileId, false);
+    // Start download in background - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Send chunk BEFORE metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -680,7 +671,7 @@ describe("FileDownloader", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId,
+          fileId: fileId,
           chunkIndex: 0,
           chunkData: fileContent,
           merkleProof: proof,
@@ -700,11 +691,10 @@ describe("FileDownloader", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId,
+          fileId: fileId,
           filename,
           size: fileContent.length,
           mimeType,
-          contentId,
         },
         context,
         false,
@@ -735,14 +725,13 @@ describe("FileUploader", () => {
   });
 
   it("should upload a single-chunk file successfully", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
     const filename = "test.txt";
     const mimeType = "text/plain";
     const file = new File([fileContent], filename, { type: mimeType });
 
     // Upload the file
-    const contentId = await fileTransport.upload(file, fileId, false);
+    const fileId = await fileTransport.upload(file, "test-file-id", false);
 
     // Wait for messages to be sent
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -752,7 +741,7 @@ describe("FileUploader", () => {
     const merkleTree = buildMerkleTree(chunks);
     const expectedContentId =
       merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    expect(contentId).toEqual(expectedContentId);
+    expect(fileId).toBe(toBase64(expectedContentId));
 
     // Verify messages were sent
     const sentMessages = mockTransport.getSentMessages();
@@ -764,7 +753,7 @@ describe("FileUploader", () => {
     expect(requestMessage.payload.type).toBe("file-request");
     const requestPayload = requestMessage.payload as DecodedFileRequest;
     expect(requestPayload.direction).toBe("upload");
-    expect(requestPayload.fileId).toBe(fileId);
+    expect(requestPayload.fileId).toBe("test-file-id");
     expect(requestPayload.filename).toBe(filename);
     expect(requestPayload.size).toBe(fileContent.length);
     expect(requestPayload.mimeType).toContain(mimeType); // File constructor may add charset
@@ -774,14 +763,13 @@ describe("FileUploader", () => {
     expect(progressMessage.type).toBe("file");
     expect(progressMessage.payload.type).toBe("file-progress");
     const progressPayload = progressMessage.payload as DecodedFileProgress;
-    expect(progressPayload.fileId).toBe(fileId);
+    expect(progressPayload.fileId).toBe("test-file-id");
     expect(progressPayload.chunkIndex).toBe(0);
     expect(progressPayload.chunkData).toEqual(fileContent);
     expect(progressPayload.totalChunks).toBe(1);
   });
 
   it("should upload a multi-chunk file successfully", async () => {
-    const fileId = "test-file-id";
     // Create a file larger than CHUNK_SIZE to ensure multiple chunks
     const fileSize = CHUNK_SIZE + 1000;
     const fileContent = new Uint8Array(fileSize);
@@ -791,7 +779,7 @@ describe("FileUploader", () => {
     const file = new File([fileContent], filename, { type: mimeType });
 
     // Upload the file
-    const contentId = await fileTransport.upload(file, fileId, false);
+    const fileId = await fileTransport.upload(file, "test-file-id", false);
 
     // Wait for messages to be sent
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -804,7 +792,7 @@ describe("FileUploader", () => {
     const merkleTree = buildMerkleTree(chunks);
     const expectedContentId =
       merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    expect(contentId).toEqual(expectedContentId);
+    expect(fileId).toBe(toBase64(expectedContentId));
 
     // Verify messages were sent
     const sentMessages = mockTransport.getSentMessages();
@@ -815,7 +803,7 @@ describe("FileUploader", () => {
     expect(requestMessage.payload.type).toBe("file-request");
     const requestPayload = requestMessage.payload as DecodedFileRequest;
     expect(requestPayload.direction).toBe("upload");
-    expect(requestPayload.fileId).toBe(fileId);
+    expect(requestPayload.fileId).toBe("test-file-id");
     expect(requestPayload.size).toBe(fileContent.length);
 
     // Verify all chunks were sent
@@ -823,7 +811,7 @@ describe("FileUploader", () => {
       const progressMessage = sentMessages[i + 1] as FileMessage<ClientContext>;
       expect(progressMessage.payload.type).toBe("file-progress");
       const progressPayload = progressMessage.payload as DecodedFileProgress;
-      expect(progressPayload.fileId).toBe(fileId);
+      expect(progressPayload.fileId).toBe("test-file-id");
       expect(progressPayload.chunkIndex).toBe(i);
       expect(progressPayload.chunkData).toEqual(chunks[i]);
       expect(progressPayload.totalChunks).toBe(chunks.length);
@@ -831,14 +819,13 @@ describe("FileUploader", () => {
   });
 
   it("should upload an empty file successfully", async () => {
-    const fileId = "test-file-id";
     const fileContent = new Uint8Array(0);
     const filename = "empty.txt";
     const mimeType = "text/plain";
     const file = new File([fileContent], filename, { type: mimeType });
 
     // Upload the file
-    const contentId = await fileTransport.upload(file, fileId, false);
+    const fileId = await fileTransport.upload(file, "test-file-id", false);
 
     // Wait for messages to be sent
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -848,7 +835,7 @@ describe("FileUploader", () => {
     const merkleTree = buildMerkleTree(chunks);
     const expectedContentId =
       merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    expect(contentId).toEqual(expectedContentId);
+    expect(fileId).toBe(toBase64(expectedContentId));
 
     // Verify messages were sent
     const sentMessages = mockTransport.getSentMessages();
@@ -863,7 +850,6 @@ describe("FileUploader", () => {
   });
 
   it("should include merkle proofs in chunk messages", async () => {
-    const fileId = "test-file-id";
     // Use a multi-chunk file to ensure merkle proofs are non-empty
     const fileSize = CHUNK_SIZE + 1000;
     const fileContent = new Uint8Array(fileSize);
@@ -873,7 +859,7 @@ describe("FileUploader", () => {
     const file = new File([fileContent], filename, { type: mimeType });
 
     // Upload the file
-    await fileTransport.upload(file, fileId, false);
+    await fileTransport.upload(file, "test-file-id", false);
 
     // Wait for messages to be sent
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -906,14 +892,13 @@ describe("FileUploader and FileDownloader integration", () => {
 
   it("should upload and then download the same file", async () => {
     const uploadFileId = "upload-file-id";
-    const downloadFileId = "download-file-id";
     const fileContent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const filename = "test.txt";
     const mimeType = "text/plain";
     const file = new File([fileContent], filename, { type: mimeType });
 
     // Upload the file
-    const contentId = await fileTransport.upload(file, uploadFileId, false);
+    const fileId = await fileTransport.upload(file, uploadFileId, false);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Simulate server storing the file and responding to download request
@@ -923,12 +908,8 @@ describe("FileUploader and FileDownloader integration", () => {
     const uploadRequestPayload = uploadRequest.payload as DecodedFileRequest;
     const uploadChunks = sentMessages.slice(1) as FileMessage<ClientContext>[];
 
-    // Start download
-    const downloadPromise = fileTransport.download(
-      contentId,
-      downloadFileId,
-      false,
-    );
+    // Start download - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata for download
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -937,11 +918,10 @@ describe("FileUploader and FileDownloader integration", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId: downloadFileId,
+          fileId: fileId,
           filename: uploadRequestPayload.filename,
           size: uploadRequestPayload.size,
           mimeType: uploadRequestPayload.mimeType,
-          contentId,
         },
         context,
         false,
@@ -956,7 +936,7 @@ describe("FileUploader and FileDownloader integration", () => {
         new FileMessage<ClientContext>(
           {
             type: "file-progress",
-            fileId: downloadFileId,
+            fileId: fileId,
             chunkIndex: chunkPayload.chunkIndex,
             chunkData: chunkPayload.chunkData,
             merkleProof: chunkPayload.merkleProof,
@@ -996,7 +976,7 @@ describe("FileUploader and FileDownloader integration", () => {
     const file = new File([fileContent], filename, { type: mimeType });
 
     // Upload the file
-    const contentId = await fileTransport.upload(file, uploadFileId, false);
+    const fileId = await fileTransport.upload(file, uploadFileId, false);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // Capture upload messages
@@ -1005,12 +985,8 @@ describe("FileUploader and FileDownloader integration", () => {
     const uploadRequestPayload = uploadRequest.payload as DecodedFileRequest;
     const uploadChunks = sentMessages.slice(1) as FileMessage<ClientContext>[];
 
-    // Start download
-    const downloadPromise = fileTransport.download(
-      contentId,
-      downloadFileId,
-      false,
-    );
+    // Start download - fileId is the merkle root hash (hex string)
+    const downloadPromise = fileTransport.download(fileId, false);
 
     // Simulate server sending metadata
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1019,11 +995,10 @@ describe("FileUploader and FileDownloader integration", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId: downloadFileId,
+          fileId: fileId,
           filename: uploadRequestPayload.filename,
           size: uploadRequestPayload.size,
           mimeType: uploadRequestPayload.mimeType,
-          contentId,
         },
         context,
         false,
@@ -1038,7 +1013,7 @@ describe("FileUploader and FileDownloader integration", () => {
         new FileMessage<ClientContext>(
           {
             type: "file-progress",
-            fileId: downloadFileId,
+            fileId: fileId,
             chunkIndex: chunkPayload.chunkIndex,
             chunkData: chunkPayload.chunkData,
             merkleProof: chunkPayload.merkleProof,
@@ -1078,22 +1053,18 @@ describe("FileUploader and FileDownloader integration", () => {
     });
 
     // Upload both files
-    const contentId1 = await fileTransport.upload(file1, "upload-1", false);
+    const contentId1Hex = await fileTransport.upload(file1, "upload-1", false);
     await new Promise((resolve) => setTimeout(resolve, 10));
     mockTransport.clearSentMessages();
 
-    const contentId2 = await fileTransport.upload(file2, "upload-2", false);
+    const contentId2Hex = await fileTransport.upload(file2, "upload-2", false);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Verify contentIds are different
-    expect(contentId1).not.toEqual(contentId2);
+    expect(contentId1Hex).not.toBe(contentId2Hex);
 
-    // Download first file
-    const downloadPromise1 = fileTransport.download(
-      contentId1,
-      "download-1",
-      false,
-    );
+    // Download first file - fileId is the merkle root hash (hex string)
+    const downloadPromise1 = fileTransport.download(contentId1Hex, false);
 
     // Simulate server response for first file
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1102,11 +1073,10 @@ describe("FileUploader and FileDownloader integration", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId: "download-1",
+          fileId: contentId1Hex,
           filename: "file1.txt",
           size: file1Content.length,
           mimeType: "text/plain",
-          contentId: contentId1,
         },
         context,
         false,
@@ -1121,7 +1091,7 @@ describe("FileUploader and FileDownloader integration", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId: "download-1",
+          fileId: contentId1Hex,
           chunkIndex: 0,
           chunkData: file1Content,
           merkleProof: proof1,
@@ -1141,12 +1111,8 @@ describe("FileUploader and FileDownloader integration", () => {
     );
     expect(downloadedContent1).toEqual(file1Content);
 
-    // Download second file
-    const downloadPromise2 = fileTransport.download(
-      contentId2,
-      "download-2",
-      false,
-    );
+    // Download second file - fileId is the merkle root hash (hex string)
+    const downloadPromise2 = fileTransport.download(contentId2Hex, false);
 
     // Simulate server response for second file
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1155,11 +1121,10 @@ describe("FileUploader and FileDownloader integration", () => {
         {
           type: "file-request",
           direction: "download",
-          fileId: "download-2",
+          fileId: contentId2Hex,
           filename: "file2.txt",
           size: file2Content.length,
           mimeType: "text/plain",
-          contentId: contentId2,
         },
         context,
         false,
@@ -1174,7 +1139,7 @@ describe("FileUploader and FileDownloader integration", () => {
       new FileMessage<ClientContext>(
         {
           type: "file-progress",
-          fileId: "download-2",
+          fileId: contentId2Hex,
           chunkIndex: 0,
           chunkData: file2Content,
           merkleProof: proof2,

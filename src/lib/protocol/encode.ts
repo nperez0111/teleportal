@@ -135,7 +135,7 @@ export function encodeMessage(update: Message): BinaryMessage {
               encoder,
               update.payload.direction === "upload" ? 0 : 1,
             );
-            // fileId (UUID string)
+            // fileId (UUID string for uploads, hex string of merkle root for downloads)
             encoding.writeVarString(encoder, update.payload.fileId);
             // filename
             encoding.writeVarString(encoder, update.payload.filename);
@@ -143,13 +143,6 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeVarUint(encoder, update.payload.size);
             // mimeType
             encoding.writeVarString(encoder, update.payload.mimeType);
-            // contentId (optional, only for downloads)
-            if (update.payload.contentId !== undefined) {
-              encoding.writeUint8(encoder, 1);
-              encoding.writeVarUint8Array(encoder, update.payload.contentId);
-            } else {
-              encoding.writeUint8(encoder, 0);
-            }
             break;
           }
           case "file-progress": {

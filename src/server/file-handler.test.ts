@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { ConsoleTransport, LogLayer } from "loglayer";
 import type {
   ClientContext,
   Message,
@@ -6,11 +7,10 @@ import type {
   Transport,
 } from "teleportal";
 import { FileMessage } from "../lib/protocol/message-types";
+import { InMemoryFileStorage } from "../storage/in-memory/file-storage";
 import { getFileTransport } from "../transports/send-file";
 import { FileHandler } from "./file-handler";
-import { InMemoryFileStorage } from "../storage/in-memory/file-storage";
-import { logger } from "./logger";
-import { ConsoleTransport, LogLayer } from "loglayer";
+import { fromBase64 } from "lib0/buffer";
 
 const emptyLogger = new LogLayer({
   transport: new ConsoleTransport({
@@ -152,7 +152,6 @@ describe("FileHandler integration with file transport", () => {
   });
 
   it("should handle file upload from file transport", async () => {
-    const fileId = "test-file-id";
     const context: ClientContext = { clientId: "client-1" };
     const serverContext: ServerContext = {
       clientId: "client-1",
@@ -198,7 +197,7 @@ describe("FileHandler integration with file transport", () => {
       transport: clientTransport,
       context,
     });
-    const contentId = await fileTransport.upload(file, fileId);
+    const fileId = await fileTransport.upload(file, "test-file-id");
 
     // Wait a bit for all messages to be processed
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -207,7 +206,8 @@ describe("FileHandler integration with file transport", () => {
     transport.close();
     await handlePromise;
 
-    // Verify file was stored
+    // Verify file was stored - convert hex string to Uint8Array
+    const contentId = fromBase64(fileId);
     const storedFile = await fileStorage.getFile(contentId);
     expect(storedFile).not.toBeNull();
     expect(storedFile!.metadata.filename).toBe("test.txt");
@@ -220,13 +220,7 @@ describe("FileHandler integration with file transport", () => {
   });
 
   it("should handle multiple chunk upload", async () => {
-    const fileId = "test-file-id";
     const context: ClientContext = { clientId: "client-1" };
-    const serverContext: ServerContext = {
-      clientId: "client-1",
-      userId: "user-1",
-      room: "room-1",
-    };
 
     // Create a larger file that will be split into multiple chunks
     const fileSize = 100 * 1024; // 100KB (will be ~2 chunks at 64KB each)
@@ -269,7 +263,7 @@ describe("FileHandler integration with file transport", () => {
       transport: clientTransport,
       context,
     });
-    const contentId = await fileTransport.upload(file, fileId);
+    const fileId = await fileTransport.upload(file, "test-file-id");
 
     // Wait a bit for all messages to be processed
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -278,7 +272,8 @@ describe("FileHandler integration with file transport", () => {
     transport.close();
     await handlePromise;
 
-    // Verify file was stored
+    // Verify file was stored - convert hex string to Uint8Array
+    const contentId = fromBase64(fileId);
     const storedFile = await fileStorage.getFile(contentId);
     expect(storedFile).not.toBeNull();
     expect(storedFile!.metadata.filename).toBe("large-test.txt");
@@ -287,14 +282,7 @@ describe("FileHandler integration with file transport", () => {
   });
 
   it("should handle file download request", async () => {
-    const uploadFileId = "upload-file-id";
-    const downloadFileId = "download-file-id";
     const context: ClientContext = { clientId: "client-1" };
-    const serverContext: ServerContext = {
-      clientId: "client-1",
-      userId: "user-1",
-      room: "room-1",
-    };
 
     // First, upload a file
     const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
@@ -332,20 +320,19 @@ describe("FileHandler integration with file transport", () => {
       transport: clientTransport,
       context,
     });
-    const contentId = await fileTransport.upload(file, uploadFileId);
+    const fileId = await fileTransport.upload(file, "test-file-id");
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // Now request download
+    // Now request download - fileId is the merkle root hash (hex string)
     const downloadMessage = new FileMessage<ClientContext>(
       {
         type: "file-request",
         direction: "download",
-        fileId: downloadFileId,
+        fileId,
         filename: "",
         size: 0,
         mimeType: "",
-        contentId,
       },
       context,
       false,
@@ -359,7 +346,8 @@ describe("FileHandler integration with file transport", () => {
     transport.close();
     await handlePromise;
 
-    // Verify file exists
+    // Verify file exists - convert hex string to Uint8Array
+    const contentId = fromBase64(fileId);
     const storedFile = await fileStorage.getFile(contentId);
     expect(storedFile).not.toBeNull();
   });

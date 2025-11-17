@@ -7,6 +7,7 @@ import type {
   DecodedFileProgress,
   DecodedFileRequest,
 } from "./types";
+import { toBase64 } from "lib0/buffer";
 
 describe("File Message Encoding/Decoding", () => {
   it("should encode and decode file-request (upload)", () => {
@@ -36,22 +37,21 @@ describe("File Message Encoding/Decoding", () => {
     expect(payload.filename).toBe("test.txt");
     expect(payload.size).toBe(1024);
     expect(payload.mimeType).toBe("text/plain");
-    expect(payload.contentId).toBeUndefined();
   });
 
   it("should encode and decode file-request (download)", () => {
     const contentId = new Uint8Array(32);
     contentId.fill(42);
+    const fileId = toBase64(contentId);
 
     const message = new FileMessage<Record<string, unknown>>(
       {
         type: "file-request",
         direction: "download",
-        fileId: "test-file-id",
+        fileId,
         filename: "test.txt",
         size: 1024,
         mimeType: "text/plain",
-        contentId,
       },
       {},
       false,
@@ -64,8 +64,7 @@ describe("File Message Encoding/Decoding", () => {
     expect(decoded.type).toBe("file");
     const payload = decoded.payload as DecodedFileRequest;
     expect(payload.direction).toBe("download");
-    expect(payload.contentId).toBeDefined();
-    expect(payload.contentId).toEqual(contentId);
+    expect(payload.fileId).toBe(fileId);
   });
 
   it("should encode and decode file-progress", () => {
