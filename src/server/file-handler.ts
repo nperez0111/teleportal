@@ -3,6 +3,7 @@ import type { FileStorage } from "../storage/file-storage";
 import type { Logger } from "./logger";
 import { FileMessage } from "../lib/protocol/message-types";
 import type {
+  DecodedFileAuthMessage,
   DecodedFileProgress,
   DecodedFileRequest,
 } from "../lib/protocol/types";
@@ -112,12 +113,9 @@ export class FileHandler<Context extends ServerContext> {
         await sendResponse(
           new FileMessage(
             {
-              type: "file-request",
-              direction: payload.direction,
-              fileId: payload.fileId,
-              filename: payload.filename,
-              size: payload.size,
-              mimeType: payload.mimeType,
+              type: "file-auth-message",
+              permission: "denied",
+              reason: `File size ${payload.size} exceeds maximum ${MAX_FILE_SIZE} bytes`,
             },
             context,
             encrypted,
