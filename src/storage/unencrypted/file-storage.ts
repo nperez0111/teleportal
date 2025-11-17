@@ -178,13 +178,11 @@ export abstract class UnencryptedFileStorage extends FileStorage {
     }
 
     // Determine expected number of chunks
-    let expectedChunks: number;
-    if (upload.metadata.size >= CHUNK_SIZE) {
-      expectedChunks = Math.ceil(upload.metadata.size / CHUNK_SIZE);
-    } else {
-      // Small file case: use the number of stored chunks
-      expectedChunks = chunks.length;
-    }
+    // Files under 64KB should always expect exactly 1 chunk, and 0-byte files should also expect 1 chunk
+    const expectedChunks =
+      upload.metadata.size === 0
+        ? 1
+        : Math.ceil(upload.metadata.size / CHUNK_SIZE);
 
     // Verify we have all chunks from 0 to expectedChunks-1
     // Check for missing chunks individually by examining the upload session
