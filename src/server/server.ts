@@ -414,11 +414,15 @@ export class Server<Context extends ServerContext> {
                 return false;
               }
               await client.send(
-                new FileMessage({
-                  type: "file-auth-message",
-                  permission: "denied",
-                  reason: `Insufficient permissions to access file ${message.payload.fileId}`,
-                }),
+                new FileMessage(
+                  {
+                    type: "file-auth-message",
+                    permission: "denied",
+                    reason: `Insufficient permissions to access file ${message.payload.fileId}`,
+                  },
+                  message.context,
+                  message.encrypted,
+                ),
               );
               return false;
             }
