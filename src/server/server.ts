@@ -342,6 +342,15 @@ export class Server<Context extends ServerContext> {
 
         const msgLogger = logger.child().withContext({ messageId: message.id });
 
+        // Skip permission check for file-auth-message (they're responses, not requests)
+        if (
+          message.type === "file" &&
+          message.payload.type === "file-auth-message"
+        ) {
+          // Just ignore this message that's sent by the client
+          return true;
+        }
+
         // Extract fileId from FileMessage payload if document is undefined
         const fileId =
           message.type === "file" &&
@@ -409,16 +418,12 @@ export class Server<Context extends ServerContext> {
             }
 
             if (message.type === "file") {
-              if (message.payload.type === "file-auth-message") {
-                // Just ignore this message that's sent by the client
-                return false;
-              }
               await client.send(
                 new FileMessage(
                   {
                     type: "file-auth-message",
                     permission: "denied",
-                    reason: `Insufficient permissions to access file ${message.payload.fileId}`,
+                    reason: "Insufficient permissions to access file",
                   },
                   message.context,
                   message.encrypted,
