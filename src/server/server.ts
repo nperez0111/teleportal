@@ -348,7 +348,7 @@ export class Server<Context extends ServerContext> {
           message.payload.type === "file-auth-message"
         ) {
           // Just ignore this message that's sent by the client
-          return true;
+          return false;
         }
 
         // Extract fileId from FileMessage payload if document is undefined
