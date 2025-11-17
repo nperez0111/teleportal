@@ -343,6 +343,53 @@ export function getFileSink<Context extends ClientContext>({
   };
 }
 
+export type FileTransportMethods = {
+  /**
+   * Upload a file in chunks with merkle tree verification.
+   *
+   * @returns The contentId (merkle root hash) of the uploaded file
+   */
+  upload: (
+    /**
+     * The file to upload
+     */
+    file: File,
+    /**
+     * The fileId of the file, this is a client-generated UUID for this upload.
+     */
+    fileId: string,
+    /**
+     * Whether to encrypt the file.
+     * @default false
+     */
+    encrypted?: boolean,
+  ) => Promise<Uint8Array>;
+  /**
+   * Download a file by contentId.
+   * @returns The downloaded file
+   */
+  download: (
+    /**
+     * The contentId of the file, this is the merkle root hash of the file.
+     */
+    contentId: Uint8Array,
+    /**
+     * The fileId of the file, this is a client-generated UUID for this download.
+     */
+    fileId: string,
+    /**
+     * Whether the file is encrypted.
+     * @default false
+     */
+    encrypted?: boolean,
+    /**
+     * Timeout in milliseconds for the download
+     * @default 60000
+     */
+    timeout?: number,
+  ) => Promise<File>;
+};
+
 /**
  * Makes a {@link Transport} that wraps another transport and provides file upload/download methods
  */
@@ -355,37 +402,9 @@ export function getFileTransport<Context extends ClientContext>({
 }): Transport<
   Context,
   {
-    /**
-     * Upload a file in chunks with merkle tree verification.
-     *
-     * @param file - The file to upload
-     * @param fileId - Client-generated UUID for this upload
-     * @param encrypted - Whether to encrypt the file
-     * @returns The contentId (merkle root hash) of the uploaded file
-     */
-    upload: (
-      file: File,
-      fileId: string,
-      encrypted?: boolean,
-    ) => Promise<Uint8Array>;
-    /**
-     * Download a file by contentId.
-     *
-     * @param contentId - Merkle root hash (contentId) of the file
-     * @param fileId - Client-generated UUID for this download
-     * @param encrypted - Whether the file is encrypted
-     * @param timeout - Timeout in milliseconds for the download (default: 60000)
-     * @returns The downloaded file
-     */
-    download: (
-      contentId: Uint8Array,
-      fileId: string,
-      encrypted?: boolean,
-      timeout?: number,
-    ) => Promise<File>;
     activeDownloads: Map<string, FileDownloadHandler>;
     activeUploads: Map<string, FileUploadHandler>;
-  }
+  } & FileTransportMethods
 > {
   const observer = new Observable<{
     message: (message: Message) => void;

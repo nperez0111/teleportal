@@ -16,7 +16,25 @@ import {
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 
-export type ProviderOptions = {
+export type ProviderOptions<
+  T extends Transport<
+    ClientContext,
+    {
+      synced: Promise<void>;
+      handler: {
+        start: () => Promise<Message>;
+      };
+    }
+  > = Transport<
+    ClientContext,
+    {
+      synced: Promise<void>;
+      handler: {
+        start: () => Promise<Message>;
+      };
+    }
+  >,
+> = {
   client: Connection<any>;
   document: string;
   ydoc?: Y.Doc;
@@ -38,7 +56,11 @@ export type ProviderOptions = {
         };
       }
     >;
-  }) => Transport<
+  }) => T;
+};
+
+export class Provider<
+  T extends Transport<
     ClientContext,
     {
       synced: Promise<void>;
@@ -46,10 +68,16 @@ export type ProviderOptions = {
         start: () => Promise<Message>;
       };
     }
-  >;
-};
-
-export class Provider extends Observable<{
+  > = Transport<
+    ClientContext,
+    {
+      synced: Promise<void>;
+      handler: {
+        start: () => Promise<Message>;
+      };
+    }
+  >,
+> extends Observable<{
   "load-subdoc": (ctx: {
     subdoc: Y.Doc;
     provider: Provider;
@@ -65,15 +93,7 @@ export class Provider extends Observable<{
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: Transport<
-    ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
-  >;
+  public transport: T;
   public document: string;
   #underlyingConnection: Connection<any>;
   #messageReader: FanOutReader<RawReceivedMessage>;
@@ -91,10 +111,10 @@ export class Provider extends Observable<{
     document,
     ydoc = new Y.Doc(),
     awareness = new Awareness(ydoc),
-    getTransport = ({ getDefaultTransport }) => getDefaultTransport(),
+    getTransport = ({ getDefaultTransport }) => getDefaultTransport() as T,
     enableOfflinePersistence = true,
     indexedDBPrefix = "teleportal-",
-  }: ProviderOptions) {
+  }: ProviderOptions<T>) {
     super();
     this.doc = ydoc;
     this.awareness = awareness;
