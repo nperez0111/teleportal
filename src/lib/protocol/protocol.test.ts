@@ -3,10 +3,12 @@ import {
   AckMessage,
   AwarenessMessage,
   AwarenessUpdateMessage,
+  DecodedFilePart,
   decodeMessage,
   DocMessage,
   encodePingMessage,
   encodePongMessage,
+  FileMessage,
   getEmptyStateVector,
   getEmptyUpdate,
   isEmptyStateVector,
@@ -17,6 +19,8 @@ import {
   SyncStep2Update,
   Update,
 } from ".";
+import { CHUNK_SIZE } from "../merkle-tree/merkle-tree";
+import { toBase64 } from "lib0/buffer";
 
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {
@@ -238,155 +242,197 @@ describe("can encode and decode", () => {
     const decoded = decodeMessage(ackMessage.encoded);
     expect(decoded.context).toEqual({});
   });
-});
 
-describe("can encode", () => {
-  it("awareness update", () => {
+  it("can encode and decode a file message (file-upload)", () => {
     expect(
-      new AwarenessMessage("test", {
-        type: "awareness-update",
-        update: new Uint8Array([
-          0x00, 0x01, 0x02, 0x03,
-        ]) as AwarenessUpdateMessage,
-      }).encoded,
+      decodeMessage(
+        new FileMessage<Record<string, unknown>>(
+          {
+            type: "file-upload",
+            fileId: "test-upload-id",
+            filename: "test.txt",
+            size: 1024,
+            mimeType: "text/plain",
+            lastModified: 1763526701897,
+            encrypted: false,
+          },
+          {},
+          false,
+        ).encoded,
+      ),
     ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
-        1,
-        4,
-        116,
-        101,
-        115,
-        116,
-        0,
-        1,
-        0,
-        4,
-        0,
-        1,
-        2,
-        3,
-      ]
+      FileMessage {
+        "context": {},
+        "document": undefined,
+        "encrypted": false,
+        "payload": {
+          "encrypted": false,
+          "fileId": "test-upload-id",
+          "filename": "test.txt",
+          "lastModified": 1763526701897,
+          "mimeType": "text/plain",
+          "size": 1024,
+          "type": "file-upload",
+        },
+        "type": "file",
+      }
     `);
   });
 
-  it("doc update (sync step 1)", () => {
+  it("can encode and decode a file message (file-download)", () => {
+    const contentId = new Uint8Array(32);
+    contentId.fill(42);
+    const fileId = toBase64(contentId);
+
     expect(
-      new DocMessage("test", {
-        type: "sync-step-1",
-        sv: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
-      }).encoded,
+      decodeMessage(
+        new FileMessage<Record<string, unknown>>(
+          {
+            type: "file-download",
+            fileId,
+          },
+          {},
+          false,
+        ).encoded,
+      ),
     ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
-        1,
-        4,
-        116,
-        101,
-        115,
-        116,
-        0,
-        0,
-        0,
-        4,
-        0,
-        1,
-        2,
-        3,
-      ]
+      FileMessage {
+        "context": {},
+        "document": undefined,
+        "encrypted": false,
+        "payload": {
+          "fileId": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+          "type": "file-download",
+        },
+        "type": "file",
+      }
     `);
   });
 
-  it("doc update (sync step 2)", () => {
-    expect(
-      new DocMessage("test", {
-        type: "sync-step-2",
-        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
-      }).encoded,
-    ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
-        1,
-        4,
-        116,
-        101,
-        115,
-        116,
-        0,
-        0,
-        1,
-        4,
-        0,
-        1,
-        2,
-        3,
-      ]
+  it("can encode and decode a file message (file-part)", () => {
+    const chunkData = new Uint8Array(CHUNK_SIZE);
+    chunkData.fill(1);
+
+    const merkleProof = [
+      new Uint8Array(32).fill(2),
+      new Uint8Array(32).fill(3),
+    ];
+
+    const decoded = decodeMessage(
+      new FileMessage<Record<string, unknown>>(
+        {
+          type: "file-part",
+          fileId: "test-file-id",
+          chunkIndex: 0,
+          chunkData,
+          merkleProof,
+          totalChunks: 10,
+          bytesUploaded: CHUNK_SIZE,
+          encrypted: false,
+        },
+        {},
+        false,
+      ).encoded,
+    );
+    expect((decoded.payload as DecodedFilePart).chunkData).toBeTruthy();
+    (decoded.payload as Partial<DecodedFilePart>).chunkData = undefined;
+
+    expect(decoded).toMatchInlineSnapshot(`
+      FileMessage {
+        "context": {},
+        "document": undefined,
+        "encrypted": false,
+        "payload": {
+          "bytesUploaded": 65536,
+          "chunkData": undefined,
+          "chunkIndex": 0,
+          "encrypted": false,
+          "fileId": "test-file-id",
+          "merkleProof": [
+            Uint8Array [
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+            ],
+            Uint8Array [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+            ],
+          ],
+          "totalChunks": 10,
+          "type": "file-part",
+        },
+        "type": "file",
+      }
     `);
   });
 
-  it("doc update (sync done)", () => {
+  it("file message (file-auth-message)", () => {
     expect(
-      new DocMessage("test", {
-        type: "sync-done",
-      }).encoded,
-    ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
-        1,
-        4,
-        116,
-        101,
-        115,
-        116,
-        0,
-        0,
-        3,
-      ]
-    `);
-  });
-
-  it("doc update (update)", () => {
-    expect(
-      new DocMessage("test", {
-        type: "update",
-        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
-      }).encoded,
-    ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
-        1,
-        4,
-        116,
-        101,
-        115,
-        116,
-        0,
-        0,
-        2,
-        4,
-        0,
-        1,
-        2,
-        3,
-      ]
-    `);
-  });
-
-  it("doc update (auth message)", () => {
-    expect(
-      new DocMessage("test", {
-        type: "auth-message",
+      new FileMessage<Record<string, unknown>>({
+        type: "file-auth-message",
         permission: "denied",
+        fileId: "test-file-id",
+        statusCode: 404,
         reason: "test",
       }).encoded,
     ).toMatchInlineSnapshot(`
@@ -395,39 +441,27 @@ describe("can encode", () => {
         74,
         83,
         1,
-        4,
+        0,
+        0,
+        3,
+        3,
+        0,
+        12,
         116,
         101,
         115,
         116,
-        0,
-        0,
-        4,
-        0,
-        4,
-        116,
+        45,
+        102,
+        105,
+        108,
         101,
-        115,
-        116,
-      ]
-    `);
-  });
-
-  it("ack message", () => {
-    expect(
-      new AckMessage({
-        type: "ack",
-        messageId: "dGVzdA==", // base64 for "test"
-      }).encoded,
-    ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
+        45,
+        105,
+        100,
+        148,
+        3,
         1,
-        0,
-        0,
-        2,
         4,
         116,
         101,

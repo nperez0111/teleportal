@@ -106,6 +106,11 @@ export type DecodedAuthMessage = {
 };
 
 /**
+ * A Y.js acknowledgement message
+ */
+export type EncodedAckMessage = Tag<Uint8Array, "ack">;
+
+/**
  * An acknowledgement message
  */
 export type DecodedAckMessage = {
@@ -137,27 +142,43 @@ export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
 export type EncodedDocUpdateMessage<T extends DocStep> = Tag<Uint8Array, T>;
 
 /**
- * A file request message for initiating uploads or downloads.
+ * A file download message for initiating downloads.
  */
-export type FileRequestMessage = Tag<Uint8Array, "file-request">;
+export type EncodedFileDownloadMessage = Tag<Uint8Array, "file-download">;
 
 /**
- * A file progress message containing chunk data and merkle proof.
+ * A file upload message for initiating uploads.
  */
-export type FileProgressMessage = Tag<Uint8Array, "file-progress">;
+export type EncodedFileUploadMessage = Tag<Uint8Array, "file-upload">;
 
 /**
- * A decoded file request message.
+ * A file part message containing chunk data and merkle proof.
  */
-export type DecodedFileRequest = {
-  type: "file-request";
+export type EncodedFilePartMessage = Tag<Uint8Array, "file-part">;
+
+/**
+ * A file step message for initiating uploads, downloads, or parts.
+ */
+export type FileStep =
+  | EncodedFileDownloadMessage
+  | EncodedFileUploadMessage
+  | EncodedFilePartMessage;
+
+/**
+ * A file step message for initiating uploads, downloads, or parts.
+ */
+export type EncodedFileStep<T extends FileStep> = Tag<Uint8Array, T>;
+
+/**
+ * A decoded file upload message.
+ * This message is the preamble to a file upload.
+ * A client uploads a file to a sever, and a server uploads a file to a client.
+ * @note Sending from local to remote.
+ */
+export type DecodedFileUpload = {
+  type: "file-upload";
   /**
-   * Direction of the file transfer
-   */
-  direction: "upload" | "download";
-  /**
-   * For uploads: Client-generated UUID identifying this file transfer.
-   * For downloads: Merkle root hash (hex string) identifying the file to download.
+   * A client-generated identifier for resumable upload of the same file.
    */
   fileId: string;
   /**
@@ -165,20 +186,42 @@ export type DecodedFileRequest = {
    */
   filename: string;
   /**
-   * File size in bytes
+   * File size in bytes (max 2^53 - 1 bytes)
    */
   size: number;
   /**
    * MIME type of the file
    */
   mimeType: string;
+  /**
+   * Last modified timestamp of the file
+   */
+  lastModified: number;
+  /**
+   * Whether the file is encrypted
+   */
+  encrypted: boolean;
+};
+
+/**
+ * A decoded file download message.
+ * This message is the preamble to a file download.
+ * A client downloads a file from a server, and a server downloads a file from a client.
+ * @note Sending from remote to local (if exists)
+ */
+export type DecodedFileDownload = {
+  type: "file-download";
+  /**
+   * The fileId (merkle root hash) of the file to download.
+   */
+  fileId: string;
 };
 
 /**
  * A decoded file progress message.
  */
-export type DecodedFileProgress = {
-  type: "file-progress";
+export type DecodedFilePart = {
+  type: "file-part";
   /**
    * Client-generated UUID identifying this file transfer
    */
@@ -214,11 +257,20 @@ export type DecodedFileProgress = {
  */
 export type DecodedFileAuthMessage = {
   type: "file-auth-message";
+  /**
+   * The permission granted or denied for the file
+   */
   permission: "denied";
-  reason: string;
+  /**
+   * The fileId of the file that was denied authorization for
+   */
+  fileId: string;
+  /**
+   * The reason for the authorization denial
+   */
+  reason?: string;
+  /**
+   * The HTTP status code of the response
+   */
+  statusCode: 404 | 403 | 401 | 500;
 };
-
-/**
- * Any file-related message step.
- */
-export type FileStep = FileRequestMessage | FileProgressMessage;

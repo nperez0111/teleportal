@@ -127,15 +127,19 @@ export function encodeMessage(update: Message): BinaryMessage {
         encoding.writeUint8(encoder, 3);
 
         switch (update.payload.type) {
-          case "file-request": {
-            // message type (file-request)
+          case "file-download": {
+            // message type (file-download)
             encoding.writeUint8(encoder, 0);
-            // direction (0=upload, 1=download)
-            encoding.writeUint8(
-              encoder,
-              update.payload.direction === "upload" ? 0 : 1,
-            );
-            // fileId (UUID string for uploads, hex string of merkle root for downloads)
+            // fileId (UUID string)
+            encoding.writeVarString(encoder, update.payload.fileId);
+            break;
+          }
+          case "file-upload": {
+            // message type (file-upload)
+            encoding.writeUint8(encoder, 1);
+            // encrypted flag
+            encoding.writeUint8(encoder, update.payload.encrypted ? 1 : 0);
+            // fileId
             encoding.writeVarString(encoder, update.payload.fileId);
             // filename
             encoding.writeVarString(encoder, update.payload.filename);
@@ -143,11 +147,13 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeVarUint(encoder, update.payload.size);
             // mimeType
             encoding.writeVarString(encoder, update.payload.mimeType);
+            // lastModified
+            encoding.writeVarUint(encoder, update.payload.lastModified);
             break;
           }
-          case "file-progress": {
-            // message type (file-progress)
-            encoding.writeUint8(encoder, 1);
+          case "file-part": {
+            // message type (file-part)
+            encoding.writeUint8(encoder, 2);
             // fileId (UUID string)
             encoding.writeVarString(encoder, update.payload.fileId);
             // chunkIndex
@@ -169,9 +175,22 @@ export function encodeMessage(update: Message): BinaryMessage {
           }
           case "file-auth-message": {
             // message type (file-auth-message)
-            encoding.writeUint8(encoder, 2);
-            // reason
-            encoding.writeVarString(encoder, update.payload.reason);
+            encoding.writeUint8(encoder, 3);
+            // permission
+            encoding.writeUint8(
+              encoder,
+              update.payload.permission === "denied" ? 0 : 1,
+            );
+            // fileId
+            encoding.writeVarString(encoder, update.payload.fileId);
+            // status code
+            encoding.writeVarUint(encoder, update.payload.statusCode ?? 500);
+            // has reason?
+            encoding.writeUint8(encoder, update.payload.reason ? 1 : 0);
+            if (update.payload.reason) {
+              // reason
+              encoding.writeVarString(encoder, update.payload.reason);
+            }
             break;
           }
           default: {

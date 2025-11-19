@@ -150,65 +150,83 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 │ Msg Type    │                    Payload                                        │
 │ (1 byte)    │                  (variable)                                       │
 ├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x00 = File │ Direction (1 byte) + FileId (string) + Filename (string) +        │
-│ Request     │ Size (varint) + MimeType (string)                                │
+│ 0x00 = File │ FileId (varint string)                                            │
+│ Download    │                                                                   │
 ├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x01 = File │ FileId (string) + ChunkIndex (varint) + ChunkData (varint array)  │
-│ Progress    │ + MerkleProof (array) + TotalChunks (varint) +                    │
-│             │ BytesUploaded (varint) + Encrypted (1 byte)                       │
+│ 0x01 = File │ Encrypted (1 byte) + UploadId (varint string) + Filename (string) │
+│ Upload      │ + Size (varint) + MimeType (string) + LastModified (varint)       │
 ├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x02 = File │ Reason (string)                                                   │
-│ Auth        │                                                                   │
+│ 0x02 = File │ FileId (string) + ChunkIndex (varint) + ChunkData (varint array)  │
+│ Part        │ + MerkleProofLength (varint) + MerkleProof (array) +              │
+│             │ TotalChunks (varint) + BytesUploaded (varint) +                   │
+│             │ Encrypted (1 byte)                                                │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x03 = File │ Permission (1 byte) + FileId (string) + StatusCode (varint) +     │
+│ Auth        │ HasReason (1 byte) + Reason (string, optional)                    │
+│ Message     │                                                                   │
 └─────────────┴───────────────────────────────────────────────────────────────────┘
 ```
 
 ### File Message Types
 
-#### 1. File Request (0x00)
+#### 1. File Download (0x00)
 
-**Purpose**: Initiates file upload or download
+**Purpose**: Initiates file download by requesting a file using its content ID
 
 **Payload Structure**:
 
-- Direction (1 byte): `0x00` = upload, `0x01` = download
-- FileId (varint string):
-  - For uploads: Client-generated UUID for this transfer
-  - For downloads: Merkle root hash (hex string) identifying the file to download
+- FileId (varint string): Merkle root hash (base64 string) identifying the file to download
+
+**Usage**: Client requests file by providing the merkle root hash as the fileId. The server responds with file-part messages containing the file chunks.
+
+#### 2. File Upload (0x01)
+
+**Purpose**: Initiates file upload by sending file metadata
+
+**Payload Structure**:
+
+- Encrypted (1 byte): `0x00` = false, `0x01` = true
+- UploadId (varint string): Client-generated UUID for this transfer session
 - Filename (varint string): Original filename
 - Size (varint): File size in bytes
 - MimeType (varint string): MIME type of the file
+- LastModified (varint): Last modified timestamp of the file
 
-**Usage**:
+**Usage**: Client sends file metadata with a client-generated UUID as uploadId to initiate upload session. After upload completes, the client receives the merkle root hash (base64 string) which should be used as the fileId for future downloads.
 
-- **Upload**: Client sends file metadata with a client-generated UUID as fileId to initiate upload session. After upload completes, the client receives the merkle root hash (hex string) which should be used as the fileId for future downloads.
-- **Download**: Client requests file by providing the merkle root hash (hex string) as the fileId
-
-#### 2. File Progress (0x01)
+#### 3. File Part (0x02)
 
 **Purpose**: Sends file chunk data with Merkle proof for verification
 
 **Payload Structure**:
 
-- FileId (varint string): Client-generated UUID matching the file request
+- FileId (varint string): Client-generated UUID matching the file upload, or merkle root hash for downloads
 - ChunkIndex (varint): Zero-based index of this chunk
 - ChunkData (varint array): Chunk data (typically 64KB)
 - MerkleProofLength (varint): Number of proof hashes
 - MerkleProof (array of varint arrays): Merkle proof path hashes
 - TotalChunks (varint): Total number of chunks in the file
-- BytesUploaded (varint): Cumulative bytes uploaded so far
+- BytesUploaded (varint): Cumulative bytes uploaded/downloaded so far
 - Encrypted (1 byte): `0x00` = false, `0x01` = true
 
-**Usage**: Client sends chunks sequentially with Merkle proofs for server verification
+**Usage**:
 
-#### 3. File Auth Message (0x02)
+- **Upload**: Client sends chunks sequentially with Merkle proofs for server verification
+- **Download**: Server sends chunks sequentially with Merkle proofs for client verification
 
-**Purpose**: Server response indicating permission denied
+#### 4. File Auth Message (0x03)
+
+**Purpose**: Server response indicating permission denied or authorization status
 
 **Payload Structure**:
 
-- Reason (varint string): Explanation for denial
+- Permission (1 byte): `0x00` = denied, `0x01` = allowed (currently only denied is supported)
+- FileId (varint string): The fileId of the file that was denied authorization
+- StatusCode (varint): HTTP status code (404, 403, or 500)
+- HasReason (1 byte): `0x00` = no reason, `0x01` = reason follows
+- Reason (varint string, optional): Explanation for denial (only present if HasReason is 1)
 
-**Usage**: Server sends when file request is rejected (e.g., size limit exceeded, unauthorized)
+**Usage**: Server sends when file request is rejected (e.g., size limit exceeded, unauthorized, file not found)
 
 ### File Chunking and Merkle Trees
 
@@ -352,26 +370,27 @@ Client                           Server
 ```
 Client                           Server
   │                                │
-  │─────── File Request ─────────▶│  (upload, metadata)
-  │      (direction: upload)       │
+  │─────── File Upload ──────────▶│  (metadata: uploadId, filename, size, etc.)
   │                                │
   │                                │  (creates upload session)
   │                                │
-  │─────── File Progress ────────▶│  (chunk 0 + merkle proof)
+  │─────── File Part ────────────▶│  (chunk 0 + merkle proof)
   │                                │
   │                                │  (verifies chunk, stores)
   │                                │
-  │─────── File Progress ────────▶│  (chunk 1 + merkle proof)
+  │─────── File Part ────────────▶│  (chunk 1 + merkle proof)
   │                                │
   │                                │  (verifies chunk, stores)
   │                                │
   │         ... (more chunks)      │
   │                                │
-  │─────── File Progress ────────▶│  (final chunk + merkle proof)
+  │─────── File Part ────────────▶│  (final chunk + merkle proof)
   │                                │
   │                                │  (verifies all chunks,
   │                                │   reconstructs merkle tree,
   │                                │   stores file, removes session)
+  │                                │
+  │◀────── File Auth Message ─────│  (optional: returns contentId/fileId)
 ```
 
 ### File Download Flow
@@ -379,25 +398,26 @@ Client                           Server
 ```
 Client                           Server
   │                                │
-  │─────── File Request ─────────▶│  (download, contentId)
-  │     (direction: download)      │
+  │─────── File Download ────────▶│  (fileId: merkle root hash)
   │                                │
-  │                                │  (looks up file by contentId)
+  │                                │  (looks up file by fileId/contentId)
   │                                │
-  │◀────── File Progress ─────────│  (chunk 0 + merkle proof)
+  │◀────── File Part ─────────────│  (chunk 0 + merkle proof)
   │                                │
   │                                │  (client verifies chunk)
   │                                │
-  │◀────── File Progress ─────────│  (chunk 1 + merkle proof)
+  │◀────── File Part ─────────────│  (chunk 1 + merkle proof)
   │                                │
   │                                │  (client verifies chunk)
   │                                │
   │         ... (more chunks)      │
   │                                │
-  │◀────── File Progress ─────────│  (final chunk + merkle proof)
+  │◀────── File Part ─────────────│  (final chunk + merkle proof)
   │                                │
   │                                │  (client verifies all chunks,
   │                                │   reconstructs file)
+  │                                │
+  │◀────── File Auth Message ─────│  (optional: error if file not found)
 ```
 
 ## Error Handling
@@ -440,19 +460,20 @@ const awarenessMessage = new AwarenessMessage("my-document", {
 });
 
 // Initiating file upload
-const fileRequest = new FileMessage({
-  type: "file-request",
-  direction: "upload",
-  fileId: "unique-file-id",
+const fileUpload = new FileMessage({
+  type: "file-upload",
+  uploadId: "unique-upload-id",
   filename: "document.pdf",
   size: 1024000,
-  mimeType: "application/pdf"
+  mimeType: "application/pdf",
+  lastModified: Date.now(),
+  encrypted: false
 });
 
 // Sending file chunk with Merkle proof
-const fileProgress = new FileMessage({
-  type: "file-progress",
-  fileId: "unique-file-id",
+const filePart = new FileMessage({
+  type: "file-part",
+  fileId: "unique-upload-id", // Matches uploadId from file-upload
   chunkIndex: 0,
   chunkData: chunkBytes,
   merkleProof: [hash1, hash2, hash3], // Path to root
@@ -462,14 +483,9 @@ const fileProgress = new FileMessage({
 });
 
 // Requesting file download
-const downloadRequest = new FileMessage({
-  type: "file-request",
-  direction: "download",
-  fileId: "download-session-id",
-  filename: "", // Not required for downloads
-  size: 0, // Not required for downloads
-  mimeType: "", // Not required for downloads
-  contentId: merkleRootHash // Required: identifies the file
+const fileDownload = new FileMessage({
+  type: "file-download",
+  fileId: merkleRootHash // Merkle root hash (base64) identifying the file
 });
 ```
 

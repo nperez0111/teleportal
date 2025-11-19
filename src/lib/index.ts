@@ -33,10 +33,7 @@ export type ServerContext = {
  */
 export type Source<
   Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown> = Record<
-    string,
-    unknown
-  >,
+  AdditionalProperties extends Record<string, unknown> = {},
 > = {
   /**
    * A readable stream of document/awareness updates.
@@ -49,10 +46,7 @@ export type Source<
  */
 export type Sink<
   Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown> = Record<
-    string,
-    unknown
-  >,
+  AdditionalProperties extends Record<string, unknown> = {},
 > = {
   /**
    * A writable stream of document updates.
@@ -65,10 +59,7 @@ export type Sink<
  */
 export type Transport<
   Context extends Record<string, unknown>,
-  AdditionalProperties extends Record<string, unknown> = Record<
-    string,
-    unknown
-  >,
+  AdditionalProperties extends Record<string, unknown> = {},
 > = Sink<Context, AdditionalProperties> & Source<Context, AdditionalProperties>;
 
 /**

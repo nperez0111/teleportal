@@ -18,13 +18,17 @@ import type {
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
   DecodedFileAuthMessage,
-  DecodedFileProgress,
-  DecodedFileRequest,
+  DecodedFileDownload,
+  DecodedFilePart,
+  DecodedFileUpload,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
   DocStep,
+  EncodedDocUpdateMessage,
+  EncodedFileStep,
+  FileStep,
   SyncDone,
   SyncStep1,
   SyncStep2,
@@ -65,7 +69,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           decodeDocStepWithDecoder(decoder),
           undefined,
           encrypted,
-          update,
+          update as EncodedDocUpdateMessage<DocStep>,
         );
       }
       case 0x01: {
@@ -74,7 +78,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           decodeAwarenessStepWithDecoder(decoder),
           undefined,
           encrypted,
-          update,
+          update as AwarenessUpdateMessage | AwarenessRequestMessage,
         );
       }
       case 0x02: {
@@ -85,7 +89,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           decodeFileStepWithDecoder(decoder),
           undefined,
           encrypted,
-          update,
+          update as EncodedFileStep<FileStep>,
         );
       }
       default:
@@ -227,29 +231,43 @@ function decodeAckMessageWithDecoder(
 
 function decodeFileStepWithDecoder(
   decoder: decoding.Decoder,
-): DecodedFileRequest | DecodedFileProgress | DecodedFileAuthMessage {
+):
+  | DecodedFileDownload
+  | DecodedFileUpload
+  | DecodedFilePart
+  | DecodedFileAuthMessage {
   try {
     const messageType = decoding.readUint8(decoder);
     switch (messageType) {
       case 0x00: {
-        // file-request
-        const direction = decoding.readUint8(decoder) as 0 | 1;
+        // file-download
+        const fileId = decoding.readVarString(decoder);
+        return {
+          type: "file-download",
+          fileId,
+        };
+      }
+      case 0x01: {
+        // file-upload
+        const encrypted = decoding.readUint8(decoder) === 1;
         const fileId = decoding.readVarString(decoder);
         const filename = decoding.readVarString(decoder);
         const size = decoding.readVarUint(decoder);
         const mimeType = decoding.readVarString(decoder);
+        const lastModified = decoding.readVarUint(decoder);
 
         return {
-          type: "file-request",
-          direction: direction === 0 ? "upload" : "download",
+          type: "file-upload",
           fileId,
           filename,
           size,
           mimeType,
+          lastModified,
+          encrypted,
         };
       }
-      case 0x01: {
-        // file-progress
+      case 0x02: {
+        // file-part
         const fileId = decoding.readVarString(decoder);
         const chunkIndex = decoding.readVarUint(decoder);
         const chunkData = decoding.readVarUint8Array(decoder);
@@ -263,7 +281,7 @@ function decodeFileStepWithDecoder(
         const encrypted = decoding.readUint8(decoder) === 1;
 
         return {
-          type: "file-progress",
+          type: "file-part",
           fileId,
           chunkIndex,
           chunkData,
@@ -273,12 +291,24 @@ function decodeFileStepWithDecoder(
           encrypted,
         };
       }
-      case 0x02: {
-        const reason = decoding.readVarString(decoder);
+      case 0x03: {
+        const permission =
+          decoding.readUint8(decoder) === 0 ? "denied" : "allowed";
+        if (permission !== "denied") {
+          throw new Error("Invalid permission", {
+            cause: { permission },
+          });
+        }
+        const fileId = decoding.readVarString(decoder);
+        const statusCode = decoding.readVarUint(decoder);
+        const hasReason = decoding.readUint8(decoder) === 1;
+        const reason = hasReason ? decoding.readVarString(decoder) : undefined;
         return {
           type: "file-auth-message",
           permission: "denied",
-          reason,
+          fileId,
+          reason: reason,
+          statusCode: statusCode as 404 | 403 | 500,
         };
       }
       default: {
