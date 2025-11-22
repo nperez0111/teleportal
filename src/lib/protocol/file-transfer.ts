@@ -323,7 +323,7 @@ export namespace FileTransferProtocol {
         try {
           const fileData = new Uint8Array(handler.fileMetadata.size);
           let offset = 0;
-          for (let i = 0; i < handler.chunks.size; i++) {
+          for (let i = 0; i < expectedChunks; i++) {
             const chunk = handler.chunks.get(i);
             if (!chunk) {
               throw new Error(`Missing chunk ${i}`);
