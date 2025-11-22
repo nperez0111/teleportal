@@ -22,10 +22,11 @@ import { ConnectionState } from "../connection";
 import { HttpConnection } from "./connection";
 import { FileHandler } from "../../server/file-handler";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
-import { ConsoleTransport, LogLayer } from "loglayer";
 import { noopTransport } from "../../transports/passthrough";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type { ServerContext } from "teleportal";
+import { augmentLogger } from "../../server/logger";
+import { getLogger } from "@logtape/logtape";
 
 /**
  * MSW SSE Testing Approach for Node.js
@@ -272,12 +273,9 @@ function connectionToTransport(
   };
 }
 
-const emptyLogger = new LogLayer({
-  transport: new ConsoleTransport({
-    logger: console,
-    enabled: false,
-  }),
-});
+const testLogger = augmentLogger(
+  getLogger(["teleportal", "tests", "http-connection-msw"]),
+);
 
 describe("HttpConnection with MSW", () => {
   const server = setupServer();
@@ -1104,7 +1102,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload file through HTTP connection", async () => {
       const testClientId = "test-client-file";
       const fileStorage = new InMemoryFileStorage();
-      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const fileHandler = new FileHandler(fileStorage, testLogger);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
@@ -1248,7 +1246,7 @@ describe("HttpConnection with MSW", () => {
     test("should handle multiple chunk file upload via HTTP", async () => {
       const testClientId = "test-client-large-file";
       const fileStorage = new InMemoryFileStorage();
-      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const fileHandler = new FileHandler(fileStorage, testLogger);
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
       };
@@ -1388,7 +1386,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload and download file through HTTP connection (round-trip)", async () => {
       const testClientId = "test-client-roundtrip";
       const fileStorage = new InMemoryFileStorage();
-      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const fileHandler = new FileHandler(fileStorage, testLogger);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,

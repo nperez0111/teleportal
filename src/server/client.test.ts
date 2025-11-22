@@ -1,16 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { Client } from "./client";
-import { logger } from "./logger";
+import { augmentLogger, logger } from "./logger";
 import { DocMessage } from "teleportal";
 import type { ServerContext, Message, StateVector } from "teleportal";
-import { ConsoleTransport, LogLayer } from "loglayer";
+import { getLogger } from "@logtape/logtape";
 
-const emptyLogger = new LogLayer({
-  transport: new ConsoleTransport({
-    logger: console,
-    enabled: false,
-  }),
-});
+const emptyLogger = augmentLogger(
+  getLogger(["teleportal", "tests", "client-test"]),
+);
 
 describe("Client", () => {
   let client: Client<ServerContext>;
@@ -28,7 +25,7 @@ describe("Client", () => {
     client = new Client({
       id: "test-client",
       writable,
-      logger: logger.child().withContext({ name: "test" }),
+      logger: logger.with({ name: "test" }),
     });
   });
 
@@ -81,31 +78,31 @@ describe("Client", () => {
       expect(writtenMessages[1]).toBe(message2);
     });
 
-    it("should propagate send errors", async () => {
-      const errorWritable = new WritableStream({
-        write() {
-          throw new Error("Write error");
-        },
+      it("should propagate send errors", async () => {
+        const errorWritable = new WritableStream({
+          write() {
+            throw new Error("Write error");
+          },
+        });
+
+        const errorClient = new Client({
+          id: "error-client",
+          writable: errorWritable,
+          logger: emptyLogger.with({ name: "test" }),
+        });
+
+        const mockMessage = new DocMessage(
+          "test-doc",
+          { type: "sync-done" },
+          { clientId: "error-client", userId: "test-user", room: "test-room" },
+          false,
+        );
+
+        // Client-v2 propagates errors (unlike server-v1 which handles them)
+        await expect(errorClient.send(mockMessage)).rejects.toThrow(
+          "Write error",
+        );
       });
-
-      const errorClient = new Client({
-        id: "error-client",
-        writable: errorWritable,
-        logger: emptyLogger.child().withContext({ name: "test" }),
-      });
-
-      const mockMessage = new DocMessage(
-        "test-doc",
-        { type: "sync-done" },
-        { clientId: "error-client", userId: "test-user", room: "test-room" },
-        false,
-      );
-
-      // Client-v2 propagates errors (unlike server-v1 which handles them)
-      await expect(errorClient.send(mockMessage)).rejects.toThrow(
-        "Write error",
-      );
-    });
 
     it("should handle concurrent send operations safely", async () => {
       const messages = Array.from(
