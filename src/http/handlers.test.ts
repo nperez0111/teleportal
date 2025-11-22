@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { getLogger } from "@logtape/logtape";
 import {
   DocMessage,
   InMemoryPubSub,
@@ -7,6 +8,7 @@ import {
   encodeMessageArray,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
+import { augmentLogger } from "../server/logger";
 import { Server } from "../server/server";
 import {
   getHTTPEndpoint,
@@ -14,7 +16,6 @@ import {
   getSSEWriterEndpoint,
 } from "./handlers";
 import { getDocumentsFromQueryParams } from "./utils";
-import { ConsoleTransport, LogLayer } from "loglayer";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
@@ -75,16 +76,13 @@ describe("HTTP Handlers", () => {
       room: "room-1",
     });
 
-    server = new Server({
-      getStorage: mockGetStorage,
-      pubSub,
-      logger: new LogLayer({
-        transport: new ConsoleTransport({
-          logger: console,
-          enabled: false,
-        }),
-      }),
-    });
+      server = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        logger: augmentLogger(
+          getLogger(["teleportal", "tests", "http-handlers"]),
+        ),
+      });
   });
 
   afterEach(async () => {

@@ -116,7 +116,7 @@
     "ioredis": "^5.8.2",
     "jose": "^6.1.1",
     "lib0": "^0.2.114",
-    "loglayer": "^7.2.1",
+    "@logtape/logtape": "^1.2.0",
     "srvx": "^0.9.6",
     "unstorage": "^1.17.2",
     "y-indexeddb": "^9.0.12",

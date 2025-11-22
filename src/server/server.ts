@@ -9,6 +9,7 @@ import {
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
+import { toErrorDetails } from "../logging";
 import { logger as defaultLogger, type Logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
@@ -78,19 +79,15 @@ export class Server<Context extends ServerContext> {
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
-    this.logger = (options.logger ?? defaultLogger)
-      .child()
-      .withContext({ name: "server-v2" });
+    this.logger = (options.logger ?? defaultLogger).with({ name: "server-v2" });
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
-    this.logger
-      .withMetadata({
-        nodeId: this.#nodeId,
-        hasCustomPubSub: !!options.pubSub,
-        hasPermissionChecker: !!options.checkPermission,
-      })
-      .info("Server initialized");
+    this.logger.info("Server initialized", {
+      nodeId: this.#nodeId,
+      hasCustomPubSub: !!options.pubSub,
+      hasPermissionChecker: !!options.checkPermission,
+    });
   }
 
   /**
@@ -139,29 +136,25 @@ export class Server<Context extends ServerContext> {
     const existing = this.#sessions.get(compositeDocumentId);
     if (existing) {
       // Validate that the encryption state matches the existing session
-      if (existing.encrypted !== encrypted) {
-        const error = new Error(
-          `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
-        );
-        this.logger
-          .withError(error)
-          .withMetadata({
+        if (existing.encrypted !== encrypted) {
+          const error = new Error(
+            `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
+          );
+          this.logger.error("Encryption state mismatch detected", {
             documentId: compositeDocumentId,
             sessionId: existing.id,
             existingEncrypted: existing.encrypted,
             requestedEncrypted: encrypted,
-          })
-          .error("Encryption state mismatch detected");
-        throw error;
-      }
+            error: toErrorDetails(error),
+          });
+          throw error;
+        }
 
-      this.logger
-        .withMetadata({
+        this.logger.debug("Retrieved existing session", {
           documentId: compositeDocumentId,
           sessionId: existing.id,
           encrypted,
-        })
-        .debug("Retrieved existing session");
+        });
 
       if (client) {
         existing.addClient(client);
@@ -172,31 +165,27 @@ export class Server<Context extends ServerContext> {
 
     // Check if there's a pending session creation for this document
     const pending = this.#pendingSessions.get(compositeDocumentId);
-    if (pending) {
-      this.logger
-        .withMetadata({
+      if (pending) {
+        this.logger.debug("Waiting for pending session creation", {
           documentId: compositeDocumentId,
-        })
-        .debug("Waiting for pending session creation");
+        });
 
       const session = await pending;
 
       // Validate encryption state matches
-      if (session.encrypted !== encrypted) {
-        const error = new Error(
-          `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
-        );
-        this.logger
-          .withError(error)
-          .withMetadata({
+        if (session.encrypted !== encrypted) {
+          const error = new Error(
+            `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
+          );
+          this.logger.error("Encryption state mismatch detected", {
             documentId: compositeDocumentId,
             sessionId: session.id,
             existingEncrypted: session.encrypted,
             requestedEncrypted: encrypted,
-          })
-          .error("Encryption state mismatch detected");
-        throw error;
-      }
+            error: toErrorDetails(error),
+          });
+          throw error;
+        }
 
       if (client) {
         session.addClient(client);
@@ -206,19 +195,17 @@ export class Server<Context extends ServerContext> {
     }
 
     // Create a new session - wrap in a promise to prevent race conditions
-    const sessionLogger = this.logger.child().withContext({
+      const sessionLogger = this.logger.with({
       documentId: compositeDocumentId,
       sessionId: id,
       encrypted,
     });
 
-    sessionLogger
-      .withMetadata({
+      sessionLogger.info("Creating new session", {
         documentId: compositeDocumentId,
         sessionId: id,
         encrypted,
-      })
-      .info("Creating new session");
+      });
 
     const sessionPromise = (async (): Promise<Session<Context>> => {
       try {

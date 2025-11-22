@@ -10,6 +10,7 @@ import { fromBinaryTransport } from "../transports/utils";
 import type { Server } from "teleportal/server";
 import type { TokenManager } from "teleportal/token";
 import type { Logger } from "teleportal/server";
+import { toErrorDetails } from "../logging";
 
 declare module "crossws" {
   interface PeerContext {
@@ -97,7 +98,7 @@ export function getWebsocketHandlers<
           };
         } catch (err) {
           logger
-            .withError(err)
+            .withError(toErrorDetails(err))
             .withMetadata({ requestUrl: request.url })
             .error("rejected upgrade websocket connection");
           if (err instanceof Response) {
@@ -138,7 +139,7 @@ export function getWebsocketHandlers<
           });
         } catch (err) {
           logger
-            .withError(err)
+            .withError(toErrorDetails(err))
             .withMetadata({ clientId: peer.id })
             .error("failed to connect");
           peer.close();

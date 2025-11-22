@@ -12,15 +12,13 @@ import {
   generateMerkleProof,
 } from "../lib/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "../storage/in-memory/file-storage";
-import { ConsoleTransport, LogLayer } from "loglayer";
 import { FileHandler } from "./file-handler";
+import { augmentLogger } from "./logger";
+import { getLogger } from "@logtape/logtape";
 
-const emptyLogger = new LogLayer({
-  transport: new ConsoleTransport({
-    logger: console,
-    enabled: false,
-  }),
-});
+const emptyLogger = augmentLogger(
+  getLogger(["teleportal", "tests", "file-handler-test"]),
+);
 
 describe("FileHandler", () => {
   it("should handle file upload request and authorize it", async () => {
