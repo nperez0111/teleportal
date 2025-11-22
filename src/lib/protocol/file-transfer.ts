@@ -265,13 +265,13 @@ export namespace FileTransferProtocol {
       if (this.activeUploads.has(payload.fileId)) {
         this.activeUploads
           .get(payload.fileId)
-          ?.reject(new Error(payload.reason));
+          ?.reject(new Error(payload.reason || "Upload permission denied"));
         this.activeUploads.delete(payload.fileId);
       }
       if (this.activeDownloads.has(payload.fileId)) {
         this.activeDownloads
           .get(payload.fileId)
-          ?.reject(new Error(payload.reason));
+          ?.reject(new Error(payload.reason || "Download permission denied"));
         this.activeDownloads.delete(payload.fileId);
       }
     }
