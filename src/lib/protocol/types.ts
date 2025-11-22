@@ -272,5 +272,5 @@ export type DecodedFileAuthMessage = {
   /**
    * The HTTP status code of the response
    */
-  statusCode: 404 | 403 | 401 | 500;
+  statusCode: 404 | 403 | 401 | 500 | 501;
 };

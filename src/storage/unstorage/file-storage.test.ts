@@ -21,6 +21,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const progress = await storage.getUploadProgress(fileId);
@@ -38,6 +39,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const chunk1 = new Uint8Array(CHUNK_SIZE);
@@ -62,6 +64,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Build merkle tree to get contentId
@@ -101,6 +104,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     await storage.storeChunk(fileId, 0, chunks[0], []);
@@ -122,6 +126,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const chunk = new Uint8Array(CHUNK_SIZE);
@@ -148,6 +153,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Wait for expiration
@@ -171,6 +177,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Create a new storage instance with the same unstorage backend
@@ -193,6 +200,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Store chunks in reverse order to test ordering
@@ -230,6 +238,7 @@ describe("UnstorageFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Check that keys use the custom prefix

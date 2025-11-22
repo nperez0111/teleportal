@@ -13,7 +13,6 @@ import { logger as defaultLogger, type Logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
 import { FileHandler } from "./file-handler";
-import type { FileStorage } from "../storage/file-storage";
 
 export type ServerOptions<Context extends ServerContext> = {
   logger?: Logger;
@@ -48,12 +47,6 @@ export type ServerOptions<Context extends ServerContext> = {
    * Defaults to a random UUID.
    */
   nodeId?: string;
-
-  /**
-   * File storage for file upload/download operations.
-   * If not provided, file messages will be rejected.
-   */
-  fileStorage?: FileStorage;
 };
 
 export class Server<Context extends ServerContext> {
@@ -82,10 +75,6 @@ export class Server<Context extends ServerContext> {
    * Maps composite document ID to the promise that will resolve to the session.
    */
   #pendingSessions = new Map<string, Promise<Session<Context>>>();
-  /**
-   * File handler for file upload/download operations.
-   */
-  #fileHandler: FileHandler<Context> | null = null;
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -95,16 +84,11 @@ export class Server<Context extends ServerContext> {
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
-    if (options.fileStorage) {
-      this.#fileHandler = new FileHandler(options.fileStorage, this.logger);
-    }
-
     this.logger
       .withMetadata({
         nodeId: this.#nodeId,
         hasCustomPubSub: !!options.pubSub,
         hasPermissionChecker: !!options.checkPermission,
-        hasFileStorage: !!options.fileStorage,
       })
       .info("Server initialized");
   }
@@ -300,6 +284,69 @@ export class Server<Context extends ServerContext> {
   }
 
   /**
+   * Deletes a document and its associated data (files, sessions, etc.).
+   * @param documentId - The ID of the document to delete.
+   * @param context - Optional context for document ID resolution.
+   */
+  async deleteDocument(
+    documentId: string,
+    context: Context,
+    encrypted: boolean,
+  ): Promise<void> {
+    const compositeDocumentId = this.#getCompositeDocumentId(
+      documentId,
+      context,
+    );
+
+    this.logger
+      .withMetadata({
+        documentId: compositeDocumentId,
+        encrypted,
+      })
+      .info("Deleting document");
+
+    // Get storage directly to delete document data
+    const storage = await this.#options.getStorage({
+      documentId: compositeDocumentId,
+      context,
+      encrypted,
+    });
+
+    // Close existing session if any
+    const session = this.#sessions.get(compositeDocumentId);
+    if (session) {
+      // Disconnect all clients
+      for (const client of session.clients) {
+        // Optionally notify clients about deletion
+        // await client.send(new DocMessage(documentId, { type: "deleted" }, context, encrypted));
+      }
+      await session[Symbol.asyncDispose]();
+      this.#sessions.delete(compositeDocumentId);
+    }
+
+    // Wait for any pending session creation
+    const pending = this.#pendingSessions.get(compositeDocumentId);
+    if (pending) {
+      try {
+        const pendingSession = await pending;
+        await pendingSession[Symbol.asyncDispose]();
+      } catch (e) {
+        // Ignore errors from pending session
+      }
+      this.#pendingSessions.delete(compositeDocumentId);
+    }
+
+    // Delete document data via storage (this handles cascade deletion of files)
+    await storage.deleteDocument(compositeDocumentId);
+
+    this.logger
+      .withMetadata({
+        documentId: compositeDocumentId,
+      })
+      .info("Document deleted");
+  }
+
+  /**
    * Create a client for a transport.
    * @param ctx - Context Object
    * @param ctx.transport - The transport to use for the client.
@@ -421,6 +468,7 @@ export class Server<Context extends ServerContext> {
             if (message.type === "file") {
               await client.send(
                 new FileMessage(
+                  message.document,
                   {
                     type: "file-auth-message",
                     permission: "denied",
@@ -488,21 +536,60 @@ export class Server<Context extends ServerContext> {
               .debug("Processing incoming message");
 
             try {
-              // File messages bypass document sessions
+              // File messages need a session to access storage
               if (message.type === "file") {
-                if (!this.#fileHandler) {
+                const session = await this.getOrOpenSession(message.document, {
+                  encrypted: message.encrypted,
+                  client,
+                  context: message.context,
+                });
+
+                // Check if file storage is available for this document
+                // We need to access the storage implementation to check for fileStorage
+                // @ts-ignore - we know the storage has fileStorage if it supports files
+                const fileStorage = session.storage.fileStorage;
+
+                if (!fileStorage) {
                   const error = new Error(
                     "File storage not configured. File messages are not supported.",
                   );
                   msgLogger
                     .withError(error)
                     .error("File storage not available");
-                  throw error;
+
+                  // Send error response
+                  if (
+                    message.payload.type === "file-upload" ||
+                    message.payload.type === "file-download"
+                  ) {
+                    await client.send(
+                      new FileMessage(
+                        message.document,
+                        {
+                          type: "file-auth-message",
+                          permission: "denied",
+                          reason: "File storage not configured",
+                          statusCode: 501,
+                          fileId: message.payload.fileId,
+                        },
+                        message.context,
+                        message.encrypted,
+                      ),
+                    );
+                  }
+
+                  return; // Don't throw, just return
                 }
 
                 msgLogger.debug("Processing file message");
 
-                await this.#fileHandler.handle(message, async (response) => {
+                // Create a temporary handler for this message using the session's file storage
+                const fileHandler = new FileHandler<Context>(
+                  fileStorage,
+                  this.logger,
+                );
+
+                await fileHandler.handle(message, async (response) => {
                   await client.send(response);
                 });
 

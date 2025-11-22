@@ -190,9 +190,9 @@ export class FileMessage<
 > extends CustomMessage<Context, EncodedFileStep<FileStep>> {
   public type = "file" as const;
   public context: Context;
-  public document: string | undefined = undefined;
 
   constructor(
+    public document: string,
     public payload:
       | DecodedFileAuthMessage
       | DecodedFileUpload

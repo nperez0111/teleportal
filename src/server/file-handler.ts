@@ -64,6 +64,7 @@ export class FileHandler<
   protected async onUploadStart(
     metadata: DecodedFileUpload,
     context: Context,
+    document: string,
     encrypted: boolean,
   ): Promise<void> {
     await this.#fileStorage.initiateUpload(metadata.fileId, {
@@ -72,6 +73,7 @@ export class FileHandler<
       mimeType: metadata.mimeType,
       encrypted,
       lastModified: Date.now(),
+      documentId: document,
     });
     this.#logger
       .child()
@@ -82,6 +84,7 @@ export class FileHandler<
   protected async onDownloadRequest(
     payload: DecodedFileDownload,
     context: Context,
+    document: string,
     encrypted: boolean,
     sendMessage: (message: Message<Context>) => Promise<void>,
   ): Promise<void> {
@@ -100,6 +103,7 @@ export class FileHandler<
           .info("File not found for download");
         await sendMessage(
           new FileMessage(
+            document,
             {
               type: "file-auth-message",
               fileId: payload.fileId,
@@ -124,6 +128,7 @@ export class FileHandler<
       // Send upload initiation response
       await sendMessage(
         new FileMessage(
+          document,
           {
             type: "file-upload",
             fileId: toBase64(contentId),
@@ -150,6 +155,7 @@ export class FileHandler<
 
         await sendMessage(
           new FileMessage(
+            document,
             {
               type: "file-part",
               fileId: toBase64(contentId),
@@ -177,6 +183,7 @@ export class FileHandler<
   protected async onChunkReceived(
     payload: DecodedFilePart,
     messageId: string,
+    document: string,
     context: Context,
     sendMessage: (message: Message<Context>) => Promise<void>,
   ): Promise<void> {

@@ -79,6 +79,7 @@ class SendFileClient<
 
   public requestDownload(
     fileId: string,
+    document: string,
     encrypted?: boolean,
     timeout?: number,
     context?: Context | undefined,
@@ -88,7 +89,7 @@ class SendFileClient<
       return Promise.resolve(file);
     }
 
-    return super.requestDownload(fileId, encrypted, timeout, context);
+    return super.requestDownload(fileId, document, encrypted, timeout, context);
   }
 }
 
@@ -187,6 +188,10 @@ export type FileTransportMethods = {
      */
     file: File,
     /**
+     * The document ID to associate the file with
+     */
+    document: string,
+    /**
      * The fileId of the file, this is a client-generated UUID for this upload.
      * @default a random UUID
      */
@@ -206,6 +211,10 @@ export type FileTransportMethods = {
      * The `fileId` of the file to download. This is the `fileId` returned from {@link FileTransportMethods.upload}.
      */
     fileId: string,
+    /**
+     * The document ID associated with the file
+     */
+    document: string,
     /**
      * Whether the file is encrypted.
      * @default false

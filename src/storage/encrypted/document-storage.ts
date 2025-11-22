@@ -14,12 +14,15 @@ import {
   getEncryptedStateVector,
   getEncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
-import { DocumentStorage } from "../document-storage";
+import {
+  DocumentStorage,
+  type DocumentMetadata as BaseDocumentMetadata,
+} from "../document-storage";
 import { EncryptedUpdate } from "teleportal/encryption-key";
 
-export type DocumentMetadata = {
+export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
   seenMessages: SeenMessageMapping;
-};
+}
 
 /**
  * This can definitely be optimized, I see 3 ways of improving on this:
@@ -42,10 +45,12 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
 
   abstract writeDocumentMetadata(
     key: string,
-    metadata: DocumentMetadata,
+    metadata: EncryptedDocumentMetadata,
   ): Promise<void>;
 
-  abstract fetchDocumentMetadata(key: string): Promise<DocumentMetadata>;
+  abstract fetchDocumentMetadata(
+    key: string,
+  ): Promise<EncryptedDocumentMetadata>;
 
   abstract storeEncryptedMessage(
     key: string,

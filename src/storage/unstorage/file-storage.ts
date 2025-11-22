@@ -2,6 +2,7 @@ import type { Storage } from "unstorage";
 import type { FileData, FileMetadata, UploadProgress } from "../file-storage";
 import { UnencryptedFileStorage } from "../unencrypted/file-storage";
 import { toBase64 } from "lib0/buffer";
+import { DocumentStorage } from "../document-storage";
 
 /**
  * Default upload timeout in milliseconds (24 hours)
@@ -22,9 +23,10 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
     options?: {
       uploadTimeoutMs?: number;
       keyPrefix?: string;
+      documentStorage?: DocumentStorage;
     },
   ) {
-    super();
+    super(options?.documentStorage);
     this.storage = storage;
     this.uploadTimeoutMs =
       options?.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
@@ -227,6 +229,27 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
       chunks: validChunks,
       contentId: new Uint8Array(serialized.contentId),
     };
+  }
+
+  public async deleteFile(contentId: Uint8Array): Promise<void> {
+    const fileKey = this.#getFileKey(contentId);
+    const serialized = await this.storage.getItem<{
+      metadata: FileMetadata;
+      contentId: number[];
+      chunkKeys: string[];
+    }>(fileKey);
+
+    if (!serialized) {
+      return;
+    }
+
+    // Delete all chunks
+    await Promise.all(
+      serialized.chunkKeys.map((key) => this.storage.removeItem(key)),
+    );
+
+    // Delete file metadata
+    await this.storage.removeItem(fileKey);
   }
 
   protected async getAllUploadSessions(): Promise<

@@ -1514,7 +1514,11 @@ describe("HttpConnection with MSW", () => {
       client.getReader().readable.pipeTo(wrappedTransport.writable);
 
       // Upload file
-      const fileId = await wrappedTransport.upload(file, "test-file-id");
+      const fileId = await wrappedTransport.upload(
+        file,
+        "test-doc",
+        "test-file-id",
+      );
 
       // wait for the storage to be updated
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1527,7 +1531,11 @@ describe("HttpConnection with MSW", () => {
       expect(storedFile!.metadata.size).toBe(fileContent.length);
 
       // Download file
-      const downloadedFile = await wrappedTransport.download(fileId, false);
+      const downloadedFile = await wrappedTransport.download(
+        fileId,
+        "test-doc",
+        false,
+      );
 
       // Verify downloaded file matches original
       expect(downloadedFile).toBeInstanceOf(File);

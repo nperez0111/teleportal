@@ -460,7 +460,7 @@ const awarenessMessage = new AwarenessMessage("my-document", {
 });
 
 // Initiating file upload
-const fileUpload = new FileMessage({
+const fileUpload = new FileMessage("my-document", {
   type: "file-upload",
   uploadId: "unique-upload-id",
   filename: "document.pdf",
@@ -471,7 +471,7 @@ const fileUpload = new FileMessage({
 });
 
 // Sending file chunk with Merkle proof
-const filePart = new FileMessage({
+const filePart = new FileMessage("my-document", {
   type: "file-part",
   fileId: "unique-upload-id", // Matches uploadId from file-upload
   chunkIndex: 0,
@@ -483,7 +483,7 @@ const filePart = new FileMessage({
 });
 
 // Requesting file download
-const fileDownload = new FileMessage({
+const fileDownload = new FileMessage("my-document", {
   type: "file-download",
   fileId: merkleRootHash // Merkle root hash (base64) identifying the file
 });

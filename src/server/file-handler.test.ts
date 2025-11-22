@@ -33,7 +33,7 @@ describe("FileHandler", () => {
     };
 
     // Client sends file-upload message
-    const uploadMessage = new FileMessage<ServerContext>({
+    const uploadMessage = new FileMessage<ServerContext>("test-doc", {
       type: "file-upload",
       fileId: "test-upload-id",
       filename: "test.txt",
@@ -78,6 +78,7 @@ describe("FileHandler", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const sentMessages: Message<ServerContext>[] = [];
@@ -91,7 +92,7 @@ describe("FileHandler", () => {
     const proof = generateMerkleProof(merkleTree, 0);
 
     // Client sends first file-part message
-    const partMessage = new FileMessage<ServerContext>({
+    const partMessage = new FileMessage<ServerContext>("test-doc", {
       type: "file-part",
       fileId: "test-upload-id",
       chunkIndex: 0,
@@ -132,6 +133,7 @@ describe("FileHandler", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const sentMessages: Message<ServerContext>[] = [];
@@ -147,7 +149,7 @@ describe("FileHandler", () => {
     );
 
     // Client sends file-part message (the only chunk)
-    const partMessage = new FileMessage<ServerContext>({
+    const partMessage = new FileMessage<ServerContext>("test-doc", {
       type: "file-part",
       fileId: "test-upload-id",
       chunkIndex: 0,
@@ -191,6 +193,7 @@ describe("FileHandler", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const sentMessages: Message<ServerContext>[] = [];
@@ -206,7 +209,7 @@ describe("FileHandler", () => {
     const merkleTree = buildMerkleTree(chunks);
 
     // Client sends first file-part message
-    const part1Message = new FileMessage<ServerContext>({
+    const part1Message = new FileMessage<ServerContext>("test-doc", {
       type: "file-part",
       fileId: "large-upload-id",
       chunkIndex: 0,
@@ -228,7 +231,7 @@ describe("FileHandler", () => {
     sentMessages.shift();
 
     // Client sends second file-part message
-    const part2Message = new FileMessage<ServerContext>({
+    const part2Message = new FileMessage<ServerContext>("test-doc", {
       type: "file-part",
       fileId: "large-upload-id",
       chunkIndex: 1,
@@ -274,6 +277,7 @@ describe("FileHandler", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
     await fileStorage.storeChunk("upload-id", 0, fileData, []);
     await fileStorage.completeUpload("upload-id", contentId);
@@ -284,7 +288,7 @@ describe("FileHandler", () => {
     };
 
     // Client sends file-download request
-    const downloadMessage = new FileMessage<ServerContext>({
+    const downloadMessage = new FileMessage<ServerContext>("test-doc", {
       type: "file-download",
       fileId: contentIdBase64,
     });
@@ -320,7 +324,7 @@ describe("FileHandler", () => {
     };
 
     // Client sends file-download request for non-existent file
-    const downloadMessage = new FileMessage<ServerContext>({
+    const downloadMessage = new FileMessage<ServerContext>("test-doc", {
       type: "file-download",
       fileId: "non-existent-file-id",
     });
@@ -349,7 +353,7 @@ describe("FileHandler", () => {
     };
 
     // Client sends file-upload message with size exceeding 1GB
-    const uploadMessage = new FileMessage<ServerContext>({
+    const uploadMessage = new FileMessage<ServerContext>("test-doc", {
       type: "file-upload",
       fileId: "large-upload-id",
       filename: "huge.txt",

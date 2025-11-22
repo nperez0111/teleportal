@@ -1,10 +1,12 @@
 import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
+import { fromBase64, toBase64 } from "lib0/buffer";
 import {
   FileStorage,
   type FileData,
   type FileMetadata,
   type UploadProgress,
 } from "../file-storage";
+import { DocumentStorage } from "../document-storage";
 
 /**
  * Base class for unencrypted file storage implementations.
@@ -18,6 +20,10 @@ import {
  */
 export abstract class UnencryptedFileStorage extends FileStorage {
   public encrypted = false;
+
+  constructor(protected documentStorage?: DocumentStorage) {
+    super();
+  }
 
   /**
    * Create a new upload session.
@@ -103,6 +109,11 @@ export abstract class UnencryptedFileStorage extends FileStorage {
   protected abstract getStoredFile(
     contentId: Uint8Array,
   ): Promise<FileData | null>;
+
+  /**
+   * Delete a file by contentId.
+   */
+  public abstract deleteFile(contentId: Uint8Array): Promise<void>;
 
   /**
    * Get all upload sessions (for cleanup operations).
@@ -230,6 +241,23 @@ export abstract class UnencryptedFileStorage extends FileStorage {
       contentId,
     });
 
+    // Update document metadata
+    if (this.documentStorage && upload.metadata.documentId) {
+      const key = upload.metadata.documentId;
+      await this.documentStorage.transaction(key, async () => {
+        const metadata = await this.documentStorage!.fetchDocumentMetadata(key);
+        const files = metadata.files || [];
+        const contentIdBase64 = toBase64(contentId);
+        if (!files.includes(contentIdBase64)) {
+          files.push(contentIdBase64);
+          await this.documentStorage!.writeDocumentMetadata(key, {
+            ...metadata,
+            files,
+          });
+        }
+      });
+    }
+
     // Remove upload session
     await this.deleteUploadSession(uploadId);
   }
@@ -255,6 +283,29 @@ export abstract class UnencryptedFileStorage extends FileStorage {
         await this.deleteUploadSession(fileId);
       }
     }
+  }
+
+  async getFilesByDocument(documentId: string): Promise<FileData[]> {
+    if (!this.documentStorage) return [];
+    const metadata =
+      await this.documentStorage.fetchDocumentMetadata(documentId);
+    if (!metadata.files) return [];
+
+    const files = await Promise.all(
+      metadata.files.map((id) => this.getFile(fromBase64(id))),
+    );
+    return files.filter((f) => f !== null) as FileData[];
+  }
+
+  async deleteFilesByDocument(documentId: string): Promise<void> {
+    if (!this.documentStorage) return;
+    const metadata =
+      await this.documentStorage.fetchDocumentMetadata(documentId);
+    if (!metadata.files) return;
+
+    await Promise.all(
+      metadata.files.map((id) => this.deleteFile(fromBase64(id))),
+    );
   }
 
   /**

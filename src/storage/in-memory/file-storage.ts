@@ -1,5 +1,6 @@
 import type { FileData, FileMetadata, UploadProgress } from "../file-storage";
 import { UnencryptedFileStorage } from "../unencrypted/file-storage";
+import { DocumentStorage } from "../document-storage";
 
 /**
  * Default upload timeout in milliseconds (24 hours)
@@ -26,8 +27,11 @@ export class InMemoryFileStorage extends UnencryptedFileStorage {
    */
   #uploadTimeoutMs: number;
 
-  constructor(uploadTimeoutMs: number = DEFAULT_UPLOAD_TIMEOUT_MS) {
-    super();
+  constructor(
+    uploadTimeoutMs: number = DEFAULT_UPLOAD_TIMEOUT_MS,
+    documentStorage?: DocumentStorage,
+  ) {
+    super(documentStorage);
     this.#uploadTimeoutMs = uploadTimeoutMs;
   }
 
@@ -105,6 +109,11 @@ export class InMemoryFileStorage extends UnencryptedFileStorage {
   ): Promise<FileData | null> {
     const contentIdKey = this.#contentIdToKey(contentId);
     return this.#files.get(contentIdKey) ?? null;
+  }
+
+  public async deleteFile(contentId: Uint8Array): Promise<void> {
+    const contentIdKey = this.#contentIdToKey(contentId);
+    this.#files.delete(contentIdKey);
   }
 
   protected async getAllUploadSessions(): Promise<

@@ -44,6 +44,7 @@ describe("FileTransferProtocol.Client", () => {
     // Start upload
     const uploadPromise = client.requestUpload(
       new File([new Uint8Array([1, 2, 3, 4, 5])], "test.txt"),
+      "test-doc",
       "test-upload-id",
       false,
     );
@@ -61,7 +62,7 @@ describe("FileTransferProtocol.Client", () => {
 
     // Act as server and send file-download (authorization)
     await client.handleMessage(
-      new FileMessage<TestContext>({
+      new FileMessage<TestContext>("test-doc", {
         type: "file-download",
         fileId: "test-upload-id",
       }),
@@ -124,6 +125,7 @@ describe("FileTransferProtocol.Client", () => {
     // Start upload
     const uploadPromise = client.requestUpload(
       new File([largeFileData], "large.txt"),
+      "test-doc",
       "large-upload-id",
       false,
     );
@@ -138,7 +140,7 @@ describe("FileTransferProtocol.Client", () => {
 
     // Act as server and send file-download (authorization)
     await client.handleMessage(
-      new FileMessage<TestContext>({
+      new FileMessage<TestContext>("test-doc", {
         type: "file-download",
         fileId: "large-upload-id",
       }),
@@ -222,7 +224,11 @@ describe("FileTransferProtocol.Client", () => {
     );
 
     // Start download
-    const downloadPromise = client.requestDownload(contentId, false);
+    const downloadPromise = client.requestDownload(
+      contentId,
+      "test-doc",
+      false,
+    );
     // let it be processed async
     await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -235,7 +241,7 @@ describe("FileTransferProtocol.Client", () => {
 
     // Act as server and send file-upload (metadata)
     await client.handleMessage(
-      new FileMessage<TestContext>({
+      new FileMessage<TestContext>("test-doc", {
         type: "file-upload",
         fileId: contentId,
         filename: "downloaded.txt",
@@ -251,7 +257,7 @@ describe("FileTransferProtocol.Client", () => {
     // Act as server and send file-part
     const proof = generateMerkleProof(merkleTree, 0);
     await client.handleMessage(
-      new FileMessage<TestContext>({
+      new FileMessage<TestContext>("test-doc", {
         type: "file-part",
         fileId: contentId,
         chunkIndex: 0,
@@ -290,6 +296,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onUploadStart(
         metadata: DecodedFileUpload,
         context: any,
+        document: string,
         encrypted: boolean,
       ): Promise<void> {
         uploadStarted = true;
@@ -299,6 +306,7 @@ describe("FileTransferProtocol.Server", () => {
         payload: DecodedFilePart,
         messageId: string,
         context: any,
+        document: string,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
         await sendMessage(
@@ -312,6 +320,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onDownloadRequest(
         payload: any,
         context: any,
+        document: string,
         encrypted: boolean,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
@@ -325,7 +334,7 @@ describe("FileTransferProtocol.Server", () => {
     };
 
     // Client sends file-upload message
-    const uploadMessage = new FileMessage<TestContext>({
+    const uploadMessage = new FileMessage<TestContext>("test-doc", {
       type: "file-upload",
       fileId: "test-upload-id",
       filename: "test.txt",
@@ -364,6 +373,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onUploadStart(
         metadata: DecodedFileUpload,
         context: any,
+        document: string,
         encrypted: boolean,
       ): Promise<void> {}
 
@@ -371,6 +381,7 @@ describe("FileTransferProtocol.Server", () => {
         payload: DecodedFilePart,
         messageId: string,
         context: any,
+        document: string,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
         await sendMessage(
@@ -384,6 +395,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onDownloadRequest(
         payload: any,
         context: any,
+        document: string,
         encrypted: boolean,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
@@ -401,7 +413,7 @@ describe("FileTransferProtocol.Server", () => {
     const merkleTree = buildMerkleTree([fileData]);
     const proof = generateMerkleProof(merkleTree, 0);
 
-    const partMessage = new FileMessage<TestContext>({
+    const partMessage = new FileMessage<TestContext>("test-doc", {
       type: "file-part",
       fileId: "test-upload-id",
       chunkIndex: 0,
@@ -441,6 +453,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onUploadStart(
         metadata: DecodedFileUpload,
         context: any,
+        document: string,
         encrypted: boolean,
       ): Promise<void> {
         // Should not be called
@@ -450,6 +463,7 @@ describe("FileTransferProtocol.Server", () => {
         payload: DecodedFilePart,
         messageId: string,
         context: any,
+        document: string,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
         // Not used in this test
@@ -458,6 +472,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onDownloadRequest(
         payload: any,
         context: any,
+        document: string,
         encrypted: boolean,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
@@ -471,7 +486,7 @@ describe("FileTransferProtocol.Server", () => {
     };
 
     // Client sends file-upload message
-    const uploadMessage = new FileMessage<TestContext>({
+    const uploadMessage = new FileMessage<TestContext>("test-doc", {
       type: "file-upload",
       fileId: "test-upload-id",
       filename: "test.txt",
@@ -510,6 +525,7 @@ describe("FileTransferProtocol.Server", () => {
       protected async onUploadStart(
         metadata: DecodedFileUpload,
         context: any,
+        document: string,
         encrypted: boolean,
       ): Promise<void> {}
 
@@ -517,6 +533,7 @@ describe("FileTransferProtocol.Server", () => {
         payload: DecodedFilePart,
         messageId: string,
         context: any,
+        document: string,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
         // Not used in this test
@@ -525,13 +542,14 @@ describe("FileTransferProtocol.Server", () => {
       protected async onDownloadRequest(
         payload: any,
         context: any,
+        document: string,
         encrypted: boolean,
         sendMessage: (message: Message) => Promise<void>,
       ): Promise<void> {
         downloadRequested = true;
         // Send file metadata
         await sendMessage(
-          new FileMessage<TestContext>({
+          new FileMessage<TestContext>("test-doc", {
             type: "file-upload",
             fileId: payload.fileId,
             filename: "downloaded.txt",
@@ -550,7 +568,7 @@ describe("FileTransferProtocol.Server", () => {
     };
 
     // Client sends file-download request
-    const downloadMessage = new FileMessage<TestContext>({
+    const downloadMessage = new FileMessage<TestContext>("test-doc", {
       type: "file-download",
       fileId: "test-file-id",
     });

@@ -31,6 +31,7 @@ wrappedTransport.readable.pipeTo(
 // start the upload, but we need to act as the server in-between, so just wait for it
 const uploadPromise = wrappedTransport.upload(
   new File([new Uint8Array(CHUNK_SIZE * 2).fill(42)], "test.txt"),
+  "test-doc",
   "test-file-id",
   false,
 );
@@ -52,7 +53,7 @@ if (message.payload.type !== "file-upload") {
 receivedMessages.shift();
 // act as the server and send a file-download message (acknowledge to allow the upload to continue)
 await writer.write(
-  new FileMessage({
+  new FileMessage("test-doc", {
     type: "file-download",
     fileId: message.payload.fileId,
   }),

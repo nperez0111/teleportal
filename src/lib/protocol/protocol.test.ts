@@ -247,6 +247,7 @@ describe("can encode and decode", () => {
     expect(
       decodeMessage(
         new FileMessage<Record<string, unknown>>(
+          "test-doc",
           {
             type: "file-upload",
             fileId: "test-upload-id",
@@ -263,7 +264,7 @@ describe("can encode and decode", () => {
     ).toMatchInlineSnapshot(`
       FileMessage {
         "context": {},
-        "document": undefined,
+        "document": "unknown",
         "encrypted": false,
         "payload": {
           "encrypted": false,
@@ -287,6 +288,7 @@ describe("can encode and decode", () => {
     expect(
       decodeMessage(
         new FileMessage<Record<string, unknown>>(
+          "test-doc",
           {
             type: "file-download",
             fileId,
@@ -298,7 +300,7 @@ describe("can encode and decode", () => {
     ).toMatchInlineSnapshot(`
       FileMessage {
         "context": {},
-        "document": undefined,
+        "document": "unknown",
         "encrypted": false,
         "payload": {
           "fileId": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
@@ -320,6 +322,7 @@ describe("can encode and decode", () => {
 
     const decoded = decodeMessage(
       new FileMessage<Record<string, unknown>>(
+        "test-doc",
         {
           type: "file-part",
           fileId: "test-file-id",
@@ -340,7 +343,7 @@ describe("can encode and decode", () => {
     expect(decoded).toMatchInlineSnapshot(`
       FileMessage {
         "context": {},
-        "document": undefined,
+        "document": "unknown",
         "encrypted": false,
         "payload": {
           "bytesUploaded": 65536,
@@ -428,7 +431,7 @@ describe("can encode and decode", () => {
 
   it("file message (file-auth-message)", () => {
     expect(
-      new FileMessage<Record<string, unknown>>({
+      new FileMessage<Record<string, unknown>>("test-doc", {
         type: "file-auth-message",
         permission: "denied",
         fileId: "test-file-id",
@@ -441,7 +444,15 @@ describe("can encode and decode", () => {
         74,
         83,
         1,
-        0,
+        8,
+        116,
+        101,
+        115,
+        116,
+        45,
+        100,
+        111,
+        99,
         0,
         3,
         3,

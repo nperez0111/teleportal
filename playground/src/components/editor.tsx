@@ -46,7 +46,11 @@ export function Editor({ provider, user }: EditorProps) {
     async uploadFile(file, blockId) {
       try {
         console.log("uploading file", file, blockId);
-        const fileId = await provider.transport.upload(file, blockId);
+        const fileId = await provider.transport.upload(
+          file,
+          provider.document,
+          blockId,
+        );
 
         return `teleportal://${fileId}`;
       } catch (error) {
@@ -58,7 +62,10 @@ export function Editor({ provider, user }: EditorProps) {
       if (url.startsWith("teleportal://")) {
         const fileId = url.split("://")[1];
         console.log("downloading file", url, fileId);
-        const file = await provider.transport.download(fileId);
+        const file = await provider.transport.download(
+          fileId,
+          provider.document,
+        );
         console.log("file downloaded", file);
         return URL.createObjectURL(file);
       }

@@ -24,6 +24,10 @@ export interface FileMetadata {
    * Last modified timestamp of the file
    */
   lastModified: number;
+  /**
+   * The document ID associated with this file
+   */
+  documentId: string;
 }
 
 /**
@@ -71,18 +75,13 @@ export interface FileData {
 }
 
 /**
- * Interface for file storage operations
+ * Interface for upload storage operations (temporary storage)
  */
-export abstract class FileStorage {
-  /**
-   * The type of the storage.
-   */
-  public readonly type = "file-storage";
-
+export abstract class UploadStorage {
   /**
    * Initiate a new file upload session.
    *
-   * @param fileId - Client-generated UUID for this upload
+   * @param uploadId - Client-generated UUID for this upload
    * @param metadata - File metadata
    */
   abstract initiateUpload(
@@ -93,7 +92,7 @@ export abstract class FileStorage {
   /**
    * Store a chunk for an ongoing upload.
    *
-   * @param fileId - Client-generated UUID for this upload
+   * @param uploadId - Client-generated UUID for this upload
    * @param chunkIndex - Zero-based index of the chunk
    * @param chunkData - Chunk data (64KB)
    * @param proof - Merkle proof for this chunk
@@ -125,6 +124,22 @@ export abstract class FileStorage {
   ): Promise<void>;
 
   /**
+   * Clean up expired upload sessions.
+   * Should remove uploads that haven't been updated within the timeout window.
+   */
+  abstract cleanupExpiredUploads(): Promise<void>;
+}
+
+/**
+ * Interface for file storage operations (cold storage)
+ */
+export abstract class FileStorage extends UploadStorage {
+  /**
+   * The type of the storage.
+   */
+  public readonly type = "file-storage";
+
+  /**
    * Get a file by contentId.
    *
    * @param contentId - Merkle root hash (contentId)
@@ -133,8 +148,24 @@ export abstract class FileStorage {
   abstract getFile(contentId: Uint8Array): Promise<FileData | null>;
 
   /**
-   * Clean up expired upload sessions.
-   * Should remove uploads that haven't been updated within the timeout window.
+   * Delete a file by contentId.
+   *
+   * @param contentId - Merkle root hash (contentId)
    */
-  abstract cleanupExpiredUploads(): Promise<void>;
+  abstract deleteFile(contentId: Uint8Array): Promise<void>;
+
+  /**
+   * Get all files associated with a document.
+   *
+   * @param documentId - The document ID
+   * @returns Array of file data
+   */
+  abstract getFilesByDocument(documentId: string): Promise<FileData[]>;
+
+  /**
+   * Delete all files associated with a document.
+   *
+   * @param documentId - The document ID
+   */
+  abstract deleteFilesByDocument(documentId: string): Promise<void>;
 }

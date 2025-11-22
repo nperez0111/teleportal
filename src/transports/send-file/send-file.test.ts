@@ -38,6 +38,7 @@ describe("withSendFile", () => {
     // start the upload, but we need to act as the server in-between, so just wait for it
     const uploadPromise = wrappedTransport.upload(
       new File([new Uint8Array([1, 2, 3, 4, 5])], "test.txt"),
+      "test-doc",
       "test-file-id",
       false,
     );
@@ -55,7 +56,7 @@ describe("withSendFile", () => {
     receivedMessages.pop();
     // act as the server and send a file-download message (acknowledge to allow the upload to continue)
     await writer.write(
-      new FileMessage({
+      new FileMessage("test-doc", {
         type: "file-download",
         fileId: message.payload.fileId,
       }),
@@ -118,6 +119,7 @@ describe("withSendFile", () => {
     largeFileData.fill(42);
     const uploadPromise = wrappedTransport.upload(
       new File([largeFileData], "large.txt"),
+      "test-doc",
       "large-file-id",
       false,
     );
@@ -133,7 +135,7 @@ describe("withSendFile", () => {
 
     // act as the server and send a file-download message
     await writer.write(
-      new FileMessage({
+      new FileMessage("test-doc", {
         type: "file-download",
         fileId: fileId,
       }),
@@ -214,7 +216,11 @@ describe("withSendFile", () => {
     );
 
     // Start the download with the contentId
-    const downloadPromise = wrappedTransport.download(contentId, false);
+    const downloadPromise = wrappedTransport.download(
+      contentId,
+      "test-doc",
+      false,
+    );
     // let it be received async
     await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -228,7 +234,7 @@ describe("withSendFile", () => {
     // act as the server and send file-upload (metadata) message with the contentId
 
     await writer.write(
-      new FileMessage({
+      new FileMessage("test-doc", {
         type: "file-upload",
         fileId: contentId, // This should be the contentId (merkle root)
         filename: "downloaded.txt",
@@ -244,7 +250,7 @@ describe("withSendFile", () => {
     // Server should now send the file-part with proper merkle proof
     const proof = generateMerkleProof(merkleTree, 0);
     await writer.write(
-      new FileMessage({
+      new FileMessage("test-doc", {
         type: "file-part",
         fileId: contentId,
         chunkIndex: 0,
@@ -293,6 +299,7 @@ describe("withSendFile", () => {
     // start the encrypted upload
     const uploadPromise = wrappedTransport.upload(
       new File([new Uint8Array([1, 2, 3, 4, 5])], "encrypted.txt"),
+      "test-doc",
       "encrypted-file-id",
       true, // encrypted = true
     );
@@ -308,7 +315,7 @@ describe("withSendFile", () => {
 
     // act as the server and send a file-download message
     await writer.write(
-      new FileMessage({
+      new FileMessage("test-doc", {
         type: "file-download",
         fileId: message.payload.fileId,
       }),
@@ -362,6 +369,7 @@ describe("withSendFile", () => {
     // Start an upload
     const uploadPromise = wrappedTransport.upload(
       new File([new Uint8Array([1, 2, 3])], "tracking.txt"),
+      "test-doc",
       "tracking-file-id",
       false,
     );
@@ -376,7 +384,7 @@ describe("withSendFile", () => {
     const uploadMessage = receivedMessages[0] as FileMessage<ClientContext>;
     receivedMessages.pop();
     await writer.write(
-      new FileMessage({
+      new FileMessage("test-doc", {
         type: "file-download",
         fileId: uploadMessage.payload.fileId,
       }),

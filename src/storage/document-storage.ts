@@ -1,4 +1,14 @@
 import type { StateVector, SyncStep2Update, Update } from "teleportal";
+import type { FileStorage } from "./file-storage";
+
+export interface DocumentMetadata {
+  /**
+   * Content IDs of files associated with this document
+   */
+  files?: string[];
+  [key: string]: any;
+}
+
 /**
  * A storage interface for a document.
  */
@@ -7,6 +17,12 @@ export abstract class DocumentStorage {
    * The type of the storage.
    */
   public readonly type = "document-storage";
+
+  /**
+   * Optional file storage for this document.
+   * If not provided, file operations will be rejected.
+   */
+  abstract get fileStorage(): FileStorage | undefined;
 
   /**
    * Whether the document is encrypted.
@@ -44,6 +60,24 @@ export abstract class DocumentStorage {
     update: Update;
     stateVector: StateVector;
   } | null>;
+
+  /**
+   * Stores document metadata.
+   */
+  abstract writeDocumentMetadata(
+    key: string,
+    metadata: DocumentMetadata,
+  ): Promise<void>;
+
+  /**
+   * Fetches document metadata.
+   */
+  abstract fetchDocumentMetadata(key: string): Promise<DocumentMetadata>;
+
+  /**
+   * Deletes a document and its associated data (metadata, files, etc).
+   */
+  abstract deleteDocument(key: string): Promise<void>;
 
   /**
    * Unloads a document from storage.

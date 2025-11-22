@@ -21,6 +21,7 @@ export namespace FileTransferProtocol {
     file: File;
     fileId: string | null;
     sentChunks: Set<string>;
+    document: string;
   }
 
   export interface DownloadState {
@@ -40,6 +41,7 @@ export namespace FileTransferProtocol {
 
     async requestUpload(
       file: File,
+      document: string,
       fileId: string = uuidv4(),
       encrypted: boolean = false,
       context?: Context,
@@ -52,11 +54,13 @@ export namespace FileTransferProtocol {
           fileId: null,
           file,
           sentChunks: new Set(),
+          document,
         });
       });
 
       this.sendMessage(
         new FileMessage<Context>(
+          document,
           {
             type: "file-upload",
             fileId,
@@ -76,6 +80,7 @@ export namespace FileTransferProtocol {
 
     async requestDownload(
       fileId: string,
+      document: string,
       encrypted: boolean = false,
       timeout: number = 60000,
       context?: Context,
@@ -106,6 +111,7 @@ export namespace FileTransferProtocol {
 
       this.sendMessage(
         new FileMessage<Context>(
+          document,
           {
             type: "file-download",
             fileId,
@@ -233,6 +239,7 @@ export namespace FileTransferProtocol {
         const filePart = fileParts[i];
         const proof = generateMerkleProof(merkleTree, i);
         const message = new FileMessage<Context>(
+          uploadState.document,
           {
             type: "file-part",
             fileId: uploadState.uploadId,
@@ -348,12 +355,14 @@ export namespace FileTransferProtocol {
       }
 
       const fileMessage = message as FileMessage<Context>;
+      const document = fileMessage.document;
 
       switch (fileMessage.payload.type) {
         case "file-download":
           await this.onDownloadRequest(
             fileMessage.payload as DecodedFileDownload,
             fileMessage.context,
+            document,
             fileMessage.encrypted,
             sendMessage,
           );
@@ -362,6 +371,7 @@ export namespace FileTransferProtocol {
           await this.handleUploadRequest(
             fileMessage.payload as DecodedFileUpload,
             fileMessage.context,
+            document,
             fileMessage.encrypted,
             sendMessage,
           );
@@ -370,6 +380,7 @@ export namespace FileTransferProtocol {
           await this.onChunkReceived(
             fileMessage.payload as DecodedFilePart,
             message.id,
+            document,
             fileMessage.context,
             sendMessage,
           );
@@ -383,6 +394,7 @@ export namespace FileTransferProtocol {
     protected async handleUploadRequest(
       payload: DecodedFileUpload,
       context: Context,
+      document: string,
       encrypted: boolean,
       sendMessage: (message: Message<Context>) => Promise<void>,
     ) {
@@ -390,6 +402,7 @@ export namespace FileTransferProtocol {
       if (!allowed.allowed) {
         await sendMessage(
           new FileMessage(
+            document,
             {
               type: "file-auth-message",
               permission: "denied",
@@ -405,9 +418,10 @@ export namespace FileTransferProtocol {
       }
 
       try {
-        await this.onUploadStart(payload, context, encrypted);
+        await this.onUploadStart(payload, context, document, encrypted);
         await sendMessage(
           new FileMessage(
+            document,
             {
               type: "file-download",
               fileId: payload.fileId,
@@ -419,6 +433,7 @@ export namespace FileTransferProtocol {
       } catch (error) {
         await sendMessage(
           new FileMessage(
+            document,
             {
               type: "file-auth-message",
               permission: "denied",
@@ -441,12 +456,14 @@ export namespace FileTransferProtocol {
     protected abstract onUploadStart(
       metadata: DecodedFileUpload,
       context: Context,
+      document: string,
       encrypted: boolean,
     ): Promise<void>;
 
     protected abstract onChunkReceived(
       payload: DecodedFilePart,
       messageId: string,
+      document: string,
       context: Context,
       sendMessage: (message: Message<Context>) => Promise<void>,
     ): Promise<void>;
@@ -454,6 +471,7 @@ export namespace FileTransferProtocol {
     protected abstract onDownloadRequest(
       payload: DecodedFileDownload,
       context: Context,
+      document: string,
       encrypted: boolean,
       sendMessage: (message: Message<Context>) => Promise<void>,
     ): Promise<void>;

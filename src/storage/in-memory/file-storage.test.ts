@@ -13,6 +13,7 @@ describe("InMemoryFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const progress = await storage.getUploadProgress(fileId);
@@ -31,6 +32,7 @@ describe("InMemoryFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const chunk1 = new Uint8Array(CHUNK_SIZE);
@@ -56,6 +58,7 @@ describe("InMemoryFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Build merkle tree to get contentId
@@ -96,6 +99,7 @@ describe("InMemoryFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     await storage.storeChunk(fileId, 0, chunks[0], []);
@@ -118,6 +122,7 @@ describe("InMemoryFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     const chunk = new Uint8Array(CHUNK_SIZE);
@@ -141,6 +146,7 @@ describe("InMemoryFileStorage", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
+      documentId: "test-doc",
     });
 
     // Wait for expiration
