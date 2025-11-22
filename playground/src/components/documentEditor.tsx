@@ -96,7 +96,7 @@ export function DocumentEditor({
               </h1>
               {Boolean(document.encryptedKey) && (
                 <svg
-                  className="w-4 h-4 md:w-5 md:h-5 text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  className="w-4 h-4 md:w-5 md:h-5 text-gray-500 dark:text-gray-400 shrink-0"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -115,7 +115,7 @@ export function DocumentEditor({
               updated {new Date(document.updatedAt).toLocaleDateString()}
             </p>
           </div>
-          <div className="flex items-center space-x-2 flex-shrink-0"></div>
+          <div className="flex items-center space-x-2 shrink-0"></div>
         </div>
       </div>
 

@@ -4,9 +4,9 @@ import { Shell } from "./components/shell";
 
 const elem = document.getElementById("root")!;
 const app = (
-  <StrictMode>
-    <Shell />
-  </StrictMode>
+  // <StrictMode>
+  <Shell />
+  // </StrictMode>
 );
 
 if (import.meta.hot) {

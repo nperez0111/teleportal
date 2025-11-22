@@ -173,9 +173,17 @@ export function getWebsocketHandlers<
           id: peer.id,
           peer,
         });
-        await peer.context.writer.close();
-        if (!peer.context.transport.writable.locked) {
-          await peer.context.transport.writable.close();
+        try {
+          await peer.context.writer.close();
+        } catch (e) {
+          // no-op
+        }
+        try {
+          if (!peer.context.transport.writable.locked) {
+            await peer.context.transport.writable.close();
+          }
+        } catch (e) {
+          // no-op
         }
       },
       async error(peer, error) {

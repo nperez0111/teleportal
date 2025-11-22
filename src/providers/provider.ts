@@ -16,7 +16,19 @@ import {
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 
-export type ProviderOptions = {
+export type DefaultTransportProperties = {
+  synced: Promise<void>;
+  handler: {
+    start: () => Promise<Message>;
+  };
+};
+
+export type ProviderOptions<
+  T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
+    ClientContext,
+    DefaultTransportProperties
+  >,
+> = {
   client: Connection<any>;
   document: string;
   ydoc?: Y.Doc;
@@ -29,27 +41,16 @@ export type ProviderOptions = {
     ydoc: Y.Doc;
     document: string;
     awareness: Awareness;
-    getDefaultTransport(): Transport<
-      ClientContext,
-      {
-        synced: Promise<void>;
-        handler: {
-          start: () => Promise<Message>;
-        };
-      }
-    >;
-  }) => Transport<
-    ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
-  >;
+    getDefaultTransport(): Transport<ClientContext, DefaultTransportProperties>;
+  }) => T;
 };
 
-export class Provider extends Observable<{
+export class Provider<
+  T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
+    ClientContext,
+    DefaultTransportProperties
+  >,
+> extends Observable<{
   "load-subdoc": (ctx: {
     subdoc: Y.Doc;
     provider: Provider;
@@ -65,15 +66,7 @@ export class Provider extends Observable<{
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: Transport<
-    ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
-  >;
+  public transport: T;
   public document: string;
   #underlyingConnection: Connection<any>;
   #messageReader: FanOutReader<RawReceivedMessage>;
@@ -91,10 +84,10 @@ export class Provider extends Observable<{
     document,
     ydoc = new Y.Doc(),
     awareness = new Awareness(ydoc),
-    getTransport = ({ getDefaultTransport }) => getDefaultTransport(),
+    getTransport = ({ getDefaultTransport }) => getDefaultTransport() as T,
     enableOfflinePersistence = true,
     indexedDBPrefix = "teleportal-",
-  }: ProviderOptions) {
+  }: ProviderOptions<T>) {
     super();
     this.doc = ydoc;
     this.awareness = awareness;
@@ -180,7 +173,7 @@ export class Provider extends Observable<{
         document: this.document + "/" + doc.guid,
         ydoc: doc,
         awareness: this.awareness,
-        getTransport: this.#getTransport,
+        getTransport: this.#getTransport as any,
       });
 
       this.subdocs.set(doc.guid, provider);
@@ -212,7 +205,9 @@ export class Provider extends Observable<{
   /**
    * Switch this provider to a new document, destroying this provider instance.
    */
-  public switchDocument(options: Omit<ProviderOptions, "client">): Provider {
+  public switchDocument(
+    options: Omit<ProviderOptions<T>, "client">,
+  ): Provider<T> {
     this.destroy({ destroyConnection: false });
     return this.openDocument(options);
   }
@@ -220,15 +215,17 @@ export class Provider extends Observable<{
   /**
    * Create a new provider instance for a new document, without destroying this provider.
    */
-  public openDocument(options: Omit<ProviderOptions, "client">): Provider {
+  public openDocument(
+    options: Omit<ProviderOptions<T>, "client">,
+  ): Provider<T> {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
 
-    return new Provider({
+    return new Provider<T>({
       client: this.#underlyingConnection,
       ydoc: doc,
       awareness,
-      getTransport: this.#getTransport,
+      getTransport: this.#getTransport as any,
       enableOfflinePersistence: this.#enableOfflinePersistence,
       indexedDBPrefix: this.#indexedDBPrefix,
       ...options,
@@ -341,7 +338,12 @@ export class Provider extends Observable<{
    *
    * If you want to use a specific connection type, provide the `client` option.
    */
-  static async create(
+  static async create<
+    T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
+      ClientContext,
+      DefaultTransportProperties
+    >,
+  >(
     options: (
       | {
           url: string;
@@ -361,8 +363,8 @@ export class Provider extends Observable<{
         }
       | { url?: undefined; client: Connection<any> }
     ) &
-      Omit<ProviderOptions, "client">,
-  ) {
+      Omit<ProviderOptions<T>, "client">,
+  ): Promise<Provider<T>> {
     const {
       url,
       document,

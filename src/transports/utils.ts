@@ -30,7 +30,7 @@ export type FanOutReader<T> = {
  * Creates a writer which will fan out to all connected readers.
  */
 export function createFanOutWriter<T>() {
-  const controllers: ReadableStreamDefaultController<T>[] = [];
+  let controllers: ReadableStreamDefaultController<T>[] = [];
 
   function getReader(): FanOutReader<T> {
     let controller: ReadableStreamDefaultController<T> | null = null;
@@ -80,24 +80,10 @@ export function createFanOutWriter<T>() {
       });
     },
     close: () => {
-      controllers.forEach((controller) => {
-        try {
-          controller.close();
-        } catch {
-          // Ignore if already closed
-        }
-      });
-      controllers.length = 0; // Clear the array
+      controllers = []; // free the memory
     },
     abort: (reason) => {
-      controllers.forEach((controller) => {
-        try {
-          controller.error(reason);
-        } catch {
-          // Ignore if already closed
-        }
-      });
-      controllers.length = 0; // Clear the array
+      controllers = []; // free the memory
     },
   });
 

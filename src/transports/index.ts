@@ -9,3 +9,4 @@ export * from "./rate-limiter";
 export * from "./sse";
 export * from "./ydoc";
 export * from "./utils";
+export * from "./send-file";

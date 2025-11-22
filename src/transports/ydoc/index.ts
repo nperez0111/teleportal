@@ -260,9 +260,14 @@ export function getYDocSink<Context extends ClientContext>({
     writable: new WritableStream({
       async write(chunk, controller) {
         try {
+          // For doc/awareness messages, ensure they target this document and are
+          // not local-only. Non-doc/awareness messages (e.g. file messages)
+          // bypass this filter so higher-level transports can still use the
+          // same underlying transport.
           if (
-            chunk.document !== document ||
-            chunk.context.clientId === "local"
+            (chunk.type === "doc" || chunk.type === "awareness") &&
+            (chunk.document !== document ||
+              chunk.context.clientId === "local")
           ) {
             return;
           }
@@ -332,6 +337,13 @@ export function getYDocSink<Context extends ClientContext>({
                   });
                 }
               }
+              break;
+            }
+            default: {
+              // Pass through any non-doc/awareness messages (e.g. file messages)
+              // so higher-level transports (like send-file) can handle them.
+              observer.call("message", chunk);
+              break;
             }
           }
         } catch (e) {

@@ -15,22 +15,10 @@ export function withLogger<
 ): Transport<Context, AdditionalProperties> {
   return withPassthrough(transport, {
     onWrite: (chunk) => {
-      console.info(
-        {
-          type: "write",
-          chunk,
-        },
-        "transport write",
-      );
+      console.info("transport write", chunk.toString(), chunk);
     },
     onRead: (chunk) => {
-      console.info(
-        {
-          type: "read",
-          chunk,
-        },
-        "transport read",
-      );
+      console.info("transport read", chunk.toString(), chunk);
     },
   });
 }

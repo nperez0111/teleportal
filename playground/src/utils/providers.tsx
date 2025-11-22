@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react";
-import { websocket, Provider } from "teleportal/providers";
+import {
+  websocket,
+  Provider,
+  DefaultTransportProperties,
+} from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 
 import { getEncryptedTransport } from "./encrypted";
+import {
+  FileTransportMethods,
+  withLogger,
+  withSendFile,
+} from "teleportal/transports";
+import { ClientContext, Transport } from "teleportal";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -13,7 +23,9 @@ const tokenManager = createTokenManager({
 // Singleton provider manager to ensure only one provider instance exists (workaround for strict mode)
 class ProviderManager {
   private static instance: ProviderManager | null = null;
-  private provider: Provider | null = null;
+  private provider: Provider<
+    Transport<ClientContext, DefaultTransportProperties & FileTransportMethods>
+  > | null = null;
   private websocketConnection: Promise<websocket.WebSocketConnection> | null =
     null;
   private subscribers = new Set<(provider: Provider | null) => void>();
@@ -52,24 +64,34 @@ class ProviderManager {
   async getProvider(
     documentId: string,
     key: CryptoKey | undefined,
-  ): Promise<Provider> {
+  ): Promise<NonNullable<ProviderManager["provider"]>> {
     if (!this.provider) {
       const client = await this.getWebSocketConnection();
       this.provider = await Provider.create({
         client,
         document: documentId,
-        getTransport: key
-          ? getEncryptedTransport(key)
-          : ({ getDefaultTransport }) => getDefaultTransport(),
+        getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
+          const baseTransport = key
+            ? getEncryptedTransport(key)({ document, ydoc, awareness })
+            : getDefaultTransport();
+          return withSendFile({
+            transport: baseTransport,
+          });
+        },
         enableOfflinePersistence: false,
       });
     } else {
       // Switch document on existing provider
       this.provider = this.provider.switchDocument({
         document: documentId,
-        getTransport: key
-          ? getEncryptedTransport(key)
-          : ({ getDefaultTransport }) => getDefaultTransport(),
+        getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
+          const baseTransport = key
+            ? getEncryptedTransport(key)({ document, ydoc, awareness })
+            : getDefaultTransport();
+          return withSendFile({
+            transport: baseTransport,
+          });
+        },
       });
     }
 
@@ -102,7 +124,9 @@ export function useProvider(
   documentId: string | null | undefined,
   key: CryptoKey | undefined,
 ): {
-  provider: Provider | null;
+  provider: Provider<
+    Transport<ClientContext, DefaultTransportProperties & FileTransportMethods>
+  > | null;
 } {
   const [provider, setProvider] = useState<Provider | null>(null);
   const providerManager = ProviderManager.getInstance();
@@ -125,6 +149,11 @@ export function useProvider(
   }, [documentId, key]);
 
   return {
-    provider,
+    provider: provider as Provider<
+      Transport<
+        ClientContext,
+        DefaultTransportProperties & FileTransportMethods
+      >
+    > | null,
   };
 }
