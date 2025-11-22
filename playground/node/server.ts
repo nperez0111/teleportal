@@ -5,15 +5,14 @@ import sqlite from "db0/connectors/node-sqlite";
 import { createStorage } from "unstorage";
 // @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
-
-// Use the dist build, since node doesn't resolve the source very well
-import { Server } from "../../dist/server/index.mjs";
-import { UnstorageDocumentStorage } from "../../dist/storage/index.mjs";
-import { tokenAuthenticatedWebsocketHandler } from "../../dist/websocket-server/index.mjs";
+import type { ServerContext } from "teleportal";
+import { Server } from "teleportal/server";
+import { UnstorageDocumentStorage } from "teleportal/storage";
+import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 import {
   checkPermissionWithTokenManager,
   createTokenManager,
-} from "../../dist/token/index.mjs";
+} from "teleportal/token";
 
 const db = createDatabase(
   sqlite({
@@ -35,7 +34,11 @@ const tokenManager = createTokenManager({
 });
 
 const serverInstance = new Server({
-  getStorage: async (ctx) => {
+  getStorage: async (ctx: {
+    documentId: string;
+    context: ServerContext;
+    encrypted: boolean;
+  }) => {
     return new UnstorageDocumentStorage(storage, {
       scanKeys: false,
     });

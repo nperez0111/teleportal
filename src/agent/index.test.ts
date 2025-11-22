@@ -1,19 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { ConsoleTransport, LogLayer } from "loglayer";
+import { getLogger } from "@logtape/logtape";
 import type { ServerContext } from "teleportal";
 import { InMemoryPubSub } from "teleportal";
 import { Server } from "teleportal/server";
+import { augmentLogger } from "../server/logger";
 import { YDocStorage } from "teleportal/storage";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { Agent } from "./index";
 
-const emptyLogger = new LogLayer({
-  transport: new ConsoleTransport({
-    logger: console,
-    enabled: false,
-  }),
-});
+const emptyLogger = augmentLogger(
+  getLogger(["teleportal", "tests", "agent-test"]),
+);
 
 describe("Agent", () => {
   let server: Server<ServerContext>;

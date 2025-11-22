@@ -1,4 +1,5 @@
 import type { ServerContext, Message } from "teleportal";
+import { toErrorDetails } from "../logging";
 import type { Logger } from "./logger";
 
 type QueuedSend<Context extends ServerContext> = {
@@ -24,13 +25,9 @@ export class Client<Context extends ServerContext> {
   }) {
     this.id = args.id;
     this.#writable = args.writable;
-    this.#logger = args.logger
-      .child()
-      .withContext({ name: "client", clientId: this.id });
+    this.#logger = args.logger.with({ name: "client", clientId: this.id });
 
-    this.#logger
-      .withMetadata({ clientId: this.id })
-      .debug("Client instance created");
+    this.#logger.debug("Client instance created", { clientId: this.id });
   }
 
   /**
@@ -76,40 +73,34 @@ export class Client<Context extends ServerContext> {
    * This method handles getting and releasing the writer.
    */
   async #sendMessage(message: Message<Context>): Promise<void> {
-    const msgLogger = this.#logger.child().withContext({
+    const msgLogger = this.#logger.with({
       messageId: message.id,
       documentId: message.document,
     });
 
-    msgLogger
-      .withMetadata({
-        messageId: message.id,
-        documentId: message.document,
-        messageType: message.type,
-        payloadType: message.payload?.type,
-      })
-      .trace("Sending message to client");
+    msgLogger.trace("Sending message to client", {
+      messageId: message.id,
+      documentId: message.document,
+      messageType: message.type,
+      payloadType: message.payload?.type,
+    });
 
     const writer = this.#writable.getWriter();
     try {
       await writer.ready;
       await writer.write(message);
 
-      msgLogger
-        .withMetadata({
-          messageId: message.id,
-          documentId: message.document,
-        })
-        .debug("Message sent successfully");
+      msgLogger.debug("Message sent successfully", {
+        messageId: message.id,
+        documentId: message.document,
+      });
     } catch (error) {
-      msgLogger
-        .withError(error as Error)
-        .withMetadata({
-          messageId: message.id,
-          documentId: message.document,
-          messageType: message.type,
-        })
-        .error("Failed to send message to client");
+      msgLogger.error("Failed to send message to client", {
+        messageId: message.id,
+        documentId: message.document,
+        messageType: message.type,
+        error: toErrorDetails(error),
+      });
       throw error;
     } finally {
       writer.releaseLock();

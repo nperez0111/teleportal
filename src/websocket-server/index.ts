@@ -96,8 +96,9 @@ export function getWebsocketHandlers<
             },
           };
         } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
           logger
-            .withError(err)
+            .withError(error)
             .withMetadata({ requestUrl: request.url })
             .error("rejected upgrade websocket connection");
           if (err instanceof Response) {
@@ -137,8 +138,9 @@ export function getWebsocketHandlers<
             peer,
           });
         } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
           logger
-            .withError(err)
+            .withError(error)
             .withMetadata({ clientId: peer.id })
             .error("failed to connect");
           peer.close();
