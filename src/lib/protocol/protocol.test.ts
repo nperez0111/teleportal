@@ -280,6 +280,45 @@ describe("can encode and decode", () => {
     `);
   });
 
+  it("can encode and decode a file message (file-upload) with all fields", () => {
+    const filePayload = {
+      type: "file-upload" as const,
+      fileId: "test-upload-id-detailed",
+      filename: "detailed-test.txt",
+      size: 12345,
+      mimeType: "application/json",
+      lastModified: 1763526701898,
+      encrypted: true,
+    };
+
+    const originalMessage = new FileMessage<Record<string, unknown>>(
+      "detailed-doc",
+      filePayload,
+      { userId: "user-123" },
+      true, // message encrypted
+    );
+
+    const decoded = decodeMessage(originalMessage.encoded);
+
+    expect(decoded).toBeInstanceOf(FileMessage);
+    expect(decoded.document).toBe("detailed-doc");
+    expect(decoded.encrypted).toBe(true); // Message encryption status
+
+    // Check payload fields
+    const payload = decoded.payload;
+    if (payload.type !== "file-upload") {
+      throw new Error("Expected payload type to be file-upload");
+    }
+
+    expect(payload.type).toBe(filePayload.type);
+    expect(payload.fileId).toBe(filePayload.fileId);
+    expect(payload.filename).toBe(filePayload.filename);
+    expect(payload.size).toBe(filePayload.size);
+    expect(payload.mimeType).toBe(filePayload.mimeType);
+    expect(payload.lastModified).toBe(filePayload.lastModified);
+    expect(payload.encrypted).toBe(filePayload.encrypted); // Payload encryption status
+  });
+
   it("can encode and decode a file message (file-download)", () => {
     const contentId = new Uint8Array(32);
     contentId.fill(42);
@@ -309,6 +348,34 @@ describe("can encode and decode", () => {
         "type": "file",
       }
     `);
+  });
+
+  it("can encode and decode a file message (file-download) with all fields", () => {
+    const filePayload = {
+      type: "file-download" as const,
+      fileId: "test-download-id",
+    };
+
+    const originalMessage = new FileMessage<Record<string, unknown>>(
+      "download-doc",
+      filePayload,
+      { userId: "user-456" },
+      false,
+    );
+
+    const decoded = decodeMessage(originalMessage.encoded);
+
+    expect(decoded).toBeInstanceOf(FileMessage);
+    expect(decoded.document).toBe("download-doc");
+    expect(decoded.encrypted).toBe(false);
+
+    const payload = decoded.payload;
+    if (payload.type !== "file-download") {
+      throw new Error("Expected payload type to be file-download");
+    }
+
+    expect(payload.type).toBe(filePayload.type);
+    expect(payload.fileId).toBe(filePayload.fileId);
   });
 
   it("can encode and decode a file message (file-part)", () => {
@@ -429,6 +496,52 @@ describe("can encode and decode", () => {
     `);
   });
 
+  it("can encode and decode a file message (file-part) with all fields", () => {
+    const chunkData = new Uint8Array([1, 2, 3, 4, 5]);
+    const merkleProof = [
+      new Uint8Array([10, 11, 12]),
+      new Uint8Array([20, 21, 22]),
+    ];
+
+    const filePayload = {
+      type: "file-part" as const,
+      fileId: "test-part-id",
+      chunkIndex: 5,
+      chunkData: chunkData,
+      merkleProof: merkleProof,
+      totalChunks: 100,
+      bytesUploaded: 5000,
+      encrypted: true,
+    };
+
+    const originalMessage = new FileMessage<Record<string, unknown>>(
+      "part-doc",
+      filePayload,
+      { userId: "user-789" },
+      true,
+    );
+
+    const decoded = decodeMessage(originalMessage.encoded);
+
+    expect(decoded).toBeInstanceOf(FileMessage);
+    expect(decoded.document).toBe("part-doc");
+    expect(decoded.encrypted).toBe(true);
+
+    const payload = decoded.payload;
+    if (payload.type !== "file-part") {
+      throw new Error("Expected payload type to be file-part");
+    }
+
+    expect(payload.type).toBe(filePayload.type);
+    expect(payload.fileId).toBe(filePayload.fileId);
+    expect(payload.chunkIndex).toBe(filePayload.chunkIndex);
+    expect(payload.chunkData).toEqual(filePayload.chunkData);
+    expect(payload.merkleProof).toEqual(filePayload.merkleProof);
+    expect(payload.totalChunks).toBe(filePayload.totalChunks);
+    expect(payload.bytesUploaded).toBe(filePayload.bytesUploaded);
+    expect(payload.encrypted).toBe(filePayload.encrypted);
+  });
+
   it("file message (file-auth-message)", () => {
     expect(
       new FileMessage<Record<string, unknown>>("test-doc", {
@@ -480,6 +593,40 @@ describe("can encode and decode", () => {
         116,
       ]
     `);
+  });
+
+  it("can encode and decode a file message (file-auth-message) with all fields", () => {
+    const filePayload = {
+      type: "file-auth-message" as const,
+      permission: "denied" as const,
+      fileId: "test-auth-id",
+      statusCode: 403 as const,
+      reason: "Access denied for test",
+    };
+
+    const originalMessage = new FileMessage<Record<string, unknown>>(
+      "auth-doc",
+      filePayload,
+      { userId: "user-999" },
+      false,
+    );
+
+    const decoded = decodeMessage(originalMessage.encoded);
+
+    expect(decoded).toBeInstanceOf(FileMessage);
+    expect(decoded.document).toBe("auth-doc");
+    expect(decoded.encrypted).toBe(false);
+
+    const payload = decoded.payload;
+    if (payload.type !== "file-auth-message") {
+      throw new Error("Expected payload type to be file-auth-message");
+    }
+
+    expect(payload.type).toBe(filePayload.type);
+    expect(payload.permission).toBe(filePayload.permission);
+    expect(payload.fileId).toBe(filePayload.fileId);
+    expect(payload.statusCode).toBe(filePayload.statusCode);
+    expect(payload.reason).toBe(filePayload.reason);
   });
 });
 
