@@ -21,7 +21,7 @@ class SendFileClient<
     FileTransferProtocol.DownloadState
   >();
 
-  private downloadCache = new Map<string, File>();
+  private downloadCache = new Map<string, Promise<File>>();
 
   constructor(
     private writer: (message: Message<Context>) => Promise<void>,
@@ -42,7 +42,7 @@ class SendFileClient<
     state: FileTransferProtocol.DownloadState,
     file: File,
   ): void | Promise<void> {
-    this.downloadCache.set(state.fileId, file);
+    this.downloadCache.set(state.fileId, Promise.resolve(file));
   }
 
   protected async onUploadReady(fileId: string, file: File): Promise<void> {
@@ -86,10 +86,18 @@ class SendFileClient<
   ): Promise<File> {
     const file = this.downloadCache.get(fileId);
     if (file) {
-      return Promise.resolve(file);
+      return file;
     }
 
-    return super.requestDownload(fileId, document, encrypted, timeout, context);
+    const promise = super.requestDownload(
+      fileId,
+      document,
+      encrypted,
+      timeout,
+      context,
+    );
+    this.downloadCache.set(fileId, promise);
+    return promise;
   }
 }
 
