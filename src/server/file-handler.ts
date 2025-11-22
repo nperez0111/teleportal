@@ -205,19 +205,20 @@ export class FileHandler<
     }
 
     try {
-      // Send an ACK for each file-part message that was received
-      await sendMessage(
-        new AckMessage({
-          type: "ack",
-          messageId,
-        }),
-      );
       // Store the chunk
       await this.#fileStorage.storeChunk(
         payload.fileId,
         payload.chunkIndex,
         payload.chunkData,
         payload.merkleProof,
+      );
+
+      // Send an ACK for each file-part message that was received
+      await sendMessage(
+        new AckMessage({
+          type: "ack",
+          messageId,
+        }),
       );
 
       // Get updated upload progress
