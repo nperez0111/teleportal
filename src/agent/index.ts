@@ -16,6 +16,9 @@ export class Agent {
     message: Pick<Message<ServerContext>, "document" | "context" | "encrypted">,
     handler?: YDocSinkHandler & YDocSourceHandler,
   ) {
+    if (!message.document) {
+      throw new Error("Document is required");
+    }
     const logger = this.logger.child().withContext({
       document: message.document,
     });

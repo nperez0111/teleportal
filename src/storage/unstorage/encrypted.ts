@@ -2,16 +2,25 @@ import type { Storage } from "unstorage";
 
 import { EncryptedUpdate } from "teleportal/encryption-key";
 import type { EncryptedMessageId } from "teleportal/protocol/encryption";
-import { DocumentMetadata, EncryptedDocumentStorage } from "../encrypted";
+import {
+  EncryptedDocumentMetadata,
+  EncryptedDocumentStorage,
+} from "../encrypted";
+import { FileStorage } from "../file-storage";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { ttl: number };
+  public readonly fileStorage: FileStorage | undefined;
 
-  constructor(storage: Storage, options?: { ttl?: number }) {
+  constructor(
+    storage: Storage,
+    options?: { ttl?: number; fileStorage?: FileStorage },
+  ) {
     super();
     this.storage = storage;
     this.options = { ttl: 5 * 1000, ...options };
+    this.fileStorage = options?.fileStorage;
   }
 
   /**
@@ -39,17 +48,17 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
 
   async writeDocumentMetadata(
     key: string,
-    metadata: DocumentMetadata,
+    metadata: EncryptedDocumentMetadata,
   ): Promise<void> {
     await this.storage.setItem(key + ":meta", metadata);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
+  async fetchDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
     const metadata = await this.storage.getItem(key + ":meta");
     if (!metadata) {
       return { seenMessages: {} };
     }
-    return metadata as DocumentMetadata;
+    return metadata as EncryptedDocumentMetadata;
   }
 
   async storeEncryptedMessage(
@@ -71,5 +80,26 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       key + ":" + messageId,
     );
     return payload;
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    if (this.fileStorage) {
+      await this.fileStorage.deleteFilesByDocument(key);
+    }
+
+    const metadata = await this.fetchDocumentMetadata(key);
+
+    // Delete all messages
+    const promises = [];
+    for (const clientId in metadata.seenMessages) {
+      for (const counter in metadata.seenMessages[clientId]) {
+        const messageId = metadata.seenMessages[clientId][counter];
+        promises.push(this.storage.removeItem(key + ":" + messageId));
+      }
+    }
+    await Promise.all(promises);
+
+    // Delete metadata
+    await this.storage.removeItem(key + ":meta");
   }
 }

@@ -48,12 +48,16 @@ class MockDocumentStorage extends DocumentStorage {
     this.lastSyncStep2 = syncStep2;
     return Promise.resolve();
   }
+  public get fileStorage() {
+    return undefined;
+  }
   public encrypted = false;
   public mockFetch = false;
   public mockWrite = false;
   public mockHandleSyncStep2 = false;
   public storedData: any = null;
   public lastSyncStep2: SyncStep2Update | null = null;
+  public metadata: Map<string, any> = new Map();
 
   async fetch(documentId: string) {
     this.mockFetch = true;
@@ -63,6 +67,19 @@ class MockDocumentStorage extends DocumentStorage {
   async write(documentId: string, update: Update) {
     this.mockWrite = true;
     this.storedData = update;
+  }
+
+  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
+    this.metadata.set(key, metadata);
+  }
+
+  async fetchDocumentMetadata(key: string): Promise<any> {
+    return this.metadata.get(key) || {};
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    this.metadata.delete(key);
+    this.storedData = null;
   }
 }
 

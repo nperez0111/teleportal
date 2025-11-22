@@ -2,17 +2,25 @@ import { toBase64 } from "lib0/buffer";
 import { digest } from "lib0/hash/sha256";
 import { encodeMessage } from "./encode";
 import type {
+  AwarenessRequestMessage,
   AwarenessUpdateMessage,
   DecodedAckMessage,
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedFileAuthMessage,
+  DecodedFileDownload,
+  DecodedFilePart,
+  DecodedFileUpload,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
   DocStep,
+  EncodedAckMessage,
   EncodedDocUpdateMessage,
+  EncodedFileStep,
+  FileStep,
 } from "./types";
 
 /**
@@ -20,7 +28,10 @@ import type {
  */
 export type BinaryMessage =
   | EncodedDocUpdateMessage<DocStep>
-  | AwarenessUpdateMessage;
+  | AwarenessUpdateMessage
+  | AwarenessRequestMessage
+  | EncodedFileStep<FileStep>
+  | EncodedAckMessage;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
@@ -29,7 +40,8 @@ export type BinaryMessage =
 export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>
-  | AckMessage<Context>;
+  | AckMessage<Context>
+  | FileMessage<Context>;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
@@ -41,26 +53,29 @@ export type RawReceivedMessage = Message<any>;
 /**
  * Base class for message types
  */
-export abstract class CustomMessage<Context extends Record<string, unknown>> {
+export abstract class CustomMessage<
+  Context extends Record<string, unknown>,
+  BinaryRepresentation extends BinaryMessage,
+> {
   public abstract type: string;
   public abstract context: Context;
   public abstract document: string | undefined;
   public abstract payload: any;
   public abstract encrypted: boolean;
 
-  constructor(encoded?: BinaryMessage) {
+  constructor(encoded?: BinaryRepresentation) {
     this.#encoded = encoded;
   }
 
-  #encoded: BinaryMessage | undefined;
+  #encoded: BinaryRepresentation | undefined;
   #id: string | undefined;
 
-  public get encoded(): BinaryMessage {
+  public get encoded(): BinaryRepresentation {
     return this.#encoded ?? (this.#encoded = this.encode());
   }
 
-  encode(): BinaryMessage {
-    return encodeMessage(this as any);
+  encode(): BinaryRepresentation {
+    return encodeMessage(this as any) as BinaryRepresentation;
   }
 
   public get id(): string {
@@ -85,7 +100,7 @@ export abstract class CustomMessage<Context extends Record<string, unknown>> {
   }
 
   public toString(): string {
-    return `Message(type: ${this.type}, document: ${this.document}, payload: ${JSON.stringify(this.payload)}, context: ${JSON.stringify(this.context)}, encrypted: ${this.encrypted}, id: ${this.id}, encoded: ${this.encoded})`;
+    return `Message(type: ${this.type}, payload: ${JSON.stringify(this.payload)}, document: ${this.document}, context: ${JSON.stringify(this.context)}, encrypted: ${this.encrypted}, id: ${this.id})`;
   }
 
   public valueOf(): string {
@@ -100,7 +115,10 @@ export abstract class CustomMessage<Context extends Record<string, unknown>> {
  */
 export class AwarenessMessage<
   Context extends Record<string, unknown>,
-> extends CustomMessage<Context> {
+> extends CustomMessage<
+  Context,
+  AwarenessUpdateMessage | AwarenessRequestMessage
+> {
   public type = "awareness" as const;
   public context: Context;
 
@@ -109,7 +127,7 @@ export class AwarenessMessage<
     public payload: DecodedAwarenessUpdateMessage | DecodedAwarenessRequest,
     context?: Context,
     public encrypted: boolean = false,
-    encoded?: BinaryMessage,
+    encoded?: AwarenessUpdateMessage | AwarenessRequestMessage,
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
@@ -123,7 +141,7 @@ export class AwarenessMessage<
  */
 export class DocMessage<
   Context extends Record<string, unknown>,
-> extends CustomMessage<Context> {
+> extends CustomMessage<Context, EncodedDocUpdateMessage<DocStep>> {
   public type = "doc" as const;
   public context: Context;
 
@@ -137,7 +155,7 @@ export class DocMessage<
       | DecodedAuthMessage,
     context?: Context,
     public encrypted: boolean = false,
-    encoded?: BinaryMessage,
+    encoded?: EncodedDocUpdateMessage<DocStep>,
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
@@ -149,17 +167,42 @@ export class DocMessage<
  */
 export class AckMessage<
   Context extends Record<string, unknown>,
-> extends CustomMessage<Context> {
+> extends CustomMessage<Context, EncodedAckMessage> {
   public type = "ack" as const;
   public context: Context;
   public encrypted: boolean = false;
+  public document = undefined;
 
   constructor(
-    public document: string,
     public payload: DecodedAckMessage,
     context?: Context,
   ) {
     super();
+    this.context = context ?? ({} as Context);
+  }
+}
+
+/**
+ * A file message for upload/download operations.
+ */
+export class FileMessage<
+  Context extends Record<string, unknown>,
+> extends CustomMessage<Context, EncodedFileStep<FileStep>> {
+  public type = "file" as const;
+  public context: Context;
+
+  constructor(
+    public document: string,
+    public payload:
+      | DecodedFileAuthMessage
+      | DecodedFileUpload
+      | DecodedFileDownload
+      | DecodedFilePart,
+    context?: Context,
+    public encrypted: boolean = false,
+    encoded?: EncodedFileStep<FileStep>,
+  ) {
+    super(encoded);
     this.context = context ?? ({} as Context);
   }
 }

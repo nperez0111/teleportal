@@ -31,10 +31,14 @@ class MockDocumentStorage extends DocumentStorage {
   handleSyncStep2(key: string, syncStep2: SyncStep2Update): Promise<void> {
     return Promise.resolve();
   }
+  public get fileStorage() {
+    return undefined;
+  }
   public encrypted = false;
   public mockFetch = false;
   public mockWrite = false;
   public storedData: any = null;
+  public metadata: Map<string, any> = new Map();
 
   async fetch(documentId: string) {
     this.mockFetch = true;
@@ -44,6 +48,19 @@ class MockDocumentStorage extends DocumentStorage {
   async write(documentId: string, update: any) {
     this.mockWrite = true;
     this.storedData = update;
+  }
+
+  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
+    this.metadata.set(key, metadata);
+  }
+
+  async fetchDocumentMetadata(key: string): Promise<any> {
+    return this.metadata.get(key) || {};
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    this.metadata.delete(key);
+    this.storedData = null;
   }
 }
 
@@ -196,7 +213,7 @@ describe("Server", () => {
     it("should handle concurrent calls and return the same session", async () => {
       // Simulate race condition: multiple concurrent calls for the same document
       const context = { userId: "user-1", room: "room", clientId: "client-1" };
-      
+
       const [session1, session2, session3] = await Promise.all([
         server.getOrOpenSession("concurrent-doc", {
           encrypted: false,
@@ -510,8 +527,16 @@ describe("Server", () => {
 
     it("should check permissions when checkPermission is provided", async () => {
       let permissionChecked = false;
-      const checkPermission = async () => {
+      const checkPermission = async ({
+        documentId,
+        fileId,
+      }: {
+        documentId?: string;
+        fileId?: string;
+      }) => {
         permissionChecked = true;
+        // Verify that either documentId or fileId is provided
+        expect(documentId || fileId).toBeDefined();
         return true;
       };
 
@@ -548,7 +573,17 @@ describe("Server", () => {
     });
 
     it("should deny access when checkPermission returns false", async () => {
-      const checkPermission = async () => false;
+      const checkPermission = async ({
+        documentId,
+        fileId,
+      }: {
+        documentId?: string;
+        fileId?: string;
+      }) => {
+        // Verify that either documentId or fileId is provided
+        expect(documentId || fileId).toBeDefined();
+        return false;
+      };
 
       const serverWithPermission = new Server({
         logger: emptyLogger,
@@ -606,10 +641,16 @@ describe("Server", () => {
       const checkPermission = async ({
         message,
         type,
+        documentId,
+        fileId,
       }: {
         message: Message<ServerContext>;
         type: "read" | "write";
+        documentId?: string;
+        fileId?: string;
       }) => {
+        // Verify that either documentId or fileId is provided
+        expect(documentId || fileId).toBeDefined();
         // Deny write operations (sync-step-2 requires write)
         if (
           message.type === "doc" &&

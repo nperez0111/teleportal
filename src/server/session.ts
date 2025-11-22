@@ -84,6 +84,10 @@ export class Session<Context extends ServerContext> {
       .debug("Session instance created");
   }
 
+  public get storage(): DocumentStorage {
+    return this.#storage;
+  }
+
   /**
    * Load the most recent state for initial sync.
    */
@@ -680,5 +684,12 @@ export class Session<Context extends ServerContext> {
 
   public get shouldDispose(): boolean {
     return this.#clients.size === 0;
+  }
+
+  /**
+   * Get the clients in the session.
+   */
+  public get clients(): IterableIterator<Client<Context>> {
+    return this.#clients.values();
   }
 }

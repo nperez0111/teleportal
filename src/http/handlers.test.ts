@@ -31,8 +31,12 @@ class MockDocumentStorage extends DocumentStorage {
   handleSyncStep2(key: string, syncStep2: any): Promise<void> {
     return Promise.resolve();
   }
+  public get fileStorage() {
+    return undefined;
+  }
   public encrypted = false;
   public storedData: any = null;
+  public metadata: Map<string, any> = new Map();
 
   async fetch(documentId: string) {
     return this.storedData;
@@ -40,6 +44,19 @@ class MockDocumentStorage extends DocumentStorage {
 
   async write(documentId: string, update: any) {
     this.storedData = update;
+  }
+
+  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
+    this.metadata.set(key, metadata);
+  }
+
+  async fetchDocumentMetadata(key: string): Promise<any> {
+    return this.metadata.get(key) || {};
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    this.metadata.delete(key);
+    this.storedData = null;
   }
 }
 
