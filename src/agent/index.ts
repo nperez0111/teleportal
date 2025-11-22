@@ -8,11 +8,9 @@ import {
 
 export class Agent {
   private logger: Logger;
-  constructor(private server: Server<ServerContext>) {
-    this.logger = this.server.logger.child();
-    this.logger.clearContext();
-    this.logger.withContext({ name: "agent" });
-  }
+    constructor(private server: Server<ServerContext>) {
+      this.logger = this.server.logger.child().withContext({ name: "agent" });
+    }
 
   public async createAgent(
     message: Pick<Message<ServerContext>, "document" | "context" | "encrypted">,

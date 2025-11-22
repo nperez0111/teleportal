@@ -1,33 +1,36 @@
-import { PinoTransport } from "@loglayer/transport-pino";
+import { getPinoSink } from "@logtape/adaptor-pino";
 import {
-  getSimplePrettyTerminal,
-  moonlight,
-} from "@loglayer/transport-simple-pretty-terminal";
-import { LogLayer } from "loglayer";
+  configure,
+  getConsoleSink,
+  getLogger,
+  type Sink,
+} from "@logtape/logtape";
+import { augmentLogger } from "teleportal/server";
 import { pino } from "pino";
 
-const p = pino({
+const pinoLogger = pino({
   level: "info",
 });
 
-export const logger = new LogLayer({
-  transport: [
-    new PinoTransport({
-      logger: p,
-      enabled: Bun.env.NODE_ENV === "production",
-    }),
-    getSimplePrettyTerminal({
-      enabled: Bun.env.NODE_ENV !== "production",
-      runtime: "node", // Required: "node" or "browser"
-      viewMode: "expanded", // "inline" | "message-only" | "expanded"
-      theme: moonlight,
-      level: "info",
-    }),
+const isProduction = Bun.env.NODE_ENV === "production";
+
+const sinks: Record<string, Sink> = {
+  console: getConsoleSink(),
+};
+
+if (isProduction) {
+  sinks.pino = getPinoSink(pinoLogger);
+}
+
+await configure({
+  sinks,
+  loggers: [
+    {
+      category: ["teleportal", "playground"],
+      sinks: [isProduction ? "pino" : "console"],
+      lowestLevel: isProduction ? "info" : "debug",
+    },
   ],
-  errorSerializer: (err) => ({
-    message: err.message,
-    stack: err.stack,
-    code: err.code,
-    cause: err.cause,
-  }),
 });
+
+export const logger = augmentLogger(getLogger(["teleportal", "playground"]));

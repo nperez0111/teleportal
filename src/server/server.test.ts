@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import { getLogger } from "@logtape/logtape";
 import { Server } from "./server";
 import { Client } from "./client";
-import { logger } from "./logger";
+import { augmentLogger, logger } from "./logger";
 import { InMemoryPubSub, DocMessage } from "teleportal";
 import type {
   ServerContext,
@@ -12,14 +13,10 @@ import type {
   Update,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
-import { ConsoleTransport, LogLayer } from "loglayer";
 
-const emptyLogger = new LogLayer({
-  transport: new ConsoleTransport({
-    logger: console,
-    enabled: false,
-  }),
-});
+const emptyLogger = augmentLogger(
+  getLogger(["teleportal", "tests", "server-test"]),
+);
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
   handleSyncStep1(

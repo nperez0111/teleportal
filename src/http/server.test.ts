@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { getLogger } from "@logtape/logtape";
 import {
   InMemoryPubSub,
   type ServerContext,
   type StateVector,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
+import { augmentLogger } from "../server/logger";
 import { Server } from "../server/server";
 import { getHTTPHandler } from "./server";
-import { logger } from "teleportal/server";
-import { ConsoleTransport, LogLayer } from "loglayer";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
@@ -53,16 +53,13 @@ describe("getHTTPHandler", () => {
       room: "room-1",
     });
 
-    server = new Server({
-      getStorage: mockGetStorage,
-      pubSub,
-      logger: new LogLayer({
-        transport: new ConsoleTransport({
-          logger: console,
-          enabled: false,
-        }),
-      }),
-    });
+      server = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        logger: augmentLogger(
+          getLogger(["teleportal", "tests", "http-server"]),
+        ),
+      });
 
     handler = getHTTPHandler({
       server,
