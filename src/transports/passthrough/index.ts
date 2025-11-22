@@ -15,7 +15,7 @@ export function withPassthroughSink<
 >(
   sink: Sink<Context, AdditionalProperties>,
   options?: {
-    onWrite?: (chunk: Message<Context>) => void;
+    onWrite?: (chunk: Message<Context>) => boolean | void;
   },
 ): Sink<Context, AdditionalProperties> {
   const writer = sink.writable.getWriter();
@@ -24,7 +24,9 @@ export function withPassthroughSink<
     ...sink,
     writable: new WritableStream({
       async write(chunk) {
-        options?.onWrite?.(chunk);
+        if (options?.onWrite?.(chunk) === false) {
+          return;
+        }
 
         await writer.write(chunk);
       },
@@ -43,7 +45,7 @@ export function withPassthroughSource<
 >(
   source: Source<Context, AdditionalProperties>,
   options?: {
-    onRead?: (chunk: Message<Context>) => void;
+    onRead?: (chunk: Message<Context>) => boolean | void;
   },
 ): Source<Context, AdditionalProperties> {
   return {
@@ -51,7 +53,10 @@ export function withPassthroughSource<
     readable: source.readable.pipeThrough(
       new TransformStream({
         transform(chunk, controller) {
-          options?.onRead?.(chunk);
+          if (options?.onRead?.(chunk) === false) {
+            return;
+          }
+
           controller.enqueue(chunk);
         },
       }),
@@ -71,8 +76,8 @@ export function withPassthrough<
 >(
   transport: Transport<Context, AdditionalProperties>,
   options?: {
-    onRead?: (chunk: Message<Context>) => void;
-    onWrite?: (chunk: Message<Context>) => void;
+    onRead?: (chunk: Message<Context>) => boolean | void;
+    onWrite?: (chunk: Message<Context>) => boolean | void;
   },
 ): Transport<Context, AdditionalProperties> {
   return compose(

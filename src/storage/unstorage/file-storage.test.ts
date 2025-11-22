@@ -20,7 +20,7 @@ describe("UnstorageFileStorage", () => {
       size: 1024,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     const progress = await storage.getUploadProgress(fileId);
@@ -37,7 +37,7 @@ describe("UnstorageFileStorage", () => {
       size: CHUNK_SIZE * 2,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     const chunk1 = new Uint8Array(CHUNK_SIZE);
@@ -61,7 +61,7 @@ describe("UnstorageFileStorage", () => {
       size: chunks[0].length + chunks[1].length,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     // Build merkle tree to get contentId
@@ -100,7 +100,7 @@ describe("UnstorageFileStorage", () => {
       size: chunks[0].length,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     await storage.storeChunk(fileId, 0, chunks[0], []);
@@ -121,7 +121,7 @@ describe("UnstorageFileStorage", () => {
       size: CHUNK_SIZE * 2,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     const chunk = new Uint8Array(CHUNK_SIZE);
@@ -147,7 +147,7 @@ describe("UnstorageFileStorage", () => {
       size: 1024,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     // Wait for expiration
@@ -170,7 +170,7 @@ describe("UnstorageFileStorage", () => {
       size: 1024,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     // Create a new storage instance with the same unstorage backend
@@ -192,7 +192,7 @@ describe("UnstorageFileStorage", () => {
       size: numChunks * chunkSize,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     // Store chunks in reverse order to test ordering
@@ -229,7 +229,7 @@ describe("UnstorageFileStorage", () => {
       size: 1024,
       mimeType: "text/plain",
       encrypted: false,
-      createdAt: Date.now(),
+      lastModified: Date.now(),
     });
 
     // Check that keys use the custom prefix

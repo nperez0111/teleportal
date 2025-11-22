@@ -9,6 +9,8 @@ import { Server } from "teleportal/server";
 import {
   UnstorageEncryptedDocumentStorage,
   UnstorageDocumentStorage,
+  UnstorageFileStorage,
+  InMemoryFileStorage,
 } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
@@ -58,6 +60,7 @@ const server = new Server<TokenPayload & { clientId: string }>({
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
   logger: logger,
+  fileStorage: new UnstorageFileStorage(memoryStorage, { keyPrefix: "file" }),
   // pubSub: new RedisPubSub({
   //   path: "redis://127.0.0.1:6379",
   // }),

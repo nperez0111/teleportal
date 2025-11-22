@@ -34,15 +34,15 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
   /**
    * Get the storage key for an upload session metadata
    */
-  #getUploadSessionKey(fileId: string): string {
-    return `${this.keyPrefix}:upload:${fileId}`;
+  #getUploadSessionKey(uploadId: string): string {
+    return `${this.keyPrefix}:upload:${uploadId}`;
   }
 
   /**
    * Get the storage key for a chunk
    */
-  #getChunkKey(fileId: string, chunkIndex: number): string {
-    return `${this.keyPrefix}:upload:${fileId}:chunk:${chunkIndex}`;
+  #getChunkKey(uploadId: string, chunkIndex: number): string {
+    return `${this.keyPrefix}:upload:${uploadId}:chunk:${chunkIndex}`;
   }
 
   /**
@@ -53,10 +53,10 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
   }
 
   protected async createUploadSession(
-    fileId: string,
+    uploadId: string,
     metadata: FileMetadata,
   ): Promise<void> {
-    const sessionKey = this.#getUploadSessionKey(fileId);
+    const sessionKey = this.#getUploadSessionKey(uploadId);
     const session: UploadProgress = {
       metadata,
       chunks: new Map(),
@@ -74,9 +74,9 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
   }
 
   protected async getUploadSession(
-    fileId: string,
+    uploadId: string,
   ): Promise<UploadProgress | null> {
-    const sessionKey = this.#getUploadSessionKey(fileId);
+    const sessionKey = this.#getUploadSessionKey(uploadId);
     const sessionData = await this.storage.getItem<{
       metadata: FileMetadata;
       bytesUploaded: number;
@@ -90,7 +90,7 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
     // Reconstruct chunks map by reading all chunk keys
     const chunks = new Map<number, Uint8Array>();
     const chunkKeys = await this.storage.getKeys(
-      `${this.keyPrefix}:upload:${fileId}:chunk:`,
+      `${this.keyPrefix}:upload:${uploadId}:chunk:`,
     );
 
     for (const chunkKey of chunkKeys) {
@@ -112,12 +112,12 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
     };
   }
 
-  protected async deleteUploadSession(fileId: string): Promise<void> {
-    const sessionKey = this.#getUploadSessionKey(fileId);
+  protected async deleteUploadSession(uploadId: string): Promise<void> {
+    const sessionKey = this.#getUploadSessionKey(uploadId);
 
     // Delete all chunks first
     const chunkKeys = await this.storage.getKeys(
-      `${this.keyPrefix}:upload:${fileId}:chunk:`,
+      `${this.keyPrefix}:upload:${uploadId}:chunk:`,
     );
     await Promise.all(chunkKeys.map((key) => this.storage.removeItem(key)));
 
@@ -126,18 +126,18 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
   }
 
   protected async storeChunkForUpload(
-    fileId: string,
+    uploadId: string,
     chunkIndex: number,
     chunkData: Uint8Array,
   ): Promise<void> {
-    const chunkKey = this.#getChunkKey(fileId, chunkIndex);
+    const chunkKey = this.#getChunkKey(uploadId, chunkIndex);
     await this.storage.setItemRaw(chunkKey, chunkData);
   }
 
   protected async getChunksForUpload(
-    fileId: string,
+    uploadId: string,
   ): Promise<Uint8Array[] | null> {
-    const session = await this.getUploadSession(fileId);
+    const session = await this.getUploadSession(uploadId);
     if (!session) {
       return null;
     }
@@ -150,11 +150,11 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
   }
 
   protected async updateUploadSession(
-    fileId: string,
+    uploadId: string,
     lastActivity: number,
     bytesUploaded: number,
   ): Promise<void> {
-    const sessionKey = this.#getUploadSessionKey(fileId);
+    const sessionKey = this.#getUploadSessionKey(uploadId);
     const sessionData = await this.storage.getItem<{
       metadata: FileMetadata;
       bytesUploaded: number;
@@ -162,7 +162,7 @@ export class UnstorageFileStorage extends UnencryptedFileStorage {
     }>(sessionKey);
 
     if (!sessionData) {
-      throw new Error(`Upload session ${fileId} not found`);
+      throw new Error(`Upload session ${uploadId} not found`);
     }
 
     await this.storage.setItem(sessionKey, {

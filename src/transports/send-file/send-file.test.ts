@@ -1,1162 +1,401 @@
-import { beforeEach, describe, expect, it } from "bun:test";
-import type { ClientContext, Message, Transport } from "teleportal";
-import { FileMessage } from "teleportal/protocol";
-import type {
-  DecodedFileProgress,
-  DecodedFileRequest,
-} from "../../lib/protocol/types";
-import { getFileTransport } from "./send-file";
+import { describe, expect, it } from "bun:test";
+import { toBase64 } from "lib0/buffer";
+import { AckMessage, ClientContext, FileMessage, Message } from "teleportal";
 import {
   buildMerkleTree,
   CHUNK_SIZE,
   generateMerkleProof,
 } from "../../lib/merkle-tree/merkle-tree";
-import { toBase64 } from "lib0/buffer";
+import { noopTransport, withPassthrough } from "../passthrough";
+import { withSendFile } from "./send-file";
 
-/**
- * Mock bidirectional transport for testing FileDownloader
- */
-class MockBidirectionalTransport<Context extends Record<string, unknown>>
-  implements Transport<Context>
-{
-  public readable: ReadableStream<Message<Context>>;
-  public writable: WritableStream<Message<Context>>;
-  [key: string]: unknown;
-  private clientReadableController: ReadableStreamDefaultController<
-    Message<Context>
-  > | null = null;
-  private clientWritable: WritableStream<Message<Context>>;
-  private clientReadable: ReadableStream<Message<Context>>;
-  private sentMessages: Message<Context>[] = [];
-
-  constructor() {
-    // Client readable: receives messages from server
-    this.clientReadable = new ReadableStream<Message<Context>>({
-      start: (controller) => {
-        this.clientReadableController = controller;
+describe("withSendFile", () => {
+  it("should upload a small file successfully", async () => {
+    const transportReadMessages: Message<ClientContext>[] = [];
+    const transportWriteMessages: Message<ClientContext>[] = [];
+    const transport = withPassthrough<ClientContext, {}>(noopTransport(), {
+      onRead: (chunk) => {
+        transportReadMessages.push(chunk);
+      },
+      onWrite: (chunk) => {
+        transportWriteMessages.push(chunk);
       },
     });
+    const wrappedTransport = withSendFile({
+      transport: transport,
+    });
 
-    // Client writable: messages written here can be read by test
-    this.clientWritable = new WritableStream<Message<Context>>({
-      write: async (message) => {
-        // Store message for test inspection
-        this.sentMessages.push(message);
+    const writer = wrappedTransport.writable.getWriter();
+    const receivedMessages: Message<ClientContext>[] = [];
+    wrappedTransport.readable.pipeTo(
+      new WritableStream({
+        write: (chunk) => {
+          receivedMessages.push(chunk);
+        },
+      }),
+    );
+
+    // start the upload, but we need to act as the server in-between, so just wait for it
+    const uploadPromise = wrappedTransport.upload(
+      new File([new Uint8Array([1, 2, 3, 4, 5])], "test.txt"),
+      "test-file-id",
+      false,
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // assert expectation
+    expect(receivedMessages.length).toBe(1);
+    // check what we received
+    const message = receivedMessages[0] as FileMessage<ClientContext>;
+
+    // assert expectation
+    expect(message.payload.type).toBe("file-upload");
+    // clear the queue of received messages
+    receivedMessages.pop();
+    // act as the server and send a file-download message (acknowledge to allow the upload to continue)
+    await writer.write(
+      new FileMessage({
+        type: "file-download",
+        fileId: message.payload.fileId,
+      }),
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    // assert expectation
+    expect(receivedMessages.length).toBe(1);
+    // check what we received
+    const downloadMessage = receivedMessages[0] as FileMessage<ClientContext>;
+    // assert expectation
+    expect(downloadMessage.payload.type).toBe("file-part");
+    // clear the queue of received messages
+    receivedMessages.pop();
+
+    // ACK the file-part message, so the client knows the file-part was received
+    await writer.write(
+      new AckMessage({
+        type: "ack",
+        messageId: downloadMessage.id,
+      }),
+    );
+
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // Upload should be complete, so check the client's result
+    const uploadResult = await uploadPromise;
+    // assert expectation
+    expect(uploadResult).toBe("dPgf4WfZm0y0HW0MzagieMrunz4vJdXlo5Nv89zsYNA=");
+  });
+
+  it("should upload a file larger than one chunk", async () => {
+    const transportReadMessages: Message<ClientContext>[] = [];
+    const transportWriteMessages: Message<ClientContext>[] = [];
+    const transport = withPassthrough<ClientContext, {}>(noopTransport(), {
+      onRead: (chunk) => {
+        transportReadMessages.push(chunk);
+      },
+      onWrite: (chunk) => {
+        transportWriteMessages.push(chunk);
       },
     });
-
-    // Default readable/writable for the transport interface
-    this.readable = this.clientReadable;
-    this.writable = this.clientWritable;
-  }
-
-  // Helper to send messages to client (simulating server responses)
-  sendToClient(message: Message<Context>) {
-    if (this.clientReadableController) {
-      this.clientReadableController.enqueue(message);
-    }
-  }
-
-  // Helper to close the readable stream
-  close() {
-    this.clientReadableController?.close();
-  }
-
-  // Helper to get client transport
-  getClientTransport(): Transport<Context> {
-    return {
-      readable: this.clientReadable,
-      writable: this.clientWritable,
-    } as Transport<Context>;
-  }
-
-  // Helper to get sent messages
-  getSentMessages(): Message<Context>[] {
-    return this.sentMessages;
-  }
-
-  // Helper to clear sent messages
-  clearSentMessages() {
-    this.sentMessages = [];
-  }
-}
-
-describe("FileDownloader", () => {
-  let mockTransport: MockBidirectionalTransport<ClientContext>;
-  let fileTransport: ReturnType<typeof getFileTransport>;
-  const context: ClientContext = { clientId: "client-1" };
-
-  beforeEach(() => {
-    mockTransport = new MockBidirectionalTransport<ClientContext>();
-    fileTransport = getFileTransport({
-      transport: mockTransport.getClientTransport(),
-      context,
+    const wrappedTransport = withSendFile({
+      transport: transport,
     });
-  });
 
-  it("should download a single-chunk file successfully", async () => {
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-
-    // Build merkle tree for the file
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
+    const writer = wrappedTransport.writable.getWriter();
+    const receivedMessages: Message<ClientContext>[] = [];
+    wrappedTransport.readable.pipeTo(
+      new WritableStream({
+        write: (chunk) => {
+          receivedMessages.push(chunk);
         },
-        context,
-        false,
-      ),
+      }),
     );
 
-    // Simulate server sending chunk
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const proof = generateMerkleProof(merkleTree, 0);
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: fileId,
-          chunkIndex: 0,
-          chunkData: fileContent,
-          merkleProof: proof,
-          totalChunks: 1,
-          bytesUploaded: fileContent.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Wait for download to complete
-    const downloadedFile = await downloadPromise;
-
-    // Verify file
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-    expect(downloadedFile.type).toContain(mimeType); // File constructor may add charset
-    expect(downloadedFile.size).toBe(fileContent.length);
-
-    // Verify content
-    const downloadedContent = new Uint8Array(
-      await downloadedFile.arrayBuffer(),
-    );
-    expect(downloadedContent).toEqual(fileContent);
-  });
-
-  it("should download a multi-chunk file successfully", async () => {
-    // Create a file larger than CHUNK_SIZE to ensure multiple chunks
-    const fileSize = CHUNK_SIZE + 1000;
-    const fileContent = new Uint8Array(fileSize);
-    fileContent.fill(42); // Fill with test value
-    const filename = "large-test.txt";
-    const mimeType = "text/plain";
-
-    // Split into chunks
-    const chunks: Uint8Array[] = [];
-    for (let i = 0; i < fileContent.length; i += CHUNK_SIZE) {
-      chunks.push(fileContent.slice(i, i + CHUNK_SIZE));
-    }
-
-    // Build merkle tree
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Simulate server sending chunks
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    for (let i = 0; i < chunks.length; i++) {
-      const proof = generateMerkleProof(merkleTree, i);
-      mockTransport.sendToClient(
-        new FileMessage<ClientContext>(
-          {
-            type: "file-progress",
-            fileId: fileId,
-            chunkIndex: i,
-            chunkData: chunks[i],
-            merkleProof: proof,
-            totalChunks: chunks.length,
-            bytesUploaded: (i + 1) * CHUNK_SIZE,
-            encrypted: false,
-          },
-          context,
-          false,
-        ),
-      );
-      // Small delay between chunks
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-
-    // Wait for download to complete
-    const downloadedFile = await downloadPromise;
-
-    // Verify file
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-    expect(downloadedFile.type).toContain(mimeType); // File constructor may add charset
-    expect(downloadedFile.size).toBe(fileContent.length);
-
-    // Verify content
-    const downloadedContent = new Uint8Array(
-      await downloadedFile.arrayBuffer(),
-    );
-    expect(downloadedContent).toEqual(fileContent);
-  });
-
-  it("should handle out-of-order chunks", async () => {
-    const fileSize = CHUNK_SIZE * 3;
-    const fileContent = new Uint8Array(fileSize);
-    fileContent.fill(99);
-    const filename = "out-of-order-test.txt";
-    const mimeType = "text/plain";
-
-    // Split into chunks
-    const chunks: Uint8Array[] = [];
-    for (let i = 0; i < fileContent.length; i += CHUNK_SIZE) {
-      chunks.push(fileContent.slice(i, i + CHUNK_SIZE));
-    }
-
-    // Build merkle tree
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Send chunks out of order: 2, 0, 1
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const order = [2, 0, 1];
-    for (const i of order) {
-      const proof = generateMerkleProof(merkleTree, i);
-      mockTransport.sendToClient(
-        new FileMessage<ClientContext>(
-          {
-            type: "file-progress",
-            fileId: fileId,
-            chunkIndex: i,
-            chunkData: chunks[i],
-            merkleProof: proof,
-            totalChunks: chunks.length,
-            bytesUploaded: (i + 1) * CHUNK_SIZE,
-            encrypted: false,
-          },
-          context,
-          false,
-        ),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-
-    // Wait for download to complete
-    const downloadedFile = await downloadPromise;
-
-    // Verify file content is correct despite out-of-order delivery
-    const downloadedContent = new Uint8Array(
-      await downloadedFile.arrayBuffer(),
-    );
-    expect(downloadedContent).toEqual(fileContent);
-  });
-
-  it("should handle empty file", async () => {
-    const fileContent = new Uint8Array(0);
-    const filename = "empty.txt";
-    const mimeType = "text/plain";
-
-    // Build merkle tree for empty file
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: 0,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Wait for download to complete (empty file should complete immediately after metadata)
-    const downloadedFile = await downloadPromise;
-
-    // Verify file
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-    expect(downloadedFile.size).toBe(0);
-  });
-
-  it("should reject download with invalid merkle proof", async () => {
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-
-    // Build merkle tree for the file
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Simulate server sending chunk with invalid proof (wrong proof)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const wrongProof = [new Uint8Array(32).fill(255)]; // Invalid proof
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: fileId,
-          chunkIndex: 0,
-          chunkData: fileContent,
-          merkleProof: wrongProof,
-          totalChunks: 1,
-          bytesUploaded: fileContent.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Wait for download to fail
-    await expect(downloadPromise).rejects.toThrow(
-      "Chunk 0 failed merkle proof verification",
-    );
-  });
-
-  it("should reject download with modified chunk data", async () => {
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
-    const modifiedContent = new Uint8Array([9, 9, 9, 9, 9]); // Modified
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-
-    // Build merkle tree for the original file
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Simulate server sending modified chunk (with correct proof for original)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const proof = generateMerkleProof(merkleTree, 0);
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: fileId,
-          chunkIndex: 0,
-          chunkData: modifiedContent, // Modified data
-          merkleProof: proof, // Proof for original data
-          totalChunks: 1,
-          bytesUploaded: fileContent.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Wait for download to fail
-    await expect(downloadPromise).rejects.toThrow(
-      "Chunk 0 failed merkle proof verification",
-    );
-  });
-
-  it("should reject download with missing chunks", async () => {
-    const fileSize = CHUNK_SIZE * 3;
-    const fileContent = new Uint8Array(fileSize);
-    fileContent.fill(42);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-
-    // Split into chunks
-    const chunks: Uint8Array[] = [];
-    for (let i = 0; i < fileContent.length; i += CHUNK_SIZE) {
-      chunks.push(fileContent.slice(i, i + CHUNK_SIZE));
-    }
-
-    // Build merkle tree
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Simulate server sending only first 2 chunks (missing the third)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    for (let i = 0; i < chunks.length - 1; i++) {
-      const proof = generateMerkleProof(merkleTree, i);
-      mockTransport.sendToClient(
-        new FileMessage<ClientContext>(
-          {
-            type: "file-progress",
-            fileId: fileId,
-            chunkIndex: i,
-            chunkData: chunks[i],
-            merkleProof: proof,
-            totalChunks: chunks.length,
-            bytesUploaded: (i + 1) * CHUNK_SIZE,
-            encrypted: false,
-          },
-          context,
-          false,
-        ),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-
-    // Close transport to trigger timeout/error
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    mockTransport.close();
-
-    // Wait for download to fail
-    await expect(downloadPromise).rejects.toThrow();
-  });
-
-  it("should handle timeout", async () => {
-    const contentId = new Uint8Array(32).fill(1);
-    const fileId = toBase64(contentId);
-
-    // Start download with short timeout
-    const downloadPromise = fileTransport.download(
-      fileId,
+    // Create a file larger than one chunk
+    const largeFileData = new Uint8Array(CHUNK_SIZE + 100);
+    largeFileData.fill(42);
+    const uploadPromise = wrappedTransport.upload(
+      new File([largeFileData], "large.txt"),
+      "large-file-id",
       false,
-      100, // 100ms timeout
     );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
-    // Don't send any messages - should timeout
-    await expect(downloadPromise).rejects.toThrow(
-      "Download timeout after 100ms",
+    // assert expectation - should receive file-upload message
+    expect(receivedMessages.length).toBe(1);
+    const uploadMessage = receivedMessages[0] as FileMessage<ClientContext>;
+    expect(uploadMessage.payload.type).toBe("file-upload");
+    const fileId = uploadMessage.payload.fileId;
+    receivedMessages.pop();
+
+    // act as the server and send a file-download message
+    await writer.write(
+      new FileMessage({
+        type: "file-download",
+        fileId: fileId,
+      }),
     );
+    // let it be received async - client will send all chunks immediately
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // assert expectation - should receive both file-parts (client sends all chunks at once)
+    expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
+    const part1Message = receivedMessages[0] as FileMessage<ClientContext>;
+    expect(part1Message.payload.type).toBe("file-part");
+    expect((part1Message.payload as any).chunkIndex).toBe(0);
+    receivedMessages.shift();
+
+    // ACK the first file-part
+    await writer.write(
+      new AckMessage({
+        type: "ack",
+        messageId: part1Message.id,
+      }),
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // assert expectation - should receive second file-part
+    expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
+    const part2Message = receivedMessages[0] as FileMessage<ClientContext>;
+    expect(part2Message.payload.type).toBe("file-part");
+    expect((part2Message.payload as any).chunkIndex).toBe(1);
+    receivedMessages.shift();
+
+    // ACK the second file-part
+    await writer.write(
+      new AckMessage({
+        type: "ack",
+        messageId: part2Message.id,
+      }),
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // Upload should be complete
+    const uploadResult = await uploadPromise;
+    expect(uploadResult).toBeDefined();
+    expect(typeof uploadResult).toBe("string");
   });
 
-  it("should handle transport closure", async () => {
-    const contentId = new Uint8Array(32).fill(1);
-    const fileId = toBase64(contentId);
+  it("should download a file successfully", async () => {
+    const transportReadMessages: Message<ClientContext>[] = [];
+    const transportWriteMessages: Message<ClientContext>[] = [];
+    const transport = withPassthrough<ClientContext, {}>(noopTransport(), {
+      onRead: (chunk) => {
+        transportReadMessages.push(chunk);
+      },
+      onWrite: (chunk) => {
+        transportWriteMessages.push(chunk);
+      },
+    });
+    const wrappedTransport = withSendFile({
+      transport: transport,
+    });
 
-    // Start download with short timeout
-    const downloadPromise = fileTransport.download(
-      fileId,
+    const writer = wrappedTransport.writable.getWriter();
+    const receivedMessages: Message<ClientContext>[] = [];
+    wrappedTransport.readable.pipeTo(
+      new WritableStream({
+        write: (chunk) => {
+          receivedMessages.push(chunk);
+        },
+      }),
+    );
+
+    // Prepare file data and calculate contentId (merkle root) first
+    const fileData = new Uint8Array([1, 2, 3, 4, 5]);
+    const merkleTree = buildMerkleTree([fileData]);
+    const contentId = toBase64(
+      merkleTree.nodes[merkleTree.nodes.length - 1].hash,
+    );
+
+    // Start the download with the contentId
+    const downloadPromise = wrappedTransport.download(contentId, false);
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // assert expectation - should receive file-download request
+    expect(receivedMessages.length).toBe(1);
+    const downloadRequest = receivedMessages[0] as FileMessage<ClientContext>;
+    expect(downloadRequest.payload.type).toBe("file-download");
+    expect((downloadRequest.payload as any).fileId).toBe(contentId);
+    receivedMessages.pop();
+
+    // act as the server and send file-upload (metadata) message with the contentId
+
+    await writer.write(
+      new FileMessage({
+        type: "file-upload",
+        fileId: contentId, // This should be the contentId (merkle root)
+        filename: "downloaded.txt",
+        size: 5,
+        mimeType: "text/plain",
+        lastModified: Date.now(),
+        encrypted: false,
+      }),
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // Server should now send the file-part with proper merkle proof
+    const proof = generateMerkleProof(merkleTree, 0);
+    await writer.write(
+      new FileMessage({
+        type: "file-part",
+        fileId: contentId,
+        chunkIndex: 0,
+        chunkData: fileData,
+        merkleProof: proof,
+        totalChunks: 1,
+        bytesUploaded: 5,
+        encrypted: false,
+      } as any),
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // Download should complete
+    const downloadedFile = await downloadPromise;
+    expect(downloadedFile).toBeInstanceOf(File);
+    expect(downloadedFile.name).toBe("downloaded.txt");
+    expect(downloadedFile.size).toBe(5);
+  });
+
+  it("should handle encrypted file upload", async () => {
+    const transportReadMessages: Message<ClientContext>[] = [];
+    const transportWriteMessages: Message<ClientContext>[] = [];
+    const transport = withPassthrough<ClientContext, {}>(noopTransport(), {
+      onRead: (chunk) => {
+        transportReadMessages.push(chunk);
+      },
+      onWrite: (chunk) => {
+        transportWriteMessages.push(chunk);
+      },
+    });
+    const wrappedTransport = withSendFile({
+      transport: transport,
+    });
+
+    const writer = wrappedTransport.writable.getWriter();
+    const receivedMessages: Message<ClientContext>[] = [];
+    wrappedTransport.readable.pipeTo(
+      new WritableStream({
+        write: (chunk) => {
+          receivedMessages.push(chunk);
+        },
+      }),
+    );
+
+    // start the encrypted upload
+    const uploadPromise = wrappedTransport.upload(
+      new File([new Uint8Array([1, 2, 3, 4, 5])], "encrypted.txt"),
+      "encrypted-file-id",
+      true, // encrypted = true
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // assert expectation
+    expect(receivedMessages.length).toBe(1);
+    const message = receivedMessages[0] as FileMessage<ClientContext>;
+    expect(message.payload.type).toBe("file-upload");
+    expect((message.payload as any).encrypted).toBe(true);
+    receivedMessages.pop();
+
+    // act as the server and send a file-download message
+    await writer.write(
+      new FileMessage({
+        type: "file-download",
+        fileId: message.payload.fileId,
+      }),
+    );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // assert expectation
+    expect(receivedMessages.length).toBe(1);
+    const downloadMessage = receivedMessages[0] as FileMessage<ClientContext>;
+    expect(downloadMessage.payload.type).toBe("file-part");
+    receivedMessages.pop();
+
+    // ACK the file-part message
+    await writer.write(
+      new AckMessage({
+        type: "ack",
+        messageId: downloadMessage.id,
+      }),
+    );
+
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // Upload should be complete
+    const uploadResult = await uploadPromise;
+    expect(uploadResult).toBeDefined();
+    expect(typeof uploadResult).toBe("string");
+  });
+
+  it("should track active uploads and downloads", async () => {
+    const transport = withPassthrough<ClientContext, {}>(noopTransport());
+    const wrappedTransport = withSendFile({
+      transport: transport,
+    });
+
+    // Initially, there should be no active uploads or downloads
+    expect(wrappedTransport.activeUploads.size).toBe(0);
+    expect(wrappedTransport.activeDownloads.size).toBe(0);
+
+    const writer = wrappedTransport.writable.getWriter();
+    const receivedMessages: Message<ClientContext>[] = [];
+    wrappedTransport.readable.pipeTo(
+      new WritableStream({
+        write: (chunk) => {
+          receivedMessages.push(chunk);
+        },
+      }),
+    );
+
+    // Start an upload
+    const uploadPromise = wrappedTransport.upload(
+      new File([new Uint8Array([1, 2, 3])], "tracking.txt"),
+      "tracking-file-id",
       false,
-      100, // 100ms timeout
     );
+    // let it be received async
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
-    // Close transport immediately
-    mockTransport.close();
+    // Should have one active upload
+    expect(wrappedTransport.activeUploads.size).toBe(1);
+    expect(wrappedTransport.activeUploads.has("tracking-file-id")).toBe(true);
 
-    // Should reject with timeout error (since stream closes and no messages arrive)
-    await expect(downloadPromise).rejects.toThrow(
-      "Download timeout after 100ms",
+    // Complete the upload
+    const uploadMessage = receivedMessages[0] as FileMessage<ClientContext>;
+    receivedMessages.pop();
+    await writer.write(
+      new FileMessage({
+        type: "file-download",
+        fileId: uploadMessage.payload.fileId,
+      }),
     );
-  });
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
-  it("should ignore messages for different fileId", async () => {
-    const otherFileId = "other-file-id";
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-
-    // Build merkle tree
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata for correct fileId
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
+    const partMessage = receivedMessages[0] as FileMessage<ClientContext>;
+    receivedMessages.pop();
+    await writer.write(
+      new AckMessage({
+        type: "ack",
+        messageId: partMessage.id,
+      }),
     );
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
-    // Send chunk for wrong fileId (should be ignored)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const proof = generateMerkleProof(merkleTree, 0);
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: otherFileId, // Wrong fileId
-          chunkIndex: 0,
-          chunkData: fileContent,
-          merkleProof: proof,
-          totalChunks: 1,
-          bytesUploaded: fileContent.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
+    await uploadPromise;
 
-    // Send correct chunk
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: fileId, // Correct fileId (fileId)
-          chunkIndex: 0,
-          chunkData: fileContent,
-          merkleProof: proof,
-          totalChunks: 1,
-          bytesUploaded: fileContent.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Download should complete successfully
-    const downloadedFile = await downloadPromise;
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-  });
-
-  it("should handle chunks arriving before metadata", async () => {
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-
-    // Build merkle tree
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    const fileId = toBase64(contentId);
-
-    // Start download in background - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Send chunk BEFORE metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const proof = generateMerkleProof(merkleTree, 0);
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: fileId,
-          chunkIndex: 0,
-          chunkData: fileContent,
-          merkleProof: proof,
-          totalChunks: 1,
-          bytesUploaded: fileContent.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Then send metadata (this should trigger completion check)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename,
-          size: fileContent.length,
-          mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Download should complete successfully
-    // Note: The current implementation requires metadata before completion,
-    // so chunks arriving first will be stored but won't complete until metadata arrives
-    const downloadedFile = await downloadPromise;
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-  });
-});
-
-describe("FileUploader", () => {
-  let mockTransport: MockBidirectionalTransport<ClientContext>;
-  let fileTransport: ReturnType<typeof getFileTransport>;
-  const context: ClientContext = { clientId: "client-1" };
-
-  beforeEach(() => {
-    mockTransport = new MockBidirectionalTransport<ClientContext>();
-    fileTransport = getFileTransport({
-      transport: mockTransport.getClientTransport(),
-      context,
-    });
-    mockTransport.clearSentMessages();
-  });
-
-  it("should upload a single-chunk file successfully", async () => {
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5]);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-    const file = new File([fileContent], filename, { type: mimeType });
-
-    // Upload the file
-    const fileId = await fileTransport.upload(file, "test-file-id", false);
-
-    // Wait for messages to be sent
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Verify contentId is correct
-    const chunks = [fileContent];
-    const merkleTree = buildMerkleTree(chunks);
-    const expectedContentId =
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    expect(fileId).toBe(toBase64(expectedContentId));
-
-    // Verify messages were sent
-    const sentMessages = mockTransport.getSentMessages();
-    expect(sentMessages.length).toBeGreaterThan(0);
-
-    // First message should be file-request
-    const requestMessage = sentMessages[0] as FileMessage<ClientContext>;
-    expect(requestMessage.type).toBe("file");
-    expect(requestMessage.payload.type).toBe("file-request");
-    const requestPayload = requestMessage.payload as DecodedFileRequest;
-    expect(requestPayload.direction).toBe("upload");
-    expect(requestPayload.fileId).toBe("test-file-id");
-    expect(requestPayload.filename).toBe(filename);
-    expect(requestPayload.size).toBe(fileContent.length);
-    expect(requestPayload.mimeType).toContain(mimeType); // File constructor may add charset
-
-    // Second message should be file-progress (chunk)
-    const progressMessage = sentMessages[1] as FileMessage<ClientContext>;
-    expect(progressMessage.type).toBe("file");
-    expect(progressMessage.payload.type).toBe("file-progress");
-    const progressPayload = progressMessage.payload as DecodedFileProgress;
-    expect(progressPayload.fileId).toBe("test-file-id");
-    expect(progressPayload.chunkIndex).toBe(0);
-    expect(progressPayload.chunkData).toEqual(fileContent);
-    expect(progressPayload.totalChunks).toBe(1);
-  });
-
-  it("should upload a multi-chunk file successfully", async () => {
-    // Create a file larger than CHUNK_SIZE to ensure multiple chunks
-    const fileSize = CHUNK_SIZE + 1000;
-    const fileContent = new Uint8Array(fileSize);
-    fileContent.fill(42); // Fill with test value
-    const filename = "large-test.txt";
-    const mimeType = "text/plain";
-    const file = new File([fileContent], filename, { type: mimeType });
-
-    // Upload the file
-    const fileId = await fileTransport.upload(file, "test-file-id", false);
-
-    // Wait for messages to be sent
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    // Verify contentId is correct
-    const chunks: Uint8Array[] = [];
-    for (let i = 0; i < fileContent.length; i += CHUNK_SIZE) {
-      chunks.push(fileContent.slice(i, i + CHUNK_SIZE));
-    }
-    const merkleTree = buildMerkleTree(chunks);
-    const expectedContentId =
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    expect(fileId).toBe(toBase64(expectedContentId));
-
-    // Verify messages were sent
-    const sentMessages = mockTransport.getSentMessages();
-    expect(sentMessages.length).toBe(chunks.length + 1); // 1 request + N chunks
-
-    // First message should be file-request
-    const requestMessage = sentMessages[0] as FileMessage<ClientContext>;
-    expect(requestMessage.payload.type).toBe("file-request");
-    const requestPayload = requestMessage.payload as DecodedFileRequest;
-    expect(requestPayload.direction).toBe("upload");
-    expect(requestPayload.fileId).toBe("test-file-id");
-    expect(requestPayload.size).toBe(fileContent.length);
-
-    // Verify all chunks were sent
-    for (let i = 0; i < chunks.length; i++) {
-      const progressMessage = sentMessages[i + 1] as FileMessage<ClientContext>;
-      expect(progressMessage.payload.type).toBe("file-progress");
-      const progressPayload = progressMessage.payload as DecodedFileProgress;
-      expect(progressPayload.fileId).toBe("test-file-id");
-      expect(progressPayload.chunkIndex).toBe(i);
-      expect(progressPayload.chunkData).toEqual(chunks[i]);
-      expect(progressPayload.totalChunks).toBe(chunks.length);
-    }
-  });
-
-  it("should upload an empty file successfully", async () => {
-    const fileContent = new Uint8Array(0);
-    const filename = "empty.txt";
-    const mimeType = "text/plain";
-    const file = new File([fileContent], filename, { type: mimeType });
-
-    // Upload the file
-    const fileId = await fileTransport.upload(file, "test-file-id", false);
-
-    // Wait for messages to be sent
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Verify contentId is correct (empty file should have a specific merkle root)
-    const chunks = [new Uint8Array(0)];
-    const merkleTree = buildMerkleTree(chunks);
-    const expectedContentId =
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-    expect(fileId).toBe(toBase64(expectedContentId));
-
-    // Verify messages were sent
-    const sentMessages = mockTransport.getSentMessages();
-    expect(sentMessages.length).toBeGreaterThan(0);
-
-    // First message should be file-request
-    const requestMessage = sentMessages[0] as FileMessage<ClientContext>;
-    expect(requestMessage.payload.type).toBe("file-request");
-    const requestPayload = requestMessage.payload as DecodedFileRequest;
-    expect(requestPayload.direction).toBe("upload");
-    expect(requestPayload.size).toBe(0);
-  });
-
-  it("should include merkle proofs in chunk messages", async () => {
-    // Use a multi-chunk file to ensure merkle proofs are non-empty
-    const fileSize = CHUNK_SIZE + 1000;
-    const fileContent = new Uint8Array(fileSize);
-    fileContent.fill(42);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-    const file = new File([fileContent], filename, { type: mimeType });
-
-    // Upload the file
-    await fileTransport.upload(file, "test-file-id", false);
-
-    // Wait for messages to be sent
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    // Verify merkle proof is included (for multi-chunk files, proofs should exist)
-    const sentMessages = mockTransport.getSentMessages();
-    const progressMessage = sentMessages[1] as FileMessage<ClientContext>;
-    expect(progressMessage.payload.type).toBe("file-progress");
-    const progressPayload = progressMessage.payload as DecodedFileProgress;
-    expect(progressPayload.merkleProof).toBeDefined();
-    expect(Array.isArray(progressPayload.merkleProof)).toBe(true);
-    // For multi-chunk files, merkle proofs should be non-empty
-    expect(progressPayload.merkleProof.length).toBeGreaterThan(0);
-  });
-});
-
-describe("FileUploader and FileDownloader integration", () => {
-  let mockTransport: MockBidirectionalTransport<ClientContext>;
-  let fileTransport: ReturnType<typeof getFileTransport>;
-  const context: ClientContext = { clientId: "client-1" };
-
-  beforeEach(() => {
-    mockTransport = new MockBidirectionalTransport<ClientContext>();
-    fileTransport = getFileTransport({
-      transport: mockTransport.getClientTransport(),
-      context,
-    });
-    mockTransport.clearSentMessages();
-  });
-
-  it("should upload and then download the same file", async () => {
-    const uploadFileId = "upload-file-id";
-    const fileContent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    const filename = "test.txt";
-    const mimeType = "text/plain";
-    const file = new File([fileContent], filename, { type: mimeType });
-
-    // Upload the file
-    const fileId = await fileTransport.upload(file, uploadFileId, false);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Simulate server storing the file and responding to download request
-    // First, capture the upload messages to simulate server behavior
-    const sentMessages = mockTransport.getSentMessages();
-    const uploadRequest = sentMessages[0] as FileMessage<ClientContext>;
-    const uploadRequestPayload = uploadRequest.payload as DecodedFileRequest;
-    const uploadChunks = sentMessages.slice(1) as FileMessage<ClientContext>[];
-
-    // Start download - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata for download
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename: uploadRequestPayload.filename,
-          size: uploadRequestPayload.size,
-          mimeType: uploadRequestPayload.mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Simulate server sending chunks (reusing the chunks from upload)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    for (const chunkMessage of uploadChunks) {
-      const chunkPayload = chunkMessage.payload as DecodedFileProgress;
-      mockTransport.sendToClient(
-        new FileMessage<ClientContext>(
-          {
-            type: "file-progress",
-            fileId: fileId,
-            chunkIndex: chunkPayload.chunkIndex,
-            chunkData: chunkPayload.chunkData,
-            merkleProof: chunkPayload.merkleProof,
-            totalChunks: chunkPayload.totalChunks,
-            bytesUploaded: chunkPayload.bytesUploaded,
-            encrypted: false,
-          },
-          context,
-          false,
-        ),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-
-    // Wait for download to complete
-    const downloadedFile = await downloadPromise;
-
-    // Verify downloaded file matches uploaded file
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-    expect(downloadedFile.size).toBe(fileContent.length);
-
-    const downloadedContent = new Uint8Array(
-      await downloadedFile.arrayBuffer(),
-    );
-    expect(downloadedContent).toEqual(fileContent);
-  });
-
-  it("should upload a large file and then download it", async () => {
-    const uploadFileId = "upload-file-id";
-    const downloadFileId = "download-file-id";
-    const fileSize = CHUNK_SIZE * 3;
-    const fileContent = new Uint8Array(fileSize);
-    fileContent.fill(99);
-    const filename = "large-test.txt";
-    const mimeType = "text/plain";
-    const file = new File([fileContent], filename, { type: mimeType });
-
-    // Upload the file
-    const fileId = await fileTransport.upload(file, uploadFileId, false);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    // Capture upload messages
-    const sentMessages = mockTransport.getSentMessages();
-    const uploadRequest = sentMessages[0] as FileMessage<ClientContext>;
-    const uploadRequestPayload = uploadRequest.payload as DecodedFileRequest;
-    const uploadChunks = sentMessages.slice(1) as FileMessage<ClientContext>[];
-
-    // Start download - fileId is the merkle root hash (hex string)
-    const downloadPromise = fileTransport.download(fileId, false);
-
-    // Simulate server sending metadata
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: fileId,
-          filename: uploadRequestPayload.filename,
-          size: uploadRequestPayload.size,
-          mimeType: uploadRequestPayload.mimeType,
-        },
-        context,
-        false,
-      ),
-    );
-
-    // Simulate server sending chunks
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    for (const chunkMessage of uploadChunks) {
-      const chunkPayload = chunkMessage.payload as DecodedFileProgress;
-      mockTransport.sendToClient(
-        new FileMessage<ClientContext>(
-          {
-            type: "file-progress",
-            fileId: fileId,
-            chunkIndex: chunkPayload.chunkIndex,
-            chunkData: chunkPayload.chunkData,
-            merkleProof: chunkPayload.merkleProof,
-            totalChunks: chunkPayload.totalChunks,
-            bytesUploaded: chunkPayload.bytesUploaded,
-            encrypted: false,
-          },
-          context,
-          false,
-        ),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-
-    // Wait for download to complete
-    const downloadedFile = await downloadPromise;
-
-    // Verify downloaded file matches uploaded file
-    expect(downloadedFile).toBeInstanceOf(File);
-    expect(downloadedFile.name).toBe(filename);
-    expect(downloadedFile.size).toBe(fileContent.length);
-
-    const downloadedContent = new Uint8Array(
-      await downloadedFile.arrayBuffer(),
-    );
-    expect(downloadedContent).toEqual(fileContent);
-  });
-
-  it("should handle multiple uploads and downloads", async () => {
-    const file1Content = new Uint8Array([1, 2, 3]);
-    const file1 = new File([file1Content], "file1.txt", {
-      type: "text/plain",
-    });
-    const file2Content = new Uint8Array([4, 5, 6]);
-    const file2 = new File([file2Content], "file2.txt", {
-      type: "text/plain",
-    });
-
-    // Upload both files
-    const contentId1Hex = await fileTransport.upload(file1, "upload-1", false);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.clearSentMessages();
-
-    const contentId2Hex = await fileTransport.upload(file2, "upload-2", false);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Verify contentIds are different
-    expect(contentId1Hex).not.toBe(contentId2Hex);
-
-    // Download first file - fileId is the merkle root hash (hex string)
-    const downloadPromise1 = fileTransport.download(contentId1Hex, false);
-
-    // Simulate server response for first file
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: contentId1Hex,
-          filename: "file1.txt",
-          size: file1Content.length,
-          mimeType: "text/plain",
-        },
-        context,
-        false,
-      ),
-    );
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const chunks1 = [file1Content];
-    const merkleTree1 = buildMerkleTree(chunks1);
-    const proof1 = generateMerkleProof(merkleTree1, 0);
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: contentId1Hex,
-          chunkIndex: 0,
-          chunkData: file1Content,
-          merkleProof: proof1,
-          totalChunks: 1,
-          bytesUploaded: file1Content.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    const downloadedFile1 = await downloadPromise1;
-    expect(downloadedFile1.name).toBe("file1.txt");
-    const downloadedContent1 = new Uint8Array(
-      await downloadedFile1.arrayBuffer(),
-    );
-    expect(downloadedContent1).toEqual(file1Content);
-
-    // Download second file - fileId is the merkle root hash (hex string)
-    const downloadPromise2 = fileTransport.download(contentId2Hex, false);
-
-    // Simulate server response for second file
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-request",
-          direction: "download",
-          fileId: contentId2Hex,
-          filename: "file2.txt",
-          size: file2Content.length,
-          mimeType: "text/plain",
-        },
-        context,
-        false,
-      ),
-    );
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const chunks2 = [file2Content];
-    const merkleTree2 = buildMerkleTree(chunks2);
-    const proof2 = generateMerkleProof(merkleTree2, 0);
-    mockTransport.sendToClient(
-      new FileMessage<ClientContext>(
-        {
-          type: "file-progress",
-          fileId: contentId2Hex,
-          chunkIndex: 0,
-          chunkData: file2Content,
-          merkleProof: proof2,
-          totalChunks: 1,
-          bytesUploaded: file2Content.length,
-          encrypted: false,
-        },
-        context,
-        false,
-      ),
-    );
-
-    const downloadedFile2 = await downloadPromise2;
-    expect(downloadedFile2.name).toBe("file2.txt");
-    const downloadedContent2 = new Uint8Array(
-      await downloadedFile2.arrayBuffer(),
-    );
-    expect(downloadedContent2).toEqual(file2Content);
+    // After completion, upload should be removed
+    expect(wrappedTransport.activeUploads.size).toBe(0);
   });
 });

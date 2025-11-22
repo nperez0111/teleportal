@@ -116,15 +116,18 @@ export abstract class UnencryptedFileStorage extends FileStorage {
   /**
    * Default implementation that creates an upload session.
    */
-  async initiateUpload(fileId: string, metadata: FileMetadata): Promise<void> {
-    const existing = await this.getUploadSession(fileId);
+  async initiateUpload(
+    uploadId: string,
+    metadata: FileMetadata,
+  ): Promise<void> {
+    const existing = await this.getUploadSession(uploadId);
     if (existing) {
-      throw new Error(`Upload session ${fileId} already exists`);
+      throw new Error(`Upload session ${uploadId} already exists`);
     }
 
-    await this.createUploadSession(fileId, {
+    await this.createUploadSession(uploadId, {
       ...metadata,
-      createdAt: Date.now(),
+      lastModified: metadata.lastModified || Date.now(),
     });
   }
 
@@ -132,49 +135,49 @@ export abstract class UnencryptedFileStorage extends FileStorage {
    * Default implementation that stores a chunk and updates activity.
    */
   async storeChunk(
-    fileId: string,
+    uploadId: string,
     chunkIndex: number,
     chunkData: Uint8Array,
     proof: Uint8Array[],
   ): Promise<void> {
-    const upload = await this.getUploadSession(fileId);
+    const upload = await this.getUploadSession(uploadId);
     if (!upload) {
-      throw new Error(`Upload session ${fileId} not found`);
+      throw new Error(`Upload session ${uploadId} not found`);
     }
 
     // Store the chunk
-    await this.storeChunkForUpload(fileId, chunkIndex, chunkData);
+    await this.storeChunkForUpload(uploadId, chunkIndex, chunkData);
 
     // Calculate new bytesUploaded from all chunks
-    const chunks = await this.getChunksForUpload(fileId);
+    const chunks = await this.getChunksForUpload(uploadId);
     const bytesUploaded = chunks
       ? chunks.reduce((sum, chunk) => sum + chunk.length, 0)
       : upload.bytesUploaded + chunkData.length;
 
     // Update session with new activity and bytes uploaded
-    await this.updateUploadSession(fileId, Date.now(), bytesUploaded);
+    await this.updateUploadSession(uploadId, Date.now(), bytesUploaded);
   }
 
   /**
    * Default implementation that returns upload progress.
    */
-  async getUploadProgress(fileId: string): Promise<UploadProgress | null> {
-    return await this.getUploadSession(fileId);
+  async getUploadProgress(uploadId: string): Promise<UploadProgress | null> {
+    return await this.getUploadSession(uploadId);
   }
 
   /**
    * Default implementation that completes an upload with merkle tree verification.
    */
-  async completeUpload(fileId: string, contentId: Uint8Array): Promise<void> {
-    const upload = await this.getUploadSession(fileId);
+  async completeUpload(uploadId: string, contentId: Uint8Array): Promise<void> {
+    const upload = await this.getUploadSession(uploadId);
     if (!upload) {
-      throw new Error(`Upload session ${fileId} not found`);
+      throw new Error(`Upload session ${uploadId} not found`);
     }
 
     // Get chunks for verification
-    const chunks = await this.getChunksForUpload(fileId);
+    const chunks = await this.getChunksForUpload(uploadId);
     if (!chunks || chunks.length === 0) {
-      throw new Error(`No chunks found for file ${fileId}`);
+      throw new Error(`No chunks found for file ${uploadId}`);
     }
 
     // Determine expected number of chunks
@@ -188,7 +191,7 @@ export abstract class UnencryptedFileStorage extends FileStorage {
     // Check for missing chunks individually by examining the upload session
     for (let i = 0; i < expectedChunks; i++) {
       if (!upload.chunks.has(i)) {
-        throw new Error(`Missing chunk ${i} for file ${fileId}`);
+        throw new Error(`Missing chunk ${i} for file ${uploadId}`);
       }
     }
 
@@ -196,7 +199,7 @@ export abstract class UnencryptedFileStorage extends FileStorage {
     const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     if (totalSize !== upload.metadata.size) {
       throw new Error(
-        `Size mismatch for file ${fileId}. Expected ${upload.metadata.size}, got ${totalSize}`,
+        `Size mismatch for file ${uploadId}. Expected ${upload.metadata.size}, got ${totalSize}`,
       );
     }
 
@@ -210,7 +213,7 @@ export abstract class UnencryptedFileStorage extends FileStorage {
       !rootHash.every((byte, i) => byte === contentId[i])
     ) {
       throw new Error(
-        `Merkle root hash mismatch for file ${fileId}. Expected ${Array.from(
+        `Merkle root hash mismatch for file ${uploadId}. Expected ${Array.from(
           contentId,
         )
           .map((b) => b.toString(16).padStart(2, "0"))
@@ -228,7 +231,7 @@ export abstract class UnencryptedFileStorage extends FileStorage {
     });
 
     // Remove upload session
-    await this.deleteUploadSession(fileId);
+    await this.deleteUploadSession(uploadId);
   }
 
   /**

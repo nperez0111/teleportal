@@ -354,8 +354,9 @@ export class Server<Context extends ServerContext> {
         // Extract fileId from FileMessage payload if document is undefined
         const fileId =
           message.type === "file" &&
-          (message.payload.type === "file-request" ||
-            message.payload.type === "file-progress")
+          (message.payload.type === "file-download" ||
+            message.payload.type === "file-upload" ||
+            message.payload.type === "file-part")
             ? message.payload.fileId
             : undefined;
 
@@ -424,6 +425,8 @@ export class Server<Context extends ServerContext> {
                     type: "file-auth-message",
                     permission: "denied",
                     reason: "Insufficient permissions to access file",
+                    statusCode: 401,
+                    fileId: fileId!,
                   },
                   message.context,
                   message.encrypted,

@@ -1,14 +1,18 @@
 import type { Message, ServerContext } from "teleportal";
 import type { FileStorage } from "../storage/file-storage";
 import type { Logger } from "./logger";
-import { FileMessage } from "../lib/protocol/message-types";
+import {
+  AckMessage,
+  FileMessage,
+  FileTransferProtocol,
+} from "teleportal/protocol";
 import type {
-  DecodedFileAuthMessage,
-  DecodedFileProgress,
-  DecodedFileRequest,
+  DecodedFileDownload,
+  DecodedFilePart,
+  DecodedFileUpload,
 } from "../lib/protocol/types";
-import { buildMerkleTree } from "teleportal/merkle-tree";
-import { fromBase64 } from "lib0/buffer";
+import { buildMerkleTree, generateMerkleProof } from "teleportal/merkle-tree";
+import { fromBase64, toBase64 } from "lib0/buffer";
 
 /**
  * Maximum file size in bytes (1GB)
@@ -18,11 +22,14 @@ const MAX_FILE_SIZE = 1024 * 1024 * 1024;
 /**
  * Handle file-related messages.
  */
-export class FileHandler<Context extends ServerContext> {
+export class FileHandler<
+  Context extends ServerContext,
+> extends FileTransferProtocol.Server<Context> {
   #fileStorage: FileStorage;
   #logger: Logger;
 
   constructor(fileStorage: FileStorage, logger: Logger) {
+    super();
     this.#fileStorage = fileStorage;
     this.#logger = logger.child().withContext({ name: "file-handler" });
   }
@@ -35,203 +42,152 @@ export class FileHandler<Context extends ServerContext> {
    */
   async handle(
     message: Message<Context>,
-    sendResponse?: (message: Message<Context>) => Promise<void>,
+    sendResponse: (message: Message<Context>) => Promise<void>,
   ): Promise<void> {
-    if (message.type !== "file") {
-      throw new Error("FileHandler can only handle file messages");
-    }
-
-    const fileMessage = message as FileMessage<Context>;
-    const log = this.#logger.child().withContext({
-      messageId: message.id,
-      fileId: (fileMessage.payload as any).fileId,
-    });
-
-    switch (fileMessage.payload.type) {
-      case "file-request": {
-        await this.#handleFileRequest(
-          fileMessage.payload,
-          fileMessage.context,
-          fileMessage.encrypted,
-          sendResponse,
-        );
-        break;
-      }
-      case "file-progress": {
-        await this.#handleFileProgress(fileMessage.payload, log);
-        break;
-      }
-      default: {
-        log
-          .withMetadata({
-            payloadType: (fileMessage.payload as any).type,
-          })
-          .error("Unknown file payload type");
-        throw new Error(
-          `Unknown file payload type: ${(fileMessage.payload as any).type}`,
-        );
-      }
-    }
+    return this.handleMessage(message, sendResponse);
   }
 
-  /**
-   * Handle a file request (upload or download initiation).
-   */
-  async #handleFileRequest(
-    payload: DecodedFileRequest,
+  protected async checkUploadPermission(
+    metadata: DecodedFileUpload,
+    context: Context,
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    // Validate file size
+    if (metadata.size > MAX_FILE_SIZE) {
+      return {
+        allowed: false,
+        reason: `File size ${metadata.size} exceeds maximum ${MAX_FILE_SIZE} bytes`,
+      };
+    }
+    return { allowed: true };
+  }
+
+  protected async onUploadStart(
+    metadata: DecodedFileUpload,
     context: Context,
     encrypted: boolean,
-    sendResponse?: (message: Message<Context>) => Promise<void>,
+  ): Promise<void> {
+    await this.#fileStorage.initiateUpload(metadata.fileId, {
+      filename: metadata.filename,
+      size: metadata.size,
+      mimeType: metadata.mimeType,
+      encrypted,
+      lastModified: Date.now(),
+    });
+    this.#logger
+      .child()
+      .withContext({ uploadId: metadata.fileId })
+      .debug("Upload session initiated");
+  }
+
+  protected async onDownloadRequest(
+    payload: DecodedFileDownload,
+    context: Context,
+    encrypted: boolean,
+    sendMessage: (message: Message<Context>) => Promise<void>,
   ): Promise<void> {
     const log = this.#logger.child().withContext({
       fileId: payload.fileId,
-      direction: payload.direction,
+      direction: "download",
     });
 
-    log
-      .withMetadata({
-        fileId: payload.fileId,
-        filename: payload.filename,
-        size: payload.size,
-        mimeType: payload.mimeType,
-        direction: payload.direction,
-      })
-      .debug("Handling file request");
-
-    // Validate file size
-    if (payload.size > MAX_FILE_SIZE) {
-      const error = new Error(
-        `File size ${payload.size} exceeds maximum ${MAX_FILE_SIZE}`,
-      );
-      log
-        .withError(error)
-        .withMetadata({ size: payload.size, maxSize: MAX_FILE_SIZE })
-        .error("File size validation failed");
-
-      if (sendResponse) {
-        // Send denial response
-        await sendResponse(
+    try {
+      // Convert fileId (base64 string) to Uint8Array for file lookup
+      const contentId = fromBase64(payload.fileId);
+      const file = await this.#fileStorage.getFile(contentId);
+      if (!file) {
+        log
+          .withMetadata({ fileId: payload.fileId })
+          .info("File not found for download");
+        await sendMessage(
           new FileMessage(
             {
               type: "file-auth-message",
+              fileId: payload.fileId,
               permission: "denied",
-              reason: `File size ${payload.size} exceeds maximum ${MAX_FILE_SIZE} bytes`,
+              reason: "File not found",
+              statusCode: 404,
             },
             context,
             encrypted,
           ),
         );
+        return;
       }
-      throw error;
-    }
 
-    if (payload.direction === "upload") {
-      // Upload request
-      try {
-        await this.#fileStorage.initiateUpload(payload.fileId, {
-          filename: payload.filename,
-          size: payload.size,
-          mimeType: payload.mimeType,
-          encrypted,
-          createdAt: Date.now(),
-        });
+      log
+        .withMetadata({
+          fileId: payload.fileId,
+          filename: file.metadata.filename,
+        })
+        .debug("File found for download");
 
-        log
-          .withMetadata({ fileId: payload.fileId })
-          .debug("Upload session initiated");
-
-        // Send approval response (could be enhanced with more details)
-        if (sendResponse) {
-          await sendResponse(
-            new FileMessage(
-              {
-                type: "file-request",
-                direction: "upload",
-                fileId: payload.fileId,
-                filename: payload.filename,
-                size: payload.size,
-                mimeType: payload.mimeType,
-              },
-              context,
-              encrypted,
-            ),
-          );
-        }
-      } catch (error) {
-        log
-          .withError(error as Error)
-          .withMetadata({ fileId: payload.fileId })
-          .error("Failed to initiate upload");
-        throw error;
-      }
-    } else {
-      // Download request
-      // For downloads, fileId is the merkle root hash (hex string)
-      try {
-        // Convert fileId (hex string) to Uint8Array for file lookup
-        const contentId = fromBase64(payload.fileId);
-        const file = await this.#fileStorage.getFile(contentId);
-        if (!file) {
-          const error = new Error(
-            `File not found for fileId: ${payload.fileId}`,
-          );
-          log
-            .withError(error)
-            .withMetadata({ fileId: payload.fileId })
-            .error("File not found for download");
-          throw error;
-        }
-
-        log
-          .withMetadata({
-            fileId: payload.fileId,
+      // Send upload initiation response
+      await sendMessage(
+        new FileMessage(
+          {
+            type: "file-upload",
+            fileId: toBase64(contentId),
             filename: file.metadata.filename,
-          })
-          .debug("File found for download");
+            size: file.metadata.size,
+            mimeType: file.metadata.mimeType,
+            lastModified: file.metadata.lastModified,
+            encrypted: file.metadata.encrypted,
+          },
+          context,
+          encrypted,
+        ),
+      );
 
-        // Send file data response (could be enhanced to stream chunks)
-        // For now, we just acknowledge the request
-        if (sendResponse) {
-          await sendResponse(
-            new FileMessage(
-              {
-                type: "file-request",
-                direction: "download",
-                fileId: payload.fileId, // Merkle root hash as hex string
-                filename: file.metadata.filename,
-                size: file.metadata.size,
-                mimeType: file.metadata.mimeType,
-              },
-              context,
-              encrypted,
-            ),
-          );
-        }
-      } catch (error) {
-        log
-          .withError(error as Error)
-          .withMetadata({ fileId: payload.fileId })
-          .error("Failed to handle download request");
-        throw error;
+      // Then stream file chunks with merkle proofs as file-part messages
+      const chunks = file.chunks;
+      const merkleTree = buildMerkleTree(chunks);
+      let bytesSent = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const proof = generateMerkleProof(merkleTree, i);
+        bytesSent += chunk.length;
+
+        await sendMessage(
+          new FileMessage(
+            {
+              type: "file-part",
+              fileId: toBase64(contentId),
+              chunkIndex: i,
+              chunkData: chunk,
+              merkleProof: proof,
+              totalChunks: chunks.length,
+              bytesUploaded: bytesSent,
+              encrypted: file.metadata.encrypted,
+            } as DecodedFilePart,
+            context,
+            encrypted,
+          ),
+        );
       }
+    } catch (error) {
+      log
+        .withError(error as Error)
+        .withMetadata({ fileId: payload.fileId })
+        .error("Failed to handle download request");
+      throw error;
     }
   }
 
-  /**
-   * Handle file progress (chunk upload).
-   */
-  async #handleFileProgress(
-    payload: DecodedFileProgress,
-    log: Logger,
+  protected async onChunkReceived(
+    payload: DecodedFilePart,
+    messageId: string,
+    context: Context,
+    sendMessage: (message: Message<Context>) => Promise<void>,
   ): Promise<void> {
-    log
-      .withMetadata({
-        fileId: payload.fileId,
-        chunkIndex: payload.chunkIndex,
-        totalChunks: payload.totalChunks,
-        bytesUploaded: payload.bytesUploaded,
-      })
-      .debug("Handling file progress");
+    const log = this.#logger.child().withMetadata({
+      fileId: payload.fileId,
+      chunkIndex: payload.chunkIndex,
+      totalChunks: payload.totalChunks,
+      bytesUploaded: payload.bytesUploaded,
+    });
+
+    log.debug("Handling file progress");
 
     // Get upload progress
     const upload = await this.#fileStorage.getUploadProgress(payload.fileId);
@@ -241,16 +197,15 @@ export class FileHandler<Context extends ServerContext> {
       throw error;
     }
 
-    // Verify merkle proof
-    // For incremental verification, we need the expected root
-    // Since we don't have it yet, we'll verify when completing the upload
-    // For now, we'll store the chunk
-
-    // Calculate expected contentId (merkle root) from the tree
-    // This would ideally be provided or calculated incrementally
-    // For now, we'll verify during completion
-
     try {
+      // Send an ACK for each file-part message that was received
+      await sendMessage(
+        new AckMessage({
+          type: "ack",
+          messageId,
+        }),
+      );
+      // Store the chunk
       await this.#fileStorage.storeChunk(
         payload.fileId,
         payload.chunkIndex,
@@ -296,9 +251,7 @@ export class FileHandler<Context extends ServerContext> {
             log
               .withMetadata({
                 fileId: payload.fileId,
-                contentId: Array.from(contentId)
-                  .map((b) => b.toString(16).padStart(2, "0"))
-                  .join(""),
+                contentId: toBase64(contentId),
               })
               .debug("Upload completed successfully");
           } catch (error) {
@@ -311,13 +264,7 @@ export class FileHandler<Context extends ServerContext> {
         }
       }
 
-      log
-        .withMetadata({
-          fileId: payload.fileId,
-          chunkIndex: payload.chunkIndex,
-          progress: `${payload.bytesUploaded}/${upload.metadata.size}`,
-        })
-        .debug("Chunk stored successfully");
+      log.debug("Chunk stored successfully");
     } catch (error) {
       log
         .withError(error as Error)

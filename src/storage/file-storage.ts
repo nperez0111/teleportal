@@ -21,9 +21,9 @@ export interface FileMetadata {
    */
   encrypted: boolean;
   /**
-   * Timestamp when upload was initiated
+   * Last modified timestamp of the file
    */
-  createdAt: number;
+  lastModified: number;
 }
 
 /**
@@ -86,7 +86,7 @@ export abstract class FileStorage {
    * @param metadata - File metadata
    */
   abstract initiateUpload(
-    fileId: string,
+    uploadId: string,
     metadata: FileMetadata,
   ): Promise<void>;
 
@@ -99,7 +99,7 @@ export abstract class FileStorage {
    * @param proof - Merkle proof for this chunk
    */
   abstract storeChunk(
-    fileId: string,
+    uploadId: string,
     chunkIndex: number,
     chunkData: Uint8Array,
     proof: Uint8Array[],
@@ -108,18 +108,21 @@ export abstract class FileStorage {
   /**
    * Get upload progress for a file.
    *
-   * @param fileId - Client-generated UUID for this upload
+   * @param uploadId - Client-generated UUID for this upload
    * @returns Upload progress or null if not found
    */
-  abstract getUploadProgress(fileId: string): Promise<UploadProgress | null>;
+  abstract getUploadProgress(uploadId: string): Promise<UploadProgress | null>;
 
   /**
    * Complete an upload and store the file by contentId.
    *
-   * @param fileId - Client-generated UUID for this upload
+   * @param uploadId - Client-generated UUID for this upload
    * @param contentId - Merkle root hash (contentId)
    */
-  abstract completeUpload(fileId: string, contentId: Uint8Array): Promise<void>;
+  abstract completeUpload(
+    uploadId: string,
+    contentId: Uint8Array,
+  ): Promise<void>;
 
   /**
    * Get a file by contentId.

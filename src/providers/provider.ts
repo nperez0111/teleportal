@@ -16,23 +16,17 @@ import {
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 
+export type DefaultTransportProperties = {
+  synced: Promise<void>;
+  handler: {
+    start: () => Promise<Message>;
+  };
+};
+
 export type ProviderOptions<
-  T extends Transport<
+  T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
     ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
-  > = Transport<
-    ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
+    DefaultTransportProperties
   >,
 > = {
   client: Connection<any>;
@@ -47,35 +41,14 @@ export type ProviderOptions<
     ydoc: Y.Doc;
     document: string;
     awareness: Awareness;
-    getDefaultTransport(): Transport<
-      ClientContext,
-      {
-        synced: Promise<void>;
-        handler: {
-          start: () => Promise<Message>;
-        };
-      }
-    >;
+    getDefaultTransport(): Transport<ClientContext, DefaultTransportProperties>;
   }) => T;
 };
 
 export class Provider<
-  T extends Transport<
+  T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
     ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
-  > = Transport<
-    ClientContext,
-    {
-      synced: Promise<void>;
-      handler: {
-        start: () => Promise<Message>;
-      };
-    }
+    DefaultTransportProperties
   >,
 > extends Observable<{
   "load-subdoc": (ctx: {
@@ -200,7 +173,7 @@ export class Provider<
         document: this.document + "/" + doc.guid,
         ydoc: doc,
         awareness: this.awareness,
-        getTransport: this.#getTransport,
+        getTransport: this.#getTransport as any,
       });
 
       this.subdocs.set(doc.guid, provider);
@@ -232,7 +205,9 @@ export class Provider<
   /**
    * Switch this provider to a new document, destroying this provider instance.
    */
-  public switchDocument(options: Omit<ProviderOptions, "client">): Provider {
+  public switchDocument(
+    options: Omit<ProviderOptions<T>, "client">,
+  ): Provider<T> {
     this.destroy({ destroyConnection: false });
     return this.openDocument(options);
   }
@@ -240,15 +215,17 @@ export class Provider<
   /**
    * Create a new provider instance for a new document, without destroying this provider.
    */
-  public openDocument(options: Omit<ProviderOptions, "client">): Provider {
+  public openDocument(
+    options: Omit<ProviderOptions<T>, "client">,
+  ): Provider<T> {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
 
-    return new Provider({
+    return new Provider<T>({
       client: this.#underlyingConnection,
       ydoc: doc,
       awareness,
-      getTransport: this.#getTransport,
+      getTransport: this.#getTransport as any,
       enableOfflinePersistence: this.#enableOfflinePersistence,
       indexedDBPrefix: this.#indexedDBPrefix,
       ...options,
@@ -361,7 +338,12 @@ export class Provider<
    *
    * If you want to use a specific connection type, provide the `client` option.
    */
-  static async create(
+  static async create<
+    T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
+      ClientContext,
+      DefaultTransportProperties
+    >,
+  >(
     options: (
       | {
           url: string;
@@ -381,8 +363,8 @@ export class Provider<
         }
       | { url?: undefined; client: Connection<any> }
     ) &
-      Omit<ProviderOptions, "client">,
-  ) {
+      Omit<ProviderOptions<T>, "client">,
+  ): Promise<Provider<T>> {
     const {
       url,
       document,
