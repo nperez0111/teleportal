@@ -55,7 +55,6 @@ export function withAckSink<
         // Send ACK for non-ACK messages (to avoid ACK loops)
         if (message.type !== "ack") {
           const ackMessage = new AckMessage(
-            message.document,
             {
               type: "ack",
               messageId: message.id,

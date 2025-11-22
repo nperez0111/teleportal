@@ -7,12 +7,25 @@ import {
   expect,
   test,
 } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { fromBase64, toBase64 } from "lib0/buffer";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { DocMessage } from "teleportal";
+import {
+  DocMessage,
+  type ClientContext,
+  type Message,
+  type Transport,
+  decodeMessageArray,
+} from "teleportal";
+import { withSendFile } from "../../transports/send-file";
 import { ConnectionState } from "../connection";
 import { HttpConnection } from "./connection";
+import { FileHandler } from "../../server/file-handler";
+import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
+import { ConsoleTransport, LogLayer } from "loglayer";
+import { noopTransport } from "../../transports/passthrough";
+import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
+import type { ServerContext } from "teleportal";
 
 /**
  * MSW SSE Testing Approach for Node.js
@@ -235,6 +248,36 @@ function createTestMessage(): DocMessage<any> {
     sv: new Uint8Array([1, 2, 3]) as any,
   });
 }
+
+// Helper to create a Transport from an HttpConnection
+function connectionToTransport(
+  connection: HttpConnection,
+): Transport<ClientContext> {
+  const writable = new WritableStream<Message<ClientContext>>({
+    async write(message) {
+      await connection.send(message);
+    },
+  });
+
+  return {
+    readable: connection.getReader().readable.pipeThrough(
+      new TransformStream({
+        transform(chunk, controller) {
+          // Convert RawReceivedMessage to Message
+          controller.enqueue(chunk as Message<ClientContext>);
+        },
+      }),
+    ),
+    writable,
+  };
+}
+
+const emptyLogger = new LogLayer({
+  transport: new ConsoleTransport({
+    logger: console,
+    enabled: false,
+  }),
+});
 
 describe("HttpConnection with MSW", () => {
   const server = setupServer();
@@ -1054,6 +1097,458 @@ describe("HttpConnection with MSW", () => {
       expect(receivedMessages.length).toBeGreaterThan(0);
       // Connection should still be alive after ping
       expect(client.state.type).toBe("connected");
+    });
+  });
+
+  describe("File uploads", () => {
+    test("should upload file through HTTP connection", async () => {
+      const testClientId = "test-client-file";
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const receivedMessages: Message<ServerContext>[] = [];
+      const eventSourceRef: { current: MockEventSourceForMSW | null } = {
+        current: null,
+      };
+
+      server.use(
+        http.post(`${baseUrl}/sse`, async ({ request }) => {
+          const body = await request.arrayBuffer();
+          const data = new Uint8Array(body);
+
+          try {
+            // HTTP sink sends message arrays (batched)
+            const messages = decodeMessageArray(data as any);
+            for (const decoded of messages) {
+              const message = decoded as Message<ServerContext>;
+              receivedMessages.push(message);
+
+              // Process file messages
+              if (message.type === "file") {
+                await fileHandler.handle(message, async (response) => {
+                  // Send response back via SSE
+                  // Wait a bit to ensure EventSource is ready
+                  let attempts = 0;
+                  while (!eventSourceRef.current && attempts < 50) {
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    attempts++;
+                  }
+                  if (eventSourceRef.current) {
+                    // Ensure listeners are attached
+                    let listenerReady = false;
+                    for (let i = 0; i < 50; i++) {
+                      if (
+                        eventSourceRef.current.listeners.has("message") &&
+                        eventSourceRef.current.listeners.get("message")?.size &&
+                        eventSourceRef.current.listeners.get("message")!.size >
+                          0
+                      ) {
+                        listenerReady = true;
+                        break;
+                      }
+                      await new Promise((resolve) => setTimeout(resolve, 10));
+                    }
+                    if (listenerReady) {
+                      const encoded = toBase64(response.encoded);
+                      await eventSourceRef.current.simulateMessage(
+                        encoded,
+                        "message",
+                        response.id,
+                      );
+                    }
+                  }
+                });
+              }
+            }
+
+            return HttpResponse.json({ success: true });
+          } catch (error) {
+            // Return error response
+            return HttpResponse.json(
+              { error: "Failed to process message" },
+              { status: 500 },
+            );
+          }
+        }),
+      );
+
+      client = createHttpConnectionWithMockES({
+        testClientId,
+        eventSourceRef,
+      });
+
+      await client.connected;
+
+      // Wait for EventSource to be created and ref to be set
+      let attempts = 0;
+      while (!eventSourceRef.current && attempts < 100) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        attempts++;
+      }
+
+      // Wait for connection to be fully ready and listeners to be attached
+      if (eventSourceRef.current) {
+        let listenerReady = false;
+        for (let i = 0; i < 200; i++) {
+          if (
+            eventSourceRef.current.listeners.has("message") &&
+            eventSourceRef.current.listeners.get("message")?.size &&
+            eventSourceRef.current.listeners.get("message")!.size > 0
+          ) {
+            listenerReady = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (listenerReady) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      // Create a test file
+      const fileContent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      const file = new File([fileContent], "test.txt", {
+        type: "text/plain",
+      });
+
+      const context: ClientContext = { clientId: testClientId };
+      const wrappedTransport = withSendFile({
+        // we don't care what the transport is underlying, we just want to test the file transport
+        transport: noopTransport<ClientContext>(),
+        context,
+      });
+
+      // Create a writable stream that sends messages via HTTP connection
+      const httpWritable = new WritableStream<Message<ClientContext>>({
+        async write(message) {
+          await client.send(message);
+        },
+      });
+
+      // messages emitted from the file transport should be sent to the server, through the client
+      wrappedTransport.readable.pipeTo(httpWritable);
+      // messages emitted from the client should be sent to the file transport
+      client.getReader().readable.pipeTo(wrappedTransport.writable);
+
+      const fileId = await wrappedTransport.upload(file, "test-file-id");
+
+      // wait for the storage to be updated
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      // Verify file was stored
+      const contentId = fromBase64(fileId);
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("test.txt");
+      expect(storedFile!.metadata.size).toBe(fileContent.length);
+      expect(fileId).toMatchInlineSnapshot(
+        `"yEjhAT+fBKnWP6Q85/1K8DUVLHxmmkpAS2cQfO5fLk4="`,
+      );
+    });
+
+    test("should handle multiple chunk file upload via HTTP", async () => {
+      const testClientId = "test-client-large-file";
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const eventSourceRef: { current: MockEventSourceForMSW | null } = {
+        current: null,
+      };
+
+      server.use(
+        http.post(`${baseUrl}/sse`, async ({ request }) => {
+          const body = await request.arrayBuffer();
+          const data = new Uint8Array(body);
+
+          try {
+            // HTTP sink sends message arrays (batched)
+            const messages = decodeMessageArray(data as any);
+            for (const decoded of messages) {
+              const message = decoded as Message<ServerContext>;
+              if (message.type === "file") {
+                await fileHandler.handle(message, async (response) => {
+                  // Send response back via SSE
+                  // Wait a bit to ensure EventSource is ready
+                  let attempts = 0;
+                  while (!eventSourceRef.current && attempts < 50) {
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    attempts++;
+                  }
+                  if (eventSourceRef.current) {
+                    // Ensure listeners are attached
+                    let listenerReady = false;
+                    for (let i = 0; i < 50; i++) {
+                      if (
+                        eventSourceRef.current.listeners.has("message") &&
+                        eventSourceRef.current.listeners.get("message")?.size &&
+                        eventSourceRef.current.listeners.get("message")!.size >
+                          0
+                      ) {
+                        listenerReady = true;
+                        break;
+                      }
+                      await new Promise((resolve) => setTimeout(resolve, 10));
+                    }
+                    if (listenerReady) {
+                      const encoded = toBase64(response.encoded);
+                      await eventSourceRef.current.simulateMessage(
+                        encoded,
+                        "message",
+                        response.id,
+                      );
+                    }
+                  }
+                });
+              }
+            }
+
+            return HttpResponse.json({ success: true });
+          } catch (error) {
+            return HttpResponse.json(
+              { error: "Failed to process message" },
+              { status: 500 },
+            );
+          }
+        }),
+      );
+
+      client = createHttpConnectionWithMockES({
+        testClientId,
+        eventSourceRef,
+      });
+
+      await client.connected;
+
+      // Wait for EventSource to be created and ref to be set
+      let attempts = 0;
+      while (!eventSourceRef.current && attempts < 100) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        attempts++;
+      }
+
+      // Wait for connection to be fully ready and listeners to be attached
+      if (eventSourceRef.current) {
+        let listenerReady = false;
+        for (let i = 0; i < 200; i++) {
+          if (
+            eventSourceRef.current.listeners.has("message") &&
+            eventSourceRef.current.listeners.get("message")?.size &&
+            eventSourceRef.current.listeners.get("message")!.size > 0
+          ) {
+            listenerReady = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (listenerReady) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      // Create a larger file that will be split into multiple chunks
+      const fileContent = new Uint8Array(CHUNK_SIZE * 2);
+      fileContent.fill(42);
+      const file = new File([fileContent], "test.txt", {
+        type: "text/plain",
+      });
+
+      const context: ClientContext = { clientId: testClientId };
+      const wrappedTransport = withSendFile({
+        // we don't care what the transport is underlying, we just want to test the file transport
+        transport: noopTransport<ClientContext>(),
+        context,
+      });
+
+      // Create a writable stream that sends messages via HTTP connection
+      const httpWritable = new WritableStream<Message<ClientContext>>({
+        async write(message) {
+          await client.send(message);
+        },
+      });
+
+      // messages emitted from the file transport should be sent to the server, through the client
+      wrappedTransport.readable.pipeTo(httpWritable);
+      // messages emitted from the client should be sent to the file transport
+      client.getReader().readable.pipeTo(wrappedTransport.writable);
+
+      const fileId = await wrappedTransport.upload(file, "test-large-file-id");
+
+      // wait for the storage to be updated
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      // Verify file was stored
+      const contentId = fromBase64(fileId);
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("test.txt");
+      expect(storedFile!.metadata.size).toBe(fileContent.length);
+      expect(fileId).toMatchInlineSnapshot(
+        `"h3KLkpK8GaKRh4b5BUiHr1xcYQ2TGSjx7kDOgfNXmlM="`,
+      );
+    });
+
+    test("should upload and download file through HTTP connection (round-trip)", async () => {
+      const testClientId = "test-client-roundtrip";
+      const fileStorage = new InMemoryFileStorage();
+      const fileHandler = new FileHandler(fileStorage, emptyLogger);
+      const receivedMessages: Message<ServerContext>[] = [];
+      const eventSourceRef: { current: MockEventSourceForMSW | null } = {
+        current: null,
+      };
+
+      server.use(
+        http.post(`${baseUrl}/sse`, async ({ request }) => {
+          const body = await request.arrayBuffer();
+          const data = new Uint8Array(body);
+
+          try {
+            // HTTP sink sends message arrays (batched)
+            const messages = decodeMessageArray(data as any);
+            for (const decoded of messages) {
+              const message = decoded as Message<ServerContext>;
+              receivedMessages.push(message);
+
+              // Process file messages
+              if (message.type === "file") {
+                await fileHandler.handle(message, async (response) => {
+                  // Send response back via SSE
+                  // Wait a bit to ensure EventSource is ready
+                  let attempts = 0;
+                  while (!eventSourceRef.current && attempts < 50) {
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    attempts++;
+                  }
+                  if (eventSourceRef.current) {
+                    // Ensure listeners are attached
+                    let listenerReady = false;
+                    for (let i = 0; i < 50; i++) {
+                      if (
+                        eventSourceRef.current.listeners.has("message") &&
+                        eventSourceRef.current.listeners.get("message")?.size &&
+                        eventSourceRef.current.listeners.get("message")!.size >
+                          0
+                      ) {
+                        listenerReady = true;
+                        break;
+                      }
+                      await new Promise((resolve) => setTimeout(resolve, 10));
+                    }
+                    if (listenerReady) {
+                      const encoded = toBase64(response.encoded);
+                      await eventSourceRef.current.simulateMessage(
+                        encoded,
+                        "message",
+                        response.id,
+                      );
+                    }
+                  }
+                });
+              }
+            }
+
+            return HttpResponse.json({ success: true });
+          } catch (error) {
+            // Return error response
+            return HttpResponse.json(
+              { error: "Failed to process message" },
+              { status: 500 },
+            );
+          }
+        }),
+      );
+
+      client = createHttpConnectionWithMockES({
+        testClientId,
+        eventSourceRef,
+      });
+
+      await client.connected;
+
+      // Wait for EventSource to be created and ref to be set
+      let attempts = 0;
+      while (!eventSourceRef.current && attempts < 100) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        attempts++;
+      }
+
+      // Wait for connection to be fully ready and listeners to be attached
+      if (eventSourceRef.current) {
+        let listenerReady = false;
+        for (let i = 0; i < 200; i++) {
+          if (
+            eventSourceRef.current.listeners.has("message") &&
+            eventSourceRef.current.listeners.get("message")?.size &&
+            eventSourceRef.current.listeners.get("message")!.size > 0
+          ) {
+            listenerReady = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (listenerReady) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      // Create a test file
+      const fileContent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      const file = new File([fileContent], "test.txt", {
+        type: "text/plain",
+      });
+
+      const context: ClientContext = { clientId: testClientId };
+      const wrappedTransport = withSendFile({
+        // we don't care what the transport is underlying, we just want to test the file transport
+        transport: noopTransport<ClientContext>(),
+        context,
+      });
+
+      // Create a writable stream that sends messages via HTTP connection
+      const httpWritable = new WritableStream<Message<ClientContext>>({
+        async write(message) {
+          await client.send(message);
+        },
+      });
+
+      // messages emitted from the file transport should be sent to the server, through the client
+      wrappedTransport.readable.pipeTo(httpWritable);
+      // messages emitted from the client should be sent to the file transport
+      client.getReader().readable.pipeTo(wrappedTransport.writable);
+
+      // Upload file
+      const fileId = await wrappedTransport.upload(
+        file,
+        "test-doc",
+        "test-file-id",
+      );
+
+      // wait for the storage to be updated
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      // Verify file was stored
+      const contentId = fromBase64(fileId);
+      const storedFile = await fileStorage.getFile(contentId);
+      expect(storedFile).not.toBeNull();
+      expect(storedFile!.metadata.filename).toBe("test.txt");
+      expect(storedFile!.metadata.size).toBe(fileContent.length);
+
+      // Download file
+      const downloadedFile = await wrappedTransport.download(
+        fileId,
+        "test-doc",
+        false,
+      );
+
+      // Verify downloaded file matches original
+      expect(downloadedFile).toBeInstanceOf(File);
+      expect(downloadedFile.name).toBe("test.txt");
+      expect(downloadedFile.size).toBe(fileContent.length);
+      expect(downloadedFile.type).toContain("text/plain");
+
+      // Compare file contents
+      const downloadedContent = new Uint8Array(
+        await downloadedFile.arrayBuffer(),
+      );
+      expect(downloadedContent.length).toBe(fileContent.length);
+      expect(downloadedContent).toEqual(fileContent);
     });
   });
 });

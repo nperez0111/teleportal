@@ -3,6 +3,14 @@ import { Client } from "./client";
 import { logger } from "./logger";
 import { DocMessage } from "teleportal";
 import type { ServerContext, Message, StateVector } from "teleportal";
+import { ConsoleTransport, LogLayer } from "loglayer";
+
+const emptyLogger = new LogLayer({
+  transport: new ConsoleTransport({
+    logger: console,
+    enabled: false,
+  }),
+});
 
 describe("Client", () => {
   let client: Client<ServerContext>;
@@ -83,7 +91,7 @@ describe("Client", () => {
       const errorClient = new Client({
         id: "error-client",
         writable: errorWritable,
-        logger: logger.child().withContext({ name: "test" }),
+        logger: emptyLogger.child().withContext({ name: "test" }),
       });
 
       const mockMessage = new DocMessage(

@@ -4,6 +4,8 @@ import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
 import { UnencryptedDocumentStorage } from "../unencrypted";
+import { DocumentMetadata } from "../document-storage";
+import { FileStorage } from "../file-storage";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -15,14 +17,16 @@ import { UnencryptedDocumentStorage } from "../unencrypted";
 export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { scanKeys: boolean; ttl: number };
+  public readonly fileStorage: FileStorage | undefined;
 
   constructor(
     storage: Storage,
-    options?: { scanKeys?: boolean; ttl?: number },
+    options?: { scanKeys?: boolean; ttl?: number; fileStorage?: FileStorage },
   ) {
     super();
     this.storage = storage;
     this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
+    this.fileStorage = options?.fileStorage;
   }
 
   /**
@@ -138,5 +142,42 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
   async unload(key: string): Promise<void> {
     await this.compact(key, false);
+  }
+
+  async writeDocumentMetadata(
+    key: string,
+    metadata: DocumentMetadata,
+  ): Promise<void> {
+    await this.storage.setItem(key + ":meta", metadata);
+  }
+
+  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
+    return (
+      ((await this.storage.getItem(key + ":meta")) as DocumentMetadata) ?? {}
+    );
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    // Cascade delete files
+    if (this.fileStorage) {
+      await this.fileStorage.deleteFilesByDocument(key);
+    }
+
+    // Delete metadata
+    await this.storage.removeItem(key + ":meta");
+
+    // Delete updates and index
+    const keys = this.options.scanKeys
+      ? new Set(await this.storage.getKeys(key + "-update-"))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
+        new Set());
+
+    if (keys.size > 0) {
+      await Promise.all(
+        Array.from(keys).map((k) => this.storage.removeItem(k)),
+      );
+    }
+
+    await this.storage.removeItem(key);
   }
 }

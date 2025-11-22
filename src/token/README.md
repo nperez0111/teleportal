@@ -120,11 +120,13 @@ const access = new DocumentAccessBuilder()
 ### Builder Methods
 
 #### Basic Methods
+
 - `allow(pattern, permissions)` - Allow access with specific permissions
 - `deny(pattern)` - Deny access (exclusion pattern)
 - `build()` - Return the constructed `DocumentAccess[]`
 
 #### Permission Convenience Methods
+
 - `readOnly(pattern)` - Read-only access
 - `writeOnly(pattern)` - Write-only access
 - `readWrite(pattern)` - Read and write access
@@ -134,18 +136,21 @@ const access = new DocumentAccessBuilder()
 - `suggestOnly(pattern)` - Read and suggest access
 
 #### Domain-Specific Methods
+
 - `ownDocuments(userId, permissions?)` - User owns their documents (`userId/*`)
 - `sharedDocuments(permissions?)` - Access to shared documents (`shared/*`)
 - `projectDocuments(projectName, permissions?)` - Access to project documents (`projects/projectName/*`)
 - `orgDocuments(orgName, permissions?)` - Access to organization documents (`orgName/*`)
 
 #### Denial Convenience Methods
+
 - `denyPrivate()` - Deny access to private documents (`!private/*`)
 - `denySecrets()` - Deny access to secret files (`!*.secret`)
 - `denyAdmin()` - Deny access to admin documents (`!admin/*`)
 - `denyDocument(documentName)` - Deny access to specific document
 
 #### Global Access
+
 - `allowAll(permissions?)` - Allow access to all documents (`*`)
 
 ## Usage Examples
@@ -231,7 +236,7 @@ const server = new Server({
     // Your storage implementation
     return {} as any;
   },
-  checkPermission: async ({ context, document, message }) => {
+  checkPermission: async ({ context, documentId, fileId, message }) => {
     // Extract token from context
     const token = (context as any).token;
     if (!token) return false;
@@ -245,9 +250,20 @@ const server = new Server({
     // Check room access
     if (payload.room !== context.room) return false;
 
-    // Check document permissions
+    // Handle file messages (use fileId instead of documentId)
+    if (message.type === "file") {
+      // File messages use fileId for permission checks
+      // For now, allow all file messages through
+      // You can implement file-specific permission checks here
+      return true;
+    }
+
+    // Check document permissions (use documentId)
+    if (!documentId) {
+      throw new Error("documentId is required for doc messages");
+    }
     const requiredPermission = message.type === "awareness" ? "read" : "write";
-    return tokenManager.hasDocumentPermission(payload, document, requiredPermission);
+    return tokenManager.hasDocumentPermission(payload, documentId, requiredPermission);
   },
 });
 

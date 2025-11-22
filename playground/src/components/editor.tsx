@@ -1,11 +1,15 @@
 import { BlockNoteView } from "@blocknote/mantine";
 import { useCreateBlockNote } from "@blocknote/react";
-import { Provider } from "teleportal/providers";
+import { DefaultTransportProperties, Provider } from "teleportal/providers";
 import "@blocknote/mantine/style.css";
 import { use } from "react";
+import { ClientContext, Transport } from "teleportal";
+import { FileTransportMethods } from "teleportal/transports";
 
 interface EditorProps {
-  provider: Provider;
+  provider: Provider<
+    Transport<ClientContext, DefaultTransportProperties & FileTransportMethods>
+  >;
   user?: {
     /**
      * The name of the user.
@@ -38,6 +42,34 @@ export function Editor({ provider, user }: EditorProps) {
         class: "flex-1 w-full min-h-full",
         style: "min-height: calc(100vh - 200px);",
       },
+    },
+    async uploadFile(file, blockId) {
+      try {
+        console.log("uploading file", file, blockId);
+        const fileId = await provider.transport.upload(
+          file,
+          provider.document,
+          blockId,
+        );
+
+        return `teleportal://${fileId}`;
+      } catch (error) {
+        console.error("Error uploading file:", error);
+        return {};
+      }
+    },
+    async resolveFileUrl(url) {
+      if (url.startsWith("teleportal://")) {
+        const fileId = url.split("://")[1];
+        console.log("downloading file", url, fileId);
+        const file = await provider.transport.download(
+          fileId,
+          provider.document,
+        );
+        console.log("file downloaded", file);
+        return URL.createObjectURL(file);
+      }
+      return url;
     },
   });
 

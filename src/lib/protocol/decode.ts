@@ -5,6 +5,7 @@ import {
   AwarenessMessage,
   type BinaryMessage,
   DocMessage,
+  FileMessage,
   type RawReceivedMessage,
 } from "./message-types";
 import type {
@@ -16,11 +17,18 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedFileAuthMessage,
+  DecodedFileDownload,
+  DecodedFilePart,
+  DecodedFileUpload,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
   DecodedUpdateStep,
   DocStep,
+  EncodedDocUpdateMessage,
+  EncodedFileStep,
+  FileStep,
   SyncDone,
   SyncStep1,
   SyncStep2,
@@ -61,7 +69,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           decodeDocStepWithDecoder(decoder),
           undefined,
           encrypted,
-          update,
+          update as EncodedDocUpdateMessage<DocStep>,
         );
       }
       case 0x01: {
@@ -70,14 +78,19 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           decodeAwarenessStepWithDecoder(decoder),
           undefined,
           encrypted,
-          update,
+          update as AwarenessUpdateMessage | AwarenessRequestMessage,
         );
       }
       case 0x02: {
-        return new AckMessage(
+        return new AckMessage(decodeAckMessageWithDecoder(decoder), undefined);
+      }
+      case 0x03: {
+        return new FileMessage(
           documentName,
-          decodeAckMessageWithDecoder(decoder),
+          decodeFileStepWithDecoder(decoder),
           undefined,
+          encrypted,
+          update as EncodedFileStep<FileStep>,
         );
       }
       default:
@@ -215,4 +228,99 @@ function decodeAckMessageWithDecoder(
     type: "ack",
     messageId: toBase64(decoding.readVarUint8Array(decoder)),
   };
+}
+
+function decodeFileStepWithDecoder(
+  decoder: decoding.Decoder,
+):
+  | DecodedFileDownload
+  | DecodedFileUpload
+  | DecodedFilePart
+  | DecodedFileAuthMessage {
+  try {
+    const messageType = decoding.readUint8(decoder);
+    switch (messageType) {
+      case 0x00: {
+        // file-download
+        const fileId = decoding.readVarString(decoder);
+        return {
+          type: "file-download",
+          fileId,
+        };
+      }
+      case 0x01: {
+        // file-upload
+        const encrypted = decoding.readUint8(decoder) === 1;
+        const fileId = decoding.readVarString(decoder);
+        const filename = decoding.readVarString(decoder);
+        const size = decoding.readVarUint(decoder);
+        const mimeType = decoding.readVarString(decoder);
+        const lastModified = decoding.readVarUint(decoder);
+
+        return {
+          type: "file-upload",
+          fileId,
+          filename,
+          size,
+          mimeType,
+          lastModified,
+          encrypted,
+        };
+      }
+      case 0x02: {
+        // file-part
+        const fileId = decoding.readVarString(decoder);
+        const chunkIndex = decoding.readVarUint(decoder);
+        const chunkData = decoding.readVarUint8Array(decoder);
+        const merkleProofLength = decoding.readVarUint(decoder);
+        const merkleProof: Uint8Array[] = [];
+        for (let i = 0; i < merkleProofLength; i++) {
+          merkleProof.push(decoding.readVarUint8Array(decoder));
+        }
+        const totalChunks = decoding.readVarUint(decoder);
+        const bytesUploaded = decoding.readVarUint(decoder);
+        const encrypted = decoding.readUint8(decoder) === 1;
+
+        return {
+          type: "file-part",
+          fileId,
+          chunkIndex,
+          chunkData,
+          merkleProof,
+          totalChunks,
+          bytesUploaded,
+          encrypted,
+        };
+      }
+      case 0x03: {
+        const permission =
+          decoding.readUint8(decoder) === 0 ? "denied" : "allowed";
+        if (permission !== "denied") {
+          throw new Error("Invalid permission", {
+            cause: { permission },
+          });
+        }
+        const fileId = decoding.readVarString(decoder);
+        const statusCode = decoding.readVarUint(decoder);
+        const hasReason = decoding.readUint8(decoder) === 1;
+        const reason = hasReason ? decoding.readVarString(decoder) : undefined;
+        return {
+          type: "file-auth-message",
+          permission: "denied",
+          fileId,
+          reason: reason,
+          statusCode: statusCode as 404 | 403 | 500,
+        };
+      }
+      default: {
+        throw new Error(`Failed to decode file step, unexpected value`, {
+          cause: { messageType },
+        });
+      }
+    }
+  } catch (err) {
+    throw new Error("Failed to decode file step", {
+      cause: { err },
+    });
+  }
 }

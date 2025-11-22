@@ -2,7 +2,11 @@ import type {
   EncryptedMessageId,
   EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
-import { DocumentMetadata, EncryptedDocumentStorage } from "../encrypted";
+import {
+  EncryptedDocumentMetadata,
+  EncryptedDocumentStorage,
+} from "../encrypted";
+import { FileStorage } from "../file-storage";
 
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   constructor(
@@ -10,12 +14,12 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
       write: (
         key: string,
         doc: {
-          metadata: DocumentMetadata;
+          metadata: EncryptedDocumentMetadata;
           updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
         },
       ) => Promise<void>;
       fetch: (key: string) => Promise<{
-        metadata: DocumentMetadata;
+        metadata: EncryptedDocumentMetadata;
         updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
       }>;
     } = {
@@ -26,20 +30,21 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
         return EncryptedMemoryStorage.docs.get(key)!;
       },
     },
+    public readonly fileStorage: FileStorage | undefined = undefined,
   ) {
     super();
   }
   public static docs = new Map<
     string,
     {
-      metadata: DocumentMetadata;
+      metadata: EncryptedDocumentMetadata;
       updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
     }
   >();
 
   async writeDocumentMetadata(
     key: string,
-    metadata: DocumentMetadata,
+    metadata: EncryptedDocumentMetadata,
   ): Promise<void> {
     let doc = await this.options.fetch(key);
     if (!doc) {
@@ -53,7 +58,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     await this.options.write(key, doc);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
+  async fetchDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
     const doc = await this.options.fetch(key);
     if (!doc) {
       return {
@@ -92,5 +97,12 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
       throw new Error("Message not found");
     }
     return update;
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    if (this.fileStorage) {
+      await this.fileStorage.deleteFilesByDocument(key);
+    }
+    EncryptedMemoryStorage.docs.delete(key);
   }
 }

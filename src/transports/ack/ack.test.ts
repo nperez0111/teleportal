@@ -152,7 +152,6 @@ describe("withAckSink", () => {
     });
 
     const ackMessage = new AckMessage(
-      "test-doc",
       {
         type: "ack",
         messageId: "some-message-id",
@@ -308,7 +307,6 @@ describe("withAckTrackingSink", () => {
 
     // Send ACK
     const ackMessage = new AckMessage(
-      "test-doc",
       {
         type: "ack",
         messageId: docMessage.id,
@@ -393,7 +391,6 @@ describe("withAckTrackingSink", () => {
 
     // Simulate slow pubsub propagation by delaying the ACK
     const ackMessage = new AckMessage(
-      "test-doc",
       {
         type: "ack",
         messageId: docMessage.id,
@@ -432,7 +429,6 @@ describe("withAckTrackingSink", () => {
     });
 
     const ackMessage = new AckMessage(
-      "test-doc",
       {
         type: "ack",
         messageId: "some-message-id",
@@ -490,7 +486,6 @@ describe("withAckTrackingSink", () => {
 
     // Send ACKs
     const ack1 = new AckMessage(
-      "test-doc",
       {
         type: "ack",
         messageId: message1.id,
@@ -498,7 +493,6 @@ describe("withAckTrackingSink", () => {
       context,
     );
     const ack2 = new AckMessage(
-      "test-doc",
       {
         type: "ack",
         messageId: message2.id,
