@@ -86,7 +86,7 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
       }
       case 0x03: {
         return new FileMessage(
-          "unknown", // Document ID is not part of binary encoding yet, will be populated by context or separate field if added to binary protocol
+          documentName,
           decodeFileStepWithDecoder(decoder),
           undefined,
           encrypted,

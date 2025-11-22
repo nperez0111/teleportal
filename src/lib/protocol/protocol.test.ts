@@ -264,7 +264,7 @@ describe("can encode and decode", () => {
     ).toMatchInlineSnapshot(`
       FileMessage {
         "context": {},
-        "document": "unknown",
+        "document": "test-doc",
         "encrypted": false,
         "payload": {
           "encrypted": false,
@@ -300,7 +300,7 @@ describe("can encode and decode", () => {
     ).toMatchInlineSnapshot(`
       FileMessage {
         "context": {},
-        "document": "unknown",
+        "document": "test-doc",
         "encrypted": false,
         "payload": {
           "fileId": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
@@ -343,7 +343,7 @@ describe("can encode and decode", () => {
     expect(decoded).toMatchInlineSnapshot(`
       FileMessage {
         "context": {},
-        "document": "unknown",
+        "document": "test-doc",
         "encrypted": false,
         "payload": {
           "bytesUploaded": 65536,
