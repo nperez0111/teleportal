@@ -1,11 +1,11 @@
 /**
  * The Y.js update, decrypted with AES-GCM
  */
-export type DecryptedUpdate = Uint8Array;
+export type DecryptedBinary = Uint8Array;
 /**
  * The Y.js update, encrypted with AES-GCM
  */
-export type EncryptedUpdate = Uint8Array;
+export type EncryptedBinary = Uint8Array;
 
 /**
  * Generate a new AES-GCM encryption key
@@ -67,13 +67,13 @@ export async function exportEncryptionKey(key: CryptoKey): Promise<string> {
 /**
  * Encrypt a Y.js update using AES-GCM
  * @param key - The encryption key to use
- * @param update - The update to encrypt
+ * @param data - The update to encrypt
  * @returns The encrypted update as a Uint8Array
  */
 export async function encryptUpdate(
   key: CryptoKey,
-  update: Uint8Array,
-): Promise<EncryptedUpdate> {
+  data: DecryptedBinary,
+): Promise<EncryptedBinary> {
   try {
     // Generate a random IV (Initialization Vector) for each encryption
     const iv = crypto.getRandomValues(new Uint8Array(12)); // 12 bytes for AES-GCM
@@ -85,7 +85,7 @@ export async function encryptUpdate(
         iv: iv,
       },
       key,
-      new Uint8Array(update),
+      new Uint8Array(data),
     );
 
     // Combine IV and encrypted data (which includes the authentication tag)
@@ -93,7 +93,7 @@ export async function encryptUpdate(
     result.set(iv, 0);
     result.set(new Uint8Array(encryptedData), iv.length);
 
-    return result as EncryptedUpdate;
+    return result as EncryptedBinary;
   } catch (error) {
     throw new Error(`Encryption failed: ${error}`);
   }
@@ -102,17 +102,17 @@ export async function encryptUpdate(
 /**
  * Decrypt a Y.js update using AES-GCM
  * @param key - The decryption key to use
- * @param encryptedUpdate - The encrypted update to decrypt
+ * @param encryptedBinary - The encrypted update to decrypt
  * @returns The decrypted update as a Uint8Array
  */
 export async function decryptUpdate(
   key: CryptoKey,
-  encryptedUpdate: EncryptedUpdate,
-): Promise<Uint8Array> {
+  encryptedBinary: EncryptedBinary,
+): Promise<DecryptedBinary> {
   try {
     // Extract IV (first 12 bytes) and encrypted data (which includes auth tag)
-    const iv = encryptedUpdate.slice(0, 12);
-    const encryptedData = encryptedUpdate.slice(12);
+    const iv = encryptedBinary.slice(0, 12);
+    const encryptedData = encryptedBinary.slice(12);
 
     // Decrypt the data
     const decryptedData = await crypto.subtle.decrypt(

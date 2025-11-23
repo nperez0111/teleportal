@@ -1,4 +1,4 @@
-import { EncryptedUpdate } from "teleportal/encryption-key";
+import { EncryptedBinary } from "teleportal/encryption-key";
 import type {
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
@@ -60,7 +60,7 @@ export async function getDecodedSyncStep2(
   seenMessages: SeenMessageMapping,
   getEncryptedMessageUpdate: (
     messageId: EncryptedMessageId,
-  ) => Promise<EncryptedUpdate | null>,
+  ) => Promise<EncryptedBinary | null>,
   syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
 ): Promise<DecodedEncryptedSyncStep2> {
   const promiseMessages: Promise<DecodedEncryptedUpdatePayload | null>[] = [];
@@ -106,7 +106,7 @@ export async function getEncryptedSyncStep2(
   seenMessages: SeenMessageMapping,
   getEncryptedMessageUpdate: (
     messageId: EncryptedMessageId,
-  ) => Promise<EncryptedUpdate | null>,
+  ) => Promise<EncryptedBinary | null>,
   syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
 ): Promise<EncryptedSyncStep2> {
   return encodeToSyncStep2(

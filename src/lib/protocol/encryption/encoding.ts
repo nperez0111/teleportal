@@ -4,7 +4,7 @@ import * as encoding from "lib0/encoding";
 import { digest } from "lib0/hash/sha256";
 
 import type { StateVector, SyncStep2Update, Update } from "teleportal";
-import { EncryptedUpdate } from "teleportal/encryption-key";
+import { EncryptedBinary } from "teleportal/encryption-key";
 import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
 
 /**
@@ -94,7 +94,7 @@ export function decodeFromStateVector(
 export type DecodedEncryptedUpdatePayload = {
   id: EncryptedMessageId;
   timestamp: LamportClockValue;
-  payload: EncryptedUpdate;
+  payload: EncryptedBinary;
 };
 
 /**
@@ -129,10 +129,10 @@ export function encodeEncryptedUpdateMessages(
 }
 
 /**
- * Encodes a {@link EncryptedUpdate} to a {@link EncryptedUpdatePayload}
+ * Encodes a {@link EncryptedBinary} to a {@link EncryptedUpdatePayload}
  */
 export function encodeEncryptedUpdate(
-  update: EncryptedUpdate,
+  update: EncryptedBinary,
   timestamp: LamportClockValue,
 ): EncryptedUpdatePayload {
   return encodeEncryptedUpdateMessages([
@@ -163,7 +163,7 @@ export function decodeEncryptedUpdate(
       const clientId = decoding.readVarUint(decoder);
       const counter = decoding.readVarUint(decoder);
       // payload
-      const payload = decoding.readVarUint8Array(decoder) as EncryptedUpdate;
+      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
 
       // create message instance
       messages.push({ id, timestamp: [clientId, counter], payload });
@@ -280,7 +280,7 @@ export function decodeFromSyncStep2(
       // lamport clock
       const lamportClock = decoding.readVarUint(decoder);
       // payload
-      const payload = decoding.readVarUint8Array(decoder) as EncryptedUpdate;
+      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
 
       // add message
       messages.push({

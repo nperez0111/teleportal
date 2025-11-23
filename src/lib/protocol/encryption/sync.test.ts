@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { EncryptedUpdate } from "../../../encryption-key";
+import { EncryptedBinary } from "../../../encryption-key";
 import type { EncryptedMessageId } from "./encoding";
 import { decodeFromStateVector, decodeFromSyncStep2 } from "./encoding";
 import type { SeenMessageMapping } from "./sync";
@@ -120,8 +120,8 @@ describe("sync functions", () => {
         1: { 5: "msg1", 10: "msg2" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
         return null;
       };
 
@@ -146,8 +146,8 @@ describe("sync functions", () => {
         1: { 5: "msg1", 10: "msg2" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
         return null;
       };
 
@@ -186,11 +186,11 @@ describe("sync functions", () => {
         2: { 3: "msg3", 7: "msg4" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedUpdate;
-        if (id === "msg3") return new Uint8Array([7, 8, 9]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
+        if (id === "msg3") return new Uint8Array([7, 8, 9]) as EncryptedBinary;
         if (id === "msg4")
-          return new Uint8Array([10, 11, 12]) as EncryptedUpdate;
+          return new Uint8Array([10, 11, 12]) as EncryptedBinary;
         return null;
       };
 
@@ -220,8 +220,8 @@ describe("sync functions", () => {
         1: { 5: "msg1", 10: "msg2" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
         return null;
       };
 
@@ -247,8 +247,8 @@ describe("sync functions", () => {
         2: { 3: "msg2" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
         return null;
       };
 
@@ -274,7 +274,7 @@ describe("sync functions", () => {
         1: { 5: "msg1", 10: "msg2" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
         if (id === "msg2") return null; // This message is not available
         return null;
       };
@@ -295,7 +295,7 @@ describe("sync functions", () => {
         1: { 5: "msg1" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
         return null;
       };
 
@@ -328,9 +328,9 @@ describe("sync functions", () => {
         2: { 3: "msg3" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedUpdate;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedUpdate;
-        if (id === "msg3") return new Uint8Array([7, 8, 9]) as EncryptedUpdate;
+        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
+        if (id === "msg3") return new Uint8Array([7, 8, 9]) as EncryptedBinary;
         return null;
       };
 

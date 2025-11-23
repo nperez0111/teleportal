@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { EncryptedUpdate } from "../../../encryption-key";
+import { EncryptedBinary } from "../../../encryption-key";
 import type {
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
@@ -72,7 +72,7 @@ describe("protocol encryption encoding", () => {
     });
 
     it("should encode and decode single update message", () => {
-      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedUpdate;
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedBinary;
       const timestamp: LamportClockValue = [1, 5];
       const message: DecodedEncryptedUpdatePayload = {
         id: "dGVzdC1tZXNzYWdlLWlk", // base64 encoded "test-message-id"
@@ -94,12 +94,12 @@ describe("protocol encryption encoding", () => {
         {
           id: "bXNnMQ==", // base64 encoded "msg1"
           timestamp: [1, 5],
-          payload: new Uint8Array([1, 2, 3]) as EncryptedUpdate,
+          payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
         },
         {
           id: "bXNnMg==", // base64 encoded "msg2"
           timestamp: [2, 10],
-          payload: new Uint8Array([4, 5, 6]) as EncryptedUpdate,
+          payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
         },
       ];
 
@@ -112,7 +112,7 @@ describe("protocol encryption encoding", () => {
     });
 
     it("should encode single encrypted update", () => {
-      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedUpdate;
+      const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedBinary;
       const timestamp: LamportClockValue = [1, 5];
 
       const encoded = encodeEncryptedUpdate(testUpdate, timestamp);
@@ -151,12 +151,12 @@ describe("protocol encryption encoding", () => {
         {
           id: "msg1",
           timestamp: [1, 5],
-          payload: new Uint8Array([1, 2, 3]) as EncryptedUpdate,
+          payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
         },
         {
           id: "msg2",
           timestamp: [2, 10],
-          payload: new Uint8Array([4, 5, 6]) as EncryptedUpdate,
+          payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
         },
       ];
       const sync: DecodedEncryptedSyncStep2 = { messages };
@@ -174,12 +174,12 @@ describe("protocol encryption encoding", () => {
         {
           id: "msg1",
           timestamp: [100, 5],
-          payload: new Uint8Array([1, 2, 3]) as EncryptedUpdate,
+          payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
         },
         {
           id: "msg2",
           timestamp: [100, 10], // Same client id
-          payload: new Uint8Array([4, 5, 6]) as EncryptedUpdate,
+          payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
         },
       ];
       const sync: DecodedEncryptedSyncStep2 = { messages };

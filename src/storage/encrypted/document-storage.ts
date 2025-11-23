@@ -18,7 +18,7 @@ import {
   DocumentStorage,
   type DocumentMetadata as BaseDocumentMetadata,
 } from "../document-storage";
-import { EncryptedUpdate } from "teleportal/encryption-key";
+import { EncryptedBinary } from "teleportal/encryption-key";
 
 export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
   seenMessages: SeenMessageMapping;
@@ -55,13 +55,13 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   abstract storeEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-    payload: EncryptedUpdate,
+    payload: EncryptedBinary,
   ): Promise<void>;
 
   abstract fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdate | null>;
+  ): Promise<EncryptedBinary | null>;
 
   async handleSyncStep1(
     key: string,

@@ -2,7 +2,7 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import { useEffect, useState } from "react";
 import {
   createEncryptionKey,
-  EncryptedUpdate,
+  EncryptedBinary,
   exportEncryptionKey,
   importEncryptionKey,
 } from "teleportal/encryption-key";
@@ -36,7 +36,7 @@ export function getEncryptedTransport(key: CryptoKey) {
         if (!payload) {
           throw new Error("Message not found");
         }
-        return fromBase64(payload) as EncryptedUpdate;
+        return fromBase64(payload) as EncryptedBinary;
       },
     });
     // TODO more convenient way to do this

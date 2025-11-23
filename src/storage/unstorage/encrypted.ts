@@ -1,6 +1,6 @@
 import type { Storage } from "unstorage";
 
-import { EncryptedUpdate } from "teleportal/encryption-key";
+import { EncryptedBinary } from "teleportal/encryption-key";
 import type { EncryptedMessageId } from "teleportal/protocol/encryption";
 import {
   EncryptedDocumentMetadata,
@@ -64,9 +64,9 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
   async storeEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-    payload: EncryptedUpdate,
+    payload: EncryptedBinary,
   ): Promise<void> {
-    await this.storage.setItemRaw<EncryptedUpdate>(
+    await this.storage.setItemRaw<EncryptedBinary>(
       key + ":" + messageId,
       payload,
     );
@@ -75,8 +75,8 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
   async fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdate | null> {
-    const payload = await this.storage.getItemRaw<EncryptedUpdate>(
+  ): Promise<EncryptedBinary | null> {
+    const payload = await this.storage.getItemRaw<EncryptedBinary>(
       key + ":" + messageId,
     );
     return payload;

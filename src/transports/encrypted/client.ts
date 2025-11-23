@@ -2,10 +2,10 @@ import { toBase64 } from "lib0/buffer";
 import { digest } from "lib0/hash/sha256";
 import { ClientContext, Observable } from "teleportal";
 import {
-  DecryptedUpdate,
+  type DecryptedBinary,
   decryptUpdate as defaultDecryptUpdate,
   encryptUpdate as defaultEncryptUpdate,
-  EncryptedUpdate,
+  type EncryptedBinary,
 } from "teleportal/encryption-key";
 import {
   AwarenessMessage,
@@ -74,15 +74,15 @@ export class EncryptionClient
   public key: CryptoKey;
   public getEncryptedMessageUpdate: (
     messageId: EncryptedMessageId,
-  ) => Promise<EncryptedUpdate>;
+  ) => Promise<EncryptedBinary>;
   #decryptUpdate: (
     key: CryptoKey,
-    encryptedUpdate: EncryptedUpdate,
-  ) => Promise<DecryptedUpdate>;
+    encryptedUpdate: EncryptedBinary,
+  ) => Promise<DecryptedBinary>;
   #encryptUpdate: (
     key: CryptoKey,
-    update: DecryptedUpdate,
-  ) => Promise<EncryptedUpdate>;
+    update: DecryptedBinary,
+  ) => Promise<EncryptedBinary>;
 
   constructor({
     document,
@@ -99,15 +99,15 @@ export class EncryptionClient
     key: CryptoKey;
     getEncryptedMessageUpdate: (
       messageId: EncryptedMessageId,
-    ) => Promise<EncryptedUpdate>;
+    ) => Promise<EncryptedBinary>;
     decryptUpdate?: (
       key: CryptoKey,
-      encryptedUpdate: EncryptedUpdate,
-    ) => Promise<DecryptedUpdate>;
+      encryptedUpdate: EncryptedBinary,
+    ) => Promise<DecryptedBinary>;
     encryptUpdate?: (
       key: CryptoKey,
-      update: DecryptedUpdate,
-    ) => Promise<EncryptedUpdate>;
+      update: DecryptedBinary,
+    ) => Promise<EncryptedBinary>;
   }) {
     super();
     this.ydoc = ydoc ?? new Y.Doc();
@@ -121,18 +121,18 @@ export class EncryptionClient
   }
 
   /**
-   * Encrypts a {@link DecryptedUpdate} using the {@link CryptoKey}.
+   * Encrypts a {@link DecryptedBinary} using the {@link CryptoKey}.
    */
-  public encryptUpdate(update: DecryptedUpdate): Promise<EncryptedUpdate> {
+  public encryptUpdate(update: DecryptedBinary): Promise<EncryptedBinary> {
     return this.#encryptUpdate(this.key, update);
   }
 
   /**
-   * Decrypts an {@link EncryptedUpdate} using the {@link CryptoKey}.
+   * Decrypts an {@link EncryptedBinary} using the {@link CryptoKey}.
    */
   public decryptUpdate(
-    encryptedUpdate: EncryptedUpdate,
-  ): Promise<DecryptedUpdate> {
+    encryptedUpdate: EncryptedBinary,
+  ): Promise<DecryptedBinary> {
     return this.#decryptUpdate(this.key, encryptedUpdate);
   }
   private loadedSeenMessages: boolean = false;
@@ -143,7 +143,7 @@ export class EncryptionClient
   public async loadSeenMessages(
     seenMessages: SeenMessageMapping,
   ): Promise<void> {
-    const promises: Promise<DecryptedUpdate>[] = [];
+    const promises: Promise<DecryptedBinary>[] = [];
     for (const [clientId, messages] of Object.entries(seenMessages)) {
       for (const [counter, messageId] of Object.entries(messages)) {
         promises.push(
@@ -164,9 +164,9 @@ export class EncryptionClient
   }
 
   /**
-   * Applies a list of {@link DecryptedUpdate}s to the {@link Y.Doc}.
+   * Applies a list of {@link DecryptedBinary}s to the {@link Y.Doc}.
    */
-  private applyUpdates(updates: DecryptedUpdate[]): void {
+  private applyUpdates(updates: DecryptedBinary[]): void {
     this.ydoc.transact((tr) => {
       for (const update of updates) {
         Y.applyUpdateV2(tr.doc, update, getSyncTransactionOrigin(this.ydoc));
@@ -359,7 +359,7 @@ export class EncryptionClient
 
   private createMessageNode(
     messageId: EncryptedMessageId,
-    payload: EncryptedUpdate,
+    payload: EncryptedBinary,
     timestamp?: LamportClockValue,
   ): DecodedEncryptedUpdatePayload {
     if (timestamp) {
