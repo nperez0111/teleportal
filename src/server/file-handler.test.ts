@@ -13,17 +13,10 @@ import {
 } from "../lib/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "../storage/in-memory/file-storage";
 import { FileHandler } from "./file-handler";
-import { augmentLogger } from "./logger";
-import { getLogger } from "@logtape/logtape";
-
-const emptyLogger = augmentLogger(
-  getLogger(["teleportal", "tests", "file-handler-test"]),
-);
-
 describe("FileHandler", () => {
   it("should handle file upload request and authorize it", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     const sentMessages: Message<ServerContext>[] = [];
     const sendResponse = async (message: Message<ServerContext>) => {
@@ -53,7 +46,8 @@ describe("FileHandler", () => {
     sentMessages.shift();
 
     // Check that upload session was initiated
-    const uploadProgress = await fileStorage.getUploadProgress("test-upload-id");
+    const uploadProgress =
+      await fileStorage.getUploadProgress("test-upload-id");
     expect(uploadProgress).not.toBeNull();
     expect(uploadProgress!.metadata.filename).toBe("test.txt");
     expect(uploadProgress!.metadata.size).toBe(5);
@@ -61,7 +55,7 @@ describe("FileHandler", () => {
 
   it("should handle file-part message and send ack", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     // First, initiate the upload with a multi-chunk file so we can check progress before completion
     const fileData1 = new Uint8Array(CHUNK_SIZE);
@@ -113,7 +107,8 @@ describe("FileHandler", () => {
     sentMessages.shift();
 
     // Check that chunk was stored (upload not complete yet, so session still exists)
-    const uploadProgress = await fileStorage.getUploadProgress("test-upload-id");
+    const uploadProgress =
+      await fileStorage.getUploadProgress("test-upload-id");
     expect(uploadProgress).not.toBeNull();
     expect(uploadProgress!.chunks.has(0)).toBe(true);
     expect(uploadProgress!.chunks.get(0)).toEqual(fileData1);
@@ -121,7 +116,7 @@ describe("FileHandler", () => {
 
   it("should complete upload when all chunks are received", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     // First, initiate the upload
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
@@ -178,7 +173,7 @@ describe("FileHandler", () => {
 
   it("should handle multi-chunk upload", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     // Create a file larger than one chunk
     const largeFileData = new Uint8Array(CHUNK_SIZE + 100);
@@ -260,7 +255,7 @@ describe("FileHandler", () => {
 
   it("should handle download request and send file", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     // First, store a file
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
@@ -314,7 +309,7 @@ describe("FileHandler", () => {
 
   it("should handle download request for non-existent file", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     const sentMessages: Message<ServerContext>[] = [];
     const sendResponse = async (message: Message<ServerContext>) => {
@@ -343,7 +338,7 @@ describe("FileHandler", () => {
 
   it("should reject file upload that exceeds maximum size", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const fileHandler = new FileHandler(fileStorage, emptyLogger);
+    const fileHandler = new FileHandler(fileStorage);
 
     const sentMessages: Message<ServerContext>[] = [];
     const sendResponse = async (message: Message<ServerContext>) => {

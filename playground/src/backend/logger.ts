@@ -5,7 +5,6 @@ import {
   getLogger,
   type Sink,
 } from "@logtape/logtape";
-import { augmentLogger } from "teleportal/server";
 import { pino } from "pino";
 import { prettyFormatter } from "@logtape/pretty";
 
@@ -41,4 +40,4 @@ await configure({
   ],
 });
 
-export const logger = augmentLogger(getLogger(["teleportal", "playground"]));
+export const logger = getLogger(["teleportal", "playground"]);

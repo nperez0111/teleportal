@@ -25,12 +25,6 @@ import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { noopTransport, withPassthrough } from "../../transports/passthrough";
 import { fromBase64 } from "lib0/buffer";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
-import { augmentLogger } from "../../server/logger";
-import { getLogger } from "@logtape/logtape";
-
-const testLogger = augmentLogger(
-  getLogger(["teleportal", "tests", "ws-connection-msw"]),
-);
 
 const wsUrl = "ws://localhost:8080";
 
@@ -84,7 +78,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload file through WebSocket connection", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
-        const fileHandler = new FileHandler(fileStorage, testLogger);
+      const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
 
@@ -167,7 +161,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload large file through WebSocket connection", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
-        const fileHandler = new FileHandler(fileStorage, testLogger);
+      const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
 
@@ -244,7 +238,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload and download file through WebSocket connection (round-trip)", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
-        const fileHandler = new FileHandler(fileStorage, testLogger);
+      const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
 

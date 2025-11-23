@@ -7,9 +7,10 @@ import {
   type Update,
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
-import type { Logger } from "./logger";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
+import { getLogger, Logger } from "@logtape/logtape";
+import { toErrorDetails } from "../logging";
 
 /**
  * A session is a collection of clients which are connected to a document.
@@ -52,7 +53,6 @@ export class Session<Context extends ServerContext> {
     storage: DocumentStorage;
     pubSub: PubSub;
     nodeId: string;
-    logger: Logger;
     dedupe?: TtlDedupe;
     onCleanupScheduled: (session: Session<Context>) => void;
   }) {
@@ -63,7 +63,7 @@ export class Session<Context extends ServerContext> {
     this.#storage = args.storage;
     this.#pubSub = args.pubSub;
     this.#nodeId = args.nodeId;
-    this.#logger = args.logger.child().withContext({
+    this.#logger = getLogger(["teleportal", "server", "session"]).with({
       name: "session",
       documentId: this.documentId,
       namespacedDocumentId: this.namespacedDocumentId,
@@ -73,7 +73,7 @@ export class Session<Context extends ServerContext> {
     this.#onCleanupScheduled = args.onCleanupScheduled;
 
     this.#logger
-      .withMetadata({
+      .with({
         documentId: this.documentId,
         namespacedDocumentId: this.namespacedDocumentId,
         sessionId: this.id,
@@ -98,7 +98,7 @@ export class Session<Context extends ServerContext> {
     }
 
     this.#logger
-      .withMetadata({ documentId: this.documentId, sessionId: this.id })
+      .with({ documentId: this.documentId, sessionId: this.id })
       .info("Loading session");
 
     this.#loaded = true;
@@ -107,7 +107,7 @@ export class Session<Context extends ServerContext> {
       this.#unsubscribe = this.#pubSub.subscribe(
         `document/${this.namespacedDocumentId}` as const,
         async (binary, sourceId) => {
-          const replicationLogger = this.#logger.child().withContext({
+          const replicationLogger = this.#logger.with({
             sourceNodeId: sourceId,
           });
 
@@ -120,8 +120,8 @@ export class Session<Context extends ServerContext> {
             message = decodeMessage(binary);
           } catch (error) {
             replicationLogger
-              .withError(error as Error)
-              .withMetadata({ sourceNodeId: sourceId })
+              .with({ error: toErrorDetails(error as Error) })
+              .with({ sourceNodeId: sourceId })
               .error("Failed to decode replicated message");
             return;
           }
@@ -129,7 +129,7 @@ export class Session<Context extends ServerContext> {
           // Best-effort: ensure it matches the documentId (client-facing)
           if (message.document !== this.documentId) {
             replicationLogger
-              .withMetadata({
+              .with({
                 messageDocumentId: message.document,
                 sessionDocumentId: this.documentId,
                 sourceNodeId: sourceId,
@@ -139,7 +139,7 @@ export class Session<Context extends ServerContext> {
           }
 
           replicationLogger
-            .withMetadata({
+            .with({
               messageId: message.id,
               documentId: message.document,
               messageType: message.type,
@@ -155,7 +155,7 @@ export class Session<Context extends ServerContext> {
 
             if (!shouldAccept) {
               replicationLogger
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: message.document,
                   sourceNodeId: sourceId,
@@ -167,7 +167,7 @@ export class Session<Context extends ServerContext> {
             await this.apply(message);
 
             replicationLogger
-              .withMetadata({
+              .with({
                 messageId: message.id,
                 documentId: message.document,
                 sourceNodeId: sourceId,
@@ -175,8 +175,8 @@ export class Session<Context extends ServerContext> {
               .debug("Replicated message applied successfully");
           } catch (e) {
             replicationLogger
-              .withError(e as Error)
-              .withMetadata({
+              .with({
+                error: toErrorDetails(e as Error),
                 messageId: message.id,
                 documentId: message.document,
                 sourceNodeId: sourceId,
@@ -187,12 +187,15 @@ export class Session<Context extends ServerContext> {
       );
 
       this.#logger
-        .withMetadata({ documentId: this.documentId, sessionId: this.id })
+        .with({ documentId: this.documentId, sessionId: this.id })
         .trace("Session loaded and pubSub subscription active");
     } catch (error) {
       this.#logger
-        .withError(error as Error)
-        .withMetadata({ documentId: this.documentId, sessionId: this.id })
+        .with({
+          error: toErrorDetails(error as Error),
+          documentId: this.documentId,
+          sessionId: this.id,
+        })
         .error("Failed to load session");
       throw error;
     }
@@ -211,7 +214,7 @@ export class Session<Context extends ServerContext> {
     }
 
     this.#logger
-      .withMetadata({
+      .with({
         clientId: client.id,
         documentId: this.documentId,
         sessionId: this.id,
@@ -233,7 +236,7 @@ export class Session<Context extends ServerContext> {
 
     if (hadClient) {
       this.#logger
-        .withMetadata({
+        .with({
           clientId: id,
           documentId: this.documentId,
           sessionId: this.id,
@@ -252,7 +255,7 @@ export class Session<Context extends ServerContext> {
    * Broadcast a message to all clients in the session.
    */
   async broadcast(message: Message<Context>, excludeClientId?: string) {
-    const broadcastLogger = this.#logger.child().withContext({
+    const broadcastLogger = this.#logger.with({
       messageId: message.id,
     });
 
@@ -261,7 +264,7 @@ export class Session<Context extends ServerContext> {
     );
 
     broadcastLogger
-      .withMetadata({
+      .with({
         messageId: message.id,
         documentId: this.documentId,
         totalClients: this.#clients.size,
@@ -280,8 +283,8 @@ export class Session<Context extends ServerContext> {
       } catch (error) {
         errorCount++;
         broadcastLogger
-          .withError(error as Error)
-          .withMetadata({
+          .with({
+            error: toErrorDetails(error as Error),
             messageId: message.id,
             clientId: id,
             documentId: this.documentId,
@@ -291,7 +294,7 @@ export class Session<Context extends ServerContext> {
     }
 
     broadcastLogger
-      .withMetadata({
+      .with({
         messageId: message.id,
         documentId: this.documentId,
         successCount,
@@ -305,28 +308,21 @@ export class Session<Context extends ServerContext> {
    * Write an update to the storage.
    */
   async write(update: Update) {
-    const writeLogger = this.#logger.child();
+    const writeLogger = this.#logger.with({
+      documentId: this.documentId,
+      namespacedDocumentId: this.namespacedDocumentId,
+    });
 
-    writeLogger
-      .withMetadata({
-        documentId: this.documentId,
-      })
-      .debug("Writing update to storage");
+    writeLogger.debug("Writing update to storage");
 
     try {
       await this.#storage.write(this.namespacedDocumentId, update);
 
-      writeLogger
-        .withMetadata({
-          documentId: this.documentId,
-          namespacedDocumentId: this.namespacedDocumentId,
-        })
-        .debug("Update written to storage successfully");
+      writeLogger.debug("Update written to storage successfully");
     } catch (error) {
       writeLogger
-        .withError(error as Error)
-        .withMetadata({
-          documentId: this.documentId,
+        .with({
+          error: toErrorDetails(error as Error),
         })
         .error("Failed to write update to storage");
       throw error;
@@ -340,14 +336,14 @@ export class Session<Context extends ServerContext> {
     message: Message<Context>,
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
   ) {
-    const log = this.#logger.child().withContext({
+    const log = this.#logger.with({
       messageId: message.id,
       payloadType: (message as any).payload?.type,
       clientId: client?.id,
     });
 
     log
-      .withMetadata({
+      .with({
         messageId: message.id,
         documentId: this.documentId,
         messageType: message.type,
@@ -364,8 +360,8 @@ export class Session<Context extends ServerContext> {
         "Message encryption and document encryption are mismatched",
       );
       log
-        .withError(error)
-        .withMetadata({
+        .with({
+          error: toErrorDetails(error),
           messageId: message.id,
           messageEncrypted: message.encrypted,
           documentEncrypted: this.encrypted,
@@ -380,7 +376,7 @@ export class Session<Context extends ServerContext> {
           switch (message.payload.type) {
             case "sync-step-1": {
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                 })
@@ -393,7 +389,7 @@ export class Session<Context extends ServerContext> {
                 );
 
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                 })
@@ -401,7 +397,7 @@ export class Session<Context extends ServerContext> {
 
               if (!client) {
                 log
-                  .withMetadata({ messageId: message.id })
+                  .with({ messageId: message.id })
                   .warn("sync-step-1 received without client, cannot respond");
                 return;
               }
@@ -424,7 +420,7 @@ export class Session<Context extends ServerContext> {
               );
 
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                   clientId: client.id,
@@ -435,7 +431,7 @@ export class Session<Context extends ServerContext> {
             }
             case "update": {
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                 })
@@ -455,7 +451,7 @@ export class Session<Context extends ServerContext> {
               ]);
 
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                   clientId: client?.id,
@@ -466,7 +462,7 @@ export class Session<Context extends ServerContext> {
             }
             case "sync-step-2": {
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                 })
@@ -487,7 +483,7 @@ export class Session<Context extends ServerContext> {
 
               if (!client) {
                 log
-                  .withMetadata({ messageId: message.id })
+                  .with({ messageId: message.id })
                   .warn(
                     "sync-step-2 received without client, cannot send sync-done",
                   );
@@ -504,7 +500,7 @@ export class Session<Context extends ServerContext> {
               );
 
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                   clientId: client.id,
@@ -515,7 +511,7 @@ export class Session<Context extends ServerContext> {
             }
             case "sync-done": {
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                 })
@@ -524,7 +520,7 @@ export class Session<Context extends ServerContext> {
             }
             case "auth-message": {
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                   permission: (message.payload as any).permission,
@@ -534,7 +530,7 @@ export class Session<Context extends ServerContext> {
             }
             default: {
               log
-                .withMetadata({
+                .with({
                   messageId: message.id,
                   documentId: this.documentId,
                   unknownPayloadType: (message.payload as any).type,
@@ -546,7 +542,7 @@ export class Session<Context extends ServerContext> {
         }
         default: {
           log
-            .withMetadata({
+            .with({
               messageId: message.id,
               documentId: this.documentId,
               messageType: message.type,
@@ -563,7 +559,7 @@ export class Session<Context extends ServerContext> {
           ]);
 
           log
-            .withMetadata({
+            .with({
               messageId: message.id,
               documentId: this.documentId,
               messageType: message.type,
@@ -575,8 +571,8 @@ export class Session<Context extends ServerContext> {
       }
     } catch (error) {
       log
-        .withError(error as Error)
-        .withMetadata({
+        .with({
+          error: toErrorDetails(error),
           messageId: message.id,
           documentId: this.documentId,
           messageType: message.type,
@@ -592,7 +588,7 @@ export class Session<Context extends ServerContext> {
    */
   async [Symbol.asyncDispose]() {
     this.#logger
-      .withMetadata({
+      .with({
         documentId: this.documentId,
         sessionId: this.id,
         activeClients: this.#clients.size,
@@ -607,18 +603,21 @@ export class Session<Context extends ServerContext> {
         const unsubscribeFn = await this.#unsubscribe;
         await unsubscribeFn();
         this.#logger
-          .withMetadata({ documentId: this.documentId, sessionId: this.id })
+          .with({ documentId: this.documentId, sessionId: this.id })
           .debug("Pubsub subscription unsubscribed");
       }
     } catch (error) {
       this.#logger
-        .withError(error as Error)
-        .withMetadata({ documentId: this.documentId, sessionId: this.id })
+        .with({
+          error: toErrorDetails(error as Error),
+          documentId: this.documentId,
+          sessionId: this.id,
+        })
         .error("Error unsubscribing from pubSub");
     }
 
     this.#logger
-      .withMetadata({
+      .with({
         documentId: this.documentId,
         sessionId: this.id,
       })
@@ -633,7 +632,7 @@ export class Session<Context extends ServerContext> {
     this.#cancelCleanup();
 
     this.#logger
-      .withMetadata({
+      .with({
         documentId: this.documentId,
         sessionId: this.id,
         delayMs: this.#CLEANUP_DELAY_MS,
@@ -654,7 +653,7 @@ export class Session<Context extends ServerContext> {
       clearTimeout(this.#cleanupTimeoutId);
       this.#cleanupTimeoutId = undefined;
       this.#logger
-        .withMetadata({
+        .with({
           documentId: this.documentId,
           sessionId: this.id,
         })

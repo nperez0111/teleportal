@@ -18,7 +18,6 @@ import {
 } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
-import { logger } from "../src/backend/logger";
 import homepage from "../src/index.html";
 // import { RedisPubSub } from "teleportal/transports/redis";
 
@@ -65,7 +64,6 @@ const server = new Server<TokenPayload & { clientId: string }>({
     });
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
-  logger: logger,
   // pubSub: new RedisPubSub({
   //   path: "redis://127.0.0.1:6379",
   // }),

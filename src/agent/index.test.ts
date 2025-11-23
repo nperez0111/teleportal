@@ -3,15 +3,10 @@ import { getLogger } from "@logtape/logtape";
 import type { ServerContext } from "teleportal";
 import { InMemoryPubSub } from "teleportal";
 import { Server } from "teleportal/server";
-import { augmentLogger } from "../server/logger";
 import { YDocStorage } from "teleportal/storage";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { Agent } from "./index";
-
-const emptyLogger = augmentLogger(
-  getLogger(["teleportal", "tests", "agent-test"]),
-);
 
 describe("Agent", () => {
   let server: Server<ServerContext>;
@@ -26,7 +21,6 @@ describe("Agent", () => {
     mockGetStorage = () => Promise.resolve(new YDocStorage());
 
     server = new Server({
-      logger: emptyLogger,
       getStorage: mockGetStorage,
       pubSub,
     });

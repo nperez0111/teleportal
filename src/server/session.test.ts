@@ -9,7 +9,6 @@ import type {
 } from "teleportal";
 import { DocMessage, InMemoryPubSub } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
-import { augmentLogger, logger } from "./logger";
 import { Session } from "./session";
 import { Client } from "./client";
 
@@ -19,18 +18,15 @@ class MockClient<Context extends ServerContext> {
   public sentMessages: Message<Context>[] = [];
   public mockSend = false;
 
-    constructor(id: string) {
-      this.id = id;
-    }
-
-    async send(message: Message<Context>) {
-      this.mockSend = true;
-      this.sentMessages.push(message);
-    }
+  constructor(id: string) {
+    this.id = id;
   }
 
-const createTestLogger = (name: string) =>
-  augmentLogger(getLogger(["teleportal", "tests", name]));
+  async send(message: Message<Context>) {
+    this.mockSend = true;
+    this.sentMessages.push(message);
+  }
+}
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
@@ -101,19 +97,18 @@ describe("Session", () => {
     client1AsClient = client1 as any;
     client2AsClient = client2 as any;
 
-      session = new Session({
-        documentId: "test-doc",
-        namespacedDocumentId: "test-doc",
-        id: "session-1",
-        encrypted: false,
-        storage,
-        pubSub: pubSub,
-        nodeId,
-        logger: createTestLogger("session-tests"),
-        onCleanupScheduled: () => {
-          // No-op for tests
-        },
-      });
+    session = new Session({
+      documentId: "test-doc",
+      namespacedDocumentId: "test-doc",
+      id: "session-1",
+      encrypted: false,
+      storage,
+      pubSub: pubSub,
+      nodeId,
+      onCleanupScheduled: () => {
+        // No-op for tests
+      },
+    });
   });
 
   afterEach(async () => {
@@ -132,20 +127,19 @@ describe("Session", () => {
     it("should create a Session instance with custom dedupe", () => {
       const { TtlDedupe } = require("./dedupe");
       const customDedupe = new TtlDedupe({ ttlMs: 60_000 });
-        const customSession = new Session({
-          documentId: "test-doc-2",
-          namespacedDocumentId: "test-doc-2",
-          id: "session-2",
-          encrypted: false,
-          storage,
-          pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          dedupe: customDedupe,
-          onCleanupScheduled: () => {
-            // No-op for tests
-          },
-        });
+      const customSession = new Session({
+        documentId: "test-doc-2",
+        namespacedDocumentId: "test-doc-2",
+        id: "session-2",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        dedupe: customDedupe,
+        onCleanupScheduled: () => {
+          // No-op for tests
+        },
+      });
       expect(customSession).toBeDefined();
     });
   });
@@ -275,20 +269,19 @@ describe("Session", () => {
     it("should schedule cleanup when last client is removed", () => {
       let cleanupCalled = false;
       let cleanupSession: Session<ServerContext> | null = null;
-        const testSession = new Session({
-          documentId: "test-doc-cleanup",
-          namespacedDocumentId: "test-doc-cleanup",
-          id: "session-cleanup",
-          encrypted: false,
-          storage,
-          pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          onCleanupScheduled: (s) => {
-            cleanupCalled = true;
-            cleanupSession = s;
-          },
-        });
+      const testSession = new Session({
+        documentId: "test-doc-cleanup",
+        namespacedDocumentId: "test-doc-cleanup",
+        id: "session-cleanup",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: (s) => {
+          cleanupCalled = true;
+          cleanupSession = s;
+        },
+      });
 
       testSession.addClient(client1 as any);
       expect(testSession.shouldDispose).toBe(false);
@@ -303,19 +296,18 @@ describe("Session", () => {
 
     it("should cancel cleanup when client reconnects", (done: () => void) => {
       let cleanupCalled = false;
-        const testSession = new Session({
-          documentId: "test-doc-cancel",
-          namespacedDocumentId: "test-doc-cancel",
-          id: "session-cancel",
-          encrypted: false,
-          storage,
-          pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          onCleanupScheduled: () => {
-            cleanupCalled = true;
-          },
-        });
+      const testSession = new Session({
+        documentId: "test-doc-cancel",
+        namespacedDocumentId: "test-doc-cancel",
+        id: "session-cancel",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+      });
 
       testSession.addClient(client1 as any);
       testSession.removeClient("client-1");
@@ -336,19 +328,18 @@ describe("Session", () => {
 
     it("should not schedule cleanup if clients remain", () => {
       let cleanupCalled = false;
-        const testSession = new Session({
-          documentId: "test-doc-multi",
-          namespacedDocumentId: "test-doc-multi",
-          id: "session-multi",
-          encrypted: false,
-          storage,
-          pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          onCleanupScheduled: () => {
-            cleanupCalled = true;
-          },
-        });
+      const testSession = new Session({
+        documentId: "test-doc-multi",
+        namespacedDocumentId: "test-doc-multi",
+        id: "session-multi",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+      });
 
       testSession.addClient(client1 as any);
       testSession.addClient(client2 as any);
@@ -422,19 +413,18 @@ describe("Session", () => {
 
   describe("apply", () => {
     it("should throw error for encryption mismatch", async () => {
-        const encryptedSession = new Session({
-          documentId: "encrypted-doc",
-          namespacedDocumentId: "encrypted-doc",
-          id: "session-encrypted",
-          encrypted: true,
-          storage,
-          pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          onCleanupScheduled: () => {
-            // No-op for tests
-          },
-        });
+      const encryptedSession = new Session({
+        documentId: "encrypted-doc",
+        namespacedDocumentId: "encrypted-doc",
+        id: "session-encrypted",
+        encrypted: true,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {
+          // No-op for tests
+        },
+      });
 
       const message = new DocMessage(
         "encrypted-doc",
@@ -525,19 +515,18 @@ describe("Session", () => {
 
         let publishedMessage: Uint8Array | null = null;
         const testPubSub = new InMemoryPubSub();
-          const testSession = new Session({
-            documentId: "test-doc-2",
-            namespacedDocumentId: "test-doc-2",
-            id: "session-2",
-            encrypted: false,
-            storage,
-            pubSub: testPubSub,
-            nodeId,
-            logger: createTestLogger("session-tests"),
-            onCleanupScheduled: () => {
-              // No-op for tests
-            },
-          });
+        const testSession = new Session({
+          documentId: "test-doc-2",
+          namespacedDocumentId: "test-doc-2",
+          id: "session-2",
+          encrypted: false,
+          storage,
+          pubSub: testPubSub,
+          nodeId,
+          onCleanupScheduled: () => {
+            // No-op for tests
+          },
+        });
 
         await testSession.load();
         await testSession.apply(message, client1 as any);
@@ -663,19 +652,18 @@ describe("Session", () => {
     });
 
     it("should work when not loaded", async () => {
-        const unloadedSession = new Session({
-          documentId: "test-doc-3",
-          namespacedDocumentId: "test-doc-3",
-          id: "session-3",
-          encrypted: false,
-          storage,
-          pubSub: pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          onCleanupScheduled: () => {
-            // No-op for tests
-          },
-        });
+      const unloadedSession = new Session({
+        documentId: "test-doc-3",
+        namespacedDocumentId: "test-doc-3",
+        id: "session-3",
+        encrypted: false,
+        storage,
+        pubSub: pubSub,
+        nodeId,
+        onCleanupScheduled: () => {
+          // No-op for tests
+        },
+      });
 
       await expect(
         unloadedSession[Symbol.asyncDispose](),
@@ -684,19 +672,18 @@ describe("Session", () => {
 
     it("should cancel pending cleanup when disposed", (done: () => void) => {
       let cleanupCalled = false;
-        const testSession = new Session({
-          documentId: "test-doc-dispose-cancel",
-          namespacedDocumentId: "test-doc-dispose-cancel",
-          id: "session-dispose-cancel",
-          encrypted: false,
-          storage,
-          pubSub,
-          nodeId,
-          logger: createTestLogger("session-tests"),
-          onCleanupScheduled: () => {
-            cleanupCalled = true;
-          },
-        });
+      const testSession = new Session({
+        documentId: "test-doc-dispose-cancel",
+        namespacedDocumentId: "test-doc-dispose-cancel",
+        id: "session-dispose-cancel",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+      });
 
       testSession.addClient(client1 as any);
       testSession.removeClient("client-1");

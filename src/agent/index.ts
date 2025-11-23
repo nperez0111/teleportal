@@ -1,5 +1,6 @@
 import { Message, Observable, ServerContext } from "teleportal";
-import { Logger, Server } from "teleportal/server";
+import { Server } from "teleportal/server";
+import { getLogger } from "@logtape/logtape";
 import {
   getYTransportFromYDoc,
   YDocSinkHandler,
@@ -7,10 +8,7 @@ import {
 } from "teleportal/transports";
 
 export class Agent {
-  private logger: Logger;
-    constructor(private server: Server<ServerContext>) {
-      this.logger = this.server.logger.child().withContext({ name: "agent" });
-    }
+  constructor(private server: Server<ServerContext>) {}
 
   public async createAgent(
     message: Pick<Message<ServerContext>, "document" | "context" | "encrypted">,
@@ -19,7 +17,8 @@ export class Agent {
     if (!message.document) {
       throw new Error("Document is required");
     }
-    const logger = this.logger.child().withContext({
+    const logger = getLogger(["teleportal", "agent"]).with({
+      name: "agent",
       document: message.document,
     });
     const observer = new Observable<{
@@ -39,7 +38,7 @@ export class Agent {
     });
 
     logger
-      .withContext({
+      .with({
         clientId: client.id,
       })
       .trace("client created");

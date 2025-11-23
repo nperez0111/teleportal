@@ -21,6 +21,8 @@ import {
   withAckTrackingSink,
 } from "teleportal/transports";
 import { getDocumentsFromQueryParams } from "./utils";
+import { getLogger } from "@logtape/logtape";
+import { toErrorDetails } from "../logging";
 
 /**
  * Creates an SSE endpoint that can be used to stream {@link Message}s to the client.
@@ -58,16 +60,14 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
     },
   ) => { document: string; encrypted?: boolean }[];
 }) {
-  const baseLogger = server.logger.child().withContext({
-    name: "sse-reader-endpoint",
-  });
+  const baseLogger = getLogger(["teleportal", "http", "sse-reader-endpoint"]);
 
   return async (req: Request): Promise<Response> => {
     const clientId =
       req.headers.get("x-teleportal-client-id") ??
       new URL(req.url).searchParams.get("client-id") ??
       uuidv4();
-    const logger = baseLogger.child().withContext({
+    const logger = baseLogger.with({
       clientId,
       url: req.url,
     });
@@ -103,7 +103,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
     });
 
     logger
-      .withMetadata({
+      .with({
         clientId: context.clientId,
       })
       .trace("created client");
@@ -116,7 +116,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
 
     await sseTransport.subscribe(`client/${context.clientId}`);
     logger
-      .withMetadata({
+      .with({
         topic: `client/${context.clientId}`,
       })
       .trace("sseTransport subscribed to client");
@@ -139,7 +139,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
             })
             .then((session) => {
               logger
-                .withMetadata({
+                .with({
                   sessionId: session.id,
                   documentId: session.documentId,
                 })
@@ -173,15 +173,13 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
    */
   ackTimeout?: number;
 }) {
-  const baseLogger = server.logger.child().withContext({
-    name: "sse-writer-endpoint",
-  });
+  const baseLogger = getLogger(["teleportal", "http", "sse-writer-endpoint"]);
 
   return async (req: Request): Promise<Response> => {
     const clientId =
       req.headers.get("x-teleportal-client-id") ??
       new URL(req.url).searchParams.get("client-id");
-    const logger = baseLogger.child().withContext({
+    const logger = baseLogger.with({
       clientId,
       url: req.url,
     });
@@ -209,7 +207,7 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
       pubSub: server.pubSub,
       topicResolver: (message) => {
         logger
-          .withMetadata({
+          .with({
             messageId: message.id,
             payloadType: message.payload.type,
           })
@@ -240,7 +238,9 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
       await trackedSink.waitForAcks();
       logger.trace("all ACKs received");
     } catch (error) {
-      logger.withError(error as Error).warn("failed to receive ACK");
+      logger
+        .with({ error: toErrorDetails(error) })
+        .warn("failed to receive ACK");
       await trackedSink.unsubscribe();
 
       return Response.json(
@@ -286,13 +286,11 @@ export function getHTTPEndpoint<Context extends ServerContext>({
   server: Server<Context>;
   getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
 }) {
-  const baseLogger = server.logger.child().withContext({
-    name: "http-endpoint",
-  });
+  const baseLogger = getLogger(["teleportal", "http", "http-endpoint"]);
 
   return async (req: Request): Promise<Response> => {
     const clientId = uuidv4();
-    const logger = baseLogger.child().withContext({
+    const logger = baseLogger.with({
       clientId,
       url: req.url,
     });
@@ -322,7 +320,7 @@ export function getHTTPEndpoint<Context extends ServerContext>({
     });
 
     logger
-      .withMetadata({
+      .with({
         clientId: client.id,
       })
       .trace("client created");

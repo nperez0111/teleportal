@@ -7,7 +7,6 @@ import {
 } from "teleportal/storage";
 import { getHTTPHandler } from "teleportal/http";
 
-import { logger } from "../src/backend/logger";
 import homepage from "../src/index.html";
 import {
   checkPermissionWithTokenManager,
@@ -29,7 +28,6 @@ const server = new Server({
     return new UnstorageDocumentStorage(memoryStorage);
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
-  logger: logger,
 });
 
 const httpHandlers = getHTTPHandler({

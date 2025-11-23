@@ -25,7 +25,6 @@ import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { noopTransport } from "../../transports/passthrough";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type { ServerContext } from "teleportal";
-import { augmentLogger } from "../../server/logger";
 import { getLogger } from "@logtape/logtape";
 
 /**
@@ -272,10 +271,6 @@ function connectionToTransport(
     writable,
   };
 }
-
-const testLogger = augmentLogger(
-  getLogger(["teleportal", "tests", "http-connection-msw"]),
-);
 
 describe("HttpConnection with MSW", () => {
   const server = setupServer();
@@ -1102,7 +1097,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload file through HTTP connection", async () => {
       const testClientId = "test-client-file";
       const fileStorage = new InMemoryFileStorage();
-      const fileHandler = new FileHandler(fileStorage, testLogger);
+      const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
@@ -1227,7 +1222,11 @@ describe("HttpConnection with MSW", () => {
       // messages emitted from the client should be sent to the file transport
       client.getReader().readable.pipeTo(wrappedTransport.writable);
 
-      const fileId = await wrappedTransport.upload(file, "test-file-id");
+      const fileId = await wrappedTransport.upload(
+        file,
+        "test-doc",
+        "test-file-id",
+      );
 
       // wait for the storage to be updated
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1246,7 +1245,7 @@ describe("HttpConnection with MSW", () => {
     test("should handle multiple chunk file upload via HTTP", async () => {
       const testClientId = "test-client-large-file";
       const fileStorage = new InMemoryFileStorage();
-      const fileHandler = new FileHandler(fileStorage, testLogger);
+      const fileHandler = new FileHandler(fileStorage);
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
       };
@@ -1367,7 +1366,11 @@ describe("HttpConnection with MSW", () => {
       // messages emitted from the client should be sent to the file transport
       client.getReader().readable.pipeTo(wrappedTransport.writable);
 
-      const fileId = await wrappedTransport.upload(file, "test-large-file-id");
+      const fileId = await wrappedTransport.upload(
+        file,
+        "test-doc",
+        "test-large-file-id",
+      );
 
       // wait for the storage to be updated
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1386,7 +1389,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload and download file through HTTP connection (round-trip)", async () => {
       const testClientId = "test-client-roundtrip";
       const fileStorage = new InMemoryFileStorage();
-      const fileHandler = new FileHandler(fileStorage, testLogger);
+      const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,

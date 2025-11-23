@@ -1,6 +1,6 @@
 import type { Message, ServerContext } from "teleportal";
 import type { FileStorage } from "../storage/file-storage";
-import type { Logger } from "./logger";
+import { getLogger, Logger } from "@logtape/logtape";
 import {
   AckMessage,
   FileMessage,
@@ -29,10 +29,10 @@ export class FileHandler<
   #fileStorage: FileStorage;
   #logger: Logger;
 
-  constructor(fileStorage: FileStorage, logger: Logger) {
+  constructor(fileStorage: FileStorage) {
     super();
     this.#fileStorage = fileStorage;
-    this.#logger = logger.with({ name: "file-handler" });
+    this.#logger = getLogger(["teleportal", "server", "file-handler"]);
   }
 
   /**
@@ -75,6 +75,7 @@ export class FileHandler<
       lastModified: Date.now(),
       documentId: document,
     });
+
     this.#logger
       .with({ uploadId: metadata.fileId })
       .debug("Upload session initiated");

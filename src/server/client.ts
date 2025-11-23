@@ -1,6 +1,6 @@
 import type { ServerContext, Message } from "teleportal";
 import { toErrorDetails } from "../logging";
-import type { Logger } from "./logger";
+import { getLogger } from "@logtape/logtape";
 
 type QueuedSend<Context extends ServerContext> = {
   message: Message<Context>;
@@ -14,20 +14,21 @@ export class Client<Context extends ServerContext> {
    */
   public readonly id: string;
   #writable: WritableStream<Message<Context>>;
-  #logger: Logger;
   #sendQueue: QueuedSend<Context>[] = [];
   #processingQueue = false;
 
   constructor(args: {
     id: string;
     writable: WritableStream<Message<Context>>;
-    logger: Logger;
   }) {
     this.id = args.id;
     this.#writable = args.writable;
-    this.#logger = args.logger.with({ name: "client", clientId: this.id });
 
-    this.#logger.debug("Client instance created", { clientId: this.id });
+    const logger = getLogger(["teleportal", "server", "client"]).with({
+      name: "client",
+      clientId: this.id,
+    });
+    logger.debug("Client instance created", { clientId: this.id });
   }
 
   /**
@@ -73,7 +74,11 @@ export class Client<Context extends ServerContext> {
    * This method handles getting and releasing the writer.
    */
   async #sendMessage(message: Message<Context>): Promise<void> {
-    const msgLogger = this.#logger.with({
+    const logger = getLogger(["teleportal", "server", "client"]).with({
+      name: "client",
+      clientId: this.id,
+    });
+    const msgLogger = logger.with({
       messageId: message.id,
       documentId: message.document,
     });

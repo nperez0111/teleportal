@@ -8,7 +8,7 @@ import {
   encodeMessageArray,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
-import { augmentLogger } from "../server/logger";
+
 import { Server } from "../server/server";
 import {
   getHTTPEndpoint,
@@ -76,13 +76,10 @@ describe("HTTP Handlers", () => {
       room: "room-1",
     });
 
-      server = new Server({
-        getStorage: mockGetStorage,
-        pubSub,
-        logger: augmentLogger(
-          getLogger(["teleportal", "tests", "http-handlers"]),
-        ),
-      });
+    server = new Server({
+      getStorage: mockGetStorage,
+      pubSub,
+    });
   });
 
   afterEach(async () => {

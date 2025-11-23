@@ -11,7 +11,6 @@ import {
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
-import { logger } from "../src/backend/logger";
 import homepage from "../src/index.html";
 import { Agent } from "../../src/agent";
 
@@ -38,7 +37,6 @@ const server = new Server<TokenPayload & { clientId: string }>({
       scanKeys: false,
     });
   },
-  logger: logger,
 });
 
 const ws = crossws(

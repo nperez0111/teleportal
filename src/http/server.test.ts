@@ -6,7 +6,6 @@ import {
   type StateVector,
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
-import { augmentLogger } from "../server/logger";
 import { Server } from "../server/server";
 import { getHTTPHandler } from "./server";
 
@@ -70,13 +69,10 @@ describe("getHTTPHandler", () => {
       room: "room-1",
     });
 
-      server = new Server({
-        getStorage: mockGetStorage,
-        pubSub,
-        logger: augmentLogger(
-          getLogger(["teleportal", "tests", "http-server"]),
-        ),
-      });
+    server = new Server({
+      getStorage: mockGetStorage,
+      pubSub,
+    });
 
     handler = getHTTPHandler({
       server,

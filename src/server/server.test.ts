@@ -2,7 +2,6 @@ import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { getLogger } from "@logtape/logtape";
 import { Server } from "./server";
 import { Client } from "./client";
-import { augmentLogger, logger } from "./logger";
 import { InMemoryPubSub, DocMessage } from "teleportal";
 import type {
   ServerContext,
@@ -14,9 +13,6 @@ import type {
 } from "teleportal";
 import { DocumentStorage } from "teleportal/storage";
 
-const emptyLogger = augmentLogger(
-  getLogger(["teleportal", "tests", "server-test"]),
-);
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
   handleSyncStep1(
@@ -119,7 +115,6 @@ describe("Server", () => {
     mockGetStorage = () => Promise.resolve(new MockDocumentStorage());
 
     server = new Server({
-      logger: emptyLogger,
       getStorage: mockGetStorage,
       pubSub,
     });
@@ -133,25 +128,13 @@ describe("Server", () => {
   describe("constructor", () => {
     it("should create a Server instance", () => {
       expect(server).toBeDefined();
-      expect(server.logger).toBeDefined();
-    });
-
-    it("should use default logger when not provided", async () => {
-      const serverWithDefaultLogger = new Server({
-        getStorage: mockGetStorage,
-        pubSub,
-        logger: emptyLogger,
-      });
-      expect(serverWithDefaultLogger.logger).toBeDefined();
-      await serverWithDefaultLogger[Symbol.asyncDispose]();
     });
 
     it("should use default pubSub when not provided", async () => {
       const serverWithDefaultPubSub = new Server({
         getStorage: mockGetStorage,
-        logger: emptyLogger,
       });
-      expect(serverWithDefaultPubSub.logger).toBeDefined();
+      expect(serverWithDefaultPubSub.pubSub).toBeDefined();
       await serverWithDefaultPubSub[Symbol.asyncDispose]();
     });
 
@@ -160,7 +143,6 @@ describe("Server", () => {
         getStorage: mockGetStorage,
         pubSub,
         nodeId: "custom-node-id",
-        logger: emptyLogger,
       });
       expect(serverWithNodeId).toBeDefined();
       await serverWithNodeId[Symbol.asyncDispose]();
@@ -170,12 +152,10 @@ describe("Server", () => {
       const server1 = new Server({
         getStorage: mockGetStorage,
         pubSub,
-        logger: emptyLogger,
       });
       const server2 = new Server({
         getStorage: mockGetStorage,
         pubSub,
-        logger: emptyLogger,
       });
       // Node IDs should be different
       expect(server1).toBeDefined();
@@ -293,7 +273,6 @@ describe("Server", () => {
       };
 
       const customServer = new Server({
-        logger: emptyLogger,
         getStorage: customGetStorage,
         pubSub,
       });
@@ -318,7 +297,6 @@ describe("Server", () => {
       };
 
       const customServer = new Server({
-        logger: emptyLogger,
         getStorage: customGetStorage,
         pubSub,
       });
@@ -541,7 +519,6 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,
@@ -586,7 +563,6 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,
@@ -664,7 +640,6 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        logger: emptyLogger,
         getStorage: mockGetStorage,
         pubSub,
         checkPermission,
@@ -1072,12 +1047,10 @@ describe("Server", () => {
       const client1 = new Client({
         id: "client-1",
         writable: writable1,
-        logger: logger.child().withContext({ name: "test" }),
       });
       const client2 = new Client({
         id: "client-2",
         writable: writable2,
-        logger: logger.child().withContext({ name: "test" }),
       });
 
       // Both clients connect to same document

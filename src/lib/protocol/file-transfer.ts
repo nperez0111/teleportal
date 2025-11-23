@@ -259,6 +259,9 @@ export namespace FileTransferProtocol {
         this.sendMessage(message);
         bytesUploaded += filePart.length;
       }
+      new ReadableStream({
+        pull: async (controller) => {},
+      });
     }
 
     protected handleAuthMessage(payload: DecodedFileAuthMessage) {

@@ -10,13 +10,12 @@ import {
 import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { toErrorDetails } from "../logging";
-import { logger as defaultLogger, type Logger } from "./logger";
+import { getLogger } from "@logtape/logtape";
 import { Session } from "./session";
 import { Client } from "./client";
 import { FileHandler } from "./file-handler";
 
 export type ServerOptions<Context extends ServerContext> = {
-  logger?: Logger;
   /**
    * Retrieve per-document storage.
    */
@@ -52,10 +51,6 @@ export type ServerOptions<Context extends ServerContext> = {
 
 export class Server<Context extends ServerContext> {
   /**
-   * The logger for the server.
-   */
-  readonly logger: Logger;
-  /**
    * The options for the server.
    */
   #options: ServerOptions<Context>;
@@ -79,11 +74,12 @@ export class Server<Context extends ServerContext> {
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
-    this.logger = (options.logger ?? defaultLogger).with({ name: "server-v2" });
+    const logger = getLogger(["teleportal", "server"]);
+
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
 
-    this.logger.info("Server initialized", {
+    logger.info("Server initialized", {
       nodeId: this.#nodeId,
       hasCustomPubSub: !!options.pubSub,
       hasPermissionChecker: !!options.checkPermission,
@@ -127,6 +123,7 @@ export class Server<Context extends ServerContext> {
       throw new Error("Document ID is required");
     }
 
+    const logger = getLogger(["teleportal", "server"]);
     const compositeDocumentId = this.#getCompositeDocumentId(
       documentId,
       context,
@@ -136,25 +133,25 @@ export class Server<Context extends ServerContext> {
     const existing = this.#sessions.get(compositeDocumentId);
     if (existing) {
       // Validate that the encryption state matches the existing session
-        if (existing.encrypted !== encrypted) {
-          const error = new Error(
-            `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
-          );
-          this.logger.error("Encryption state mismatch detected", {
-            documentId: compositeDocumentId,
-            sessionId: existing.id,
-            existingEncrypted: existing.encrypted,
-            requestedEncrypted: encrypted,
-            error: toErrorDetails(error),
-          });
-          throw error;
-        }
-
-        this.logger.debug("Retrieved existing session", {
+      if (existing.encrypted !== encrypted) {
+        const error = new Error(
+          `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
+        );
+        logger.error("Encryption state mismatch detected", {
           documentId: compositeDocumentId,
           sessionId: existing.id,
-          encrypted,
+          existingEncrypted: existing.encrypted,
+          requestedEncrypted: encrypted,
+          error: toErrorDetails(error),
         });
+        throw error;
+      }
+
+      logger.debug("Retrieved existing session", {
+        documentId: compositeDocumentId,
+        sessionId: existing.id,
+        encrypted,
+      });
 
       if (client) {
         existing.addClient(client);
@@ -165,27 +162,27 @@ export class Server<Context extends ServerContext> {
 
     // Check if there's a pending session creation for this document
     const pending = this.#pendingSessions.get(compositeDocumentId);
-      if (pending) {
-        this.logger.debug("Waiting for pending session creation", {
-          documentId: compositeDocumentId,
-        });
+    if (pending) {
+      logger.debug("Waiting for pending session creation", {
+        documentId: compositeDocumentId,
+      });
 
       const session = await pending;
 
       // Validate encryption state matches
-        if (session.encrypted !== encrypted) {
-          const error = new Error(
-            `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
-          );
-          this.logger.error("Encryption state mismatch detected", {
-            documentId: compositeDocumentId,
-            sessionId: session.id,
-            existingEncrypted: session.encrypted,
-            requestedEncrypted: encrypted,
-            error: toErrorDetails(error),
-          });
-          throw error;
-        }
+      if (session.encrypted !== encrypted) {
+        const error = new Error(
+          `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
+        );
+        logger.error("Encryption state mismatch detected", {
+          documentId: compositeDocumentId,
+          sessionId: session.id,
+          existingEncrypted: session.encrypted,
+          requestedEncrypted: encrypted,
+          error: toErrorDetails(error),
+        });
+        throw error;
+      }
 
       if (client) {
         session.addClient(client);
@@ -195,17 +192,17 @@ export class Server<Context extends ServerContext> {
     }
 
     // Create a new session - wrap in a promise to prevent race conditions
-      const sessionLogger = this.logger.with({
+    const sessionLogger = logger.with({
       documentId: compositeDocumentId,
       sessionId: id,
       encrypted,
     });
 
-      sessionLogger.info("Creating new session", {
-        documentId: compositeDocumentId,
-        sessionId: id,
-        encrypted,
-      });
+    sessionLogger.info("Creating new session", {
+      documentId: compositeDocumentId,
+      sessionId: id,
+      encrypted,
+    });
 
     const sessionPromise = (async (): Promise<Session<Context>> => {
       try {
@@ -225,7 +222,6 @@ export class Server<Context extends ServerContext> {
           storage,
           pubSub: this.pubSub,
           nodeId: this.#nodeId,
-          logger: this.logger,
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
         });
 
@@ -233,7 +229,7 @@ export class Server<Context extends ServerContext> {
         this.#sessions.set(compositeDocumentId, session);
 
         sessionLogger
-          .withMetadata({
+          .with({
             documentId: compositeDocumentId,
             sessionId: id,
             encrypted,
@@ -244,8 +240,8 @@ export class Server<Context extends ServerContext> {
         return session;
       } catch (error) {
         sessionLogger
-          .withError(error as Error)
-          .withMetadata({
+          .with({
+            error: toErrorDetails(error as Error),
             documentId: compositeDocumentId,
             sessionId: id,
             encrypted,
@@ -280,13 +276,14 @@ export class Server<Context extends ServerContext> {
     context: Context,
     encrypted: boolean,
   ): Promise<void> {
+    const logger = getLogger(["teleportal", "server"]);
     const compositeDocumentId = this.#getCompositeDocumentId(
       documentId,
       context,
     );
 
-    this.logger
-      .withMetadata({
+    logger
+      .with({
         documentId: compositeDocumentId,
         encrypted,
       })
@@ -326,8 +323,8 @@ export class Server<Context extends ServerContext> {
     // Delete document data via storage (this handles cascade deletion of files)
     await storage.deleteDocument(compositeDocumentId);
 
-    this.logger
-      .withMetadata({
+    logger
+      .with({
         documentId: compositeDocumentId,
       })
       .info("Document deleted");
@@ -350,21 +347,20 @@ export class Server<Context extends ServerContext> {
     id?: string;
     abortSignal?: AbortSignal;
   }) {
-    const logger = this.logger.child().withContext({ clientId: id });
+    const logger = getLogger(["teleportal", "server"]).with({ clientId: id });
 
-    logger.withMetadata({ clientId: id }).info("Creating new client");
+    logger.info("Creating new client");
 
     const client = new Client<Context>({
       id,
       writable: transport.writable,
-      logger,
     });
 
     withMessageValidator(transport, {
       isAuthorized: async (message, type) => {
         if (!this.#options.checkPermission) {
           logger
-            .withMetadata({
+            .with({
               messageId: message.id,
               documentId: message.document,
               messageType: message.type,
@@ -374,7 +370,7 @@ export class Server<Context extends ServerContext> {
           return true;
         }
 
-        const msgLogger = logger.child().withContext({ messageId: message.id });
+        const msgLogger = logger.with({ messageId: message.id });
 
         // Skip permission check for file-auth-message (they're responses, not requests)
         if (
@@ -395,7 +391,7 @@ export class Server<Context extends ServerContext> {
             : undefined;
 
         msgLogger
-          .withMetadata({
+          .with({
             messageId: message.id,
             documentId: message.document,
             fileId,
@@ -423,7 +419,7 @@ export class Server<Context extends ServerContext> {
           });
 
           msgLogger
-            .withMetadata({
+            .with({
               messageId: message.id,
               documentId: message.document,
               fileId,
@@ -493,8 +489,8 @@ export class Server<Context extends ServerContext> {
           return true;
         } catch (error) {
           msgLogger
-            .withError(error as Error)
-            .withMetadata({
+            .with({
+              error: toErrorDetails(error as Error),
               messageId: message.id,
               documentId: message.document,
               permissionType: type,
@@ -507,13 +503,13 @@ export class Server<Context extends ServerContext> {
       .readable.pipeTo(
         new WritableStream<Message<Context>>({
           write: async (message) => {
-            const msgLogger = logger.child().withContext({
+            const msgLogger = logger.with({
               messageId: message.id,
               documentId: message.document,
             });
 
             msgLogger
-              .withMetadata({
+              .with({
                 messageId: message.id,
                 documentId: message.document,
                 messageType: message.type,
@@ -541,7 +537,7 @@ export class Server<Context extends ServerContext> {
                     "File storage not configured. File messages are not supported.",
                   );
                   msgLogger
-                    .withError(error)
+                    .with({ error: toErrorDetails(error) })
                     .error("File storage not available");
 
                   // Send error response
@@ -571,17 +567,14 @@ export class Server<Context extends ServerContext> {
                 msgLogger.debug("Processing file message");
 
                 // Create a temporary handler for this message using the session's file storage
-                const fileHandler = new FileHandler<Context>(
-                  fileStorage,
-                  this.logger,
-                );
+                const fileHandler = new FileHandler<Context>(fileStorage);
 
                 await fileHandler.handle(message, async (response) => {
                   await client.send(response);
                 });
 
                 msgLogger
-                  .withMetadata({
+                  .with({
                     messageId: message.id,
                   })
                   .debug("File message processed successfully");
@@ -598,7 +591,7 @@ export class Server<Context extends ServerContext> {
                 await session.apply(message, client);
 
                 msgLogger
-                  .withMetadata({
+                  .with({
                     messageId: message.id,
                     documentId: message.document,
                   })
@@ -606,8 +599,8 @@ export class Server<Context extends ServerContext> {
               }
             } catch (error) {
               msgLogger
-                .withError(error as Error)
-                .withMetadata({
+                .with({
+                  error: toErrorDetails(error as Error),
                   messageId: message.id,
                   documentId: message.document,
                   messageType: message.type,
@@ -620,18 +613,17 @@ export class Server<Context extends ServerContext> {
       )
       .catch((e) => {
         logger
-          .withError(e)
-          .withMetadata({ clientId: id })
+          .with({ error: toErrorDetails(e), clientId: id })
           .error("Client stream errored");
       })
       .finally(() => {
         logger
-          .withMetadata({ clientId: id })
+          .with({ clientId: id })
           .info("Client stream ended, disconnecting client");
         this.disconnectClient(client.id);
       });
 
-    logger.withMetadata({ clientId: id }).info("Client created and connected");
+    logger.with({ clientId: id }).info("Client created and connected");
 
     if (abortSignal) {
       abortSignal.addEventListener("abort", () => {
@@ -648,18 +640,16 @@ export class Server<Context extends ServerContext> {
    */
   disconnectClient(client: string | Client<Context>) {
     const clientId = typeof client === "string" ? client : client.id;
-    const logger = this.logger.child().withContext({ clientId });
+    const logger = getLogger(["teleportal", "server"]).with({ clientId });
 
-    logger
-      .withMetadata({ clientId })
-      .info("Disconnecting client from all sessions");
+    logger.with({ clientId }).info("Disconnecting client from all sessions");
 
     for (const s of this.#sessions.values()) {
       s.removeClient(client);
     }
 
     logger
-      .withMetadata({
+      .with({
         clientId,
         totalSessions: this.#sessions.size,
       })
@@ -670,6 +660,7 @@ export class Server<Context extends ServerContext> {
    * Handle cleanup of a session that was scheduled for disposal.
    */
   #handleSessionCleanup(session: Session<Context>) {
+    const logger = getLogger(["teleportal", "server"]);
     // Check if session still exists in our map (using namespacedDocumentId as key)
     const existingSession = this.#sessions.get(session.namespacedDocumentId);
     if (!existingSession || existingSession !== session) {
@@ -679,8 +670,8 @@ export class Server<Context extends ServerContext> {
 
     // Verify session should still be disposed (has no clients)
     if (session.shouldDispose) {
-      this.logger
-        .withMetadata({
+      logger
+        .with({
           documentId: session.documentId,
           namespacedDocumentId: session.namespacedDocumentId,
           sessionId: session.id,
@@ -689,9 +680,9 @@ export class Server<Context extends ServerContext> {
 
       this.#sessions.delete(session.namespacedDocumentId);
       session[Symbol.asyncDispose]().catch((error) => {
-        this.logger
-          .withError(error as Error)
-          .withMetadata({
+        logger
+          .with({
+            error: toErrorDetails(error as Error),
             documentId: session.documentId,
             namespacedDocumentId: session.namespacedDocumentId,
             sessionId: session.id,
@@ -705,8 +696,9 @@ export class Server<Context extends ServerContext> {
    * Async dispose the server.
    */
   async [Symbol.asyncDispose](): Promise<void> {
-    this.logger
-      .withMetadata({
+    const logger = getLogger(["teleportal", "server"]);
+    logger
+      .with({
         nodeId: this.#nodeId,
         activeSessions: this.#sessions.size,
         pendingSessions: this.#pendingSessions.size,
@@ -716,8 +708,8 @@ export class Server<Context extends ServerContext> {
     // Wait for any pending session creations to complete (or fail)
     // This prevents dangling promises and ensures we don't dispose while sessions are being created
     if (this.#pendingSessions.size > 0) {
-      this.logger
-        .withMetadata({
+      logger
+        .with({
           pendingCount: this.#pendingSessions.size,
         })
         .debug("Waiting for pending session creations to complete");
@@ -739,9 +731,12 @@ export class Server<Context extends ServerContext> {
       try {
         await s[Symbol.asyncDispose]();
       } catch (error) {
-        this.logger
-          .withError(error as Error)
-          .withMetadata({ sessionId: s.id, documentId: s.documentId })
+        logger
+          .with({
+            error: toErrorDetails(error as Error),
+            sessionId: s.id,
+            documentId: s.documentId,
+          })
           .error("Error disposing session");
       }
     }
@@ -749,11 +744,13 @@ export class Server<Context extends ServerContext> {
     try {
       await this.pubSub[Symbol.asyncDispose]?.();
     } catch (error) {
-      this.logger.withError(error as Error).error("Error disposing pubSub");
+      logger
+        .with({ error: toErrorDetails(error as Error) })
+        .error("Error disposing pubSub");
     }
 
-    this.logger
-      .withMetadata({
+    logger
+      .with({
         nodeId: this.#nodeId,
       })
       .info("Server disposed");

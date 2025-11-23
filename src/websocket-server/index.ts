@@ -9,7 +9,7 @@ import {
 import { fromBinaryTransport } from "../transports/utils";
 import type { Server } from "teleportal/server";
 import type { TokenManager } from "teleportal/token";
-import type { Logger } from "teleportal/server";
+import { getLogger } from "@logtape/logtape";
 import { toErrorDetails } from "../logging";
 
 declare module "crossws" {
@@ -35,7 +35,6 @@ export function getWebsocketHandlers<
   onConnect,
   onDisconnect,
   onMessage,
-  logger,
 }: {
   /**
    * Called when a client is attempting to upgrade to a websocket connection.
@@ -71,15 +70,15 @@ export function getWebsocketHandlers<
     message: BinaryMessage;
     peer: crossws.Peer;
   }) => void | Promise<void>;
-  logger: Logger;
 }): {
   hooks: crossws.Hooks;
 } {
+  const logger = getLogger(["teleportal", "websocket-server"]);
   return {
     hooks: {
       async upgrade(request) {
         logger
-          .withMetadata({ requestUrl: request.url })
+          .with({ requestUrl: request.url })
           .info("upgrade websocket connection");
         try {
           const { context, headers } = await onUpgrade(request);
@@ -98,8 +97,8 @@ export function getWebsocketHandlers<
           };
         } catch (err) {
           logger
-            .withError(toErrorDetails(err))
-            .withMetadata({ requestUrl: request.url })
+            .with(toErrorDetails(err))
+            .with({ requestUrl: request.url })
             .error("rejected upgrade websocket connection");
           if (err instanceof Response) {
             throw err;
@@ -114,9 +113,7 @@ export function getWebsocketHandlers<
         }
       },
       async open(peer) {
-        logger
-          .withMetadata({ clientId: peer.id })
-          .info("open websocket connection");
+        logger.with({ clientId: peer.id }).info("open websocket connection");
         const transform = new TransformStream<BinaryMessage, BinaryMessage>();
 
         peer.context.clientId = peer.id;
@@ -139,16 +136,14 @@ export function getWebsocketHandlers<
           });
         } catch (err) {
           logger
-            .withError(toErrorDetails(err))
-            .withMetadata({ clientId: peer.id })
+            .with(toErrorDetails(err))
+            .with({ clientId: peer.id })
             .error("failed to connect");
           peer.close();
         }
       },
       async message(peer, msg) {
-        logger
-          .withMetadata({ clientId: peer.id, messageId: msg.id })
-          .trace("message");
+        logger.with({ clientId: peer.id, messageId: msg.id }).trace("message");
         const message = msg.uint8Array();
         if (!isBinaryMessage(message)) {
           throw new Error("Invalid message");
@@ -165,9 +160,7 @@ export function getWebsocketHandlers<
         }
       },
       async close(peer) {
-        logger
-          .withMetadata({ clientId: peer.id })
-          .info("close websocket connection");
+        logger.with({ clientId: peer.id }).info("close websocket connection");
         await onDisconnect?.({
           transport: peer.context.transport,
           context: peer.context as any,
@@ -189,8 +182,7 @@ export function getWebsocketHandlers<
       },
       async error(peer, error) {
         logger
-          .withError(error)
-          .withMetadata({ clientId: peer.id })
+          .with({ error: toErrorDetails(error), clientId: peer.id })
           .error("error");
         await peer.context.writer.abort(error);
         await peer.context.transport.writable.abort(error);
@@ -262,6 +254,5 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
     onMessage: async (ctx) => {
       await hooks.onMessage?.(ctx);
     },
-    logger: server.logger,
   });
 }
