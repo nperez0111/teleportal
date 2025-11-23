@@ -66,7 +66,7 @@ export namespace FileTransferProtocol {
       if (encryptionKey) {
         const numberOfChunks = Math.ceil(file.size / CHUNK_SIZE);
         encryptionOverhead =
-          numberOfChunks * (ENCRYPTED_CHUNK_SIZE - CHUNK_SIZE);
+          numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
       }
 
       this.sendMessage(
@@ -340,6 +340,7 @@ export namespace FileTransferProtocol {
           : Math.ceil(handler.fileMetadata.size / chunkSize);
       if (handler.chunks.size >= expectedChunks) {
         try {
+          // Create a new Uint8Array with the upper bound of the expected size
           const fileData = new Uint8Array(expectedChunks * CHUNK_SIZE);
           let offset = 0;
           for (let i = 0; i < expectedChunks; i++) {
@@ -350,9 +351,13 @@ export namespace FileTransferProtocol {
             fileData.set(chunk, offset);
             offset += chunk.length;
           }
-          const file = new File([fileData], handler.fileMetadata.filename, {
-            type: handler.fileMetadata.mimeType,
-          });
+          const file = new File(
+            [fileData.slice(0, offset)],
+            handler.fileMetadata.filename,
+            {
+              type: handler.fileMetadata.mimeType,
+            },
+          );
           await this.onDownloadComplete(handler, file);
           handler.resolve(file);
         } catch (e) {

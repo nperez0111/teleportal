@@ -215,11 +215,7 @@ describe("withSendFile", () => {
     );
 
     // Start the download with the contentId
-    const downloadPromise = wrappedTransport.download(
-      contentId,
-      "test-doc",
-      false,
-    );
+    const downloadPromise = wrappedTransport.download(contentId, "test-doc");
     // let it be received async
     await new Promise((resolve) => setTimeout(resolve, 1));
 

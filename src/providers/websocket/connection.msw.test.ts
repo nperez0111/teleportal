@@ -323,7 +323,6 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       const downloadedFile = await wrappedTransport.download(
         fileId,
         "test-doc",
-        false,
       );
 
       // Verify downloaded file matches original
