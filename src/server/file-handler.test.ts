@@ -138,7 +138,7 @@ describe("FileHandler", () => {
     const merkleTree = buildMerkleTree([fileData]);
     const proof = generateMerkleProof(merkleTree, 0);
     const contentId = toBase64(
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash,
+      merkleTree.nodes[merkleTree.nodes.length - 1].hash!,
     );
 
     // Client sends file-part message (the only chunk)
@@ -246,7 +246,7 @@ describe("FileHandler", () => {
     sentMessages.shift();
 
     // Check that file was completed and stored
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
     const storedFile = await fileStorage.getFile(contentId);
     expect(storedFile).not.toBeNull();
     expect(storedFile!.metadata.filename).toBe("large.txt");
@@ -260,7 +260,7 @@ describe("FileHandler", () => {
     // First, store a file
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
     const merkleTree = buildMerkleTree([fileData]);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
     const contentIdBase64 = toBase64(contentId);
 
     // Complete an upload to store the file

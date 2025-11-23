@@ -28,7 +28,7 @@ await configure({
   sinks,
   loggers: [
     {
-      category: ["teleportal", "playground"],
+      category: ["teleportal"],
       sinks: [isProduction ? "pino" : "console"],
       lowestLevel: isProduction ? "info" : "debug",
     },

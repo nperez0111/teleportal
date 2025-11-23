@@ -69,7 +69,7 @@ describe("UnstorageFileStorage", () => {
 
     // Build merkle tree to get contentId
     const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
 
     // Store chunks
     for (let i = 0; i < chunks.length; i++) {
@@ -133,7 +133,7 @@ describe("UnstorageFileStorage", () => {
     await storage.storeChunk(fileId, 0, chunk, []);
 
     const merkleTree = buildMerkleTree([chunk, new Uint8Array(CHUNK_SIZE)]);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
 
     await expect(storage.completeUpload(fileId, contentId)).rejects.toThrow(
       "Missing chunk 1 for file test-file-id",

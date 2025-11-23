@@ -13,6 +13,7 @@ import {
   withSendFile,
 } from "teleportal/transports";
 import { ClientContext, Transport } from "teleportal";
+import { EncryptionClient } from "../../../src/transports/encrypted/client";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -24,7 +25,11 @@ const tokenManager = createTokenManager({
 class ProviderManager {
   private static instance: ProviderManager | null = null;
   private provider: Provider<
-    Transport<ClientContext, DefaultTransportProperties & FileTransportMethods>
+    Transport<
+      ClientContext,
+      DefaultTransportProperties &
+        FileTransportMethods & { handler?: EncryptionClient }
+    >
   > | null = null;
   private websocketConnection: Promise<websocket.WebSocketConnection> | null =
     null;
@@ -67,7 +72,7 @@ class ProviderManager {
   ): Promise<NonNullable<ProviderManager["provider"]>> {
     if (!this.provider) {
       const client = await this.getWebSocketConnection();
-      this.provider = await Provider.create({
+      this.provider = (await Provider.create({
         client,
         document: documentId,
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
@@ -79,7 +84,7 @@ class ProviderManager {
           });
         },
         enableOfflinePersistence: false,
-      });
+      })) as any;
     } else {
       // Switch document on existing provider
       this.provider = this.provider.switchDocument({
@@ -90,14 +95,14 @@ class ProviderManager {
             : getDefaultTransport();
           return withSendFile({
             transport: baseTransport,
-          });
+          }) as any;
         },
       });
     }
 
     // Notify all subscribers
     this.subscribers.forEach((callback) => callback(this.provider));
-    return this.provider;
+    return this.provider as any;
   }
 
   subscribe(callback: (provider: Provider | null) => void): () => void {
@@ -125,7 +130,11 @@ export function useProvider(
   key: CryptoKey | undefined,
 ): {
   provider: Provider<
-    Transport<ClientContext, DefaultTransportProperties & FileTransportMethods>
+    Transport<
+      ClientContext,
+      DefaultTransportProperties &
+        FileTransportMethods & { handler?: EncryptionClient }
+    >
   > | null;
 } {
   const [provider, setProvider] = useState<Provider | null>(null);
@@ -152,7 +161,8 @@ export function useProvider(
     provider: provider as Provider<
       Transport<
         ClientContext,
-        DefaultTransportProperties & FileTransportMethods
+        DefaultTransportProperties &
+          FileTransportMethods & { handler?: EncryptionClient }
       >
     > | null,
   };

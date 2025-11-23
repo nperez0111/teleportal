@@ -241,7 +241,7 @@ export class FileHandler<
 
         if (chunks.length === totalChunks) {
           const merkleTree = buildMerkleTree(chunks);
-          const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+          const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
 
           try {
             await this.#fileStorage.completeUpload(payload.fileId, contentId);

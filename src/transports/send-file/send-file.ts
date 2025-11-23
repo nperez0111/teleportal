@@ -80,7 +80,7 @@ class SendFileClient<
   public requestDownload(
     fileId: string,
     document: string,
-    encrypted?: boolean,
+    encryptionKey?: CryptoKey,
     timeout?: number,
     context?: Context | undefined,
   ): Promise<File> {
@@ -92,7 +92,7 @@ class SendFileClient<
     const promise = super.requestDownload(
       fileId,
       document,
-      encrypted,
+      encryptionKey,
       timeout,
       context,
     );
@@ -205,10 +205,10 @@ export type FileTransportMethods = {
      */
     fileId?: string,
     /**
-     * Whether to encrypt the file.
-     * @default false
+     * The encryption key to use for the file.
+     * @default undefined
      */
-    encrypted?: boolean,
+    encryptionKey?: CryptoKey,
   ) => Promise<string>;
   /**
    * Download a file by `fileId` returned from {@link FileTransportMethods.upload}.
@@ -224,10 +224,10 @@ export type FileTransportMethods = {
      */
     document: string,
     /**
-     * Whether the file is encrypted.
-     * @default false
+     * The encryption key to use for the file.
+     * @default undefined
      */
-    encrypted?: boolean,
+    encryptionKey?: CryptoKey,
     /**
      * Timeout in milliseconds for the download
      * @default 60000

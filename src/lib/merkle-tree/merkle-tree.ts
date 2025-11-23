@@ -6,13 +6,18 @@ import { digest } from "lib0/hash/sha256";
 export const CHUNK_SIZE = 64 * 1024;
 
 /**
+ * Size of each encrypted chunk in bytes (64KB - 28 bytes for the authentication tag)
+ */
+export const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE - 28;
+
+/**
  * A node in the merkle tree
  */
 export interface MerkleNode {
   /**
    * Hash of this node
    */
-  hash: Uint8Array;
+  hash?: Uint8Array;
   /**
    * Index of left child (if internal node)
    */
@@ -86,7 +91,7 @@ export function buildMerkleTree(chunks: Uint8Array[]): MerkleTree {
       const leftNode = nodes[i];
       const rightNode = i + 1 < currentLevelEnd ? nodes[i + 1] : leftNode; // Use left node as right if odd number
 
-      const parentHash = hashPair(leftNode.hash, rightNode.hash);
+      const parentHash = hashPair(leftNode.hash!, rightNode.hash!);
       const parentIndex = nodes.length;
 
       const parentNode: MerkleNode = {
@@ -112,6 +117,44 @@ export function buildMerkleTree(chunks: Uint8Array[]): MerkleTree {
     nodes,
     leafCount,
   };
+}
+
+function buildMerkleStructure(leafCount: number): MerkleNode[] {
+  if (leafCount === 0) {
+    return [];
+  }
+
+  const nodes: MerkleNode[] = new Array(leafCount)
+    .fill(null)
+    .map(() => ({}) as MerkleNode);
+  let currentLevelStart = 0;
+  let currentLevelEnd = nodes.length;
+
+  while (currentLevelEnd - currentLevelStart > 1) {
+    const nextLevelStart = currentLevelEnd;
+
+    for (let i = currentLevelStart; i < currentLevelEnd; i += 2) {
+      const leftNode = nodes[i];
+      const rightIndex = i + 1 < currentLevelEnd ? i + 1 : i;
+      const rightNode = nodes[rightIndex];
+      const parentIndex = nodes.length;
+
+      const parentNode: MerkleNode = {
+        left: i,
+        right: rightIndex,
+      };
+
+      nodes.push(parentNode);
+
+      leftNode.parent = parentIndex;
+      rightNode.parent = parentIndex;
+    }
+
+    currentLevelStart = nextLevelStart;
+    currentLevelEnd = nodes.length;
+  }
+
+  return nodes;
 }
 
 /**
@@ -143,11 +186,11 @@ export function generateMerkleProof(
     if (parent.left === currentNodeIndex) {
       // Current node is left child, add right sibling
       const rightSiblingIndex = parent.right!;
-      proof.push(tree.nodes[rightSiblingIndex].hash);
+      proof.push(tree.nodes[rightSiblingIndex].hash!);
     } else {
       // Current node is right child, add left sibling
       const leftSiblingIndex = parent.left!;
-      proof.push(tree.nodes[leftSiblingIndex].hash);
+      proof.push(tree.nodes[leftSiblingIndex].hash!);
     }
 
     currentNodeIndex = parentIndex;
@@ -218,7 +261,11 @@ export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
   let offset = 4;
   for (const node of tree.nodes) {
     // Write hash (32 bytes)
-    buffer.set(node.hash, offset);
+    const hash = node.hash;
+    if (!hash) {
+      throw new Error("Cannot serialize node without hash");
+    }
+    buffer.set(hash, offset);
     offset += 32;
 
     // Write parent index (4 bytes, -1 if none)
@@ -294,4 +341,281 @@ export function deserializeMerkleTree(
     nodes,
     leafCount: chunkCount,
   };
+}
+
+/**
+ * Output structure for each file part from the merkle tree transform stream
+ */
+export interface FilePart {
+  /**
+   * The chunk data
+   */
+  chunkData: Uint8Array;
+  /**
+   * Zero-based index of this chunk
+   */
+  chunkIndex: number;
+  /**
+   * Merkle proof for this chunk
+   */
+  merkleProof: Uint8Array[];
+  /**
+   * Total number of chunks in the file
+   */
+  totalChunks: number;
+  /**
+   * Total bytes processed so far (including this chunk)
+   */
+  bytesProcessed: number;
+  /**
+   * The merkle root hash (content ID)
+   */
+  rootHash: Uint8Array;
+  /**
+   * Whether the file is encrypted
+   */
+  encrypted: boolean;
+}
+
+/**
+ * Stable incremental merkle tree builder that knows the complete tree structure ahead of time.
+ * Allows generating stable proofs as soon as sibling hashes are available.
+ */
+class StableIncrementalMerkleTree {
+  private nodes: MerkleNode[];
+  private chunksAdded = 0;
+  private readonly leafCount: number;
+
+  constructor(totalChunks: number) {
+    this.leafCount = Math.max(1, totalChunks);
+    this.nodes = buildMerkleStructure(this.leafCount);
+  }
+
+  addChunk(chunk: Uint8Array): number {
+    if (this.chunksAdded >= this.leafCount) {
+      throw new Error("Cannot add more chunks than totalChunks");
+    }
+
+    const chunkIndex = this.chunksAdded;
+    const node = this.nodes[chunkIndex];
+    node.hash = digest(chunk);
+    this.chunksAdded++;
+
+    this.propagateParents(chunkIndex);
+    return chunkIndex;
+  }
+
+  private propagateParents(childIndex: number) {
+    let currentIndex = childIndex;
+    while (true) {
+      const parentIndex = this.nodes[currentIndex].parent;
+      if (parentIndex === undefined) {
+        break;
+      }
+
+      const parent = this.nodes[parentIndex];
+      const leftNode = this.nodes[parent.left!];
+      const rightNode = this.nodes[parent.right!];
+
+      if (!leftNode.hash || !rightNode.hash) {
+        break;
+      }
+
+      if (!parent.hash) {
+        parent.hash = hashPair(leftNode.hash, rightNode.hash);
+      }
+
+      currentIndex = parentIndex;
+    }
+  }
+
+  canGenerateProof(chunkIndex: number): boolean {
+    const node = this.nodes[chunkIndex];
+    if (!node.hash) {
+      return false;
+    }
+
+    let currentIndex = chunkIndex;
+    while (true) {
+      const parentIndex = this.nodes[currentIndex].parent;
+      if (parentIndex === undefined) {
+        break;
+      }
+
+      const parent = this.nodes[parentIndex];
+      const siblingIndex =
+        parent.left === currentIndex ? parent.right : parent.left;
+      if (siblingIndex === undefined) {
+        return false;
+      }
+
+      const siblingHash = this.nodes[siblingIndex].hash;
+      if (!siblingHash) {
+        return false;
+      }
+
+      currentIndex = parentIndex;
+    }
+
+    return true;
+  }
+
+  generateProof(chunkIndex: number): Uint8Array[] {
+    if (!this.canGenerateProof(chunkIndex)) {
+      throw new Error("Proof is not ready yet");
+    }
+
+    const proof: Uint8Array[] = [];
+    let currentIndex = chunkIndex;
+    while (true) {
+      const parentIndex = this.nodes[currentIndex].parent;
+      if (parentIndex === undefined) {
+        break;
+      }
+
+      const parent = this.nodes[parentIndex];
+      const siblingIndex =
+        parent.left === currentIndex ? parent.right : parent.left;
+
+      if (siblingIndex === undefined) {
+        break;
+      }
+
+      const sibling = this.nodes[siblingIndex];
+      if (!sibling.hash) {
+        break;
+      }
+
+      proof.push(sibling.hash);
+      currentIndex = parentIndex;
+    }
+
+    return proof;
+  }
+
+  getRootHash(): Uint8Array | null {
+    if (this.nodes.length === 0) {
+      return null;
+    }
+
+    const root = this.nodes[this.nodes.length - 1];
+    return root.hash ?? null;
+  }
+
+  getTotalChunks(): number {
+    return this.leafCount;
+  }
+}
+
+/**
+ * TransformStream that processes a file stream and outputs file parts with merkle proofs.
+ *
+ * This stream:
+ * 1. Chunks the input data into CHUNK_SIZE pieces
+ * 2. Builds a merkle tree incrementally knowing the complete tree structure
+ * 3. Outputs each chunk once its proof becomes stable
+ * 4. The root hash is only set in the last chunk
+ *
+ * @param fileSize - Total size of the file (used to determine total chunks)
+ * @returns A TransformStream that transforms Uint8Array chunks into FilePart objects
+ */
+export function createMerkleTreeTransformStream(
+  fileSize: number,
+  encryptChunk?: (chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array,
+): TransformStream<Uint8Array, FilePart> {
+  // 12 bytes for the encryption initialization vector
+  let chunkSize = encryptChunk ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
+  const totalChunks = fileSize === 0 ? 1 : Math.ceil(fileSize / chunkSize);
+  const tree = new StableIncrementalMerkleTree(totalChunks);
+  let buffer = new Uint8Array(0);
+  let bytesProcessed = 0;
+  const pendingChunks = new Map<number, Uint8Array>();
+
+  const emitChunk = (
+    index: number,
+    data: Uint8Array,
+    controller: TransformStreamDefaultController<FilePart>,
+  ) => {
+    const proof = tree.generateProof(index);
+    const rootHash =
+      index === totalChunks - 1
+        ? (tree.getRootHash() ?? new Uint8Array(0))
+        : new Uint8Array(0);
+    bytesProcessed += data.length;
+
+    controller.enqueue({
+      chunkData: data,
+      chunkIndex: index,
+      merkleProof: proof,
+      totalChunks,
+      bytesProcessed,
+      rootHash,
+      encrypted: !!encryptChunk,
+    });
+  };
+
+  const flushReadyChunks = (
+    controller: TransformStreamDefaultController<FilePart>,
+  ) => {
+    const readyIndexes: number[] = [];
+    for (const [index] of pendingChunks) {
+      if (tree.canGenerateProof(index)) {
+        readyIndexes.push(index);
+      }
+    }
+
+    for (const index of readyIndexes) {
+      const data = pendingChunks.get(index)!;
+      pendingChunks.delete(index);
+      emitChunk(index, data, controller);
+    }
+  };
+
+  const encodeChunk = async (chunk: Uint8Array): Promise<Uint8Array> => {
+    if (!encryptChunk) {
+      return chunk;
+    }
+    return await encryptChunk(chunk);
+  };
+
+  const processChunk = async (
+    chunk: Uint8Array,
+    controller: TransformStreamDefaultController<FilePart>,
+  ) => {
+    const encodedChunk = await encodeChunk(chunk);
+    const chunkIndex = tree.addChunk(encodedChunk);
+    pendingChunks.set(chunkIndex, encodedChunk);
+    flushReadyChunks(controller);
+  };
+
+  return new TransformStream<Uint8Array, FilePart>({
+    async transform(chunk, controller) {
+      const newBuffer = new Uint8Array(buffer.length + chunk.length);
+      newBuffer.set(buffer, 0);
+      newBuffer.set(chunk, buffer.length);
+      buffer = newBuffer;
+
+      while (buffer.length >= chunkSize) {
+        const completeChunk = buffer.slice(0, chunkSize);
+        buffer = buffer.slice(chunkSize);
+
+        await processChunk(completeChunk, controller);
+      }
+    },
+
+    async flush(controller) {
+      if (buffer.length > 0) {
+        await processChunk(buffer, controller);
+        buffer = new Uint8Array(0);
+      } else if (tree.getTotalChunks() === 0) {
+        await processChunk(new Uint8Array(0), controller);
+      }
+
+      flushReadyChunks(controller);
+
+      if (pendingChunks.size > 0) {
+        flushReadyChunks(controller);
+      }
+    },
+  });
 }

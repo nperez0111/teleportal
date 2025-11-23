@@ -5,10 +5,15 @@ import "@blocknote/mantine/style.css";
 import { use } from "react";
 import { ClientContext, Transport } from "teleportal";
 import { FileTransportMethods } from "teleportal/transports";
+import { EncryptionClient } from "../../../src/transports/encrypted/client";
 
 interface EditorProps {
   provider: Provider<
-    Transport<ClientContext, DefaultTransportProperties & FileTransportMethods>
+    Transport<
+      ClientContext,
+      DefaultTransportProperties &
+        FileTransportMethods & { handler?: EncryptionClient }
+    >
   >;
   user?: {
     /**
@@ -45,11 +50,11 @@ export function Editor({ provider, user }: EditorProps) {
     },
     async uploadFile(file, blockId) {
       try {
-        console.log("uploading file", file, blockId);
         const fileId = await provider.transport.upload(
           file,
           provider.document,
           blockId,
+          provider.transport.handler?.key,
         );
 
         return `teleportal://${fileId}`;
@@ -61,12 +66,11 @@ export function Editor({ provider, user }: EditorProps) {
     async resolveFileUrl(url) {
       if (url.startsWith("teleportal://")) {
         const fileId = url.split("://")[1];
-        console.log("downloading file", url, fileId);
         const file = await provider.transport.download(
           fileId,
           provider.document,
+          provider.transport.handler?.key,
         );
-        console.log("file downloaded", file);
         return URL.createObjectURL(file);
       }
       return url;

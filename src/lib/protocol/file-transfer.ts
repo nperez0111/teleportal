@@ -1,9 +1,9 @@
 import { toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
 import {
-  buildMerkleTree,
   CHUNK_SIZE,
-  generateMerkleProof,
+  createMerkleTreeTransformStream,
+  ENCRYPTED_CHUNK_SIZE,
 } from "teleportal/merkle-tree";
 import { AckMessage, FileMessage, type Message } from "./message-types";
 import type {
@@ -12,6 +12,7 @@ import type {
   DecodedFilePart,
   DecodedFileUpload,
 } from "./types";
+import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 
 export namespace FileTransferProtocol {
   export interface UploadState {
@@ -22,6 +23,7 @@ export namespace FileTransferProtocol {
     fileId: string | null;
     sentChunks: Set<string>;
     document: string;
+    encryptionKey?: CryptoKey;
   }
 
   export interface DownloadState {
@@ -31,6 +33,7 @@ export namespace FileTransferProtocol {
     chunks: Map<number, Uint8Array>;
     fileId: string;
     timeoutId: ReturnType<typeof setTimeout> | null;
+    encryptionKey?: CryptoKey;
   }
 
   export abstract class Client<Context extends Record<string, unknown> = any> {
@@ -43,7 +46,7 @@ export namespace FileTransferProtocol {
       file: File,
       document: string,
       fileId: string = uuidv4(),
-      encrypted: boolean = false,
+      encryptionKey?: CryptoKey,
       context?: Context,
     ): Promise<string> {
       const uploadPromise = new Promise<string>((resolve, reject) => {
@@ -55,8 +58,16 @@ export namespace FileTransferProtocol {
           file,
           sentChunks: new Set(),
           document,
+          encryptionKey,
         });
       });
+
+      let encryptionOverhead = 0;
+      if (encryptionKey) {
+        const numberOfChunks = Math.ceil(file.size / CHUNK_SIZE);
+        encryptionOverhead =
+          numberOfChunks * (ENCRYPTED_CHUNK_SIZE - CHUNK_SIZE);
+      }
 
       this.sendMessage(
         new FileMessage<Context>(
@@ -65,13 +76,13 @@ export namespace FileTransferProtocol {
             type: "file-upload",
             fileId,
             filename: file.name,
-            size: file.size,
+            size: file.size + encryptionOverhead,
             mimeType: file.type || "application/octet-stream",
             lastModified: file.lastModified,
-            encrypted,
+            encrypted: !!encryptionKey,
           },
           context,
-          encrypted,
+          !!encryptionKey,
         ),
       );
 
@@ -81,7 +92,7 @@ export namespace FileTransferProtocol {
     async requestDownload(
       fileId: string,
       document: string,
-      encrypted: boolean = false,
+      encryptionKey?: CryptoKey,
       timeout: number = 60000,
       context?: Context,
     ): Promise<File> {
@@ -106,6 +117,7 @@ export namespace FileTransferProtocol {
           chunks: new Map(),
           fileId,
           timeoutId,
+          encryptionKey,
         });
       });
 
@@ -117,7 +129,7 @@ export namespace FileTransferProtocol {
             fileId,
           },
           context,
-          encrypted,
+          !!encryptionKey,
         ),
       );
 
@@ -211,57 +223,51 @@ export namespace FileTransferProtocol {
       uploadState: UploadState,
       context?: Context,
     ) {
-      // Read file into memory
-      const fileBytes = new Uint8Array(await uploadState.file.arrayBuffer());
+      // Create transform stream that chunks the file and builds merkle tree
+      const transformStream = createMerkleTreeTransformStream(
+        uploadState.file.size,
+        uploadState.encryptionKey
+          ? (chunk: Uint8Array) =>
+              encryptUpdate(uploadState.encryptionKey!, chunk)
+          : undefined,
+      );
 
-      // Encrypt if needed (file-level encryption before chunking)
-      // TODO: Implement encryption if encrypted flag is set
+      // Set fileId from the last chunk (which contains the root hash)
+      return uploadState.file
+        .stream()
+        .pipeThrough(transformStream)
+        .pipeTo(
+          new WritableStream({
+            write: async (chunk) => {
+              // Set fileId from root hash (only set in the last chunk)
+              if (chunk.rootHash.length > 0 && !uploadState.fileId) {
+                uploadState.fileId = toBase64(chunk.rootHash);
+              }
 
-      // Split into 64KB chunks
-      const fileParts: Uint8Array[] = [];
-      for (let i = 0; i < fileBytes.length; i += CHUNK_SIZE) {
-        fileParts.push(fileBytes.slice(i, i + CHUNK_SIZE));
-      }
+              // Send chunk with merkle proof
+              const message = new FileMessage<Context>(
+                uploadState.document,
+                {
+                  type: "file-part",
+                  fileId: uploadState.uploadId,
+                  chunkIndex: chunk.chunkIndex,
+                  chunkData: chunk.chunkData,
+                  merkleProof: chunk.merkleProof,
+                  totalChunks: chunk.totalChunks,
+                  bytesUploaded: chunk.bytesProcessed,
+                  encrypted: chunk.encrypted,
+                },
+                context ?? ({} as Context),
+                chunk.encrypted,
+              );
 
-      // Handle empty files: ensure at least one chunk (even if empty)
-      if (fileParts.length === 0) {
-        fileParts.push(new Uint8Array(0));
-      }
+              // track sent chunks
+              uploadState.sentChunks.add(message.id);
 
-      // Build merkle tree
-      const merkleTree = buildMerkleTree(fileParts);
-      const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
-      uploadState.fileId = toBase64(contentId);
-
-      // Send chunks with merkle proofs
-      let bytesUploaded = 0;
-      for (let i = 0; i < fileParts.length; i++) {
-        const filePart = fileParts[i];
-        const proof = generateMerkleProof(merkleTree, i);
-        const message = new FileMessage<Context>(
-          uploadState.document,
-          {
-            type: "file-part",
-            fileId: uploadState.uploadId,
-            chunkIndex: i,
-            chunkData: filePart,
-            merkleProof: proof,
-            totalChunks: fileParts.length,
-            bytesUploaded: bytesUploaded + filePart.length,
-            encrypted: false,
-            // TODO: Implement encryption if encrypted flag is set
-          },
-          context ?? ({} as Context),
-          false,
+              this.sendMessage(message);
+            },
+          }),
         );
-
-        uploadState.sentChunks.add(message.id);
-        this.sendMessage(message);
-        bytesUploaded += filePart.length;
-      }
-      new ReadableStream({
-        pull: async (controller) => {},
-      });
     }
 
     protected handleAuthMessage(payload: DecodedFileAuthMessage) {
@@ -307,6 +313,12 @@ export namespace FileTransferProtocol {
 
       // Store chunk
       if (!handler.chunks.has(payload.chunkIndex)) {
+        if (handler.encryptionKey) {
+          payload.chunkData = await decryptUpdate(
+            handler.encryptionKey,
+            payload.chunkData,
+          );
+        }
         handler.chunks.set(payload.chunkIndex, payload.chunkData);
         // Check completion
         await this.checkDownloadCompletion(handler);
@@ -317,14 +329,18 @@ export namespace FileTransferProtocol {
       if (!handler.fileMetadata) {
         return;
       }
+      // Calculate chunk size based on whether the file is encrypted
+      const chunkSize = handler.encryptionKey
+        ? ENCRYPTED_CHUNK_SIZE
+        : CHUNK_SIZE;
       // For empty files, we still need at least one chunk (even if empty)
       const expectedChunks =
         handler.fileMetadata.size === 0
           ? 1
-          : Math.ceil(handler.fileMetadata.size / CHUNK_SIZE);
+          : Math.ceil(handler.fileMetadata.size / chunkSize);
       if (handler.chunks.size >= expectedChunks) {
         try {
-          const fileData = new Uint8Array(handler.fileMetadata.size);
+          const fileData = new Uint8Array(expectedChunks * CHUNK_SIZE);
           let offset = 0;
           for (let i = 0; i < expectedChunks; i++) {
             const chunk = handler.chunks.get(i);

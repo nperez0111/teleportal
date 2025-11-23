@@ -218,7 +218,7 @@ export abstract class UnencryptedFileStorage extends FileStorage {
     const merkleTree = buildMerkleTree(chunks);
 
     // Verify root hash matches contentId
-    const rootHash = merkleTree.nodes[merkleTree.nodes.length - 1].hash;
+    const rootHash = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
     if (
       rootHash.length !== contentId.length ||
       !rootHash.every((byte, i) => byte === contentId[i])

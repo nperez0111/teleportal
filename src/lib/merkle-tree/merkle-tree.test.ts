@@ -40,12 +40,12 @@ describe("Merkle Tree", () => {
     expect(tree.leafCount).toBe(1);
     expect(tree.nodes.length).toBe(1); // Single node is both leaf and root
     expect(tree.nodes[0].hash).toBeDefined();
-    expect(tree.nodes[0].hash.length).toBe(32); // SHA-256 hash is 32 bytes
+    expect(tree.nodes[0].hash!.length).toBe(32); // SHA-256 hash is 32 bytes
 
     // Verify we can generate and verify a proof for the empty chunk
     const proof = generateMerkleProof(tree, 0);
     expect(proof.length).toBe(0); // Single chunk has no proof path
-    const root = tree.nodes[tree.nodes.length - 1].hash;
+    const root = tree.nodes[tree.nodes.length - 1].hash!;
     const isValid = verifyMerkleProof(chunks[0], proof, root, 0);
     expect(isValid).toBe(true);
   });
@@ -72,7 +72,7 @@ describe("Merkle Tree", () => {
     ];
 
     const tree = buildMerkleTree(chunks);
-    const root = tree.nodes[tree.nodes.length - 1].hash;
+    const root = tree.nodes[tree.nodes.length - 1].hash!;
     const proof = generateMerkleProof(tree, 0);
 
     const isValid = verifyMerkleProof(chunks[0], proof, root, 0);
@@ -83,7 +83,7 @@ describe("Merkle Tree", () => {
     const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
 
     const tree = buildMerkleTree(chunks);
-    const root = tree.nodes[tree.nodes.length - 1].hash;
+    const root = tree.nodes[tree.nodes.length - 1].hash!;
     const proof = generateMerkleProof(tree, 0);
 
     // Modify the chunk
@@ -107,9 +107,9 @@ describe("Merkle Tree", () => {
     expect(deserialized.nodes.length).toBe(tree.nodes.length);
 
     // Verify root hash matches
-    const originalRoot = tree.nodes[tree.nodes.length - 1].hash;
+    const originalRoot = tree.nodes[tree.nodes.length - 1].hash!;
     const deserializedRoot =
-      deserialized.nodes[deserialized.nodes.length - 1].hash;
+      deserialized.nodes[deserialized.nodes.length - 1].hash!;
     expect(deserializedRoot).toEqual(originalRoot);
   });
 
@@ -125,7 +125,7 @@ describe("Merkle Tree", () => {
     // Verify all chunks can generate proofs
     for (let i = 0; i < chunks.length; i++) {
       const proof = generateMerkleProof(tree, i);
-      const root = tree.nodes[tree.nodes.length - 1].hash;
+      const root = tree.nodes[tree.nodes.length - 1].hash!;
       const isValid = verifyMerkleProof(chunks[i], proof, root, i);
       expect(isValid).toBe(true);
     }

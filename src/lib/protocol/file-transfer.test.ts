@@ -11,6 +11,11 @@ import {
 } from "../merkle-tree/merkle-tree";
 import { FileTransferProtocol } from "./file-transfer";
 import type { DecodedFilePart, DecodedFileUpload } from "./types";
+import {
+  createEncryptionKey,
+  encryptUpdate,
+  importEncryptionKey,
+} from "teleportal/encryption-key";
 
 describe("FileTransferProtocol.Client", () => {
   it("should handle file upload request and send file-upload message", async () => {
@@ -46,7 +51,6 @@ describe("FileTransferProtocol.Client", () => {
       new File([new Uint8Array([1, 2, 3, 4, 5])], "test.txt"),
       "test-doc",
       "test-upload-id",
-      false,
     );
     // let it be processed async
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -127,7 +131,6 @@ describe("FileTransferProtocol.Client", () => {
       new File([largeFileData], "large.txt"),
       "test-doc",
       "large-upload-id",
-      false,
     );
     // let it be processed async
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -220,15 +223,11 @@ describe("FileTransferProtocol.Client", () => {
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
     const merkleTree = buildMerkleTree([fileData]);
     const contentId = toBase64(
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash,
+      merkleTree.nodes[merkleTree.nodes.length - 1].hash!,
     );
 
     // Start download
-    const downloadPromise = client.requestDownload(
-      contentId,
-      "test-doc",
-      false,
-    );
+    const downloadPromise = client.requestDownload(contentId, "test-doc");
     // let it be processed async
     await new Promise((resolve) => setTimeout(resolve, 1));
 

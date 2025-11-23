@@ -8,6 +8,7 @@ import {
 } from "../../lib/merkle-tree/merkle-tree";
 import { noopTransport, withPassthrough } from "../passthrough";
 import { withSendFile } from "./send-file";
+import { importEncryptionKey } from "teleportal/encryption-key";
 
 describe("withSendFile", () => {
   it("should upload a small file successfully", async () => {
@@ -40,7 +41,6 @@ describe("withSendFile", () => {
       new File([new Uint8Array([1, 2, 3, 4, 5])], "test.txt"),
       "test-doc",
       "test-file-id",
-      false,
     );
     // let it be received async
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -121,7 +121,6 @@ describe("withSendFile", () => {
       new File([largeFileData], "large.txt"),
       "test-doc",
       "large-file-id",
-      false,
     );
     // let it be received async
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -212,7 +211,7 @@ describe("withSendFile", () => {
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
     const merkleTree = buildMerkleTree([fileData]);
     const contentId = toBase64(
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash,
+      merkleTree.nodes[merkleTree.nodes.length - 1].hash!,
     );
 
     // Start the download with the contentId
@@ -296,12 +295,15 @@ describe("withSendFile", () => {
       }),
     );
 
+    const encryptionKey = await importEncryptionKey(
+      "NIjJtEuEisDCgF9TL123lUSoqzthUFlpWQcaH6j-vco",
+    );
     // start the encrypted upload
     const uploadPromise = wrappedTransport.upload(
       new File([new Uint8Array([1, 2, 3, 4, 5])], "encrypted.txt"),
       "test-doc",
       "encrypted-file-id",
-      true, // encrypted = true
+      encryptionKey,
     );
     // let it be received async
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -371,7 +373,6 @@ describe("withSendFile", () => {
       new File([new Uint8Array([1, 2, 3])], "tracking.txt"),
       "test-doc",
       "tracking-file-id",
-      false,
     );
     // let it be received async
     await new Promise((resolve) => setTimeout(resolve, 1));
