@@ -147,6 +147,9 @@ export abstract class FileStorage extends UploadStorage {
    */
   abstract getFile(contentId: Uint8Array): Promise<FileData | null>;
 
+  // TODO when creating a milestone, we need to also mark all the files as part of the milestone.
+  // If a previous milestone contains a file, then we should not actually delete it, but rather remove it from the metadata document.
+  // This way, we can still access the file from the previous milestone, but it will not be part of the current milestone.
   /**
    * Delete a file by contentId.
    *
