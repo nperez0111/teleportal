@@ -89,6 +89,35 @@ export type UpdateStep = Tag<Uint8Array, "update-step">;
 export type DecodedUpdateStep = {
   type: "update";
   update: Update;
+  /**
+   * Optional attribution metadata sent alongside the update.
+   */
+  attribution?: Record<string, unknown>;
+};
+
+/**
+ * A Y.js attribution request step.
+ */
+export type AttributionRequestMessage = Tag<Uint8Array, "attribution-request">;
+
+/**
+ * A decoded attribution request.
+ */
+export type DecodedAttributionRequest = {
+  type: "attribution-request";
+};
+
+/**
+ * A Y.js attribution response step.
+ */
+export type AttributionResponseMessage = Tag<Uint8Array, "attribution-response">;
+
+/**
+ * A decoded attribution response.
+ */
+export type DecodedAttributionResponse = {
+  type: "attribution-response";
+  attributions: Uint8Array;
 };
 
 /**
@@ -129,7 +158,9 @@ export type DocStep =
   | SyncStep2
   | SyncDone
   | UpdateStep
-  | AuthMessage;
+  | AuthMessage
+  | AttributionRequestMessage
+  | AttributionResponseMessage;
 
 /**
  * Any Y.js update which contains awareness updates.

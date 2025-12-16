@@ -62,6 +62,18 @@ export function encodeMessage(update: Message): BinaryMessage {
         }
         break;
       }
+        case "attribution-request": {
+          // message type
+          encoding.writeUint8(encoder, 5);
+          break;
+        }
+        case "attribution-response": {
+          // message type
+          encoding.writeUint8(encoder, 6);
+          // encoded attributions IdMap
+          encoding.writeVarUint8Array(encoder, update.payload.attributions);
+          break;
+        }
       case "doc": {
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 0);

@@ -11,7 +11,8 @@ import type {
   SyncStep2Update,
   Update,
 } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import type { IdMap } from "yjs";
+import { DocumentStorage, type AttributionMetadata } from "teleportal/storage";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage extends DocumentStorage {
@@ -24,7 +25,12 @@ class MockDocumentStorage extends DocumentStorage {
       stateVector: syncStep1,
     });
   }
-  handleSyncStep2(key: string, syncStep2: SyncStep2Update): Promise<void> {
+  handleSyncStep2(
+    key: string,
+    syncStep2: SyncStep2Update,
+    attribution?: AttributionMetadata,
+  ): Promise<void> {
+    void attribution;
     return Promise.resolve();
   }
   public get fileStorage() {
@@ -41,9 +47,18 @@ class MockDocumentStorage extends DocumentStorage {
     return this.storedData;
   }
 
-  async write(documentId: string, update: any) {
+  async write(
+    documentId: string,
+    update: any,
+    attribution?: AttributionMetadata,
+  ) {
+    void attribution;
     this.mockWrite = true;
     this.storedData = update;
+  }
+
+  async getAttributions(_key: string): Promise<IdMap<any>> {
+    return new Map() as IdMap<any>;
   }
 
   async writeDocumentMetadata(key: string, metadata: any): Promise<void> {

@@ -15,6 +15,7 @@ import {
   getEncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
 import {
+  AttributionMetadata,
   DocumentStorage,
   type DocumentMetadata as BaseDocumentMetadata,
 } from "../document-storage";
@@ -100,7 +101,9 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   async handleSyncStep2(
     key: string,
     syncStep2: EncryptedSyncStep2,
+    attribution?: AttributionMetadata,
   ): Promise<void> {
+    void attribution;
     await this.transaction(key, async () => {
       const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
       const { seenMessages, ...rest } = await this.fetchDocumentMetadata(key);
@@ -115,7 +118,12 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
     });
   }
 
-  async write(key: string, update: EncryptedUpdatePayload): Promise<void> {
+  async write(
+    key: string,
+    update: EncryptedUpdatePayload,
+    attribution?: AttributionMetadata,
+  ): Promise<void> {
+    void attribution;
     await this.transaction(key, async () => {
       const { seenMessages, ...rest } = await this.fetchDocumentMetadata(key);
       const encryptedUpdates = decodeEncryptedUpdate(update);

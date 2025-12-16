@@ -115,9 +115,13 @@ function decodeDocStepWithDecoder<
         ? DecodedSyncDone
         : D extends UpdateStep
           ? DecodedUpdateStep
-          : D extends AuthMessage
-            ? DecodedAuthMessage
-            : never,
+          : D extends AttributionRequestMessage
+            ? DecodedAttributionRequest
+            : D extends AttributionResponseMessage
+              ? DecodedAttributionResponse
+              : D extends AuthMessage
+                ? DecodedAuthMessage
+                : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -150,6 +154,17 @@ function decodeDocStepWithDecoder<
           type: "auth-message",
           permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
           reason: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x05: {
+        return {
+          type: "attribution-request",
+        } as E;
+      }
+      case 0x06: {
+        return {
+          type: "attribution-response",
+          attributions: decoding.readVarUint8Array(decoder),
         } as E;
       }
       default: {
@@ -213,9 +228,13 @@ export function decodeDocStep<
         ? DecodedSyncDone
         : D extends UpdateStep
           ? DecodedUpdateStep
-          : D extends AuthMessage
-            ? DecodedAuthMessage
-            : never,
+          : D extends AttributionRequestMessage
+            ? DecodedAttributionRequest
+            : D extends AttributionResponseMessage
+              ? DecodedAttributionResponse
+              : D extends AuthMessage
+                ? DecodedAuthMessage
+                : never,
 >(update: D): E {
   const decoder = decoding.createDecoder(update);
   return decodeDocStepWithDecoder(decoder);

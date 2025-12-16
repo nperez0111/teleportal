@@ -1,4 +1,5 @@
 import type { StateVector, SyncStep2Update, Update } from "teleportal";
+import type * as Y from "yjs";
 import type { FileStorage } from "./file-storage";
 
 export interface DocumentMetadata {
@@ -7,6 +8,12 @@ export interface DocumentMetadata {
    */
   files?: string[];
   [key: string]: any;
+}
+
+export interface AttributionMetadata {
+  user: string;
+  timestamp: number;
+  customAttributes?: Record<string, string>;
 }
 
 /**
@@ -32,7 +39,11 @@ export abstract class DocumentStorage {
   /**
    * Stores an update for a document.
    */
-  abstract write(key: string, update: Update): Promise<void>;
+  abstract write(
+    key: string,
+    update: Update,
+    attribution?: AttributionMetadata,
+  ): Promise<void>;
 
   /**
    * Implements synchronization with a client's state vector.
@@ -51,6 +62,7 @@ export abstract class DocumentStorage {
   abstract handleSyncStep2(
     key: string,
     syncStep2: SyncStep2Update,
+    attribution?: AttributionMetadata,
   ): Promise<void>;
 
   /**
@@ -78,6 +90,8 @@ export abstract class DocumentStorage {
    * Deletes a document and its associated data (metadata, files, etc).
    */
   abstract deleteDocument(key: string): Promise<void>;
+
+  abstract getAttributions(key: string): Promise<Y.IdMap<any>>;
 
   /**
    * Unloads a document from storage.
