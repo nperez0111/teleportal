@@ -67,6 +67,12 @@ Document messages handle Y.js document synchronization and updates. They include
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x04 = Auth │ Permission (1 byte) + Reason (varint string)                    │
 │ Message     │ 0x00=denied, 0x01=allowed                                       │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x05 = Attr │ (no payload)                                                    │
+│ Request     │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x06 = Attr │ Encoded attribution IdMap (varint array)                        │
+│ Response    │                                                                 │
 └─────────────┴─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -89,6 +95,7 @@ Document messages handle Y.js document synchronization and updates. They include
 **Purpose**: Sends incremental document changes
 **Payload**: Y.js update containing new operations
 **Usage**: Real-time propagation of document changes
+**Attribution Metadata**: Optionally, a flag byte followed by a JSON-encoded metadata object can be appended to the payload describing the user, timestamp, and custom attributes that produced the change.
 
 #### 4. Sync Done (0x03)
 
@@ -101,6 +108,18 @@ Document messages handle Y.js document synchronization and updates. They include
 **Purpose**: Handles authentication and authorization
 **Payload**: Permission flag (1 byte) + reason string (variable length)
 **Usage**: Server sends to grant/deny access with explanation
+
+#### 6. Attribution Request (0x05)
+
+**Purpose**: Requests attribution data for a document from the server
+**Payload**: None
+**Usage**: Clients issue this when they want to render who made each change
+
+#### 7. Attribution Response (0x06)
+
+**Purpose**: Delivers encoded attributions to requesting clients
+**Payload**: Encoded `Y.IdMap` (varint array) representing attribution ranges
+**Usage**: Clients decode the IdMap to display user attribution details
 
 ## Awareness Messages (Type 0x01)
 

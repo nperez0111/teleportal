@@ -139,9 +139,23 @@ function decodeDocStepWithDecoder<
         } as E;
       }
       case 0x02: {
+        const update = decoding.readVarUint8Array(decoder);
+        const hasAttribution = decoding.readUint8(decoder);
+        let attribution: Record<string, unknown> | undefined;
+        if (hasAttribution === 1) {
+          const raw = decoding.readVarString(decoder);
+          try {
+            attribution = JSON.parse(raw) as Record<string, unknown>;
+          } catch (err) {
+            throw new Error("Failed to parse attribution metadata", {
+              cause: { err, payload: raw },
+            });
+          }
+        }
         return {
           type: "update",
-          update: decoding.readVarUint8Array(decoder),
+          update,
+          attribution,
         } as E;
       }
       case 0x03: {

@@ -1,4 +1,5 @@
 import type { Storage } from "unstorage";
+import * as Y from "yjs";
 
 import { EncryptedBinary } from "teleportal/encryption-key";
 import type { EncryptedMessageId } from "teleportal/protocol/encryption";
@@ -101,5 +102,10 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
 
     // Delete metadata
     await this.storage.removeItem(key + ":meta");
+    await this.storage.removeItem(key + ":attributions");
+  }
+
+  async getAttributions(_key: string): Promise<Y.IdMap<any>> {
+    return new Map() as Y.IdMap<any>;
   }
 }

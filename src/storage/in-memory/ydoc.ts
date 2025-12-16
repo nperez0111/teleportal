@@ -7,6 +7,7 @@ import {
   type AttributionMetadata,
 } from "../document-storage";
 import { FileStorage } from "../file-storage";
+import { createAttributionIdMap } from "../attribution";
 
 export class YDocStorage extends UnencryptedDocumentStorage {
   public static docs = new Map<string, Y.Doc>();
@@ -102,47 +103,12 @@ export class YDocStorage extends UnencryptedDocumentStorage {
       return;
     }
 
-    const changeMap = YDocStorage.buildAttributionMap(update, attribution);
+    const changeMap = createAttributionIdMap(update, attribution);
     if (!changeMap) {
       return;
     }
 
     const targetMap = YDocStorage.ensureAttributionMap(key);
     Y.insertIntoIdMap(targetMap, changeMap);
-  }
-
-  private static buildAttributionMap(
-    update: Update,
-    metadata: AttributionMetadata,
-  ): Y.IdMap<any> | null {
-    try {
-      const ranges = Y.readUpdateIdRanges(update);
-      const items = YDocStorage.createAttributionItems(metadata);
-
-      const baseMap = Y.createIdMapFromIdSet(ranges.inserts, items);
-      const deleteMap = Y.createIdMapFromIdSet(ranges.deletes, items);
-      Y.insertIntoIdMap(baseMap, deleteMap);
-
-      return baseMap;
-    } catch {
-      return null;
-    }
-  }
-
-  private static createAttributionItems(
-    metadata: AttributionMetadata,
-  ): ReturnType<typeof Y.createAttributionItem>[] {
-    const baseItems = [
-      Y.createAttributionItem("user", metadata.user),
-      Y.createAttributionItem("timestamp", metadata.timestamp),
-    ];
-
-    if (metadata.customAttributes) {
-      for (const [key, value] of Object.entries(metadata.customAttributes)) {
-        baseItems.push(Y.createAttributionItem(`custom:${key}`, value));
-      }
-    }
-
-    return baseItems;
   }
 }

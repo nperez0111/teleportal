@@ -86,15 +86,27 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeVarUint8Array(encoder, update.payload.sv);
             break;
           }
-          case "update":
           case "sync-step-2": {
-            // message type
-            encoding.writeUint8(
-              encoder,
-              update.payload.type === "sync-step-2" ? 1 : 2,
-            );
+            // message type (sync-step-2)
+            encoding.writeUint8(encoder, 1);
             // update
             encoding.writeVarUint8Array(encoder, update.payload.update);
+            break;
+          }
+          case "update": {
+            // message type (update)
+            encoding.writeUint8(encoder, 2);
+            // update
+            encoding.writeVarUint8Array(encoder, update.payload.update);
+            if (update.payload.attribution) {
+              encoding.writeUint8(encoder, 1);
+              encoding.writeVarString(
+                encoder,
+                JSON.stringify(update.payload.attribution),
+              );
+            } else {
+              encoding.writeUint8(encoder, 0);
+            }
             break;
           }
           case "sync-done": {

@@ -4,8 +4,14 @@ import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import { DocumentMetadata } from "../document-storage";
+import {
+  AttributionMetadata,
+  DocumentMetadata,
+} from "../document-storage";
 import { FileStorage } from "../file-storage";
+import { createAttributionIdMap } from "../attribution";
+
+const ATTRIBUTION_KEY_SUFFIX = ":attributions";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -58,10 +64,21 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   async write(
     key: string,
     update: Update,
-    overwriteKeys?: boolean,
+    overwriteKeysOrAttribution?: boolean | AttributionMetadata,
+    attribution?: AttributionMetadata,
   ): Promise<void> {
     const updateKey = key + "-update-" + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
+    const overwriteKeys =
+      typeof overwriteKeysOrAttribution === "boolean"
+        ? overwriteKeysOrAttribution
+        : false;
+    const attributionMetadata =
+      typeof overwriteKeysOrAttribution === "boolean"
+        ? attribution
+        : overwriteKeysOrAttribution;
+    await this.mergeAttributions(key, update, attributionMetadata);
+
     if (this.options.scanKeys) {
       return;
     }
@@ -178,6 +195,46 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       );
     }
 
+    await this.storage.removeItem(key + ATTRIBUTION_KEY_SUFFIX);
     await this.storage.removeItem(key);
+  }
+
+  async getAttributions(key: string): Promise<Y.IdMap<any>> {
+    const existing = await this.storage.getItemRaw<Uint8Array>(
+      key + ATTRIBUTION_KEY_SUFFIX,
+    );
+    if (!existing) {
+      return new Map() as Y.IdMap<any>;
+    }
+    return Y.decodeIdMap(existing) as Y.IdMap<any>;
+  }
+
+  private async mergeAttributions(
+    key: string,
+    update: Update,
+    metadata?: AttributionMetadata,
+  ): Promise<void> {
+    if (!metadata) {
+      return;
+    }
+
+    const attributionMap = createAttributionIdMap(update, metadata);
+    if (!attributionMap) {
+      return;
+    }
+
+    await this.transaction(key, async () => {
+      const existing = await this.storage.getItemRaw<Uint8Array>(
+        key + ATTRIBUTION_KEY_SUFFIX,
+      );
+      const target = existing
+        ? (Y.decodeIdMap(existing) as Y.IdMap<any>)
+        : (new Map() as Y.IdMap<any>);
+      Y.insertIntoIdMap(target, attributionMap);
+      await this.storage.setItemRaw(
+        key + ATTRIBUTION_KEY_SUFFIX,
+        Y.encodeIdMap(target),
+      );
+    });
   }
 }

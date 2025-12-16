@@ -5,7 +5,11 @@ import {
   type ServerContext,
   type StateVector,
 } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import type { IdMap } from "yjs";
+import {
+  DocumentStorage,
+  type AttributionMetadata,
+} from "teleportal/storage";
 import { Server } from "../server/server";
 import { getHTTPHandler } from "./server";
 
@@ -20,7 +24,12 @@ class MockDocumentStorage extends DocumentStorage {
       stateVector: syncStep1,
     });
   }
-  handleSyncStep2(key: string, syncStep2: any): Promise<void> {
+  handleSyncStep2(
+    key: string,
+    syncStep2: any,
+    attribution?: AttributionMetadata,
+  ): Promise<void> {
+    void attribution;
     return Promise.resolve();
   }
   public get fileStorage() {
@@ -34,8 +43,17 @@ class MockDocumentStorage extends DocumentStorage {
     return this.storedData;
   }
 
-  async write(documentId: string, update: any) {
+  async write(
+    documentId: string,
+    update: any,
+    attribution?: AttributionMetadata,
+  ) {
+    void attribution;
     this.storedData = update;
+  }
+
+  async getAttributions(_key: string): Promise<IdMap<any>> {
+    return new Map() as IdMap<any>;
   }
 
   async writeDocumentMetadata(key: string, metadata: any): Promise<void> {

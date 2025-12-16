@@ -1,8 +1,8 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-
 import {
+  DocMessage,
   Message,
   Observable,
   RawReceivedMessage,
@@ -13,6 +13,11 @@ import {
   getYTransportFromYDoc,
   type FanOutReader,
 } from "teleportal/transports";
+
+type PendingAttributionRequest = {
+  resolve: (result: Y.IdMap<any>) => void;
+  reject: (error: Error) => void;
+};
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 
@@ -70,8 +75,10 @@ export class Provider<
   public document: string;
   #underlyingConnection: Connection<any>;
   #messageReader: FanOutReader<RawReceivedMessage>;
+  #attributionReader: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
+  #pendingAttributionRequests = new Map<string, PendingAttributionRequest[]>();
 
   // Local persistence properties
   #localPersistence?: IndexeddbPersistence;
@@ -105,6 +112,7 @@ export class Provider<
     });
     this.#underlyingConnection = client;
     this.#messageReader = this.#underlyingConnection.getReader();
+    this.#attributionReader = this.#underlyingConnection.getReader();
 
     this.transport.readable.pipeTo(
       new WritableStream({
@@ -116,6 +124,7 @@ export class Provider<
     this.#messageReader.readable.pipeTo(this.transport.writable);
 
     this.doc.on("subdocs", this.subdocListener);
+    this.#listenForAttributionResponses();
 
     // Initialize offline persistence if enabled
     if (this.#enableOfflinePersistence) {
@@ -157,6 +166,77 @@ export class Provider<
       console.error("Failed to send sync-step-1", error);
     }
   };
+
+  #listenForAttributionResponses() {
+    this.#attributionReader.readable
+      .pipeTo(
+        new WritableStream<RawReceivedMessage>({
+          write: async (message) => {
+            this.#handleIncomingAttributionMessage(message);
+          },
+        }),
+      )
+      .catch(() => {
+        // ignore any pipe errors
+      });
+  }
+
+  #handleIncomingAttributionMessage(message: RawReceivedMessage) {
+    if (
+      message.type !== "doc" ||
+      message.payload.type !== "attribution-response" ||
+      !message.document
+    ) {
+      return;
+    }
+
+    const queue = this.#pendingAttributionRequests.get(message.document);
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    const entry = queue.shift()!;
+    if (queue.length === 0) {
+      this.#pendingAttributionRequests.delete(message.document);
+    }
+
+    try {
+      const decoded = Y.decodeIdMap(
+        message.payload.attributions,
+      ) as Y.IdMap<any>;
+      entry.resolve(decoded);
+    } catch (error) {
+      entry.reject(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
+  #removePendingAttributionRequest(
+    document: string,
+    entry: PendingAttributionRequest,
+  ) {
+    const queue = this.#pendingAttributionRequests.get(document);
+    if (!queue) {
+      return;
+    }
+    const index = queue.indexOf(entry);
+    if (index > -1) {
+      queue.splice(index, 1);
+    }
+    if (queue.length === 0) {
+      this.#pendingAttributionRequests.delete(document);
+    }
+  }
+
+  #rejectPendingAttributionRequests(error: Error) {
+    for (const queue of this.#pendingAttributionRequests.values()) {
+      for (const entry of queue) {
+        entry.reject(error);
+      }
+    }
+    this.#pendingAttributionRequests.clear();
+  }
 
   private subdocListener({
     loaded,
@@ -229,6 +309,34 @@ export class Provider<
       enableOfflinePersistence: this.#enableOfflinePersistence,
       indexedDBPrefix: this.#indexedDBPrefix,
       ...options,
+    });
+  }
+
+  /**
+   * Request attributions for a document from the server.
+   */
+  public requestAttributions(document: string): Promise<Y.IdMap<any>> {
+    return new Promise((resolve, reject) => {
+      const pending: PendingAttributionRequest = { resolve, reject };
+      const queue = this.#pendingAttributionRequests.get(document) ?? [];
+      queue.push(pending);
+      this.#pendingAttributionRequests.set(document, queue);
+
+      const request = new DocMessage(
+        document,
+        { type: "attribution-request" },
+        { clientId: "local" },
+        false,
+      );
+
+      this.transport.writable
+        .write(request)
+        .catch((error) => {
+          this.#removePendingAttributionRequest(document, pending);
+          pending.reject(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        });
     });
   }
 
@@ -320,6 +428,8 @@ export class Provider<
     // TODO how to clean up the transport?
     // this.transport.readable
     this.#messageReader.unsubscribe();
+    this.#attributionReader.unsubscribe();
+    this.#rejectPendingAttributionRequests(new Error("Provider destroyed"));
     if (destroyConnection) {
       this.#underlyingConnection.destroy();
     }
