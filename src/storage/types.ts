@@ -176,6 +176,13 @@ export interface FileStorage {
   getFile(fileId: File["id"]): Promise<File | null>;
 
   /**
+   * Store a completed file.
+   *
+   * @param file - The file to store
+   */
+  storeFile(file: File): Promise<void>;
+
+  /**
    * Delete a file by fileId.
    * If the file is part of any milestone, it will only be removed from the document metadata,
    * not actually deleted, so it can still be accessed from previous milestones.

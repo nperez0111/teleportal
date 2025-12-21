@@ -3,9 +3,13 @@ import type { Storage } from "unstorage";
 import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
-import { UnencryptedDocumentStorage } from "../unencrypted";
-import { DocumentMetadata } from "../document-storage";
-import { FileStorage } from "../file-storage";
+import { UnencryptedDocumentStorage } from "../unencrypted/document-storage";
+import {
+  DocumentMetadata,
+  FileStorage,
+  MilestoneStorage,
+  Document,
+} from "../types";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -18,60 +22,67 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { scanKeys: boolean; ttl: number };
   public readonly fileStorage: FileStorage | undefined;
+  public readonly milestoneStorage: MilestoneStorage | undefined;
 
   constructor(
     storage: Storage,
-    options?: { scanKeys?: boolean; ttl?: number; fileStorage?: FileStorage },
+    options?: {
+      scanKeys?: boolean;
+      ttl?: number;
+      fileStorage?: FileStorage;
+      milestoneStorage?: MilestoneStorage;
+    },
   ) {
     super();
     this.storage = storage;
     this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
     this.fileStorage = options?.fileStorage;
+    this.milestoneStorage = options?.milestoneStorage;
   }
 
   /**
    * Lock a key for 5 seconds
-   * @param key - The key to lock
+   * @param documentId - The document ID
    * @param cb - The callback to execute
    * @returns The TTL of the lock
    */
-  async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
-    const meta = await this.storage.getMeta(key);
+  async transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
+    const meta = await this.storage.getMeta(documentId);
     const lockedTTL = meta?.ttl;
     if (lockedTTL && lockedTTL > Date.now()) {
       // Wait for the lock to be released with jitter to avoid thundering herd
       const jitter = Math.random() * 1000; // Random delay between 0-1000ms
       const waitTime = lockedTTL - Date.now() + jitter;
       await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
+      return await this.transaction(documentId, cb);
     }
     const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
+    await this.storage.setMeta(documentId, { ttl, ...meta });
     const result = await cb();
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
+    await this.storage.setMeta(documentId, { ttl: Date.now(), ...meta });
     return result;
   }
 
   /**
    * Persist a Y.js update to storage
    */
-  async write(
-    key: string,
+  async handleUpdate(
+    documentId: string,
     update: Update,
     overwriteKeys?: boolean,
   ): Promise<void> {
-    const updateKey = key + "-update-" + uuidv4();
+    const updateKey = documentId + "-update-" + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
     if (this.options.scanKeys) {
       return;
     }
-    await this.transaction(key, async () => {
-      const doc = await this.storage.getItem<{ keys: string[] }>(key);
+    await this.transaction(documentId, async () => {
+      const doc = await this.storage.getItem<{ keys: string[] }>(documentId);
       if (doc && Array.isArray(doc.keys) && !overwriteKeys) {
         doc.keys = Array.from(new Set(doc.keys.concat(updateKey)));
-        await this.storage.setItem(key, doc);
+        await this.storage.setItem(documentId, doc);
       } else {
-        await this.storage.setItem(key, { keys: [updateKey] });
+        await this.storage.setItem(documentId, { keys: [updateKey] });
       }
     });
   }
@@ -79,36 +90,34 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   /**
    * Retrieve a Y.js update from storage
    */
-  async fetch(key: string): Promise<{
-    update: Update;
-    stateVector: StateVector;
-  } | null> {
-    const update = await this.compact(key);
+  async getDocument(documentId: string): Promise<Document | null> {
+    const update = await this.compact(documentId);
 
     if (!update) {
       return null;
     }
 
+    const stateVector = Y.encodeStateVectorFromUpdateV2(update) as StateVector;
+    const metadata = await this.getDocumentMetadata(documentId);
+
     return {
-      update,
-      get stateVector() {
-        const stateVector = Y.encodeStateVectorFromUpdateV2(
-          update,
-        ) as StateVector;
-        Object.defineProperty(this, "stateVector", { value: stateVector });
-        return stateVector;
+      id: documentId,
+      metadata,
+      content: {
+        update,
+        stateVector,
       },
     };
   }
 
   private async compact(
-    key: string,
+    documentId: string,
     asyncDeleteKeys = true,
   ): Promise<Update | null> {
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
-        new Set());
+      ? new Set(await this.storage.getKeys(documentId + "-update-"))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(documentId))
+          ?.keys ?? new Set());
 
     if (keys.size === 0) {
       return null;
@@ -127,7 +136,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     ) as Update;
 
     // asynchronously store the update and delete the keys
-    const promise = this.write(key, update, true).then(() => {
+    const promise = this.handleUpdate(documentId, update, true).then(() => {
       return Promise.all(
         Array.from(keys).map((key) => this.storage.removeItem(key)),
       );
@@ -140,37 +149,49 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     return update;
   }
 
-  async unload(key: string): Promise<void> {
-    await this.compact(key, false);
+  async unload(documentId: string): Promise<void> {
+    await this.compact(documentId, false);
   }
 
   async writeDocumentMetadata(
-    key: string,
+    documentId: string,
     metadata: DocumentMetadata,
   ): Promise<void> {
-    await this.storage.setItem(key + ":meta", metadata);
+    await this.storage.setItem(documentId + ":meta", metadata);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
+  async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
     return (
-      ((await this.storage.getItem(key + ":meta")) as DocumentMetadata) ?? {}
+      ((await this.storage.getItem(documentId + ":meta")) as DocumentMetadata) ??
+      {}
     );
   }
 
-  async deleteDocument(key: string): Promise<void> {
+  async deleteDocument(documentId: string): Promise<void> {
     // Cascade delete files
     if (this.fileStorage) {
-      await this.fileStorage.deleteFilesByDocument(key);
+      await this.fileStorage.deleteFilesByDocument(documentId);
+    }
+
+    // Cascade delete milestones
+    if (this.milestoneStorage) {
+        // Milestone storage interface doesn't have deleteMilestonesByDocument?
+        // Wait, types.ts says `deleteMilestone(documentId, id | id[])`.
+        // We need to fetch milestones first?
+        const milestones = await this.milestoneStorage.getMilestones(documentId);
+        if (milestones.length > 0) {
+            await this.milestoneStorage.deleteMilestone(documentId, milestones.map(m => m.id));
+        }
     }
 
     // Delete metadata
-    await this.storage.removeItem(key + ":meta");
+    await this.storage.removeItem(documentId + ":meta");
 
     // Delete updates and index
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
-        new Set());
+      ? new Set(await this.storage.getKeys(documentId + "-update-"))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(documentId))
+          ?.keys ?? new Set());
 
     if (keys.size > 0) {
       await Promise.all(
@@ -178,6 +199,6 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       );
     }
 
-    await this.storage.removeItem(key);
+    await this.storage.removeItem(documentId);
   }
 }

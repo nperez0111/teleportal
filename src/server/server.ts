@@ -7,7 +7,7 @@ import {
   type PubSub,
   type ServerContext,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage } from "../storage/types";
 import { withMessageValidator } from "teleportal/transports";
 import { toErrorDetails } from "../logging";
 import { getLogger } from "@logtape/logtape";

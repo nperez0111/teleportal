@@ -7,7 +7,12 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 import type { ServerContext } from "teleportal";
 import { Server } from "teleportal/server";
-import { UnstorageDocumentStorage } from "teleportal/storage";
+import {
+  UnstorageDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageTemporaryUploadStorage,
+  UnstorageMilestoneStorage,
+} from "teleportal/storage";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 import {
   checkPermissionWithTokenManager,
@@ -39,8 +44,23 @@ const serverInstance = new Server({
     context: ServerContext;
     encrypted: boolean;
   }) => {
+    const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(storage, {
+      keyPrefix: "upload",
+    });
+
+    const fileStorage = new UnstorageFileStorage(storage, {
+      keyPrefix: "file",
+      temporaryUploadStorage,
+    });
+
+    const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+      keyPrefix: "milestone",
+    });
+
     return new UnstorageDocumentStorage(storage, {
       scanKeys: false,
+      fileStorage,
+      milestoneStorage,
     });
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager) as any,

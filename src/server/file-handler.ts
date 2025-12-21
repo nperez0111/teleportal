@@ -1,5 +1,5 @@
 import type { Message, ServerContext } from "teleportal";
-import type { FileStorage } from "../storage/file-storage";
+import type { FileStorage } from "../storage/types";
 import { getLogger, Logger } from "@logtape/logtape";
 import {
   AckMessage,
@@ -67,14 +67,21 @@ export class FileHandler<
     document: string,
     encrypted: boolean,
   ): Promise<void> {
-    await this.#fileStorage.initiateUpload(metadata.fileId, {
-      filename: metadata.filename,
-      size: metadata.size,
-      mimeType: metadata.mimeType,
-      encrypted,
-      lastModified: Date.now(),
-      documentId: document,
-    });
+    if (!this.#fileStorage.temporaryUploadStorage) {
+      throw new Error("File storage does not support temporary uploads");
+    }
+
+    await this.#fileStorage.temporaryUploadStorage.beginUpload(
+      metadata.fileId,
+      {
+        filename: metadata.filename,
+        size: metadata.size,
+        mimeType: metadata.mimeType,
+        encrypted,
+        lastModified: Date.now(),
+        documentId: document,
+      },
+    );
 
     this.#logger
       .with({ uploadId: metadata.fileId })
@@ -94,8 +101,7 @@ export class FileHandler<
     });
 
     try {
-      const contentId = fromBase64(payload.fileId);
-      const file = await this.#fileStorage.getFile(contentId);
+      const file = await this.#fileStorage.getFile(payload.fileId);
       if (!file) {
         log.info("File not found for download", {
           fileId: payload.fileId,
@@ -116,6 +122,8 @@ export class FileHandler<
         );
         return;
       }
+
+      const contentId = file.contentId;
 
       log.debug("File found for download", {
         fileId: payload.fileId,
@@ -191,7 +199,12 @@ export class FileHandler<
 
     log.debug("Handling file progress");
 
-    const upload = await this.#fileStorage.getUploadProgress(payload.fileId);
+    if (!this.#fileStorage.temporaryUploadStorage) {
+      throw new Error("File storage does not support temporary uploads");
+    }
+    const tempStorage = this.#fileStorage.temporaryUploadStorage;
+
+    const upload = await tempStorage.getUploadProgress(payload.fileId);
     if (!upload) {
       const error = new Error(`Upload session ${payload.fileId} not found`);
       log.error("Upload session not found", {
@@ -201,7 +214,7 @@ export class FileHandler<
     }
 
     try {
-      await this.#fileStorage.storeChunk(
+      await tempStorage.storeChunk(
         payload.fileId,
         payload.chunkIndex,
         payload.chunkData,
@@ -216,9 +229,7 @@ export class FileHandler<
         }),
       );
 
-      const updatedUpload = await this.#fileStorage.getUploadProgress(
-        payload.fileId,
-      );
+      const updatedUpload = await tempStorage.getUploadProgress(payload.fileId);
       if (!updatedUpload) {
         throw new Error(
           `Upload session ${payload.fileId} not found after storing chunk`,
@@ -230,32 +241,41 @@ export class FileHandler<
           ? 1
           : Math.ceil(updatedUpload.metadata.size / (64 * 1024));
       if (updatedUpload.chunks.size >= totalChunks) {
-        const chunks: Uint8Array[] = [];
-        for (let i = 0; i < totalChunks; i++) {
-          const chunk = updatedUpload.chunks.get(i);
-          if (!chunk) {
-            break;
+        try {
+          const { getChunk } = await tempStorage.completeUpload(
+            payload.fileId,
+            "pending-verification",
+          );
+
+          const chunks: Uint8Array[] = [];
+          for (let i = 0; i < totalChunks; i++) {
+            chunks.push(await getChunk(i));
           }
-          chunks.push(chunk);
-        }
 
-        if (chunks.length === totalChunks) {
-          const merkleTree = buildMerkleTree(chunks);
-          const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+          if (chunks.length === totalChunks) {
+            const merkleTree = buildMerkleTree(chunks);
+            const contentId =
+              merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+            const fileId = toBase64(contentId);
 
-          try {
-            await this.#fileStorage.completeUpload(payload.fileId, contentId);
+            await this.#fileStorage.storeFile({
+              id: fileId,
+              metadata: updatedUpload.metadata,
+              chunks,
+              contentId,
+            });
+
             log.debug("Upload completed successfully", {
               fileId: payload.fileId,
-              contentId: toBase64(contentId),
+              contentId: fileId,
             });
-          } catch (error) {
-            log.error("Failed to complete upload", {
-              fileId: payload.fileId,
-              error: toErrorDetails(error),
-            });
-            throw error;
           }
+        } catch (error) {
+          log.error("Failed to complete upload", {
+            fileId: payload.fileId,
+            error: toErrorDetails(error),
+          });
+          throw error;
         }
       }
 
@@ -274,6 +294,6 @@ export class FileHandler<
    * Clean up expired uploads.
    */
   async cleanupExpiredUploads(): Promise<void> {
-    await this.#fileStorage.cleanupExpiredUploads();
+    await this.#fileStorage.temporaryUploadStorage?.cleanupExpiredUploads();
   }
 }

@@ -10,6 +10,8 @@ import {
   UnstorageDocumentStorage,
   UnstorageEncryptedDocumentStorage,
   UnstorageFileStorage,
+  UnstorageTemporaryUploadStorage,
+  UnstorageMilestoneStorage,
 } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
@@ -49,18 +51,32 @@ const server = new Server<TokenPayload & { clientId: string }>({
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
+    const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
+      backingStorage,
+      {
+        keyPrefix: "upload",
+      },
+    );
+
     const fileStorage = new UnstorageFileStorage(backingStorage, {
       keyPrefix: "file",
+      temporaryUploadStorage,
+    });
+
+    const milestoneStorage = new UnstorageMilestoneStorage(backingStorage, {
+      keyPrefix: "milestone",
     });
 
     if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(backingStorage, {
         fileStorage,
+        milestoneStorage,
       });
     }
     return new UnstorageDocumentStorage(backingStorage, {
       scanKeys: false,
       fileStorage,
+      milestoneStorage,
     });
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),

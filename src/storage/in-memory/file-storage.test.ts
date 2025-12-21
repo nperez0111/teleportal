@@ -1,160 +1,57 @@
 import { describe, expect, it } from "bun:test";
-import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "./file-storage";
+import { File } from "../types";
+import { toBase64 } from "lib0/buffer";
 
 describe("InMemoryFileStorage", () => {
-  it("should initiate an upload", async () => {
+  it("should store and retrieve a file", async () => {
     const storage = new InMemoryFileStorage();
-    const fileId = "test-file-id";
+    const contentId = new Uint8Array([1, 2, 3]);
+    const fileId = toBase64(contentId);
+    const file: File = {
+      id: fileId,
+      metadata: {
+        filename: "test.txt",
+        size: 3,
+        mimeType: "text/plain",
+        encrypted: false,
+        lastModified: Date.now(),
+        documentId: "doc1",
+      },
+      chunks: [new Uint8Array([1, 2, 3])],
+      contentId,
+    };
 
-    await storage.initiateUpload(fileId, {
-      filename: "test.txt",
-      size: 1024,
-      mimeType: "text/plain",
-      encrypted: false,
-      lastModified: Date.now(),
-      documentId: "test-doc",
-    });
+    await storage.storeFile(file);
 
-    const progress = await storage.getUploadProgress(fileId);
-    expect(progress).not.toBeNull();
-    expect(progress!.metadata.filename).toBe("test.txt");
-    expect(progress!.metadata.size).toBe(1024);
+    const retrieved = await storage.getFile(fileId);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.id).toBe(fileId);
+    expect(retrieved!.chunks[0]).toEqual(file.chunks[0]);
   });
 
-  it("should store chunks and track progress", async () => {
+  it("should delete a file", async () => {
     const storage = new InMemoryFileStorage();
-    const fileId = "test-file-id";
+    const contentId = new Uint8Array([1, 2, 3]);
+    const fileId = toBase64(contentId);
+    const file: File = {
+      id: fileId,
+      metadata: {
+        filename: "test.txt",
+        size: 3,
+        mimeType: "text/plain",
+        encrypted: false,
+        lastModified: Date.now(),
+        documentId: "doc1",
+      },
+      chunks: [new Uint8Array([1, 2, 3])],
+      contentId,
+    };
 
-    await storage.initiateUpload(fileId, {
-      filename: "test.txt",
-      size: CHUNK_SIZE * 2,
-      mimeType: "text/plain",
-      encrypted: false,
-      lastModified: Date.now(),
-      documentId: "test-doc",
-    });
+    await storage.storeFile(file);
+    await storage.deleteFile(fileId);
 
-    const chunk1 = new Uint8Array(CHUNK_SIZE);
-    chunk1.fill(1);
-    const proof1: Uint8Array[] = [];
-
-    await storage.storeChunk(fileId, 0, chunk1, proof1);
-
-    const progress = await storage.getUploadProgress(fileId);
-    expect(progress!.bytesUploaded).toBe(CHUNK_SIZE);
-    expect(progress!.chunks.has(0)).toBe(true);
-  });
-
-  it("should complete an upload and store file", async () => {
-    const storage = new InMemoryFileStorage();
-    const fileId = "test-file-id";
-
-    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
-
-    await storage.initiateUpload(fileId, {
-      filename: "test.txt",
-      size: chunks[0].length + chunks[1].length,
-      mimeType: "text/plain",
-      encrypted: false,
-      lastModified: Date.now(),
-      documentId: "test-doc",
-    });
-
-    // Build merkle tree to get contentId
-    const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
-
-    // Store chunks
-    for (let i = 0; i < chunks.length; i++) {
-      const proof: Uint8Array[] = [];
-      await storage.storeChunk(fileId, i, chunks[i], proof);
-    }
-
-    // Complete upload
-    await storage.completeUpload(fileId, contentId);
-
-    // Verify file is stored
-    const file = await storage.getFile(contentId);
-    expect(file).not.toBeNull();
-    expect(file!.metadata.filename).toBe("test.txt");
-    expect(file!.chunks.length).toBe(2);
-    expect(file!.chunks[0]).toEqual(chunks[0]);
-    expect(file!.chunks[1]).toEqual(chunks[1]);
-
-    // Verify upload session is removed
-    const progress = await storage.getUploadProgress(fileId);
-    expect(progress).toBeNull();
-  });
-
-  it("should reject completion with wrong contentId", async () => {
-    const storage = new InMemoryFileStorage();
-    const fileId = "test-file-id";
-
-    const chunks = [new Uint8Array([1, 2, 3])];
-
-    await storage.initiateUpload(fileId, {
-      filename: "test.txt",
-      size: chunks[0].length,
-      mimeType: "text/plain",
-      encrypted: false,
-      lastModified: Date.now(),
-      documentId: "test-doc",
-    });
-
-    await storage.storeChunk(fileId, 0, chunks[0], []);
-
-    const wrongContentId = new Uint8Array(32);
-    wrongContentId.fill(99);
-
-    await expect(
-      storage.completeUpload(fileId, wrongContentId),
-    ).rejects.toThrow("Merkle root hash mismatch");
-  });
-
-  it("should reject completion with missing chunks", async () => {
-    const storage = new InMemoryFileStorage();
-    const fileId = "test-file-id";
-
-    await storage.initiateUpload(fileId, {
-      filename: "test.txt",
-      size: CHUNK_SIZE * 2,
-      mimeType: "text/plain",
-      encrypted: false,
-      lastModified: Date.now(),
-      documentId: "test-doc",
-    });
-
-    const chunk = new Uint8Array(CHUNK_SIZE);
-    await storage.storeChunk(fileId, 0, chunk, []);
-
-    const merkleTree = buildMerkleTree([chunk, new Uint8Array(CHUNK_SIZE)]);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
-
-    await expect(storage.completeUpload(fileId, contentId)).rejects.toThrow(
-      "Missing chunk 1 for file test-file-id",
-    );
-  });
-
-  it("should cleanup expired uploads", async () => {
-    const storage = new InMemoryFileStorage(100); // 100ms timeout
-
-    const fileId = "test-file-id";
-    await storage.initiateUpload(fileId, {
-      filename: "test.txt",
-      size: 1024,
-      mimeType: "text/plain",
-      encrypted: false,
-      lastModified: Date.now(),
-      documentId: "test-doc",
-    });
-
-    // Wait for expiration
-    await new Promise((resolve) => setTimeout(resolve, 150));
-
-    await storage.cleanupExpiredUploads();
-
-    const progress = await storage.getUploadProgress(fileId);
-    expect(progress).toBeNull();
+    const retrieved = await storage.getFile(fileId);
+    expect(retrieved).toBeNull();
   });
 });

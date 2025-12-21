@@ -7,6 +7,8 @@ import { Server } from "teleportal/server";
 import {
   UnstorageDocumentStorage,
   UnstorageEncryptedDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageTemporaryUploadStorage,
 } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
@@ -30,11 +32,24 @@ const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
     const backingStorage = memoryStorage;
 
+    const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
+      backingStorage,
+      { keyPrefix: "upload" },
+    );
+
+    const fileStorage = new UnstorageFileStorage(backingStorage, {
+      keyPrefix: "file",
+      temporaryUploadStorage,
+    });
+
     if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(backingStorage);
+      return new UnstorageEncryptedDocumentStorage(backingStorage, {
+        fileStorage,
+      });
     }
     return new UnstorageDocumentStorage(backingStorage, {
       scanKeys: false,
+      fileStorage,
     });
   },
 });

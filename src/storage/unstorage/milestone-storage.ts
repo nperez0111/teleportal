@@ -1,11 +1,13 @@
 import { Milestone, type MilestoneSnapshot } from "teleportal";
+import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
-import type { MilestoneStorage } from "../milestone-storage";
+import type { MilestoneStorage } from "../types";
 
 /**
  * Unstorage storage for {@link Milestone}s
  */
 export class UnstorageMilestoneStorage implements MilestoneStorage {
+  readonly type = "milestone-storage";
   // The strategy here is to have a metadata document and a milestone content document
   // This allows the list endpoint to be fast by not having to scan across keys
   private readonly storage: Storage;
@@ -51,11 +53,11 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
   }
 
   #getMetadataKey(documentId: string) {
-    return `${this.keyPrefix}:milestone:${documentId}:meta`;
+    return `${this.keyPrefix}:${documentId}:meta`;
   }
 
   #getContentKey(documentId: string, id: string) {
-    return `${this.keyPrefix}:milestone:${documentId}:content:${id}`;
+    return `${this.keyPrefix}:${documentId}:content:${id}`;
   }
 
   /**
@@ -101,14 +103,14 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
   /**
    * Create a new milestone in storage
    */
-  createMilestone(ctx: {
-    id: string;
+  async createMilestone(ctx: {
     name: string;
     documentId: string;
     createdAt: number;
     snapshot: MilestoneSnapshot;
-  }): Promise<void> {
-    return this.transaction(
+  }): Promise<string> {
+    const id = uuidv4();
+    await this.transaction(
       this.#getMetadataKey(ctx.documentId),
       async (key) => {
         const milestoneMetaDoc =
@@ -124,32 +126,22 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
               )
             : [];
 
-        // Check if milestone with same ID already exists
-        const existingIndex = existingMilestones.findIndex(
-          (m) => m.id === ctx.id,
-        );
-
-        const milestone = new Milestone(ctx);
-
-        // If milestone exists, replace it; otherwise, append it
-        if (existingIndex >= 0) {
-          existingMilestones[existingIndex] = milestone;
-        } else {
-          existingMilestones.push(milestone);
-        }
+        const milestone = new Milestone({ ...ctx, id });
+        existingMilestones.push(milestone);
 
         // Re-encode the metadata document with updated milestones
         const newMilestoneMetaDoc = Milestone.encodeMetaDoc(existingMilestones);
 
         await Promise.all([
           this.storage.setItemRaw(
-            this.#getContentKey(ctx.documentId, ctx.id),
+            this.#getContentKey(ctx.documentId, id),
             milestone.encode(),
           ),
           this.storage.setItemRaw(key, newMilestoneMetaDoc),
         ]);
       },
     );
+    return id;
   }
 
   /**
@@ -166,9 +158,12 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
   /**
    * Delete the specified milestone(s) from storage
    */
-  deleteMilestone(documentId: string, id: string | string[]): Promise<void> {
+  async deleteMilestone(
+    documentId: string,
+    id: string | string[],
+  ): Promise<void> {
     const ids = ([] as string[]).concat(id);
-    return this.transaction(this.#getMetadataKey(documentId), async (key) => {
+    await this.transaction(this.#getMetadataKey(documentId), async (key) => {
       const milestones = await this.getMilestones(documentId);
       if (!milestones.some((milestone) => ids.includes(milestone.id))) {
         // bailing out early if the milestone ids are not found
