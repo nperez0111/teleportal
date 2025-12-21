@@ -4,6 +4,7 @@ import {
   type Message,
   type PubSub,
   type ServerContext,
+  type SyncStep2Update,
   type Update,
 } from "teleportal";
 import type { DocumentStorage } from "teleportal/storage";
@@ -316,7 +317,7 @@ export class Session<Context extends ServerContext> {
     writeLogger.debug("Writing update to storage");
 
     try {
-      await this.#storage.write(this.namespacedDocumentId, update);
+      await this.#storage.handleUpdate(this.namespacedDocumentId, update);
 
       writeLogger.debug("Update written to storage successfully");
     } catch (error) {
@@ -382,11 +383,10 @@ export class Session<Context extends ServerContext> {
                 })
                 .trace("Processing sync-step-1");
 
-              const { update, stateVector } =
-                await this.#storage.handleSyncStep1(
-                  this.namespacedDocumentId,
-                  message.payload.sv,
-                );
+              const doc = await this.#storage.handleSyncStep1(
+                this.namespacedDocumentId,
+                message.payload.sv,
+              );
 
               log
                 .with({
@@ -405,7 +405,10 @@ export class Session<Context extends ServerContext> {
               await client.send(
                 new DocMessage(
                   this.documentId,
-                  { type: "sync-step-2", update },
+                  {
+                    type: "sync-step-2",
+                    update: doc.content.update as unknown as SyncStep2Update,
+                  },
                   message.context,
                   this.encrypted,
                 ),
@@ -413,7 +416,7 @@ export class Session<Context extends ServerContext> {
               await client.send(
                 new DocMessage(
                   this.documentId,
-                  { type: "sync-step-1", sv: stateVector },
+                  { type: "sync-step-1", sv: doc.content.stateVector },
                   message.context,
                   this.encrypted,
                 ),

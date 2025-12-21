@@ -5,9 +5,10 @@ import {
   InMemoryPubSub,
   type ServerContext,
   type StateVector,
+  type Update,
   encodeMessageArray,
 } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 
 import { Server } from "../server/server";
 import {
@@ -18,45 +19,68 @@ import {
 import { getDocumentsFromQueryParams } from "./utils";
 
 // Mock DocumentStorage for testing
-class MockDocumentStorage extends DocumentStorage {
-  handleSyncStep1(
-    key: string,
-    syncStep1: StateVector,
-  ): Promise<{ update: any; stateVector: StateVector }> {
-    return Promise.resolve({
-      update: new Uint8Array([1, 2, 3]),
-      stateVector: syncStep1,
-    });
-  }
-  handleSyncStep2(key: string, syncStep2: any): Promise<void> {
-    return Promise.resolve();
-  }
-  public get fileStorage() {
-    return undefined;
-  }
-  public encrypted = false;
-  public storedData: any = null;
-  public metadata: Map<string, any> = new Map();
+class MockDocumentStorage implements DocumentStorage {
+  readonly type = "document-storage" as const;
+  storageType: "encrypted" | "unencrypted" = "unencrypted";
+  fileStorage = undefined;
+  milestoneStorage = undefined;
 
-  async fetch(documentId: string) {
-    return this.storedData;
+  storedUpdate: Update | null = null;
+  metadata: Map<string, DocumentMetadata> = new Map();
+
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
+    return {
+      id: documentId,
+      metadata: await this.getDocumentMetadata(documentId),
+      content: {
+        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        stateVector: syncStep1,
+      },
+    };
   }
 
-  async write(documentId: string, update: any) {
-    this.storedData = update;
+  async handleSyncStep2(_documentId: string, _syncStep2: any): Promise<void> {
+    return;
   }
 
-  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
-    this.metadata.set(key, metadata);
+  async handleUpdate(_documentId: string, update: Update): Promise<void> {
+    this.storedUpdate = update;
   }
 
-  async fetchDocumentMetadata(key: string): Promise<any> {
-    return this.metadata.get(key) || {};
+  async getDocument(documentId: string): Promise<Document | null> {
+    if (!this.storedUpdate) return null;
+    return {
+      id: documentId,
+      metadata: await this.getDocumentMetadata(documentId),
+      content: {
+        update: this.storedUpdate,
+        stateVector: new Uint8Array() as unknown as StateVector,
+      },
+    };
   }
 
-  async deleteDocument(key: string): Promise<void> {
-    this.metadata.delete(key);
-    this.storedData = null;
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
+    this.metadata.set(documentId, metadata);
+  }
+
+  async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+    const now = Date.now();
+    return (
+      this.metadata.get(documentId) ?? {
+        createdAt: now,
+        updatedAt: now,
+        encrypted: false,
+      }
+    );
+  }
+
+  async deleteDocument(documentId: string): Promise<void> {
+    this.metadata.delete(documentId);
+    this.storedUpdate = null;
+  }
+
+  transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
   }
 }
 

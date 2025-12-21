@@ -1,12 +1,14 @@
 import crossws from "crossws/adapters/bun";
 import { createStorage } from "unstorage";
-// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
+// @ts-ignore - unstorage driver types can't be resolved via exports but work at runtime
 import fsDriver from "unstorage/drivers/fs";
 
 import { Server } from "teleportal/server";
 import {
   UnstorageDocumentStorage,
   UnstorageEncryptedDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageTemporaryUploadStorage,
 } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
@@ -29,12 +31,18 @@ const tokenManager = createTokenManager({
 const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
     const backingStorage = memoryStorage;
+    const fileStorage = new UnstorageFileStorage(backingStorage, { keyPrefix: "file" });
+    fileStorage.temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
+      backingStorage,
+      { keyPrefix: "file" },
+    );
 
     if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(backingStorage);
+      return new UnstorageEncryptedDocumentStorage(backingStorage, { fileStorage });
     }
     return new UnstorageDocumentStorage(backingStorage, {
       scanKeys: false,
+      fileStorage,
     });
   },
 });

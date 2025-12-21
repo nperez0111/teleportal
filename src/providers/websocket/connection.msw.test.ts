@@ -22,8 +22,8 @@ import { withSendFile } from "../../transports/send-file";
 import { WebSocketConnection } from "./connection";
 import { FileHandler } from "../../server/file-handler";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
+import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
 import { noopTransport, withPassthrough } from "../../transports/passthrough";
-import { fromBase64 } from "lib0/buffer";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 
 const wsUrl = "ws://localhost:8080";
@@ -78,6 +78,9 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload file through WebSocket connection", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
+        onComplete: (file) => fileStorage.storeFile(file),
+      });
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
@@ -148,8 +151,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
 
       // Verify file was stored
-      const contentId = fromBase64(fileId);
-      const storedFile = await fileStorage.getFile(contentId);
+      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -161,6 +163,9 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload large file through WebSocket connection", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
+        onComplete: (file) => fileStorage.storeFile(file),
+      });
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
@@ -224,8 +229,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       const fileId = await wrappedTransport.upload(file, "test-large-file-id");
 
       // Verify file was stored
-      const contentId = fromBase64(fileId);
-      const storedFile = await fileStorage.getFile(contentId);
+      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -238,6 +242,9 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload and download file through WebSocket connection (round-trip)", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
+        onComplete: (file) => fileStorage.storeFile(file),
+      });
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
@@ -313,8 +320,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
 
       // Verify file was stored
-      const contentId = fromBase64(fileId);
-      const storedFile = await fileStorage.getFile(contentId);
+      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);

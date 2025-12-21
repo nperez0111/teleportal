@@ -4,8 +4,7 @@ import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import { DocumentMetadata } from "../document-storage";
-import { FileStorage } from "../file-storage";
+import type { Document, DocumentMetadata, FileStorage } from "../types";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -17,7 +16,6 @@ import { FileStorage } from "../file-storage";
 export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { scanKeys: boolean; ttl: number };
-  public readonly fileStorage: FileStorage | undefined;
 
   constructor(
     storage: Storage,
@@ -55,7 +53,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   /**
    * Persist a Y.js update to storage
    */
-  async write(
+  async handleUpdate(
     key: string,
     update: Update,
     overwriteKeys?: boolean,
@@ -74,29 +72,33 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
         await this.storage.setItem(key, { keys: [updateKey] });
       }
     });
+
+    // Best-effort: bump updatedAt for the document.
+    await this.transaction(key, async () => {
+      const meta = await this.getDocumentMetadata(key);
+      await this.writeDocumentMetadata(key, { ...meta, updatedAt: Date.now() });
+    });
   }
 
   /**
    * Retrieve a Y.js update from storage
    */
-  async fetch(key: string): Promise<{
-    update: Update;
-    stateVector: StateVector;
-  } | null> {
+  async getDocument(key: string): Promise<Document | null> {
     const update = await this.compact(key);
 
     if (!update) {
       return null;
     }
 
+    const stateVector = Y.encodeStateVectorFromUpdateV2(update) as StateVector;
+    const metadata = await this.getDocumentMetadata(key);
+
     return {
-      update,
-      get stateVector() {
-        const stateVector = Y.encodeStateVectorFromUpdateV2(
-          update,
-        ) as StateVector;
-        Object.defineProperty(this, "stateVector", { value: stateVector });
-        return stateVector;
+      id: key,
+      metadata,
+      content: {
+        update,
+        stateVector,
       },
     };
   }
@@ -127,7 +129,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     ) as Update;
 
     // asynchronously store the update and delete the keys
-    const promise = this.write(key, update, true).then(() => {
+    const promise = this.handleUpdate(key, update, true).then(() => {
       return Promise.all(
         Array.from(keys).map((key) => this.storage.removeItem(key)),
       );
@@ -151,10 +153,29 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     await this.storage.setItem(key + ":meta", metadata);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
-    return (
-      ((await this.storage.getItem(key + ":meta")) as DocumentMetadata) ?? {}
-    );
+  async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
+    const now = Date.now();
+    const existing = (await this.storage.getItem(
+      key + ":meta",
+    )) as DocumentMetadata | null;
+
+    if (!existing) {
+      return {
+        createdAt: now,
+        updatedAt: now,
+        encrypted: false,
+      };
+    }
+
+    return {
+      ...existing,
+      createdAt:
+        typeof existing.createdAt === "number" ? existing.createdAt : now,
+      updatedAt:
+        typeof existing.updatedAt === "number" ? existing.updatedAt : now,
+      encrypted:
+        typeof existing.encrypted === "boolean" ? existing.encrypted : false,
+    };
   }
 
   async deleteDocument(key: string): Promise<void> {
