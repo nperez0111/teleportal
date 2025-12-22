@@ -6,7 +6,7 @@ import {
   type ServerContext,
   type Update,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage } from "../storage/types";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 import { getLogger, Logger } from "@logtape/logtape";
@@ -316,7 +316,7 @@ export class Session<Context extends ServerContext> {
     writeLogger.debug("Writing update to storage");
 
     try {
-      await this.#storage.write(this.namespacedDocumentId, update);
+      await this.#storage.handleUpdate(this.namespacedDocumentId, update);
 
       writeLogger.debug("Update written to storage successfully");
     } catch (error) {
@@ -382,11 +382,12 @@ export class Session<Context extends ServerContext> {
                 })
                 .trace("Processing sync-step-1");
 
-              const { update, stateVector } =
-                await this.#storage.handleSyncStep1(
-                  this.namespacedDocumentId,
-                  message.payload.sv,
-                );
+              const document = await this.#storage.handleSyncStep1(
+                this.namespacedDocumentId,
+                message.payload.sv,
+              );
+              
+              const { update, stateVector } = document.content;
 
               log
                 .with({
@@ -674,10 +675,8 @@ export class Session<Context extends ServerContext> {
   }
 
   toString() {
-    return `Session(documentId: ${this.documentId}, namespacedDocumentId: ${this.namespacedDocumentId}, id: ${this.id}, encrypted: ${this.encrypted}, clients: ${this.#clients
-      .values()
+    return `Session(documentId: ${this.documentId}, namespacedDocumentId: ${this.namespacedDocumentId}, id: ${this.id}, encrypted: ${this.encrypted}, clients: ${Array.from(this.#clients.values())
       .map((client) => client.toString())
-      .toArray()
       .join(", ")})`;
   }
 

@@ -1,27 +1,29 @@
 import { MilestoneSnapshot, Milestone } from "teleportal";
-import { MilestoneStorage } from "../milestone-storage";
+import { uuidv4 } from "lib0/random";
+import { MilestoneStorage } from "../types";
 
 /**
  * Naive in-memory storage for {@link Milestone}s
  */
 export class InMemoryMilestoneStorage implements MilestoneStorage {
+  readonly type = "milestone-storage";
   public milestones = new Map<Milestone["id"], Milestone>();
 
   async getMilestones(documentId: string): Promise<Milestone[]> {
-    return this.milestones
-      .values()
-      .filter((milestone) => milestone.documentId === documentId)
-      .toArray();
+    return Array.from(this.milestones.values()).filter(
+      (milestone) => milestone.documentId === documentId,
+    );
   }
 
   async createMilestone(ctx: {
-    id: string;
     name: string;
     documentId: string;
     createdAt: number;
     snapshot: MilestoneSnapshot;
-  }): Promise<void> {
-    this.milestones.set(ctx.id, new Milestone(ctx));
+  }): Promise<string> {
+    const id = uuidv4();
+    this.milestones.set(id, new Milestone({ ...ctx, id }));
+    return id;
   }
 
   async getMilestone(

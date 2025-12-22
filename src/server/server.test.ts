@@ -1,5 +1,4 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { getLogger } from "@logtape/logtape";
 import { Server } from "./server";
 import { Client } from "./client";
 import { InMemoryPubSub, DocMessage } from "teleportal";
@@ -11,53 +10,76 @@ import type {
   SyncStep2Update,
   Update,
 } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import {
+  DocumentStorage,
+  Document,
+  DocumentMetadata,
+  FileStorage,
+  MilestoneStorage,
+} from "../storage/types";
 
 // Mock DocumentStorage for testing
-class MockDocumentStorage extends DocumentStorage {
+class MockDocumentStorage implements DocumentStorage {
+  readonly type = "document-storage";
+  readonly storageType = "unencrypted";
+  public fileStorage?: FileStorage;
+  public milestoneStorage?: MilestoneStorage;
+
   handleSyncStep1(
-    key: string,
+    documentId: string,
     syncStep1: StateVector,
-  ): Promise<{ update: SyncStep2Update; stateVector: StateVector }> {
+  ): Promise<Document> {
     return Promise.resolve({
-      update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
-      stateVector: syncStep1,
+      id: documentId,
+      metadata: {
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        encrypted: false,
+      },
+      content: {
+        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        stateVector: syncStep1,
+      },
     });
   }
-  handleSyncStep2(key: string, syncStep2: SyncStep2Update): Promise<void> {
+
+  handleSyncStep2(documentId: string, syncStep2: SyncStep2Update): Promise<void> {
     return Promise.resolve();
   }
-  public get fileStorage() {
-    return undefined;
+
+  handleUpdate(documentId: string, update: Update): Promise<void> {
+    this.storedData = update;
+    return Promise.resolve();
   }
-  public encrypted = false;
-  public mockFetch = false;
-  public mockWrite = false;
+
+  getDocument(documentId: string): Promise<Document | null> {
+    return Promise.resolve(null);
+  }
+
+  writeDocumentMetadata(
+    documentId: string,
+    metadata: DocumentMetadata,
+  ): Promise<void> {
+    this.metadata.set(documentId, metadata);
+    return Promise.resolve();
+  }
+
+  getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+    return Promise.resolve(this.metadata.get(documentId) || ({} as DocumentMetadata));
+  }
+
+  deleteDocument(documentId: string): Promise<void> {
+    this.metadata.delete(documentId);
+    this.storedData = null;
+    return Promise.resolve();
+  }
+
+  transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
+  }
+
   public storedData: any = null;
   public metadata: Map<string, any> = new Map();
-
-  async fetch(documentId: string) {
-    this.mockFetch = true;
-    return this.storedData;
-  }
-
-  async write(documentId: string, update: any) {
-    this.mockWrite = true;
-    this.storedData = update;
-  }
-
-  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
-    this.metadata.set(key, metadata);
-  }
-
-  async fetchDocumentMetadata(key: string): Promise<any> {
-    return this.metadata.get(key) || {};
-  }
-
-  async deleteDocument(key: string): Promise<void> {
-    this.metadata.delete(key);
-    this.storedData = null;
-  }
 }
 
 // Mock Transport for testing

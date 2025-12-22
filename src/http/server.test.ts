@@ -4,52 +4,82 @@ import {
   InMemoryPubSub,
   type ServerContext,
   type StateVector,
+  type Update,
 } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import {
+  DocumentStorage,
+  Document,
+  FileStorage,
+  MilestoneStorage,
+  DocumentMetadata,
+} from "../storage/types";
 import { Server } from "../server/server";
 import { getHTTPHandler } from "./server";
 
 // Mock DocumentStorage for testing
-class MockDocumentStorage extends DocumentStorage {
+class MockDocumentStorage implements DocumentStorage {
+  readonly type = "document-storage";
+  readonly storageType = "unencrypted";
+  public fileStorage?: FileStorage;
+  public milestoneStorage?: MilestoneStorage;
+
   handleSyncStep1(
-    key: string,
+    documentId: string,
     syncStep1: StateVector,
-  ): Promise<{ update: any; stateVector: StateVector }> {
+  ): Promise<Document> {
     return Promise.resolve({
-      update: new Uint8Array([1, 2, 3]),
-      stateVector: syncStep1,
+      id: documentId,
+      metadata: {
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        encrypted: false,
+      },
+      content: {
+        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        stateVector: syncStep1,
+      },
     });
   }
-  handleSyncStep2(key: string, syncStep2: any): Promise<void> {
+
+  handleSyncStep2(documentId: string, syncStep2: any): Promise<void> {
     return Promise.resolve();
   }
-  public get fileStorage() {
-    return undefined;
+
+  handleUpdate(documentId: string, update: any): Promise<void> {
+    this.storedData = update;
+    return Promise.resolve();
   }
-  public encrypted = false;
+
+  getDocument(documentId: string): Promise<Document | null> {
+    return Promise.resolve(null);
+  }
+
+  writeDocumentMetadata(
+    documentId: string,
+    metadata: DocumentMetadata,
+  ): Promise<void> {
+    this.metadata.set(documentId, metadata);
+    return Promise.resolve();
+  }
+
+  getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+    return Promise.resolve(
+      this.metadata.get(documentId) || ({} as DocumentMetadata),
+    );
+  }
+
+  deleteDocument(documentId: string): Promise<void> {
+    this.metadata.delete(documentId);
+    this.storedData = null;
+    return Promise.resolve();
+  }
+
+  transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
+  }
+
   public storedData: any = null;
   public metadata: Map<string, any> = new Map();
-
-  async fetch(documentId: string) {
-    return this.storedData;
-  }
-
-  async write(documentId: string, update: any) {
-    this.storedData = update;
-  }
-
-  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
-    this.metadata.set(key, metadata);
-  }
-
-  async fetchDocumentMetadata(key: string): Promise<any> {
-    return this.metadata.get(key) || {};
-  }
-
-  async deleteDocument(key: string): Promise<void> {
-    this.metadata.delete(key);
-    this.storedData = null;
-  }
 }
 
 describe("getHTTPHandler", () => {
