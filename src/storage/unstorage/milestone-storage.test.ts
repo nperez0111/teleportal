@@ -4,10 +4,8 @@ import { UnstorageMilestoneStorage } from "./milestone-storage";
 import type { MilestoneSnapshot, StateVector, Update } from "teleportal";
 
 describe("UnstorageMilestoneStorage", () => {
-  const createTestSnapshot = (): MilestoneSnapshot => ({
-    stateVector: new Uint8Array([1, 2, 3, 4, 5]) as StateVector,
-    update: new Uint8Array([10, 20, 30, 40, 50]) as Update,
-  });
+  const createTestSnapshot = (): MilestoneSnapshot =>
+    new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
 
   let storage: UnstorageMilestoneStorage;
 
@@ -82,4 +80,3 @@ describe("UnstorageMilestoneStorage", () => {
     expect(await storage.getMilestone("doc-1", id2)).toBeNull();
   });
 });
-

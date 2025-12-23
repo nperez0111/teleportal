@@ -274,3 +274,8 @@ export type DecodedFileAuthMessage = {
    */
   statusCode: 404 | 403 | 401 | 500 | 501;
 };
+
+/**
+ * A {@link MilestoneSnapshot} is a binary encoded snapshot of a document at a point in time.
+ */
+export type MilestoneSnapshot = Tag<Uint8Array, "milestone-snapshot">;

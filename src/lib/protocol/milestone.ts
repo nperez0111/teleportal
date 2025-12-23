@@ -1,22 +1,6 @@
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
-import { StateVector, Update } from "teleportal";
-
-/**
- * A {@link MilestoneSnapshot} is a snapshot of a document at a point in time.
- * This includes the {@link Update} and {@link StateVector} of the document at that point in time.
- * @note a {@link Milestone} can be defined lazily, this allows flexibility for retrieving the metadata of a {@link Milestone} versus it's underlying {@link MilestoneSnapshot} which actually has the document content. Use the {@link Milestone.fetchSnapshot} method to load the content into memory
- */
-export interface MilestoneSnapshot {
-  /**
-   * The {@link Update} of the document at the point in time of this snapshot
-   */
-  update: Update;
-  /**
-   * The {@link StateVector} of the document at the point in time of this snapshot
-   */
-  stateVector: StateVector;
-}
+import type { MilestoneSnapshot } from "teleportal";
 
 /**
  * A {@link Milestone} is a snapshot of a document at a point in time.
@@ -130,10 +114,8 @@ export class Milestone {
     return encoding.encode((encoder) => {
       // Write the meta as the head
       Milestone.encodeMeta(this, encoder);
-      // snapshot.stateVector
-      encoding.writeVarUint8Array(encoder, snapshot.stateVector);
       // snapshot.update
-      encoding.writeUint8Array(encoder, snapshot.update);
+      encoding.writeUint8Array(encoder, snapshot);
     });
   }
 
@@ -232,18 +214,16 @@ export class Milestone {
       source,
       decoder,
     );
-    const stateVector = decoding.readVarUint8Array(decoder) as StateVector;
-    const update = decoding.readTailAsUint8Array(decoder) as Update;
+    const snapshot = decoding.readTailAsUint8Array(
+      decoder,
+    ) as MilestoneSnapshot;
 
     return new Milestone({
       id,
       name,
       documentId,
       createdAt,
-      snapshot: {
-        stateVector,
-        update,
-      },
+      snapshot,
     });
   }
 

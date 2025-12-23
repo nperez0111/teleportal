@@ -1,13 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { Milestone, type MilestoneSnapshot } from "./milestone";
-import type { StateVector, Update } from "teleportal";
-import { getEmptyStateVector, getEmptyUpdate } from "./utils";
+import type { MilestoneSnapshot } from "teleportal";
+import { Milestone } from "./milestone";
 
 describe("Milestone", () => {
-  const createTestSnapshot = (): MilestoneSnapshot => ({
-    stateVector: new Uint8Array([1, 2, 3, 4, 5]) as StateVector,
-    update: new Uint8Array([10, 20, 30, 40, 50]) as Update,
-  });
+  const createTestSnapshot = (): MilestoneSnapshot =>
+    new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
 
   const createTestMilestone = (overrides?: {
     id?: string;
@@ -38,15 +35,11 @@ describe("Milestone", () => {
       expect(decoded.createdAt).toBe(original.createdAt);
       expect(decoded.loaded).toBe(true);
       const decodedSnapshot = await decoded.fetchSnapshot();
-      expect(decodedSnapshot.stateVector).toEqual(originalSnapshot.stateVector);
-      expect(decodedSnapshot.update).toEqual(originalSnapshot.update);
+      expect(decodedSnapshot).toEqual(originalSnapshot);
     });
 
     it("can encode and decode with different snapshot data", async () => {
-      const snapshot: MilestoneSnapshot = {
-        stateVector: new Uint8Array([99, 98, 97]) as StateVector,
-        update: new Uint8Array([200, 201, 202, 203]) as Update,
-      };
+      const snapshot = new Uint8Array([99, 98, 97]) as MilestoneSnapshot;
       const original = createTestMilestone({
         id: "different-id",
         name: "v2.0.0",
@@ -63,40 +56,18 @@ describe("Milestone", () => {
       expect(decoded.documentId).toBe("doc-456");
       expect(decoded.createdAt).toBe(9876543210);
       const decodedSnapshot = await decoded.fetchSnapshot();
-      expect(decodedSnapshot.stateVector).toEqual(snapshot.stateVector);
-      expect(decodedSnapshot.update).toEqual(snapshot.update);
-    });
-
-    it("can encode and decode with empty state vector and update", async () => {
-      const snapshot: MilestoneSnapshot = {
-        stateVector: getEmptyStateVector(),
-        update: getEmptyUpdate(),
-      };
-      const original = createTestMilestone({ snapshot });
-
-      const encoded = original.encode();
-      const decoded = Milestone.decode(encoded);
-
-      const decodedSnapshot = await decoded.fetchSnapshot();
-      expect(decodedSnapshot.stateVector).toEqual(snapshot.stateVector);
-      expect(decodedSnapshot.update).toEqual(snapshot.update);
+      expect(decodedSnapshot).toEqual(snapshot);
     });
 
     it("can encode and decode with large snapshot data", async () => {
-      const largeStateVector = new Uint8Array(1000).fill(42) as StateVector;
-      const largeUpdate = new Uint8Array(5000).fill(99) as Update;
-      const snapshot: MilestoneSnapshot = {
-        stateVector: largeStateVector,
-        update: largeUpdate,
-      };
+      const snapshot = new Uint8Array(1000).fill(42) as MilestoneSnapshot;
       const original = createTestMilestone({ snapshot });
 
       const encoded = original.encode();
       const decoded = Milestone.decode(encoded);
 
       const decodedSnapshot = await decoded.fetchSnapshot();
-      expect(decodedSnapshot.stateVector).toEqual(largeStateVector);
-      expect(decodedSnapshot.update).toEqual(largeUpdate);
+      expect(decodedSnapshot).toEqual(snapshot);
     });
 
     it("throws error when encoding milestone without snapshot", () => {
