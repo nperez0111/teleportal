@@ -6,12 +6,13 @@ import type {
   FileStorage,
   TemporaryUploadStorage,
 } from "../types";
+import type { InMemoryTemporaryUploadStorage } from "./temporary-upload-storage";
 
 /**
  * In-memory implementation of {@link FileStorage}.
  *
- * Note: Upload session management is handled by a {@link TemporaryUploadStorage}
- * implementation (see `InMemoryTemporaryUploadStorage`).
+ * @note Upload session management is handled by a {@link TemporaryUploadStorage}
+ * implementation (see {@link InMemoryTemporaryUploadStorage}).
  */
 export class InMemoryFileStorage implements FileStorage {
   readonly type = "file-storage" as const;
@@ -39,7 +40,8 @@ export class InMemoryFileStorage implements FileStorage {
     if (!this.#documentStorage || !documentId) return;
 
     await this.#documentStorage.transaction(documentId, async () => {
-      const metadata = await this.#documentStorage!.getDocumentMetadata(documentId);
+      const metadata =
+        await this.#documentStorage!.getDocumentMetadata(documentId);
       const files = Array.from(new Set([...(metadata.files ?? []), file.id]));
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,
@@ -61,7 +63,8 @@ export class InMemoryFileStorage implements FileStorage {
     if (!this.#documentStorage || !documentId) return;
 
     await this.#documentStorage.transaction(documentId, async () => {
-      const metadata = await this.#documentStorage!.getDocumentMetadata(documentId);
+      const metadata =
+        await this.#documentStorage!.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,
@@ -75,7 +78,8 @@ export class InMemoryFileStorage implements FileStorage {
     documentId: Document["id"],
   ): Promise<FileMetadata[]> {
     if (!this.#documentStorage) return [];
-    const metadata = await this.#documentStorage.getDocumentMetadata(documentId);
+    const metadata =
+      await this.#documentStorage.getDocumentMetadata(documentId);
     const fileIds = metadata.files ?? [];
     const files = await Promise.all(fileIds.map((id) => this.getFile(id)));
     return files.filter(Boolean).map((f) => (f as File).metadata);

@@ -93,9 +93,10 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
 
   async completeUpload(
     uploadId: string,
-    fileId: File["id"],
+    fileId?: File["id"],
   ): Promise<{
     progress: UploadProgress;
+    fileId: File["id"];
     getChunk: (chunkIndex: number) => Promise<Uint8Array>;
   }> {
     const session = this.#sessions.get(uploadId);
@@ -130,16 +131,18 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     const rootHash = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
 
     const computedFileId = toBase64(rootHash);
-    if (computedFileId !== fileId) {
+    // If fileId is provided, validate it matches the computed one
+    if (fileId !== undefined && computedFileId !== fileId) {
       throw new Error(
         `Merkle root mismatch for upload ${uploadId}. Expected ${fileId}, got ${computedFileId}`,
       );
     }
 
+    const finalFileId = fileId ?? computedFileId;
     const progress = (await this.getUploadProgress(uploadId))!;
 
     const file: File = {
-      id: fileId,
+      id: finalFileId,
       metadata: session.metadata,
       chunks: chunksInOrder,
       contentId: rootHash,
@@ -149,10 +152,13 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
 
     return {
       progress,
+      fileId: finalFileId,
       getChunk: async (chunkIndex: number) => {
         const chunk = session.chunks.get(chunkIndex);
         if (!chunk) {
-          throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
+          throw new Error(
+            `Chunk ${chunkIndex} not found for upload ${uploadId}`,
+          );
         }
         return chunk;
       },
@@ -168,4 +174,3 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     }
   }
 }
-

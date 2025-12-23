@@ -241,12 +241,12 @@ export class FileHandler<
 
       if (updatedUpload.chunks.size >= payload.totalChunks) {
         try {
-          await this.#temporaryUploadStorage.completeUpload(
-            payload.fileId,
+          const result = await this.#temporaryUploadStorage.completeUpload(
             payload.fileId,
           );
           log.debug("Upload completed successfully", {
-            fileId: payload.fileId,
+            uploadId: payload.fileId,
+            fileId: result.fileId,
           });
         } catch (error) {
           log.error("Failed to complete upload", {

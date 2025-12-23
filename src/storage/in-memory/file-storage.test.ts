@@ -13,14 +13,15 @@ describe("InMemoryFileStorage", () => {
     storage.temporaryUploadStorage = temp;
 
     const uploadId = "test-upload-id";
-    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+    // For a small file (6 bytes), it should be a single chunk
+    const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
     const merkleTree = buildMerkleTree(chunks);
     const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
     const fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
       filename: "test.txt",
-      size: chunks[0].length + chunks[1].length,
+      size: chunks[0].length,
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
@@ -31,15 +32,14 @@ describe("InMemoryFileStorage", () => {
       await temp.storeChunk(uploadId, i, chunks[i], []);
     }
 
-    await temp.completeUpload(uploadId, fileId);
+    const result = await temp.completeUpload(uploadId, fileId);
 
-    const file = await storage.getFile(fileId);
+    const file = await storage.getFile(result.fileId);
     expect(file).not.toBeNull();
     expect(file!.id).toBe(fileId);
     expect(file!.metadata.filename).toBe("test.txt");
-    expect(file!.chunks.length).toBe(2);
+    expect(file!.chunks.length).toBe(1);
     expect(file!.chunks[0]).toEqual(chunks[0]);
-    expect(file!.chunks[1]).toEqual(chunks[1]);
   });
 
   it("tracks upload progress and chunk completion", async () => {
@@ -74,7 +74,7 @@ describe("InMemoryFileStorage", () => {
     expect(progress!.bytesUploaded).toBe(CHUNK_SIZE);
 
     await temp.storeChunk(uploadId, 1, chunks[1], []);
-    await temp.completeUpload(uploadId, fileId);
+    await temp.completeUpload(uploadId);
   });
 
   it("should cleanup expired uploads", async () => {

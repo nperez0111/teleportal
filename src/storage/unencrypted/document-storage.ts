@@ -36,7 +36,10 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
   fileStorage?: FileStorage;
   milestoneStorage?: MilestoneStorage;
 
-  abstract handleUpdate(documentId: Document["id"], update: Update): Promise<void>;
+  abstract handleUpdate(
+    documentId: Document["id"],
+    update: Update,
+  ): Promise<void>;
   abstract getDocument(documentId: Document["id"]): Promise<Document | null>;
   abstract writeDocumentMetadata(
     documentId: Document["id"],
@@ -64,12 +67,12 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
       },
     };
 
-    const update = Y.diffUpdateV2(doc.content.update, syncStep1) as SyncStep2Update;
+    const update = Y.diffUpdateV2(doc.content.update, syncStep1) as Update;
 
     return {
       ...doc,
       content: {
-        update: update as unknown as Update,
+        update,
         stateVector: doc.content.stateVector,
       },
     };

@@ -90,7 +90,10 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
-    await this.#storage.setItemRaw(this.#getChunkKey(uploadId, chunkIndex), chunkData);
+    await this.#storage.setItemRaw(
+      this.#getChunkKey(uploadId, chunkIndex),
+      chunkData,
+    );
 
     // Recompute bytesUploaded from all stored chunks for correctness.
     const chunkKeys = await this.#storage.getKeys(
@@ -144,9 +147,10 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
   async completeUpload(
     uploadId: string,
-    fileId: File["id"],
+    fileId?: File["id"],
   ): Promise<{
     progress: UploadProgress;
+    fileId: File["id"];
     getChunk: (chunkIndex: number) => Promise<Uint8Array>;
   }> {
     const progress = await this.getUploadProgress(uploadId);
@@ -186,21 +190,23 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     const merkleTree = buildMerkleTree(chunksInOrder);
     const rootHash = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
     const computedFileId = toBase64(rootHash);
-    if (computedFileId !== fileId) {
+    // If fileId is provided, validate it matches the computed one
+    if (fileId !== undefined && computedFileId !== fileId) {
       throw new Error(
         `Merkle root mismatch for upload ${uploadId}. Expected ${fileId}, got ${computedFileId}`,
       );
     }
 
+    const finalFileId = fileId ?? computedFileId;
     const file: File = {
-      id: fileId,
+      id: finalFileId,
       metadata: progress.metadata,
       chunks: chunksInOrder,
       contentId: rootHash,
     };
 
     // Persist the file record into the same backend (cold storage key scheme).
-    const fileKey = this.#getFileKey(fileId);
+    const fileKey = this.#getFileKey(finalFileId);
     await this.#storage.setItem(fileKey, {
       metadata: file.metadata,
       contentId: Array.from(file.contentId),
@@ -216,12 +222,15 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
     return {
       progress,
+      fileId: finalFileId,
       getChunk: async (chunkIndex: number) => {
         const stored = await this.#storage.getItemRaw<Uint8Array>(
           this.#getChunkKey(uploadId, chunkIndex),
         );
         if (!stored) {
-          throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
+          throw new Error(
+            `Chunk ${chunkIndex} not found for upload ${uploadId}`,
+          );
         }
         return stored;
       },
@@ -230,7 +239,9 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
   async cleanupExpiredUploads(): Promise<void> {
     const now = Date.now();
-    const uploadKeys = await this.#storage.getKeys(`${this.#keyPrefix}:upload:`);
+    const uploadKeys = await this.#storage.getKeys(
+      `${this.#keyPrefix}:upload:`,
+    );
 
     for (const key of uploadKeys) {
       // Only process session metadata keys (not chunk keys)
@@ -256,4 +267,3 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     }
   }
 }
-

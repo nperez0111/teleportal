@@ -78,17 +78,21 @@ export interface TemporaryUploadStorage {
    * @note at this point, the upload is complete and can be stored in the file storage.
    *
    * @param uploadId - Client-generated UUID for this upload
-   * @param contentId - Merkle root hash (contentId)
+   * @param fileId - Optional merkle root hash (contentId). If not provided, it will be computed from the chunks.
    * @returns The final upload progress and a function to retrieve a chunk for the upload by chunk index. This allows rebuilding the whole file from the chunks to move it into a cold-storage.
    */
   completeUpload(
     uploadId: string,
-    fileId: File["id"],
+    fileId?: File["id"],
   ): Promise<{
     /**
      * The final upload progress.
      */
     progress: UploadProgress;
+    /**
+     * The computed fileId (merkle root hash).
+     */
+    fileId: File["id"];
     /**
      * Retrieve a chunk for the upload by chunk index.
      */
