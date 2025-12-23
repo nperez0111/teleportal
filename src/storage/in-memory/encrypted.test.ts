@@ -180,16 +180,15 @@ describe("EncryptedMemoryStorage", () => {
       expect(metadata.encrypted).toBe(true);
     });
 
-    it("should throw error when fetching non-existent document", async () => {
+    it("should return null when fetching non-existent document", async () => {
       const key = "test-doc-9";
       const messageId = "msg-3" as EncryptedMessageId;
 
-      await expect(
-        storage.fetchEncryptedMessage(key, messageId),
-      ).rejects.toThrow("Document not found");
+      const result = await storage.fetchEncryptedMessage(key, messageId);
+      expect(result).toBeNull();
     });
 
-    it("should throw error when fetching non-existent message", async () => {
+    it("should return null when fetching non-existent message", async () => {
       const key = "test-doc-10";
       const messageId1 = "msg-1" as EncryptedMessageId;
       const messageId2 = "msg-2" as EncryptedMessageId;
@@ -197,9 +196,8 @@ describe("EncryptedMemoryStorage", () => {
 
       await storage.storeEncryptedMessage(key, messageId1, payload);
 
-      await expect(
-        storage.fetchEncryptedMessage(key, messageId2),
-      ).rejects.toThrow("Message not found");
+      const result = await storage.fetchEncryptedMessage(key, messageId2);
+      expect(result).toBeNull();
     });
 
     it("should store multiple messages for the same document", async () => {
@@ -240,9 +238,8 @@ describe("EncryptedMemoryStorage", () => {
       await storage.deleteDocument(key);
 
       expect(EncryptedMemoryStorage.docs.has(key)).toBe(false);
-      await expect(
-        storage.fetchEncryptedMessage(key, messageId),
-      ).rejects.toThrow("Document not found");
+      const result = await storage.fetchEncryptedMessage(key, messageId);
+      expect(result).toBeNull();
     });
 
     it("should cascade delete files when fileStorage is provided", async () => {

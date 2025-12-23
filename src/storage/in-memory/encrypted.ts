@@ -18,9 +18,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
           updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
         },
       ) => Promise<void>;
-      fetch: (
-        key: string,
-      ) => Promise<
+      fetch: (key: string) => Promise<
         | {
             metadata: EncryptedDocumentMetadata;
             updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
@@ -90,7 +88,8 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     updates.set(messageId, payload);
     await this.options.write(key, {
       metadata:
-        existing?.metadata ?? ({
+        existing?.metadata ??
+        ({
           createdAt: now,
           updatedAt: now,
           encrypted: true,
@@ -103,14 +102,14 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   async fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdatePayload> {
+  ): Promise<EncryptedUpdatePayload | null> {
     const doc = await this.options.fetch(key);
     if (!doc) {
-      throw new Error("Document not found");
+      return null;
     }
     const update = doc.updates.get(messageId);
     if (!update) {
-      throw new Error("Message not found");
+      return null;
     }
     return update;
   }
