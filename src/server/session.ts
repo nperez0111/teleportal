@@ -2,6 +2,7 @@ import {
   decodeMessage,
   DocMessage,
   type Message,
+  type MilestoneSnapshot,
   type PubSub,
   type ServerContext,
   type SyncStep2Update,
@@ -529,6 +530,443 @@ export class Session<Context extends ServerContext> {
                   permission: (message.payload as any).permission,
                 })
                 .debug("Received auth-message");
+              return;
+            }
+            case "milestone-list-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                })
+                .trace("Processing milestone-list-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "milestone-list-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              if (!this.#storage.milestoneStorage) {
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: "Milestone storage is not available",
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+                return;
+              }
+
+              try {
+                const milestones =
+                  await this.#storage.milestoneStorage.getMilestones(
+                    this.namespacedDocumentId,
+                  );
+                const milestoneMetadata = milestones.map((m) => m.toJSON());
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-list-response",
+                      milestones: milestoneMetadata,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    milestoneCount: milestoneMetadata.length,
+                  })
+                  .trace("Milestone list sent");
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .error("Failed to get milestones");
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: `Failed to get milestones: ${(error as Error).message}`,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              }
+              return;
+            }
+            case "milestone-snapshot-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                  milestoneId: (message.payload as any).milestoneId,
+                })
+                .trace("Processing milestone-snapshot-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "milestone-snapshot-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              if (!this.#storage.milestoneStorage) {
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: "Milestone storage is not available",
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+                return;
+              }
+
+              try {
+                const milestoneId = (message.payload as any).milestoneId;
+                const milestone =
+                  await this.#storage.milestoneStorage.getMilestone(
+                    this.namespacedDocumentId,
+                    milestoneId,
+                  );
+
+                if (!milestone) {
+                  await client.send(
+                    new DocMessage(
+                      this.documentId,
+                      {
+                        type: "milestone-auth-message",
+                        permission: "denied",
+                        reason: `Milestone not found: ${milestoneId}`,
+                      },
+                      message.context,
+                      this.encrypted,
+                    ),
+                  );
+                  return;
+                }
+
+                const snapshot = await milestone.fetchSnapshot();
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-snapshot-response",
+                      milestoneId,
+                      snapshot,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    milestoneId,
+                  })
+                  .trace("Milestone snapshot sent");
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .error("Failed to get milestone snapshot");
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: `Failed to get milestone snapshot: ${(error as Error).message}`,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              }
+              return;
+            }
+            case "milestone-create-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                })
+                .trace("Processing milestone-create-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "milestone-create-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              if (!this.#storage.milestoneStorage) {
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: "Milestone storage is not available",
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+                return;
+              }
+
+              try {
+                const requestedName = (message.payload as any).name;
+                const doc = await this.#storage.getDocument(
+                  this.namespacedDocumentId,
+                );
+
+                if (!doc) {
+                  await client.send(
+                    new DocMessage(
+                      this.documentId,
+                      {
+                        type: "milestone-auth-message",
+                        permission: "denied",
+                        reason: "Document not found",
+                      },
+                      message.context,
+                      this.encrypted,
+                    ),
+                  );
+                  return;
+                }
+
+                // Create snapshot from current document state
+                // Using the document's update as the snapshot
+                const snapshot = doc.content
+                  .update as unknown as MilestoneSnapshot;
+
+                // Auto-generate name if not provided
+                let name = requestedName;
+                if (!name) {
+                  const existingMilestones =
+                    await this.#storage.milestoneStorage.getMilestones(
+                      this.namespacedDocumentId,
+                    );
+                  name = `Milestone ${existingMilestones.length + 1}`;
+                }
+
+                const createdAt = Date.now();
+                const milestoneId =
+                  await this.#storage.milestoneStorage.createMilestone({
+                    name,
+                    documentId: this.namespacedDocumentId,
+                    createdAt,
+                    snapshot,
+                  });
+
+                const milestone =
+                  await this.#storage.milestoneStorage.getMilestone(
+                    this.namespacedDocumentId,
+                    milestoneId,
+                  );
+
+                if (!milestone) {
+                  throw new Error("Failed to retrieve created milestone");
+                }
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-create-response",
+                      milestone: milestone.toJSON(),
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    milestoneId,
+                    name,
+                  })
+                  .trace("Milestone created");
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .error("Failed to create milestone");
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: `Failed to create milestone: ${(error as Error).message}`,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              }
+              return;
+            }
+            case "milestone-update-name-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                  milestoneId: (message.payload as any).milestoneId,
+                })
+                .trace("Processing milestone-update-name-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "milestone-update-name-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              if (!this.#storage.milestoneStorage) {
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: "Milestone storage is not available",
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+                return;
+              }
+
+              try {
+                const milestoneId = (message.payload as any).milestoneId;
+                const name = (message.payload as any).name;
+
+                await this.#storage.milestoneStorage.updateMilestoneName(
+                  this.namespacedDocumentId,
+                  milestoneId,
+                  name,
+                );
+
+                const milestone =
+                  await this.#storage.milestoneStorage.getMilestone(
+                    this.namespacedDocumentId,
+                    milestoneId,
+                  );
+
+                if (!milestone) {
+                  await client.send(
+                    new DocMessage(
+                      this.documentId,
+                      {
+                        type: "milestone-auth-message",
+                        permission: "denied",
+                        reason: `Milestone not found: ${milestoneId}`,
+                      },
+                      message.context,
+                      this.encrypted,
+                    ),
+                  );
+                  return;
+                }
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-update-name-response",
+                      milestone: milestone.toJSON(),
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    milestoneId,
+                    name,
+                  })
+                  .trace("Milestone name updated");
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .error("Failed to update milestone name");
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: `Failed to update milestone name: ${(error as Error).message}`,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              }
+              return;
+            }
+            case "milestone-list-response":
+            case "milestone-snapshot-response":
+            case "milestone-create-response":
+            case "milestone-update-name-response":
+            case "milestone-auth-message": {
+              // These are response messages, just log them
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                  payloadType: (message.payload as any).type,
+                })
+                .debug("Received milestone response message");
               return;
             }
             default: {
