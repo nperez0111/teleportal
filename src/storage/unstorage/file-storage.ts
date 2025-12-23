@@ -109,7 +109,11 @@ export class UnstorageFileStorage implements FileStorage {
     };
   }
 
-  async deleteFile(fileId: File["id"]): Promise<void> {
+  /**
+   * Internal method to delete file data without updating document metadata.
+   * This avoids transaction deadlocks when called from within a transaction.
+   */
+  async #deleteFileData(fileId: File["id"]): Promise<FileMetadata | null> {
     const fileKey = this.#getFileKey(fileId);
     const serialized = await this.#storage.getItem<{
       metadata: FileMetadata;
@@ -117,14 +121,20 @@ export class UnstorageFileStorage implements FileStorage {
       chunkKeys: string[];
     }>(fileKey);
 
-    if (!serialized) return;
+    if (!serialized) return null;
 
     await Promise.all(
       serialized.chunkKeys.map((k) => this.#storage.removeItem(k)),
     );
     await this.#storage.removeItem(fileKey);
 
-    const documentId = serialized.metadata.documentId;
+    return serialized.metadata;
+  }
+
+  async deleteFile(fileId: File["id"]): Promise<void> {
+    const fileMetadata = await this.#deleteFileData(fileId);
+
+    const documentId = fileMetadata?.documentId;
     if (!this.#documentStorage || !documentId) return;
 
     await this.#documentStorage.transaction(documentId, async () => {
@@ -158,7 +168,8 @@ export class UnstorageFileStorage implements FileStorage {
         await this.#documentStorage!.getDocumentMetadata(documentId);
       const fileIds = metadata.files ?? [];
 
-      await Promise.all(fileIds.map((id) => this.deleteFile(id)));
+      // Delete file data without nested transactions to avoid deadlock
+      await Promise.all(fileIds.map((id) => this.#deleteFileData(id)));
 
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,

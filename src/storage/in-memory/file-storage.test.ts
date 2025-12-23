@@ -3,6 +3,8 @@ import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "./file-storage";
 import { InMemoryTemporaryUploadStorage } from "./temporary-upload-storage";
 import { toBase64 } from "lib0/buffer";
+import type { Document, DocumentMetadata, DocumentStorage } from "../types";
+import type { StateVector, SyncStep2Update, Update } from "teleportal";
 
 describe("InMemoryFileStorage", () => {
   it("stores completed files and can retrieve them", async () => {
@@ -224,5 +226,338 @@ describe("InMemoryFileStorage", () => {
     // Verify temp storage session is cleaned up after fetching chunks
     const progress = await temp.getUploadProgress(uploadId);
     expect(progress).toBeNull();
+  });
+
+  describe("deleteFile", () => {
+    it("deletes a single file and removes it from document metadata", async () => {
+      // Create a mock document storage
+      class MockDocumentStorage implements DocumentStorage {
+        readonly type = "document-storage" as const;
+        storageType: "unencrypted" = "unencrypted";
+        fileStorage = undefined;
+        milestoneStorage = undefined;
+        metadata: Map<string, DocumentMetadata> = new Map();
+
+        async handleSyncStep1(
+          documentId: string,
+          syncStep1: StateVector,
+        ): Promise<Document> {
+          return {
+            id: documentId,
+            metadata: await this.getDocumentMetadata(documentId),
+            content: {
+              update: new Uint8Array() as unknown as Update,
+              stateVector: syncStep1,
+            },
+          };
+        }
+
+        async handleSyncStep2(
+          _documentId: string,
+          _syncStep2: SyncStep2Update,
+        ): Promise<void> {}
+
+        async handleUpdate(
+          _documentId: string,
+          _update: Update,
+        ): Promise<void> {}
+
+        async getDocument(documentId: string): Promise<Document | null> {
+          return {
+            id: documentId,
+            metadata: await this.getDocumentMetadata(documentId),
+            content: {
+              update: new Uint8Array() as unknown as Update,
+              stateVector: new Uint8Array() as unknown as StateVector,
+            },
+          };
+        }
+
+        async writeDocumentMetadata(
+          documentId: string,
+          metadata: DocumentMetadata,
+        ): Promise<void> {
+          this.metadata.set(documentId, metadata);
+        }
+
+        async getDocumentMetadata(
+          documentId: string,
+        ): Promise<DocumentMetadata> {
+          const now = Date.now();
+          return (
+            this.metadata.get(documentId) ?? {
+              createdAt: now,
+              updatedAt: now,
+              encrypted: false,
+            }
+          );
+        }
+
+        async deleteDocument(_documentId: string): Promise<void> {}
+
+        transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
+          return cb();
+        }
+      }
+
+      const documentStorage = new MockDocumentStorage();
+      const fileStorage = new InMemoryFileStorage({ documentStorage });
+      const temp = new InMemoryTemporaryUploadStorage();
+      fileStorage.temporaryUploadStorage = temp;
+
+      const documentId = "test-doc";
+      const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
+      const merkleTree = buildMerkleTree(chunks);
+      const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+      const fileId = toBase64(contentId);
+
+      const uploadId = "test-upload-id";
+      await temp.beginUpload(uploadId, {
+        filename: "test.txt",
+        size: chunks[0].length,
+        mimeType: "text/plain",
+        encrypted: false,
+        lastModified: Date.now(),
+        documentId,
+      });
+
+      await temp.storeChunk(uploadId, 0, chunks[0], []);
+      const result = await temp.completeUpload(uploadId, fileId);
+      await fileStorage.storeFileFromUpload(result);
+
+      // Verify file exists
+      let file = await fileStorage.getFile(fileId);
+      expect(file).not.toBeNull();
+
+      // Verify file is in document metadata
+      let metadata = await documentStorage.getDocumentMetadata(documentId);
+      expect(metadata.files).toContain(fileId);
+
+      // Delete the file
+      await fileStorage.deleteFile(fileId);
+
+      // Verify file is deleted
+      file = await fileStorage.getFile(fileId);
+      expect(file).toBeNull();
+
+      // Verify file is removed from document metadata
+      metadata = await documentStorage.getDocumentMetadata(documentId);
+      expect(metadata.files).not.toContain(fileId);
+      expect(metadata.files?.length).toBe(0);
+    });
+  });
+
+  describe("deleteFilesByDocument", () => {
+    it("deletes all files for a document and clears document metadata", async () => {
+      // Create a mock document storage
+      class MockDocumentStorage implements DocumentStorage {
+        readonly type = "document-storage" as const;
+        storageType: "unencrypted" = "unencrypted";
+        fileStorage = undefined;
+        milestoneStorage = undefined;
+        metadata: Map<string, DocumentMetadata> = new Map();
+
+        async handleSyncStep1(
+          documentId: string,
+          syncStep1: StateVector,
+        ): Promise<Document> {
+          return {
+            id: documentId,
+            metadata: await this.getDocumentMetadata(documentId),
+            content: {
+              update: new Uint8Array() as unknown as Update,
+              stateVector: syncStep1,
+            },
+          };
+        }
+
+        async handleSyncStep2(
+          _documentId: string,
+          _syncStep2: SyncStep2Update,
+        ): Promise<void> {}
+
+        async handleUpdate(
+          _documentId: string,
+          _update: Update,
+        ): Promise<void> {}
+
+        async getDocument(documentId: string): Promise<Document | null> {
+          return {
+            id: documentId,
+            metadata: await this.getDocumentMetadata(documentId),
+            content: {
+              update: new Uint8Array() as unknown as Update,
+              stateVector: new Uint8Array() as unknown as StateVector,
+            },
+          };
+        }
+
+        async writeDocumentMetadata(
+          documentId: string,
+          metadata: DocumentMetadata,
+        ): Promise<void> {
+          this.metadata.set(documentId, metadata);
+        }
+
+        async getDocumentMetadata(
+          documentId: string,
+        ): Promise<DocumentMetadata> {
+          const now = Date.now();
+          return (
+            this.metadata.get(documentId) ?? {
+              createdAt: now,
+              updatedAt: now,
+              encrypted: false,
+            }
+          );
+        }
+
+        async deleteDocument(_documentId: string): Promise<void> {}
+
+        transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
+          return cb();
+        }
+      }
+
+      const documentStorage = new MockDocumentStorage();
+      const fileStorage = new InMemoryFileStorage({ documentStorage });
+      const temp = new InMemoryTemporaryUploadStorage();
+      fileStorage.temporaryUploadStorage = temp;
+
+      const documentId = "test-doc";
+
+      // Create and store multiple files
+      const fileIds: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const chunks = [new Uint8Array([i, i + 1, i + 2, i + 3])];
+        const merkleTree = buildMerkleTree(chunks);
+        const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+        const fileId = toBase64(contentId);
+        fileIds.push(fileId);
+
+        const uploadId = `test-upload-${i}`;
+        await temp.beginUpload(uploadId, {
+          filename: `test-${i}.txt`,
+          size: chunks[0].length,
+          mimeType: "text/plain",
+          encrypted: false,
+          lastModified: Date.now(),
+          documentId,
+        });
+
+        await temp.storeChunk(uploadId, 0, chunks[0], []);
+        const result = await temp.completeUpload(uploadId, fileId);
+        await fileStorage.storeFileFromUpload(result);
+      }
+
+      // Verify all files exist
+      for (const fileId of fileIds) {
+        const file = await fileStorage.getFile(fileId);
+        expect(file).not.toBeNull();
+      }
+
+      // Verify all files are in document metadata
+      let metadata = await documentStorage.getDocumentMetadata(documentId);
+      expect(metadata.files?.length).toBe(3);
+      for (const fileId of fileIds) {
+        expect(metadata.files).toContain(fileId);
+      }
+
+      // Delete all files for the document
+      await fileStorage.deleteFilesByDocument(documentId);
+
+      // Verify all files are deleted
+      for (const fileId of fileIds) {
+        const file = await fileStorage.getFile(fileId);
+        expect(file).toBeNull();
+      }
+
+      // Verify document metadata is cleared
+      metadata = await documentStorage.getDocumentMetadata(documentId);
+      expect(metadata.files).toEqual([]);
+    });
+
+    it("handles deleting files when document has no files", async () => {
+      class MockDocumentStorage implements DocumentStorage {
+        readonly type = "document-storage" as const;
+        storageType: "unencrypted" = "unencrypted";
+        fileStorage = undefined;
+        milestoneStorage = undefined;
+        metadata: Map<string, DocumentMetadata> = new Map();
+
+        async handleSyncStep1(
+          documentId: string,
+          syncStep1: StateVector,
+        ): Promise<Document> {
+          return {
+            id: documentId,
+            metadata: await this.getDocumentMetadata(documentId),
+            content: {
+              update: new Uint8Array() as unknown as Update,
+              stateVector: syncStep1,
+            },
+          };
+        }
+
+        async handleSyncStep2(
+          _documentId: string,
+          _syncStep2: SyncStep2Update,
+        ): Promise<void> {}
+
+        async handleUpdate(
+          _documentId: string,
+          _update: Update,
+        ): Promise<void> {}
+
+        async getDocument(documentId: string): Promise<Document | null> {
+          return {
+            id: documentId,
+            metadata: await this.getDocumentMetadata(documentId),
+            content: {
+              update: new Uint8Array() as unknown as Update,
+              stateVector: new Uint8Array() as unknown as StateVector,
+            },
+          };
+        }
+
+        async writeDocumentMetadata(
+          documentId: string,
+          metadata: DocumentMetadata,
+        ): Promise<void> {
+          this.metadata.set(documentId, metadata);
+        }
+
+        async getDocumentMetadata(
+          documentId: string,
+        ): Promise<DocumentMetadata> {
+          const now = Date.now();
+          return (
+            this.metadata.get(documentId) ?? {
+              createdAt: now,
+              updatedAt: now,
+              encrypted: false,
+            }
+          );
+        }
+
+        async deleteDocument(_documentId: string): Promise<void> {}
+
+        transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
+          return cb();
+        }
+      }
+
+      const documentStorage = new MockDocumentStorage();
+      const fileStorage = new InMemoryFileStorage({ documentStorage });
+
+      const documentId = "test-doc";
+
+      // Delete files for a document with no files (should not error)
+      await fileStorage.deleteFilesByDocument(documentId);
+
+      // Verify metadata files array is empty (not undefined, as it gets set to [])
+      const metadata = await documentStorage.getDocumentMetadata(documentId);
+      expect(metadata.files).toEqual([]);
+    });
   });
 });

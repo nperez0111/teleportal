@@ -57,9 +57,18 @@ export class InMemoryFileStorage implements FileStorage {
     return this.#files.get(fileId) ?? null;
   }
 
-  async deleteFile(fileId: File["id"]): Promise<void> {
+  /**
+   * Internal method to delete file data without updating document metadata.
+   * This avoids transaction deadlocks when called from within a transaction.
+   */
+  #deleteFileData(fileId: File["id"]): File | null {
     const file = this.#files.get(fileId);
     this.#files.delete(fileId);
+    return file ?? null;
+  }
+
+  async deleteFile(fileId: File["id"]): Promise<void> {
+    const file = this.#deleteFileData(fileId);
 
     const documentId = file?.metadata.documentId;
     if (!this.#documentStorage || !documentId) return;
@@ -95,7 +104,8 @@ export class InMemoryFileStorage implements FileStorage {
         await this.#documentStorage!.getDocumentMetadata(documentId);
       const fileIds = metadata.files ?? [];
 
-      await Promise.all(fileIds.map((id) => this.deleteFile(id)));
+      // Delete file data without nested transactions to avoid deadlock
+      fileIds.forEach((id) => this.#deleteFileData(id));
 
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,
