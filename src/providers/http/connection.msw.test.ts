@@ -1098,9 +1098,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload file through HTTP connection", async () => {
       const testClientId = "test-client-file";
       const fileStorage = new InMemoryFileStorage();
-      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
-        onComplete: (file) => fileStorage.storeFile(file),
-      });
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
@@ -1248,9 +1246,7 @@ describe("HttpConnection with MSW", () => {
     test("should handle multiple chunk file upload via HTTP", async () => {
       const testClientId = "test-client-large-file";
       const fileStorage = new InMemoryFileStorage();
-      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
-        onComplete: (file) => fileStorage.storeFile(file),
-      });
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
@@ -1394,9 +1390,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload and download file through HTTP connection (round-trip)", async () => {
       const testClientId = "test-client-roundtrip";
       const fileStorage = new InMemoryFileStorage();
-      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
-        onComplete: (file) => fileStorage.storeFile(file),
-      });
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {

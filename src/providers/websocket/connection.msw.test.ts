@@ -78,9 +78,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload file through WebSocket connection", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
-      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
-        onComplete: (file) => fileStorage.storeFile(file),
-      });
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
@@ -163,9 +161,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload large file through WebSocket connection", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
-      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
-        onComplete: (file) => fileStorage.storeFile(file),
-      });
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
@@ -242,9 +238,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
     test("should upload and download file through WebSocket connection (round-trip)", async () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
-      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage({
-        onComplete: (file) => fileStorage.storeFile(file),
-      });
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];

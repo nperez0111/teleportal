@@ -230,9 +230,8 @@ export class FileHandler<
         }),
       );
 
-      const updatedUpload = await this.#temporaryUploadStorage.getUploadProgress(
-        payload.fileId,
-      );
+      const updatedUpload =
+        await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
       if (!updatedUpload) {
         throw new Error(
           `Upload session ${payload.fileId} not found after storing chunk`,
@@ -246,6 +245,12 @@ export class FileHandler<
           );
           log.debug("Upload completed successfully", {
             uploadId: payload.fileId,
+            fileId: result.fileId,
+          });
+
+          // Move file from temporary storage to durable storage incrementally
+          await this.#fileStorage.storeFileFromUpload(result);
+          log.debug("File moved to durable storage", {
             fileId: result.fileId,
           });
         } catch (error) {

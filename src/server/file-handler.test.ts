@@ -18,9 +18,7 @@ import { FileHandler } from "./file-handler";
 describe("FileHandler", () => {
   it("initiates upload via temporary upload storage", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const temp = new InMemoryTemporaryUploadStorage({
-      onComplete: (file) => fileStorage.storeFile(file),
-    });
+    const temp = new InMemoryTemporaryUploadStorage();
     fileStorage.temporaryUploadStorage = temp;
 
     const fileHandler = new FileHandler(fileStorage);
@@ -58,9 +56,7 @@ describe("FileHandler", () => {
 
   it("acks file parts and completes upload when all chunks arrive", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const temp = new InMemoryTemporaryUploadStorage({
-      onComplete: (file) => fileStorage.storeFile(file),
-    });
+    const temp = new InMemoryTemporaryUploadStorage();
     fileStorage.temporaryUploadStorage = temp;
 
     const fileHandler = new FileHandler(fileStorage);
@@ -99,7 +95,7 @@ describe("FileHandler", () => {
     await fileHandler.handle(part0, async (m) => {
       sent.push(m);
     });
-    
+
     expect(sent.length).toBe(1);
     expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
     sent.length = 0;
@@ -135,9 +131,7 @@ describe("FileHandler", () => {
 
   it("serves downloads from file storage", async () => {
     const fileStorage = new InMemoryFileStorage();
-    const temp = new InMemoryTemporaryUploadStorage({
-      onComplete: (file) => fileStorage.storeFile(file),
-    });
+    const temp = new InMemoryTemporaryUploadStorage();
     fileStorage.temporaryUploadStorage = temp;
 
     const fileHandler = new FileHandler(fileStorage);
@@ -154,11 +148,15 @@ describe("FileHandler", () => {
       documentId: "test-doc",
     });
     await temp.storeChunk(fileId, 0, chunks[0], []);
-    await temp.completeUpload(fileId, fileId);
+    const result = await temp.completeUpload(fileId, fileId);
+    await fileStorage.storeFileFromUpload(result);
 
     const sent: Message<ServerContext>[] = [];
     await fileHandler.handle(
-      new FileMessage<ServerContext>("test-doc", { type: "file-download", fileId }),
+      new FileMessage<ServerContext>("test-doc", {
+        type: "file-download",
+        fileId,
+      }),
       async (m) => {
         sent.push(m);
       },
@@ -166,8 +164,11 @@ describe("FileHandler", () => {
 
     // First message: file-upload preamble, then one file-part
     expect(sent.length).toBe(2);
-    expect((sent[0] as FileMessage<ServerContext>).payload.type).toBe("file-upload");
-    expect((sent[1] as FileMessage<ServerContext>).payload.type).toBe("file-part");
+    expect((sent[0] as FileMessage<ServerContext>).payload.type).toBe(
+      "file-upload",
+    );
+    expect((sent[1] as FileMessage<ServerContext>).payload.type).toBe(
+      "file-part",
+    );
   });
 });
-

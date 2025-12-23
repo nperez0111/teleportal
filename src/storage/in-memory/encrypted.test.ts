@@ -259,6 +259,7 @@ describe("EncryptedMemoryStorage", () => {
           deleteFilesByDocumentCalled = true;
           deleteFilesByDocumentKey = documentId;
         },
+        storeFileFromUpload: async () => {},
       };
 
       storage = new EncryptedMemoryStorage(undefined, mockFileStorage);

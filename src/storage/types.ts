@@ -34,6 +34,30 @@ export interface UploadProgress {
 }
 
 /**
+ * Result of completing an upload, containing all information needed to move
+ * the file from temporary storage to durable storage.
+ */
+export interface FileUploadResult {
+  /**
+   * The final upload progress.
+   */
+  progress: UploadProgress;
+  /**
+   * The computed fileId (merkle root hash).
+   */
+  fileId: File["id"];
+  /**
+   * The contentId (merkle root hash as Uint8Array).
+   */
+  contentId: Uint8Array;
+  /**
+   * Retrieve a chunk for the upload by chunk index.
+   * Chunks can only be fetched once and are deleted after fetching.
+   */
+  getChunk: (chunkIndex: number) => Promise<Uint8Array>;
+}
+
+/**
  * Interface for upload storage operations (temporary storage)
  */
 export interface TemporaryUploadStorage {
@@ -84,20 +108,7 @@ export interface TemporaryUploadStorage {
   completeUpload(
     uploadId: string,
     fileId?: File["id"],
-  ): Promise<{
-    /**
-     * The final upload progress.
-     */
-    progress: UploadProgress;
-    /**
-     * The computed fileId (merkle root hash).
-     */
-    fileId: File["id"];
-    /**
-     * Retrieve a chunk for the upload by chunk index.
-     */
-    getChunk: (chunkIndex: number) => Promise<Uint8Array>;
-  }>;
+  ): Promise<FileUploadResult>;
 
   /**
    * Clean up expired upload sessions.
@@ -204,6 +215,15 @@ export interface FileStorage {
    * @param documentId - The document ID
    */
   deleteFilesByDocument(documentId: Document["id"]): Promise<void>;
+
+  /**
+   * Store a file incrementally using the result from completeUpload.
+   * This allows moving large files from temporary storage to durable storage
+   * without loading the entire file into memory.
+   *
+   * @param uploadResult - The result from TemporaryUploadStorage.completeUpload
+   */
+  storeFileFromUpload(uploadResult: FileUploadResult): Promise<void>;
 }
 
 /**

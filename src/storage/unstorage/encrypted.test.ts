@@ -202,6 +202,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
           deleteFilesByDocumentCalled = true;
           deleteFilesByDocumentKey = documentId;
         },
+        storeFileFromUpload: async () => {},
       };
 
       storage = new UnstorageEncryptedDocumentStorage(createStorage(), {

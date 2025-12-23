@@ -4,6 +4,7 @@ import { toBase64 } from "lib0/buffer";
 import type {
   File,
   FileMetadata,
+  FileUploadResult,
   TemporaryUploadStorage,
   UploadProgress,
 } from "../types";
@@ -18,22 +19,17 @@ type UploadSession = {
 /**
  * In-memory temporary upload storage.
  *
- * Stores upload sessions and chunks in memory and can optionally persist a completed
- * file via a callback.
+ * Stores upload sessions and chunks in memory. After completion, use the returned
+ * getChunk function to move chunks to durable storage incrementally.
  */
 export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
   readonly type = "temporary-upload-storage" as const;
 
   #sessions = new Map<string, UploadSession>();
   #uploadTimeoutMs: number;
-  #onComplete?: (file: File) => Promise<void> | void;
 
-  constructor(options?: {
-    uploadTimeoutMs?: number;
-    onComplete?: (file: File) => Promise<void> | void;
-  }) {
+  constructor(options?: { uploadTimeoutMs?: number }) {
     this.#uploadTimeoutMs = options?.uploadTimeoutMs ?? 2 * 60 * 60 * 1000; // 2 hours
-    this.#onComplete = options?.onComplete;
   }
 
   async beginUpload(uploadId: string, metadata: FileMetadata): Promise<void> {
@@ -94,11 +90,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
   async completeUpload(
     uploadId: string,
     fileId?: File["id"],
-  ): Promise<{
-    progress: UploadProgress;
-    fileId: File["id"];
-    getChunk: (chunkIndex: number) => Promise<Uint8Array>;
-  }> {
+  ): Promise<FileUploadResult> {
     const session = this.#sessions.get(uploadId);
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
@@ -141,25 +133,40 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     const finalFileId = fileId ?? computedFileId;
     const progress = (await this.getUploadProgress(uploadId))!;
 
-    const file: File = {
-      id: finalFileId,
-      metadata: session.metadata,
-      chunks: chunksInOrder,
-      contentId: rootHash,
-    };
+    // Track which chunks have been fetched via getChunk
+    const fetchedChunks = new Set<number>();
 
-    await this.#onComplete?.(file);
+    // Release chunksInOrder array to allow GC (we've computed the merkle tree)
+    // Chunks remain in session.chunks and will be retrieved via getChunk
 
     return {
       progress,
       fileId: finalFileId,
+      contentId: rootHash,
       getChunk: async (chunkIndex: number) => {
+        // Check if chunk was already fetched (one-time use)
+        if (fetchedChunks.has(chunkIndex)) {
+          throw new Error(
+            `Chunk ${chunkIndex} has already been fetched for upload ${uploadId}. Chunks can only be fetched once.`,
+          );
+        }
+
         const chunk = session.chunks.get(chunkIndex);
         if (!chunk) {
           throw new Error(
             `Chunk ${chunkIndex} not found for upload ${uploadId}`,
           );
         }
+
+        // Mark as fetched and remove from session
+        fetchedChunks.add(chunkIndex);
+        session.chunks.delete(chunkIndex);
+
+        // If all chunks have been fetched, clean up the session
+        if (session.chunks.size === 0) {
+          this.#sessions.delete(uploadId);
+        }
+
         return chunk;
       },
     };

@@ -48,10 +48,12 @@ const serverInstance = new Server({
       storage,
       { keyPrefix: "file" },
     );
-    return new UnstorageDocumentStorage(storage, {
+    const documentStorage = new UnstorageDocumentStorage(storage, {
       scanKeys: false,
       fileStorage,
     });
+    fileStorage.setDocumentStorage(documentStorage);
+    return documentStorage;
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager) as any,
 });

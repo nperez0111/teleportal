@@ -7,9 +7,7 @@ import { toBase64 } from "lib0/buffer";
 describe("InMemoryFileStorage", () => {
   it("stores completed files and can retrieve them", async () => {
     const storage = new InMemoryFileStorage();
-    const temp = new InMemoryTemporaryUploadStorage({
-      onComplete: (file) => storage.storeFile(file),
-    });
+    const temp = new InMemoryTemporaryUploadStorage();
     storage.temporaryUploadStorage = temp;
 
     const uploadId = "test-upload-id";
@@ -33,6 +31,7 @@ describe("InMemoryFileStorage", () => {
     }
 
     const result = await temp.completeUpload(uploadId, fileId);
+    await storage.storeFileFromUpload(result);
 
     const file = await storage.getFile(result.fileId);
     expect(file).not.toBeNull();
@@ -44,9 +43,7 @@ describe("InMemoryFileStorage", () => {
 
   it("tracks upload progress and chunk completion", async () => {
     const storage = new InMemoryFileStorage();
-    const temp = new InMemoryTemporaryUploadStorage({
-      onComplete: (file) => storage.storeFile(file),
-    });
+    const temp = new InMemoryTemporaryUploadStorage();
     storage.temporaryUploadStorage = temp;
 
     const uploadId = "test-upload-id";
@@ -81,7 +78,6 @@ describe("InMemoryFileStorage", () => {
     const storage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage({
       uploadTimeoutMs: 100,
-      onComplete: (file) => storage.storeFile(file),
     });
     storage.temporaryUploadStorage = temp;
 
@@ -100,6 +96,132 @@ describe("InMemoryFileStorage", () => {
 
     await temp.cleanupExpiredUploads();
 
+    const progress = await temp.getUploadProgress(uploadId);
+    expect(progress).toBeNull();
+  });
+
+  it("should cleanup upload session after all chunks are fetched via getChunk", async () => {
+    const storage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    storage.temporaryUploadStorage = temp;
+
+    const uploadId = "test-upload-id";
+    // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
+    const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
+    const merkleTree = buildMerkleTree(chunks);
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const fileId = toBase64(contentId);
+
+    await temp.beginUpload(uploadId, {
+      filename: "test.txt",
+      size: chunks[0].length + chunks[1].length,
+      mimeType: "text/plain",
+      encrypted: false,
+      lastModified: Date.now(),
+      documentId: "test-doc",
+    });
+
+    for (let i = 0; i < chunks.length; i++) {
+      await temp.storeChunk(uploadId, i, chunks[i], []);
+    }
+
+    const result = await temp.completeUpload(uploadId, fileId);
+
+    // Verify upload session still exists before fetching chunks
+    let progress = await temp.getUploadProgress(uploadId);
+    expect(progress).not.toBeNull();
+
+    // Fetch all chunks via getChunk
+    const chunk0 = await result.getChunk(0);
+    expect(chunk0).toEqual(chunks[0]);
+
+    // Session should still exist (not all chunks fetched yet)
+    progress = await temp.getUploadProgress(uploadId);
+    expect(progress).not.toBeNull();
+
+    const chunk1 = await result.getChunk(1);
+    expect(chunk1).toEqual(chunks[1]);
+
+    // Session should be cleaned up after all chunks are fetched
+    progress = await temp.getUploadProgress(uploadId);
+    expect(progress).toBeNull();
+  });
+
+  it("should prevent double fetching of chunks via getChunk", async () => {
+    const storage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    storage.temporaryUploadStorage = temp;
+
+    const uploadId = "test-upload-id";
+    const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
+    const merkleTree = buildMerkleTree(chunks);
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const fileId = toBase64(contentId);
+
+    await temp.beginUpload(uploadId, {
+      filename: "test.txt",
+      size: chunks[0].length,
+      mimeType: "text/plain",
+      encrypted: false,
+      lastModified: Date.now(),
+      documentId: "test-doc",
+    });
+
+    await temp.storeChunk(uploadId, 0, chunks[0], []);
+    const result = await temp.completeUpload(uploadId, fileId);
+
+    // First fetch should succeed
+    const chunk = await result.getChunk(0);
+    expect(chunk).toEqual(chunks[0]);
+
+    // Second fetch should fail
+    await expect(result.getChunk(0)).rejects.toThrow(
+      "Chunk 0 has already been fetched",
+    );
+  });
+
+  it("should allow moving chunks from in-memory temp storage to unstorage file storage", async () => {
+    const { createStorage } = await import("unstorage");
+    const { UnstorageFileStorage } = await import("../unstorage/file-storage");
+
+    const unstorage = createStorage();
+    const durableStorage = new UnstorageFileStorage(unstorage, {
+      keyPrefix: "file",
+    });
+
+    const temp = new InMemoryTemporaryUploadStorage();
+
+    const uploadId = "test-upload-id";
+    // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
+    const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
+    const merkleTree = buildMerkleTree(chunks);
+    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const fileId = toBase64(contentId);
+
+    await temp.beginUpload(uploadId, {
+      filename: "test.txt",
+      size: chunks[0].length + chunks[1].length,
+      mimeType: "text/plain",
+      encrypted: false,
+      lastModified: Date.now(),
+      documentId: "test-doc",
+    });
+
+    for (let i = 0; i < chunks.length; i++) {
+      await temp.storeChunk(uploadId, i, chunks[i], []);
+    }
+
+    const result = await temp.completeUpload(uploadId, fileId);
+
+    // Move file from temporary storage to durable storage incrementally
+    await durableStorage.storeFileFromUpload(result);
+
+    // Verify file is in durable storage
+    const file = await durableStorage.getFile(result.fileId);
+    expect(file).not.toBeNull();
+    expect(file!.chunks).toEqual(chunks);
+
+    // Verify temp storage session is cleaned up after fetching chunks
     const progress = await temp.getUploadProgress(uploadId);
     expect(progress).toBeNull();
   });

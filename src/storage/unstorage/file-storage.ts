@@ -1,10 +1,12 @@
 import type { Storage } from "unstorage";
+import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type {
   Document,
   DocumentStorage,
   File,
   FileMetadata,
   FileStorage,
+  FileUploadResult,
   TemporaryUploadStorage,
 } from "../types";
 
@@ -36,6 +38,14 @@ export class UnstorageFileStorage implements FileStorage {
     this.temporaryUploadStorage = options?.temporaryUploadStorage;
   }
 
+  /**
+   * Set the document storage reference after construction.
+   * This is needed when the file storage is created before the document storage.
+   */
+  setDocumentStorage(documentStorage: DocumentStorage): void {
+    this.#documentStorage = documentStorage;
+  }
+
   #getFileKey(fileId: string): string {
     return `${this.#keyPrefix}:file:${fileId}`;
   }
@@ -63,7 +73,8 @@ export class UnstorageFileStorage implements FileStorage {
     if (!this.#documentStorage || !documentId) return;
 
     await this.#documentStorage.transaction(documentId, async () => {
-      const metadata = await this.#documentStorage!.getDocumentMetadata(documentId);
+      const metadata =
+        await this.#documentStorage!.getDocumentMetadata(documentId);
       const files = Array.from(new Set([...(metadata.files ?? []), file.id]));
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,
@@ -88,9 +99,7 @@ export class UnstorageFileStorage implements FileStorage {
         this.#storage.getItemRaw<Uint8Array>(chunkKey),
       ),
     );
-    const validChunks = chunks.filter(
-      (c): c is Uint8Array => c !== null,
-    );
+    const validChunks = chunks.filter((c): c is Uint8Array => c !== null);
 
     return {
       id: fileId,
@@ -110,14 +119,17 @@ export class UnstorageFileStorage implements FileStorage {
 
     if (!serialized) return;
 
-    await Promise.all(serialized.chunkKeys.map((k) => this.#storage.removeItem(k)));
+    await Promise.all(
+      serialized.chunkKeys.map((k) => this.#storage.removeItem(k)),
+    );
     await this.#storage.removeItem(fileKey);
 
     const documentId = serialized.metadata.documentId;
     if (!this.#documentStorage || !documentId) return;
 
     await this.#documentStorage.transaction(documentId, async () => {
-      const metadata = await this.#documentStorage!.getDocumentMetadata(documentId);
+      const metadata =
+        await this.#documentStorage!.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,
@@ -131,7 +143,8 @@ export class UnstorageFileStorage implements FileStorage {
     documentId: Document["id"],
   ): Promise<FileMetadata[]> {
     if (!this.#documentStorage) return [];
-    const metadata = await this.#documentStorage.getDocumentMetadata(documentId);
+    const metadata =
+      await this.#documentStorage.getDocumentMetadata(documentId);
     const fileIds = metadata.files ?? [];
     const files = await Promise.all(fileIds.map((id) => this.getFile(id)));
     return files.filter(Boolean).map((f) => (f as File).metadata);
@@ -141,7 +154,8 @@ export class UnstorageFileStorage implements FileStorage {
     if (!this.#documentStorage) return;
 
     await this.#documentStorage.transaction(documentId, async () => {
-      const metadata = await this.#documentStorage!.getDocumentMetadata(documentId);
+      const metadata =
+        await this.#documentStorage!.getDocumentMetadata(documentId);
       const fileIds = metadata.files ?? [];
 
       await Promise.all(fileIds.map((id) => this.deleteFile(id)));
@@ -149,6 +163,47 @@ export class UnstorageFileStorage implements FileStorage {
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,
         files: [],
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {
+    const expectedChunks =
+      uploadResult.progress.metadata.size === 0
+        ? 1
+        : Math.ceil(uploadResult.progress.metadata.size / CHUNK_SIZE);
+
+    const fileKey = this.#getFileKey(uploadResult.fileId);
+
+    // Store file metadata first
+    await this.#storage.setItem(fileKey, {
+      metadata: uploadResult.progress.metadata,
+      contentId: Array.from(uploadResult.contentId),
+      chunkKeys: Array.from(
+        { length: expectedChunks },
+        (_, i) => `${fileKey}:chunk:${i}`,
+      ),
+    });
+
+    // Fetch and store chunks incrementally
+    for (let i = 0; i < expectedChunks; i++) {
+      const chunk = await uploadResult.getChunk(i);
+      await this.#storage.setItemRaw(`${fileKey}:chunk:${i}`, chunk);
+    }
+
+    const documentId = uploadResult.progress.metadata.documentId;
+    if (!this.#documentStorage || !documentId) return;
+
+    await this.#documentStorage.transaction(documentId, async () => {
+      const docMetadata =
+        await this.#documentStorage!.getDocumentMetadata(documentId);
+      const files = Array.from(
+        new Set([...(docMetadata.files ?? []), uploadResult.fileId]),
+      );
+      await this.#documentStorage!.writeDocumentMetadata(documentId, {
+        ...docMetadata,
+        files,
         updatedAt: Date.now(),
       });
     });

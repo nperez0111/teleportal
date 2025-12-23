@@ -34,10 +34,20 @@ const server = new Server({
       memoryStorage,
       { keyPrefix: "file" },
     );
+    let documentStorage:
+      | UnstorageDocumentStorage
+      | UnstorageEncryptedDocumentStorage;
     if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(memoryStorage, { fileStorage });
+      documentStorage = new UnstorageEncryptedDocumentStorage(memoryStorage, {
+        fileStorage,
+      });
+    } else {
+      documentStorage = new UnstorageDocumentStorage(memoryStorage, {
+        fileStorage,
+      });
     }
-    return new UnstorageDocumentStorage(memoryStorage, { fileStorage });
+    fileStorage.setDocumentStorage(documentStorage);
+    return documentStorage;
   },
 
   checkPermission: checkPermissionWithTokenManager(tokenManager),

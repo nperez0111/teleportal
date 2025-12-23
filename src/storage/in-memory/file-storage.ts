@@ -1,9 +1,11 @@
+import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type {
   Document,
   DocumentStorage,
   File,
   FileMetadata,
   FileStorage,
+  FileUploadResult,
   TemporaryUploadStorage,
 } from "../types";
 import type { InMemoryTemporaryUploadStorage } from "./temporary-upload-storage";
@@ -101,5 +103,28 @@ export class InMemoryFileStorage implements FileStorage {
         updatedAt: Date.now(),
       });
     });
+  }
+
+  async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {
+    const expectedChunks =
+      uploadResult.progress.metadata.size === 0
+        ? 1
+        : Math.ceil(uploadResult.progress.metadata.size / CHUNK_SIZE);
+
+    // Fetch all chunks incrementally and store them
+    const chunks: Uint8Array[] = [];
+    for (let i = 0; i < expectedChunks; i++) {
+      const chunk = await uploadResult.getChunk(i);
+      chunks.push(chunk);
+    }
+
+    const file: File = {
+      id: uploadResult.fileId,
+      metadata: uploadResult.progress.metadata,
+      chunks,
+      contentId: uploadResult.contentId,
+    };
+
+    await this.storeFile(file);
   }
 }

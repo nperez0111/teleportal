@@ -5,6 +5,7 @@ import { toBase64 } from "lib0/buffer";
 import type {
   File,
   FileMetadata,
+  FileUploadResult,
   TemporaryUploadStorage,
   UploadProgress,
 } from "../types";
@@ -17,9 +18,8 @@ const DEFAULT_UPLOAD_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 /**
  * Unstorage-based temporary upload storage.
  *
- * Stores upload session metadata and chunks in unstorage and, on completion,
- * persists a full file record using the same key scheme as `UnstorageFileStorage`
- * (i.e. `${keyPrefix}:file:${fileId}` + per-chunk keys).
+ * Stores upload session metadata and chunks in unstorage. After completion,
+ * use the returned getChunk function to move chunks to durable storage incrementally.
  */
 export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
   readonly type = "temporary-upload-storage" as const;
@@ -27,21 +27,18 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
   #storage: Storage;
   #keyPrefix: string;
   #uploadTimeoutMs: number;
-  #onComplete?: (file: File) => Promise<void> | void;
 
   constructor(
     storage: Storage,
     options?: {
       uploadTimeoutMs?: number;
       keyPrefix?: string;
-      onComplete?: (file: File) => Promise<void> | void;
     },
   ) {
     this.#storage = storage;
     this.#uploadTimeoutMs =
       options?.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
     this.#keyPrefix = options?.keyPrefix ?? "file";
-    this.#onComplete = options?.onComplete;
   }
 
   #getUploadSessionKey(uploadId: string): string {
@@ -148,11 +145,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
   async completeUpload(
     uploadId: string,
     fileId?: File["id"],
-  ): Promise<{
-    progress: UploadProgress;
-    fileId: File["id"];
-    getChunk: (chunkIndex: number) => Promise<Uint8Array>;
-  }> {
+  ): Promise<FileUploadResult> {
     const progress = await this.getUploadProgress(uploadId);
     if (!progress) {
       throw new Error(`Upload session ${uploadId} not found`);
@@ -198,40 +191,46 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     }
 
     const finalFileId = fileId ?? computedFileId;
-    const file: File = {
-      id: finalFileId,
-      metadata: progress.metadata,
-      chunks: chunksInOrder,
-      contentId: rootHash,
-    };
 
-    // Persist the file record into the same backend (cold storage key scheme).
-    const fileKey = this.#getFileKey(finalFileId);
-    await this.#storage.setItem(fileKey, {
-      metadata: file.metadata,
-      contentId: Array.from(file.contentId),
-      chunkKeys: file.chunks.map((_, index) => `${fileKey}:chunk:${index}`),
-    });
-    await Promise.all(
-      file.chunks.map((chunk, index) =>
-        this.#storage.setItemRaw(`${fileKey}:chunk:${index}`, chunk),
-      ),
-    );
+    // Track which chunks have been fetched via getChunk
+    const fetchedChunks = new Set<number>();
 
-    await this.#onComplete?.(file);
+    // Release chunksInOrder array to allow GC (we've computed the merkle tree)
+    // Chunks remain in storage and will be retrieved via getChunk
 
     return {
       progress,
       fileId: finalFileId,
+      contentId: rootHash,
       getChunk: async (chunkIndex: number) => {
-        const stored = await this.#storage.getItemRaw<Uint8Array>(
-          this.#getChunkKey(uploadId, chunkIndex),
-        );
+        // Check if chunk was already fetched (one-time use)
+        if (fetchedChunks.has(chunkIndex)) {
+          throw new Error(
+            `Chunk ${chunkIndex} has already been fetched for upload ${uploadId}. Chunks can only be fetched once.`,
+          );
+        }
+
+        const chunkKey = this.#getChunkKey(uploadId, chunkIndex);
+        const stored = await this.#storage.getItemRaw<Uint8Array>(chunkKey);
         if (!stored) {
           throw new Error(
             `Chunk ${chunkIndex} not found for upload ${uploadId}`,
           );
         }
+
+        // Mark as fetched and delete from temporary storage
+        fetchedChunks.add(chunkIndex);
+        await this.#storage.removeItem(chunkKey);
+
+        // Check if all chunks have been fetched and clean up session
+        const remainingChunkKeys = await this.#storage.getKeys(
+          `${this.#keyPrefix}:upload:${uploadId}:chunk:`,
+        );
+        if (remainingChunkKeys.length === 0) {
+          // All chunks have been fetched, clean up the session
+          await this.#storage.removeItem(this.#getUploadSessionKey(uploadId));
+        }
+
         return stored;
       },
     };

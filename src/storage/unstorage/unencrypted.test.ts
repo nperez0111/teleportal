@@ -234,6 +234,7 @@ describe("UnstorageDocumentStorage", () => {
           deleteFilesByDocumentCalled = true;
           deleteFilesByDocumentKey = documentId;
         },
+        storeFileFromUpload: async () => {},
       };
 
       storage = new UnstorageDocumentStorage(createStorage(), {

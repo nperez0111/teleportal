@@ -204,6 +204,7 @@ describe("YDocStorage", () => {
           deleteFilesByDocumentCalled = true;
           deleteFilesByDocumentKey = documentId;
         },
+        storeFileFromUpload: async () => {},
       };
 
       storage = new YDocStorage(mockFileStorage);

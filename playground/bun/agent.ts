@@ -37,13 +37,17 @@ const server = new Server<TokenPayload & { clientId: string }>({
       { keyPrefix: "file" },
     );
 
+    let documentStorage: UnstorageDocumentStorage | UnstorageEncryptedDocumentStorage;
     if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(backingStorage, { fileStorage });
+      documentStorage = new UnstorageEncryptedDocumentStorage(backingStorage, { fileStorage });
+    } else {
+      documentStorage = new UnstorageDocumentStorage(backingStorage, {
+        scanKeys: false,
+        fileStorage,
+      });
     }
-    return new UnstorageDocumentStorage(backingStorage, {
-      scanKeys: false,
-      fileStorage,
-    });
+    fileStorage.setDocumentStorage(documentStorage);
+    return documentStorage;
   },
 });
 

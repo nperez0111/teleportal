@@ -45,7 +45,9 @@ const server = new Server({
       storage,
       { keyPrefix: "file" },
     );
-    return new UnstorageEncryptedDocumentStorage(storage, { fileStorage });
+    const documentStorage = new UnstorageEncryptedDocumentStorage(storage, { fileStorage });
+    fileStorage.setDocumentStorage(documentStorage);
+    return documentStorage;
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
 });
