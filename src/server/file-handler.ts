@@ -1,5 +1,5 @@
 import type { Message, ServerContext } from "teleportal";
-import type { FileStorage } from "../storage/file-storage";
+import type { FileStorage, TemporaryUploadStorage } from "teleportal/storage";
 import { getLogger, Logger } from "@logtape/logtape";
 import {
   AckMessage,
@@ -12,7 +12,6 @@ import type {
   DecodedFileUpload,
 } from "../lib/protocol/types";
 import { buildMerkleTree, generateMerkleProof } from "teleportal/merkle-tree";
-import { fromBase64, toBase64 } from "lib0/buffer";
 import { toErrorDetails } from "../logging";
 
 /**
@@ -27,11 +26,13 @@ export class FileHandler<
   Context extends ServerContext,
 > extends FileTransferProtocol.Server<Context> {
   #fileStorage: FileStorage;
+  #temporaryUploadStorage: TemporaryUploadStorage | undefined;
   #logger: Logger;
 
   constructor(fileStorage: FileStorage) {
     super();
     this.#fileStorage = fileStorage;
+    this.#temporaryUploadStorage = fileStorage.temporaryUploadStorage;
     this.#logger = getLogger(["teleportal", "server", "file-handler"]);
   }
 
@@ -67,7 +68,13 @@ export class FileHandler<
     document: string,
     encrypted: boolean,
   ): Promise<void> {
-    await this.#fileStorage.initiateUpload(metadata.fileId, {
+    if (!this.#temporaryUploadStorage) {
+      throw new Error(
+        "File uploads are not enabled: missing fileStorage.temporaryUploadStorage",
+      );
+    }
+
+    await this.#temporaryUploadStorage.beginUpload(metadata.fileId, {
       filename: metadata.filename,
       size: metadata.size,
       mimeType: metadata.mimeType,
@@ -94,8 +101,7 @@ export class FileHandler<
     });
 
     try {
-      const contentId = fromBase64(payload.fileId);
-      const file = await this.#fileStorage.getFile(contentId);
+      const file = await this.#fileStorage.getFile(payload.fileId);
       if (!file) {
         log.info("File not found for download", {
           fileId: payload.fileId,
@@ -127,7 +133,7 @@ export class FileHandler<
           document,
           {
             type: "file-upload",
-            fileId: toBase64(contentId),
+            fileId: file.id,
             filename: file.metadata.filename,
             size: file.metadata.size,
             mimeType: file.metadata.mimeType,
@@ -153,7 +159,7 @@ export class FileHandler<
             document,
             {
               type: "file-part",
-              fileId: toBase64(contentId),
+              fileId: file.id,
               chunkIndex: i,
               chunkData: chunk,
               merkleProof: proof,
@@ -191,7 +197,15 @@ export class FileHandler<
 
     log.debug("Handling file progress");
 
-    const upload = await this.#fileStorage.getUploadProgress(payload.fileId);
+    if (!this.#temporaryUploadStorage) {
+      throw new Error(
+        "File uploads are not enabled: missing fileStorage.temporaryUploadStorage",
+      );
+    }
+
+    const upload = await this.#temporaryUploadStorage.getUploadProgress(
+      payload.fileId,
+    );
     if (!upload) {
       const error = new Error(`Upload session ${payload.fileId} not found`);
       log.error("Upload session not found", {
@@ -201,7 +215,7 @@ export class FileHandler<
     }
 
     try {
-      await this.#fileStorage.storeChunk(
+      await this.#temporaryUploadStorage.storeChunk(
         payload.fileId,
         payload.chunkIndex,
         payload.chunkData,
@@ -216,46 +230,36 @@ export class FileHandler<
         }),
       );
 
-      const updatedUpload = await this.#fileStorage.getUploadProgress(
-        payload.fileId,
-      );
+      const updatedUpload =
+        await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
       if (!updatedUpload) {
         throw new Error(
           `Upload session ${payload.fileId} not found after storing chunk`,
         );
       }
 
-      const totalChunks =
-        updatedUpload.metadata.size === 0
-          ? 1
-          : Math.ceil(updatedUpload.metadata.size / (64 * 1024));
-      if (updatedUpload.chunks.size >= totalChunks) {
-        const chunks: Uint8Array[] = [];
-        for (let i = 0; i < totalChunks; i++) {
-          const chunk = updatedUpload.chunks.get(i);
-          if (!chunk) {
-            break;
-          }
-          chunks.push(chunk);
-        }
+      if (updatedUpload.chunks.size >= payload.totalChunks) {
+        try {
+          // Don't pass fileId - let completeUpload compute it from the merkle tree
+          const result = await this.#temporaryUploadStorage.completeUpload(
+            payload.fileId,
+          );
+          log.debug("Upload completed successfully", {
+            uploadId: payload.fileId,
+            fileId: result.fileId,
+          });
 
-        if (chunks.length === totalChunks) {
-          const merkleTree = buildMerkleTree(chunks);
-          const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
-
-          try {
-            await this.#fileStorage.completeUpload(payload.fileId, contentId);
-            log.debug("Upload completed successfully", {
-              fileId: payload.fileId,
-              contentId: toBase64(contentId),
-            });
-          } catch (error) {
-            log.error("Failed to complete upload", {
-              fileId: payload.fileId,
-              error: toErrorDetails(error),
-            });
-            throw error;
-          }
+          // Move file from temporary storage to durable storage incrementally
+          await this.#fileStorage.storeFileFromUpload(result);
+          log.debug("File moved to durable storage", {
+            fileId: result.fileId,
+          });
+        } catch (error) {
+          log.error("Failed to complete upload", {
+            fileId: payload.fileId,
+            error: toErrorDetails(error),
+          });
+          throw error;
         }
       }
 
@@ -274,6 +278,7 @@ export class FileHandler<
    * Clean up expired uploads.
    */
   async cleanupExpiredUploads(): Promise<void> {
-    await this.#fileStorage.cleanupExpiredUploads();
+    if (!this.#temporaryUploadStorage) return;
+    await this.#temporaryUploadStorage.cleanupExpiredUploads();
   }
 }

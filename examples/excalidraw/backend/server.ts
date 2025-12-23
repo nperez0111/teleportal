@@ -6,6 +6,8 @@ import { Server } from "teleportal/server";
 import {
   UnstorageEncryptedDocumentStorage,
   UnstorageDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageTemporaryUploadStorage,
 } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
@@ -25,10 +27,27 @@ const tokenManager = createTokenManager({
 
 const server = new Server({
   getStorage: async (ctx) => {
+    const fileStorage = new UnstorageFileStorage(memoryStorage, {
+      keyPrefix: "file",
+    });
+    fileStorage.temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
+      memoryStorage,
+      { keyPrefix: "file" },
+    );
+    let documentStorage:
+      | UnstorageDocumentStorage
+      | UnstorageEncryptedDocumentStorage;
     if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(memoryStorage);
+      documentStorage = new UnstorageEncryptedDocumentStorage(memoryStorage, {
+        fileStorage,
+      });
+    } else {
+      documentStorage = new UnstorageDocumentStorage(memoryStorage, {
+        fileStorage,
+      });
     }
-    return new UnstorageDocumentStorage(memoryStorage);
+    fileStorage.setDocumentStorage(documentStorage);
+    return documentStorage;
   },
 
   checkPermission: checkPermissionWithTokenManager(tokenManager),

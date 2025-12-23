@@ -6,12 +6,11 @@ import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
-import { FileStorage } from "../file-storage";
+import type { FileStorage } from "../types";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { ttl: number };
-  public readonly fileStorage: FileStorage | undefined;
 
   constructor(
     storage: Storage,
@@ -53,12 +52,24 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     await this.storage.setItem(key + ":meta", metadata);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
+  async getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
+    const now = Date.now();
     const metadata = await this.storage.getItem(key + ":meta");
     if (!metadata) {
-      return { seenMessages: {} };
+      return {
+        createdAt: now,
+        updatedAt: now,
+        encrypted: true,
+        seenMessages: {},
+      };
     }
-    return metadata as EncryptedDocumentMetadata;
+    const m = metadata as EncryptedDocumentMetadata;
+    return {
+      ...m,
+      createdAt: typeof m.createdAt === "number" ? m.createdAt : now,
+      updatedAt: typeof m.updatedAt === "number" ? m.updatedAt : now,
+      encrypted: typeof m.encrypted === "boolean" ? m.encrypted : true,
+    };
   }
 
   async storeEncryptedMessage(
@@ -87,7 +98,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       await this.fileStorage.deleteFilesByDocument(key);
     }
 
-    const metadata = await this.fetchDocumentMetadata(key);
+    const metadata = await this.getDocumentMetadata(key);
 
     // Delete all messages
     const promises = [];

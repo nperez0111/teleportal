@@ -15,9 +15,12 @@ import {
   getEncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
 import {
-  DocumentStorage,
   type DocumentMetadata as BaseDocumentMetadata,
-} from "../document-storage";
+  type DocumentStorage,
+  type FileStorage,
+  type MilestoneStorage,
+  type Document,
+} from "../types";
 import { EncryptedBinary } from "teleportal/encryption-key";
 
 export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
@@ -40,17 +43,19 @@ export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
  * and implement a "trust-but-verify" strategy, where they use the milestone, but verify against the merkle tree afterwards in the background. This might prove to be a good compromise of initial sync speed and security.
  */
 
-export abstract class EncryptedDocumentStorage extends DocumentStorage {
-  public encrypted = true;
+export abstract class EncryptedDocumentStorage implements DocumentStorage {
+  readonly type = "document-storage" as const;
+  storageType: "encrypted" = "encrypted";
+
+  fileStorage?: FileStorage;
+  milestoneStorage?: MilestoneStorage;
 
   abstract writeDocumentMetadata(
     key: string,
     metadata: EncryptedDocumentMetadata,
   ): Promise<void>;
 
-  abstract fetchDocumentMetadata(
-    key: string,
-  ): Promise<EncryptedDocumentMetadata>;
+  abstract getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata>;
 
   abstract storeEncryptedMessage(
     key: string,
@@ -66,12 +71,9 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   async handleSyncStep1(
     key: string,
     syncStep1: EncryptedStateVector,
-  ): Promise<{
-    update: EncryptedSyncStep2;
-    stateVector: EncryptedStateVector;
-  }> {
+  ): Promise<Document> {
     const decodedStateVector = decodeFromStateVector(syncStep1);
-    const { seenMessages } = await this.fetchDocumentMetadata(key);
+    const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
 
     const encryptedSyncStep2 = await getEncryptedSyncStep2(
       seenMessages,
@@ -81,9 +83,23 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
     const encryptedStateVector = getEncryptedStateVector(seenMessages);
 
     return {
-      update: encryptedSyncStep2,
-      stateVector: encryptedStateVector,
-    };
+      id: key,
+      metadata: {
+        // Spread first to preserve any stored values, then override with sanitized defaults
+        ...(rest as any),
+        createdAt:
+          typeof (rest as any).createdAt === "number"
+            ? (rest as any).createdAt
+            : Date.now(),
+        updatedAt: Date.now(),
+        encrypted: true,
+        seenMessages,
+      },
+      content: {
+        update: encryptedSyncStep2 as unknown as any,
+        stateVector: encryptedStateVector as unknown as any,
+      },
+    } satisfies Document;
   }
 
   private updateSeenMessages(
@@ -103,21 +119,25 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
   ): Promise<void> {
     await this.transaction(key, async () => {
       const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
-      const { seenMessages, ...rest } = await this.fetchDocumentMetadata(key);
+      const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
       for (const message of decodedSyncStep2.messages) {
         this.updateSeenMessages(seenMessages, message);
         await this.storeEncryptedMessage(key, message.id, message.payload);
       }
       await this.writeDocumentMetadata(key, {
         ...rest,
+        updatedAt: Date.now(),
         seenMessages,
-      });
+      } as EncryptedDocumentMetadata);
     });
   }
 
-  async write(key: string, update: EncryptedUpdatePayload): Promise<void> {
+  async handleUpdate(
+    key: string,
+    update: EncryptedUpdatePayload,
+  ): Promise<void> {
     await this.transaction(key, async () => {
-      const { seenMessages, ...rest } = await this.fetchDocumentMetadata(key);
+      const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
       const encryptedUpdates = decodeEncryptedUpdate(update);
       for (const encryptedUpdate of encryptedUpdates) {
         this.updateSeenMessages(seenMessages, encryptedUpdate);
@@ -130,17 +150,16 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
       }
       await this.writeDocumentMetadata(key, {
         ...rest,
+        updatedAt: Date.now(),
         seenMessages,
-      });
+      } as EncryptedDocumentMetadata);
     });
   }
 
-  async fetch(key: string): Promise<{
-    update: EncryptedUpdatePayload;
-    stateVector: EncryptedStateVector;
-  }> {
+  async getDocument(key: string): Promise<Document> {
     // TODO maybe a more efficient way to do this?
-    const { seenMessages } = await this.fetchDocumentMetadata(key);
+    const metadata = await this.getDocumentMetadata(key);
+    const { seenMessages } = metadata;
     const updates: DecodedEncryptedUpdatePayload[] = [];
     for (const clientId of Object.keys(seenMessages)) {
       for (const counter of Object.keys(seenMessages[parseInt(clientId)])) {
@@ -159,8 +178,30 @@ export abstract class EncryptedDocumentStorage extends DocumentStorage {
     const encryptedStateVector = getEncryptedStateVector(seenMessages);
 
     return {
-      update: encodeEncryptedUpdateMessages(updates),
-      stateVector: encryptedStateVector,
-    };
+      id: key,
+      metadata: {
+        // Spread first to preserve any stored values, then override with sanitized defaults
+        ...(metadata as any),
+        createdAt:
+          typeof (metadata as any).createdAt === "number"
+            ? (metadata as any).createdAt
+            : Date.now(),
+        updatedAt:
+          typeof (metadata as any).updatedAt === "number"
+            ? (metadata as any).updatedAt
+            : Date.now(),
+        encrypted: true,
+      },
+      content: {
+        update: encodeEncryptedUpdateMessages(updates) as unknown as any,
+        stateVector: encryptedStateVector as unknown as any,
+      },
+    } satisfies Document;
+  }
+
+  abstract deleteDocument(key: string): Promise<void>;
+
+  transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
   }
 }

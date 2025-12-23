@@ -2,45 +2,53 @@ import * as Y from "yjs";
 
 import type { StateVector, Update } from "teleportal";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import { DocumentMetadata } from "../document-storage";
-import { FileStorage } from "../file-storage";
+import type { Document, DocumentMetadata, FileStorage } from "../types";
 
 export class YDocStorage extends UnencryptedDocumentStorage {
   public static docs = new Map<string, Y.Doc>();
   public static metadata = new Map<string, DocumentMetadata>();
 
   constructor(
-    public readonly fileStorage: FileStorage | undefined = undefined,
+    fileStorage: FileStorage | undefined = undefined,
   ) {
     super();
+    this.fileStorage = fileStorage;
   }
 
   /**
    * Persist a Y.js update to storage
    */
-  async write(key: string, update: Update): Promise<void> {
+  async handleUpdate(key: string, update: Update): Promise<void> {
     if (!YDocStorage.docs.has(key)) {
       YDocStorage.docs.set(key, new Y.Doc());
     }
     const doc = YDocStorage.docs.get(key)!;
 
     Y.applyUpdateV2(doc, update);
+
+    await this.transaction(key, async () => {
+      const meta = await this.getDocumentMetadata(key);
+      await this.writeDocumentMetadata(key, { ...meta, updatedAt: Date.now() });
+    });
   }
 
   /**
    * Retrieve a Y.js update from storage
    */
-  async fetch(key: string): Promise<{
-    update: Update;
-    stateVector: StateVector;
-  } | null> {
+  async getDocument(key: string): Promise<Document | null> {
     const doc = YDocStorage.docs.get(key) ?? new Y.Doc();
 
     YDocStorage.docs.set(key, doc);
     const update = Y.encodeStateAsUpdateV2(doc) as Update;
+    const metadata = await this.getDocumentMetadata(key);
+
     return {
-      update,
-      stateVector: Y.encodeStateVectorFromUpdateV2(update) as StateVector,
+      id: key,
+      metadata,
+      content: {
+        update,
+        stateVector: Y.encodeStateVectorFromUpdateV2(update) as StateVector,
+      },
     };
   }
 
@@ -51,8 +59,21 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     YDocStorage.metadata.set(key, metadata);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<DocumentMetadata> {
-    return YDocStorage.metadata.get(key) ?? {};
+  async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
+    const now = Date.now();
+    const existing = YDocStorage.metadata.get(key);
+    if (!existing) {
+      return { createdAt: now, updatedAt: now, encrypted: false };
+    }
+    return {
+      ...existing,
+      createdAt:
+        typeof existing.createdAt === "number" ? existing.createdAt : now,
+      updatedAt:
+        typeof existing.updatedAt === "number" ? existing.updatedAt : now,
+      encrypted:
+        typeof existing.encrypted === "boolean" ? existing.encrypted : false,
+    };
   }
 
   async deleteDocument(key: string): Promise<void> {
