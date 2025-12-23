@@ -8,7 +8,10 @@ import {
   Update,
 } from "teleportal";
 
-import { DocumentStorage } from "../document-storage";
+import {
+  AttributionMetadata,
+  DocumentStorage,
+} from "../document-storage";
 
 export abstract class UnencryptedDocumentStorage extends DocumentStorage {
   public encrypted = false;
@@ -44,8 +47,9 @@ export abstract class UnencryptedDocumentStorage extends DocumentStorage {
   async handleSyncStep2(
     key: string,
     syncStep2: SyncStep2Update,
+    attribution?: AttributionMetadata,
   ): Promise<void> {
     // when unencrypted, there is no difference between the sync step 2 and the update message type
-    await this.write(key, syncStep2 as unknown as Update);
+    await this.write(key, syncStep2 as unknown as Update, attribution);
   }
 }

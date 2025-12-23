@@ -6,7 +6,11 @@ import {
   type ServerContext,
   type Update,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import * as Y from "yjs";
+import type {
+  AttributionMetadata,
+  DocumentStorage,
+} from "teleportal/storage";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 import { getLogger, Logger } from "@logtape/logtape";
@@ -307,7 +311,7 @@ export class Session<Context extends ServerContext> {
   /**
    * Write an update to the storage.
    */
-  async write(update: Update) {
+  async write(update: Update, attribution?: AttributionMetadata) {
     const writeLogger = this.#logger.with({
       documentId: this.documentId,
       namespacedDocumentId: this.namespacedDocumentId,
@@ -316,7 +320,7 @@ export class Session<Context extends ServerContext> {
     writeLogger.debug("Writing update to storage");
 
     try {
-      await this.#storage.write(this.namespacedDocumentId, update);
+      await this.#storage.write(this.namespacedDocumentId, update, attribution);
 
       writeLogger.debug("Update written to storage successfully");
     } catch (error) {
@@ -327,6 +331,62 @@ export class Session<Context extends ServerContext> {
         .error("Failed to write update to storage");
       throw error;
     }
+  }
+
+  #buildAttributionMetadata(
+    context: Context,
+    explicitAttribution?: Record<string, unknown>,
+  ): AttributionMetadata | undefined {
+    const contextUser =
+      typeof context?.userId === "string"
+        ? context.userId
+        : typeof (context as any)?.user === "string"
+          ? (context as any).user
+          : typeof (context as any)?.username === "string"
+            ? (context as any).username
+            : undefined;
+    const explicitUser =
+      typeof explicitAttribution?.user === "string"
+        ? explicitAttribution.user
+        : undefined;
+    const user = explicitUser ?? contextUser;
+    if (!user) {
+      return undefined;
+    }
+
+    const timestamp =
+      typeof explicitAttribution?.timestamp === "number"
+        ? explicitAttribution.timestamp
+        : Date.now();
+
+    const customAttributes: Record<string, string> = {};
+    if (
+      explicitAttribution?.customAttributes &&
+      typeof explicitAttribution.customAttributes === "object"
+    ) {
+      for (const [key, value] of Object.entries(
+        explicitAttribution.customAttributes,
+      )) {
+        if (value !== undefined && value !== null) {
+          customAttributes[key] = String(value);
+        }
+      }
+    }
+
+    if (context?.clientId && !customAttributes.clientId) {
+      customAttributes.clientId = context.clientId;
+    }
+
+    if (context?.room && !customAttributes.room) {
+      customAttributes.room = context.room;
+    }
+
+    const metadata: AttributionMetadata = { user, timestamp };
+    if (Object.keys(customAttributes).length > 0) {
+      metadata.customAttributes = customAttributes;
+    }
+
+    return metadata;
   }
 
   /**
@@ -438,7 +498,13 @@ export class Session<Context extends ServerContext> {
                 .trace("Processing update message");
 
               // wait for confirmed write
-              await this.write(message.payload.update);
+              await this.write(
+                message.payload.update,
+                this.#buildAttributionMetadata(
+                  message.context,
+                  message.payload.attribution,
+                ),
+              );
 
               // broadcast and replicate
               await Promise.all([
@@ -468,11 +534,15 @@ export class Session<Context extends ServerContext> {
                 })
                 .trace("Processing sync-step-2");
 
+              const syncAttribution = this.#buildAttributionMetadata(
+                message.context,
+              );
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#storage.handleSyncStep2(
                   this.namespacedDocumentId,
                   message.payload.update,
+                  syncAttribution,
                 ),
                 this.#pubSub.publish(
                   `document/${this.namespacedDocumentId}` as const,
@@ -526,6 +596,58 @@ export class Session<Context extends ServerContext> {
                   permission: (message.payload as any).permission,
                 })
                 .debug("Received auth-message");
+              return;
+            }
+            case "attribution-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                })
+                .trace("Processing attribution-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "attribution-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              try {
+                const attributions = await this.#storage.getAttributions(
+                  this.namespacedDocumentId,
+                );
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "attribution-response",
+                      attributions: Y.encodeIdMap(attributions),
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .warn("Failed to respond to attribution-request");
+              }
+
+              return;
+            }
+            case "attribution-response": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                })
+                .trace("Received attribution-response");
               return;
             }
             default: {

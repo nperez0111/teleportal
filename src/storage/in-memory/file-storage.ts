@@ -3,9 +3,9 @@ import { UnencryptedFileStorage } from "../unencrypted/file-storage";
 import { DocumentStorage } from "../document-storage";
 
 /**
- * Default upload timeout in milliseconds (24 hours)
+ * Default upload timeout in milliseconds (2 hours)
  */
-const DEFAULT_UPLOAD_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_UPLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 /**
  * In-memory implementation of FileStorage.

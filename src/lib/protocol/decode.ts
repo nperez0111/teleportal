@@ -115,9 +115,13 @@ function decodeDocStepWithDecoder<
         ? DecodedSyncDone
         : D extends UpdateStep
           ? DecodedUpdateStep
-          : D extends AuthMessage
-            ? DecodedAuthMessage
-            : never,
+          : D extends AttributionRequestMessage
+            ? DecodedAttributionRequest
+            : D extends AttributionResponseMessage
+              ? DecodedAttributionResponse
+              : D extends AuthMessage
+                ? DecodedAuthMessage
+                : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -135,9 +139,23 @@ function decodeDocStepWithDecoder<
         } as E;
       }
       case 0x02: {
+        const update = decoding.readVarUint8Array(decoder);
+        const hasAttribution = decoding.readUint8(decoder);
+        let attribution: Record<string, unknown> | undefined;
+        if (hasAttribution === 1) {
+          const raw = decoding.readVarString(decoder);
+          try {
+            attribution = JSON.parse(raw) as Record<string, unknown>;
+          } catch (err) {
+            throw new Error("Failed to parse attribution metadata", {
+              cause: { err, payload: raw },
+            });
+          }
+        }
         return {
           type: "update",
-          update: decoding.readVarUint8Array(decoder),
+          update,
+          attribution,
         } as E;
       }
       case 0x03: {
@@ -150,6 +168,17 @@ function decodeDocStepWithDecoder<
           type: "auth-message",
           permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
           reason: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x05: {
+        return {
+          type: "attribution-request",
+        } as E;
+      }
+      case 0x06: {
+        return {
+          type: "attribution-response",
+          attributions: decoding.readVarUint8Array(decoder),
         } as E;
       }
       default: {
@@ -213,9 +242,13 @@ export function decodeDocStep<
         ? DecodedSyncDone
         : D extends UpdateStep
           ? DecodedUpdateStep
-          : D extends AuthMessage
-            ? DecodedAuthMessage
-            : never,
+          : D extends AttributionRequestMessage
+            ? DecodedAttributionRequest
+            : D extends AttributionResponseMessage
+              ? DecodedAttributionResponse
+              : D extends AuthMessage
+                ? DecodedAuthMessage
+                : never,
 >(update: D): E {
   const decoder = decoding.createDecoder(update);
   return decodeDocStepWithDecoder(decoder);

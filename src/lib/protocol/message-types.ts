@@ -6,6 +6,8 @@ import type {
   AwarenessUpdateMessage,
   DecodedAckMessage,
   DecodedAuthMessage,
+  DecodedAttributionRequest,
+  DecodedAttributionResponse,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
   DecodedFileAuthMessage,
@@ -148,11 +150,13 @@ export class DocMessage<
   constructor(
     public document: string,
     public payload:
-      | DecodedSyncStep1
-      | DecodedSyncStep2
-      | DecodedSyncDone
-      | DecodedUpdateStep
-      | DecodedAuthMessage,
+    | DecodedSyncStep1
+    | DecodedSyncStep2
+    | DecodedSyncDone
+    | DecodedUpdateStep
+    | DecodedAuthMessage
+    | DecodedAttributionRequest
+    | DecodedAttributionResponse,
     context?: Context,
     public encrypted: boolean = false,
     encoded?: EncodedDocUpdateMessage<DocStep>,
