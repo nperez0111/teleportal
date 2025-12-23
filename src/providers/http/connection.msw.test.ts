@@ -1230,11 +1230,14 @@ describe("HttpConnection with MSW", () => {
         "test-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -1374,11 +1377,14 @@ describe("HttpConnection with MSW", () => {
         "test-large-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -1523,11 +1529,14 @@ describe("HttpConnection with MSW", () => {
         "test-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);

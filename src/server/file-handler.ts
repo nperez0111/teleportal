@@ -240,8 +240,8 @@ export class FileHandler<
 
       if (updatedUpload.chunks.size >= payload.totalChunks) {
         try {
+          // Don't pass fileId - let completeUpload compute it from the merkle tree
           const result = await this.#temporaryUploadStorage.completeUpload(
-            payload.fileId,
             payload.fileId,
           );
           log.debug("Upload completed successfully", {

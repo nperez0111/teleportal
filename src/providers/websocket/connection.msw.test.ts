@@ -99,20 +99,31 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
               // Process file messages
               if (message.type === "file") {
-                await fileHandler.handle(message, async (response) => {
-                  sentResponses.push(response);
+                try {
+                  await fileHandler.handle(message, async (response) => {
+                    sentResponses.push(response);
 
-                  // Send response back through WebSocket
-                  const encoded = response.encoded;
-                  const arrayBuffer = encoded.buffer.slice(
-                    encoded.byteOffset,
-                    encoded.byteOffset + encoded.byteLength,
-                  );
-                  wsClient.send(arrayBuffer);
-                });
+                    // Send response back through WebSocket
+                    const encoded = response.encoded;
+                    const arrayBuffer = encoded.buffer.slice(
+                      encoded.byteOffset,
+                      encoded.byteOffset + encoded.byteLength,
+                    );
+                    wsClient.send(arrayBuffer);
+                  });
+                } catch (error) {
+                  // Log and re-throw file handler errors
+                  console.error("File handler error:", error);
+                  throw error;
+                }
               }
             } catch (error) {
-              // Ignore decode errors for non-file messages
+              // Only ignore decode errors for non-file messages
+              // File handler errors should propagate
+              const message = receivedMessages[receivedMessages.length - 1];
+              if (message?.type === "file") {
+                throw error;
+              }
             }
           });
         }),
@@ -145,11 +156,14 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
       const fileId = await wrappedTransport.upload(file, "test-file-id");
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -224,8 +238,14 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
       const fileId = await wrappedTransport.upload(file, "test-large-file-id");
 
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
+
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -259,20 +279,31 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
               // Process file messages
               if (message.type === "file") {
-                await fileHandler.handle(message, async (response) => {
-                  sentResponses.push(response);
+                try {
+                  await fileHandler.handle(message, async (response) => {
+                    sentResponses.push(response);
 
-                  // Send response back through WebSocket
-                  const encoded = response.encoded;
-                  const arrayBuffer = encoded.buffer.slice(
-                    encoded.byteOffset,
-                    encoded.byteOffset + encoded.byteLength,
-                  );
-                  wsClient.send(arrayBuffer);
-                });
+                    // Send response back through WebSocket
+                    const encoded = response.encoded;
+                    const arrayBuffer = encoded.buffer.slice(
+                      encoded.byteOffset,
+                      encoded.byteOffset + encoded.byteLength,
+                    );
+                    wsClient.send(arrayBuffer);
+                  });
+                } catch (error) {
+                  // Log and re-throw file handler errors
+                  console.error("File handler error:", error);
+                  throw error;
+                }
               }
             } catch (error) {
-              // Ignore decode errors for non-file messages
+              // Only ignore decode errors for non-file messages
+              // File handler errors should propagate
+              const message = receivedMessages[receivedMessages.length - 1];
+              if (message?.type === "file") {
+                throw error;
+              }
             }
           });
         }),
@@ -310,11 +341,14 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         "test-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const storedFile = await fileStorage.getFile(fileId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
