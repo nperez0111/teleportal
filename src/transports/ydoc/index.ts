@@ -329,9 +329,23 @@ export function getYDocSink<Context extends ClientContext>({
                   controller.error(new Error(chunk.payload.reason));
                   break;
                 }
+                case "milestone-list-request":
+                case "milestone-list-response":
+                case "milestone-snapshot-request":
+                case "milestone-snapshot-response":
+                case "milestone-create-request":
+                case "milestone-create-response":
+                case "milestone-update-name-request":
+                case "milestone-update-name-response":
+                case "milestone-auth-message": {
+                  // Milestone messages are handled by the server, not the client transport
+                  // They can be passed through but are not processed here
+                  break;
+                }
                 default: {
-                  // @ts-expect-error - this should be unreachable due to type checking
-                  chunk.payload.type;
+                  // This should be unreachable due to type checking
+                  const _exhaustive: never = chunk.payload;
+                  _exhaustive;
                   throw new Error("Invalid chunk.payload.type", {
                     cause: { chunk },
                   });

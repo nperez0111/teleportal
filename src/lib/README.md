@@ -67,6 +67,33 @@ Document messages handle Y.js document synchronization and updates. They include
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x04 = Auth │ Permission (1 byte) + Reason (varint string)                    │
 │ Message     │ 0x00=denied, 0x01=allowed                                       │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x05 = Mile │ (no payload)                                                    │
+│ List Req    │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x06 = Mile │ Count (varint) + [Id + Name + DocId + CreatedAt] * N            │
+│ List Resp   │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x07 = Mile │ MilestoneId (varint string)                                     │
+│ Snapshot Req│                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x08 = Mile │ MilestoneId (varint string) + Snapshot (varint array)           │
+│ Snapshot Res│                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x09 = Mile │ HasName (1 byte) + Name (varint string, optional)               │
+│ Create Req  │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0A = Mile │ Id + Name + DocId + CreatedAt (all varint strings/float64)       │
+│ Create Resp │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0B = Mile │ MilestoneId (varint string) + Name (varint string)              │
+│ Update Name │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0C = Mile │ Id + Name + DocId + CreatedAt (all varint strings/float64)       │
+│ Update Resp │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0D = Mile │ Permission (1 byte) + Reason (varint string)                    │
+│ Auth Msg    │ 0x00=denied, 0x01=allowed                                       │
 └─────────────┴─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -101,6 +128,60 @@ Document messages handle Y.js document synchronization and updates. They include
 **Purpose**: Handles authentication and authorization
 **Payload**: Permission flag (1 byte) + reason string (variable length)
 **Usage**: Server sends to grant/deny access with explanation
+
+#### 6. Milestone List Request (0x05)
+
+**Purpose**: Requests a list of all milestones for a document
+**Payload**: None
+**Usage**: Client requests milestone metadata (without snapshot content)
+
+#### 7. Milestone List Response (0x06)
+
+**Purpose**: Returns list of milestone metadata
+**Payload**: Count (varint) + array of milestone metadata (id, name, documentId, createdAt)
+**Usage**: Server responds with milestone list
+
+#### 8. Milestone Snapshot Request (0x07)
+
+**Purpose**: Requests the snapshot content for a specific milestone
+**Payload**: MilestoneId (varint string)
+**Usage**: Client requests full snapshot data to fulfill lazy loading
+
+#### 9. Milestone Snapshot Response (0x08)
+
+**Purpose**: Returns the snapshot content for a milestone
+**Payload**: MilestoneId (varint string) + Snapshot (varint array - binary encoded)
+**Usage**: Server responds with milestone snapshot data
+
+#### 10. Milestone Create Request (0x09)
+
+**Purpose**: Requests creation of a new milestone from current document state
+**Payload**: HasName (1 byte) + Name (varint string, optional)
+**Usage**: Client requests milestone creation; server auto-generates name if not provided
+
+#### 11. Milestone Create Response (0x0A)
+
+**Purpose**: Confirms milestone creation and returns metadata
+**Payload**: Milestone metadata (id, name, documentId, createdAt)
+**Usage**: Server responds with created milestone information
+
+#### 12. Milestone Update Name Request (0x0B)
+
+**Purpose**: Requests updating a milestone's name
+**Payload**: MilestoneId (varint string) + Name (varint string)
+**Usage**: Client requests name change for an existing milestone
+
+#### 13. Milestone Update Name Response (0x0C)
+
+**Purpose**: Confirms milestone name update
+**Payload**: Milestone metadata (id, name, documentId, createdAt)
+**Usage**: Server responds with updated milestone information
+
+#### 14. Milestone Auth Message (0x0D)
+
+**Purpose**: Error response for milestone operations
+**Payload**: Permission flag (1 byte) + reason string (variable length)
+**Usage**: Server sends when milestone operation fails (not found, permission denied, etc.)
 
 ## Awareness Messages (Type 0x01)
 
@@ -420,6 +501,30 @@ Client                           Server
   │◀────── File Auth Message ─────│  (optional: error if file not found)
 ```
 
+### Milestone Operations Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── List Request ──────────▶│  (request milestone list)
+  │                                │
+  │◀────── List Response ──────────│  (returns milestone metadata)
+  │                                │
+  │─────── Snapshot Request ──────▶│  (request specific snapshot)
+  │                                │
+  │◀────── Snapshot Response ──────│  (returns snapshot data)
+  │                                │
+  │─────── Create Request ────────▶│  (create milestone, optional name)
+  │                                │
+  │                                │  (captures current document state)
+  │                                │
+  │◀────── Create Response ───────│  (returns created milestone)
+  │                                │
+  │─────── Update Name Request ──▶│  (update milestone name)
+  │                                │
+  │◀────── Update Name Response ──│  (returns updated milestone)
+```
+
 ## Error Handling
 
 The protocol includes robust error handling:
@@ -486,6 +591,30 @@ const filePart = new FileMessage("my-document", {
 const fileDownload = new FileMessage("my-document", {
   type: "file-download",
   fileId: merkleRootHash // Merkle root hash (base64) identifying the file
+});
+
+// Requesting milestone list
+const milestoneListRequest = new DocMessage("my-document", {
+  type: "milestone-list-request"
+});
+
+// Requesting milestone snapshot
+const milestoneSnapshotRequest = new DocMessage("my-document", {
+  type: "milestone-snapshot-request",
+  milestoneId: "milestone-id-123"
+});
+
+// Creating a milestone
+const milestoneCreateRequest = new DocMessage("my-document", {
+  type: "milestone-create-request",
+  name: "v1.0.0" // Optional - server auto-generates if not provided
+});
+
+// Updating milestone name
+const milestoneUpdateNameRequest = new DocMessage("my-document", {
+  type: "milestone-update-name-request",
+  milestoneId: "milestone-id-123",
+  name: "v1.0.1"
 });
 ```
 

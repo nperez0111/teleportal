@@ -21,6 +21,15 @@ import type {
   DecodedFileDownload,
   DecodedFilePart,
   DecodedFileUpload,
+  DecodedMilestoneAuthMessage,
+  DecodedMilestoneCreateRequest,
+  DecodedMilestoneCreateResponse,
+  DecodedMilestoneListRequest,
+  DecodedMilestoneListResponse,
+  DecodedMilestoneSnapshotRequest,
+  DecodedMilestoneSnapshotResponse,
+  DecodedMilestoneUpdateNameRequest,
+  DecodedMilestoneUpdateNameResponse,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -29,6 +38,16 @@ import type {
   EncodedDocUpdateMessage,
   EncodedFileStep,
   FileStep,
+  MilestoneAuthMessage,
+  MilestoneCreateRequest,
+  MilestoneCreateResponse,
+  MilestoneListRequest,
+  MilestoneListResponse,
+  MilestoneSnapshotRequest,
+  MilestoneSnapshotResponse,
+  MilestoneUpdateNameRequest,
+  MilestoneUpdateNameResponse,
+  MilestoneSnapshot,
   SyncDone,
   SyncStep1,
   SyncStep2,
@@ -117,7 +136,25 @@ function decodeDocStepWithDecoder<
           ? DecodedUpdateStep
           : D extends AuthMessage
             ? DecodedAuthMessage
-            : never,
+            : D extends MilestoneListRequest
+              ? DecodedMilestoneListRequest
+              : D extends MilestoneListResponse
+                ? DecodedMilestoneListResponse
+                : D extends MilestoneSnapshotRequest
+                  ? DecodedMilestoneSnapshotRequest
+                  : D extends MilestoneSnapshotResponse
+                    ? DecodedMilestoneSnapshotResponse
+                    : D extends MilestoneCreateRequest
+                      ? DecodedMilestoneCreateRequest
+                      : D extends MilestoneCreateResponse
+                        ? DecodedMilestoneCreateResponse
+                        : D extends MilestoneUpdateNameRequest
+                          ? DecodedMilestoneUpdateNameRequest
+                          : D extends MilestoneUpdateNameResponse
+                            ? DecodedMilestoneUpdateNameResponse
+                            : D extends MilestoneAuthMessage
+                              ? DecodedMilestoneAuthMessage
+                              : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -148,6 +185,93 @@ function decodeDocStepWithDecoder<
       case 0x04: {
         return {
           type: "auth-message",
+          permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
+          reason: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x05: {
+        // milestone-list-request
+        return {
+          type: "milestone-list-request",
+        } as E;
+      }
+      case 0x06: {
+        // milestone-list-response
+        const milestonesLength = decoding.readVarUint(decoder);
+        const milestones = [];
+        for (let i = 0; i < milestonesLength; i++) {
+          milestones.push({
+            id: decoding.readVarString(decoder),
+            name: decoding.readVarString(decoder),
+            documentId: decoding.readVarString(decoder),
+            createdAt: decoding.readFloat64(decoder),
+          });
+        }
+        return {
+          type: "milestone-list-response",
+          milestones,
+        } as E;
+      }
+      case 0x07: {
+        // milestone-snapshot-request
+        return {
+          type: "milestone-snapshot-request",
+          milestoneId: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x08: {
+        // milestone-snapshot-response
+        return {
+          type: "milestone-snapshot-response",
+          milestoneId: decoding.readVarString(decoder),
+          snapshot: decoding.readVarUint8Array(decoder) as MilestoneSnapshot,
+        } as E;
+      }
+      case 0x09: {
+        // milestone-create-request
+        const hasName = decoding.readUint8(decoder) === 1;
+        const name = hasName ? decoding.readVarString(decoder) : undefined;
+        return {
+          type: "milestone-create-request",
+          name,
+        } as E;
+      }
+      case 0x0a: {
+        // milestone-create-response
+        return {
+          type: "milestone-create-response",
+          milestone: {
+            id: decoding.readVarString(decoder),
+            name: decoding.readVarString(decoder),
+            documentId: decoding.readVarString(decoder),
+            createdAt: decoding.readFloat64(decoder),
+          },
+        } as E;
+      }
+      case 0x0b: {
+        // milestone-update-name-request
+        return {
+          type: "milestone-update-name-request",
+          milestoneId: decoding.readVarString(decoder),
+          name: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x0c: {
+        // milestone-update-name-response
+        return {
+          type: "milestone-update-name-response",
+          milestone: {
+            id: decoding.readVarString(decoder),
+            name: decoding.readVarString(decoder),
+            documentId: decoding.readVarString(decoder),
+            createdAt: decoding.readFloat64(decoder),
+          },
+        } as E;
+      }
+      case 0x0d: {
+        // milestone-auth-message
+        return {
+          type: "milestone-auth-message",
           permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
           reason: decoding.readVarString(decoder),
         } as E;
@@ -215,7 +339,25 @@ export function decodeDocStep<
           ? DecodedUpdateStep
           : D extends AuthMessage
             ? DecodedAuthMessage
-            : never,
+            : D extends MilestoneListRequest
+              ? DecodedMilestoneListRequest
+              : D extends MilestoneListResponse
+                ? DecodedMilestoneListResponse
+                : D extends MilestoneSnapshotRequest
+                  ? DecodedMilestoneSnapshotRequest
+                  : D extends MilestoneSnapshotResponse
+                    ? DecodedMilestoneSnapshotResponse
+                    : D extends MilestoneCreateRequest
+                      ? DecodedMilestoneCreateRequest
+                      : D extends MilestoneCreateResponse
+                        ? DecodedMilestoneCreateResponse
+                        : D extends MilestoneUpdateNameRequest
+                          ? DecodedMilestoneUpdateNameRequest
+                          : D extends MilestoneUpdateNameResponse
+                            ? DecodedMilestoneUpdateNameResponse
+                            : D extends MilestoneAuthMessage
+                              ? DecodedMilestoneAuthMessage
+                              : never,
 >(update: D): E {
   const decoder = decoding.createDecoder(update);
   return decodeDocStepWithDecoder(decoder);

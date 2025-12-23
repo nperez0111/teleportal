@@ -129,7 +129,16 @@ export type DocStep =
   | SyncStep2
   | SyncDone
   | UpdateStep
-  | AuthMessage;
+  | AuthMessage
+  | MilestoneListRequest
+  | MilestoneListResponse
+  | MilestoneSnapshotRequest
+  | MilestoneSnapshotResponse
+  | MilestoneCreateRequest
+  | MilestoneCreateResponse
+  | MilestoneUpdateNameRequest
+  | MilestoneUpdateNameResponse
+  | MilestoneAuthMessage;
 
 /**
  * Any Y.js update which contains awareness updates.
@@ -279,3 +288,155 @@ export type DecodedFileAuthMessage = {
  * A {@link MilestoneSnapshot} is a binary encoded snapshot of a document at a point in time.
  */
 export type MilestoneSnapshot = Tag<Uint8Array, "milestone-snapshot">;
+
+/**
+ * A milestone list request message.
+ */
+export type MilestoneListRequest = Tag<Uint8Array, "milestone-list-request">;
+
+/**
+ * A decoded milestone list request message.
+ */
+export type DecodedMilestoneListRequest = {
+  type: "milestone-list-request";
+};
+
+/**
+ * A milestone list response message.
+ */
+export type MilestoneListResponse = Tag<Uint8Array, "milestone-list-response">;
+
+/**
+ * A decoded milestone list response message.
+ */
+export type DecodedMilestoneListResponse = {
+  type: "milestone-list-response";
+  milestones: Array<{
+    id: string;
+    name: string;
+    documentId: string;
+    createdAt: number;
+  }>;
+};
+
+/**
+ * A milestone snapshot request message.
+ */
+export type MilestoneSnapshotRequest = Tag<
+  Uint8Array,
+  "milestone-snapshot-request"
+>;
+
+/**
+ * A decoded milestone snapshot request message.
+ */
+export type DecodedMilestoneSnapshotRequest = {
+  type: "milestone-snapshot-request";
+  milestoneId: string;
+};
+
+/**
+ * A milestone snapshot response message.
+ */
+export type MilestoneSnapshotResponse = Tag<
+  Uint8Array,
+  "milestone-snapshot-response"
+>;
+
+/**
+ * A decoded milestone snapshot response message.
+ */
+export type DecodedMilestoneSnapshotResponse = {
+  type: "milestone-snapshot-response";
+  milestoneId: string;
+  snapshot: MilestoneSnapshot;
+};
+
+/**
+ * A milestone create request message.
+ */
+export type MilestoneCreateRequest = Tag<
+  Uint8Array,
+  "milestone-create-request"
+>;
+
+/**
+ * A decoded milestone create request message.
+ */
+export type DecodedMilestoneCreateRequest = {
+  type: "milestone-create-request";
+  name?: string;
+};
+
+/**
+ * A milestone create response message.
+ */
+export type MilestoneCreateResponse = Tag<
+  Uint8Array,
+  "milestone-create-response"
+>;
+
+/**
+ * A decoded milestone create response message.
+ */
+export type DecodedMilestoneCreateResponse = {
+  type: "milestone-create-response";
+  milestone: {
+    id: string;
+    name: string;
+    documentId: string;
+    createdAt: number;
+  };
+};
+
+/**
+ * A milestone update name request message.
+ */
+export type MilestoneUpdateNameRequest = Tag<
+  Uint8Array,
+  "milestone-update-name-request"
+>;
+
+/**
+ * A decoded milestone update name request message.
+ */
+export type DecodedMilestoneUpdateNameRequest = {
+  type: "milestone-update-name-request";
+  milestoneId: string;
+  name: string;
+};
+
+/**
+ * A milestone update name response message.
+ */
+export type MilestoneUpdateNameResponse = Tag<
+  Uint8Array,
+  "milestone-update-name-response"
+>;
+
+/**
+ * A decoded milestone update name response message.
+ */
+export type DecodedMilestoneUpdateNameResponse = {
+  type: "milestone-update-name-response";
+  milestone: {
+    id: string;
+    name: string;
+    documentId: string;
+    createdAt: number;
+  };
+};
+
+/**
+ * A milestone auth message (error response).
+ */
+export type MilestoneAuthMessage = Tag<Uint8Array, "milestone-auth-message">;
+
+/**
+ * A decoded milestone auth message.
+ */
+export type DecodedMilestoneAuthMessage = {
+  type: "milestone-auth-message";
+  permission: "denied";
+  reason: string;
+};

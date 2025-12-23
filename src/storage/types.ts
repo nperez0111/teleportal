@@ -266,6 +266,15 @@ export interface MilestoneStorage {
     documentId: Document["id"],
     id: Milestone["id"] | Milestone["id"][],
   ): Promise<void>;
+
+  /**
+   * Update the name of a milestone
+   */
+  updateMilestoneName(
+    documentId: Document["id"],
+    id: Milestone["id"],
+    name: string,
+  ): Promise<void>;
 }
 
 /**
