@@ -242,6 +242,7 @@ export class FileHandler<
         try {
           const result = await this.#temporaryUploadStorage.completeUpload(
             payload.fileId,
+            payload.fileId,
           );
           log.debug("Upload completed successfully", {
             uploadId: payload.fileId,

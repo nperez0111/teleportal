@@ -68,7 +68,10 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     messageId: EncryptedMessageId,
   ): Promise<EncryptedBinary | null>;
 
-  async handleSyncStep1(key: string, syncStep1: EncryptedStateVector): Promise<Document> {
+  async handleSyncStep1(
+    key: string,
+    syncStep1: EncryptedStateVector,
+  ): Promise<Document> {
     const decodedStateVector = decodeFromStateVector(syncStep1);
     const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
 
@@ -82,11 +85,14 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     return {
       id: key,
       metadata: {
-        // Ensure required metadata fields exist, but preserve any stored values.
-        createdAt: typeof (rest as any).createdAt === "number" ? (rest as any).createdAt : Date.now(),
+        // Spread first to preserve any stored values, then override with sanitized defaults
+        ...(rest as any),
+        createdAt:
+          typeof (rest as any).createdAt === "number"
+            ? (rest as any).createdAt
+            : Date.now(),
         updatedAt: Date.now(),
         encrypted: true,
-        ...(rest as any),
         seenMessages,
       },
       content: {
@@ -118,11 +124,18 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         this.updateSeenMessages(seenMessages, message);
         await this.storeEncryptedMessage(key, message.id, message.payload);
       }
-      await this.writeDocumentMetadata(key, { ...rest, seenMessages } as EncryptedDocumentMetadata);
+      await this.writeDocumentMetadata(key, {
+        ...rest,
+        updatedAt: Date.now(),
+        seenMessages,
+      } as EncryptedDocumentMetadata);
     });
   }
 
-  async handleUpdate(key: string, update: EncryptedUpdatePayload): Promise<void> {
+  async handleUpdate(
+    key: string,
+    update: EncryptedUpdatePayload,
+  ): Promise<void> {
     await this.transaction(key, async () => {
       const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
       const encryptedUpdates = decodeEncryptedUpdate(update);
@@ -135,7 +148,11 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
           encryptedUpdate.payload,
         );
       }
-      await this.writeDocumentMetadata(key, { ...rest, seenMessages } as EncryptedDocumentMetadata);
+      await this.writeDocumentMetadata(key, {
+        ...rest,
+        updatedAt: Date.now(),
+        seenMessages,
+      } as EncryptedDocumentMetadata);
     });
   }
 
@@ -163,13 +180,17 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     return {
       id: key,
       metadata: {
+        // Spread first to preserve any stored values, then override with sanitized defaults
+        ...(metadata as any),
         createdAt:
           typeof (metadata as any).createdAt === "number"
             ? (metadata as any).createdAt
             : Date.now(),
-        updatedAt: typeof (metadata as any).updatedAt === "number" ? (metadata as any).updatedAt : Date.now(),
+        updatedAt:
+          typeof (metadata as any).updatedAt === "number"
+            ? (metadata as any).updatedAt
+            : Date.now(),
         encrypted: true,
-        ...(metadata as any),
       },
       content: {
         update: encodeEncryptedUpdateMessages(updates) as unknown as any,
