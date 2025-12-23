@@ -287,4 +287,3 @@ const documentStorage = new UnstorageDocumentStorage(redisStorage, {
 4. Update server integration to use new API (import types from `types.ts`)
 5. Update all tests to match new interfaces from `types.ts`
 6. Update examples and playground code
-7. Delete old interface files (`document-storage.ts`, `file-storage.ts`, `milestone-storage.ts`) and update exports

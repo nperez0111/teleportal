@@ -1,51 +1,88 @@
 import * as Y from "yjs";
 
 import {
-  getEmptyUpdate,
   getEmptyStateVector,
+  getEmptyUpdate,
   type StateVector,
-  SyncStep2Update,
-  Update,
+  type SyncStep2Update,
+  type Update,
 } from "teleportal";
 
-import { DocumentStorage } from "../document-storage";
+import type {
+  Document,
+  DocumentMetadata,
+  DocumentStorage,
+  FileStorage,
+  MilestoneStorage,
+} from "../types";
 
-export abstract class UnencryptedDocumentStorage extends DocumentStorage {
-  public encrypted = false;
+function defaultMetadata(now: number, encrypted: boolean): DocumentMetadata {
+  return {
+    createdAt: now,
+    updatedAt: now,
+    encrypted,
+  };
+}
 
-  /**
-   * Implements a default sync implementation that diffs the update with the sync step 1.
-   *
-   * This is useful for unencrypted documents, where the update is not encrypted and can be merged by Y.js.
-   */
+/**
+ * Base implementation for unencrypted document storage backends.
+ *
+ * Provides default sync behavior using Yjs diffing.
+ */
+export abstract class UnencryptedDocumentStorage implements DocumentStorage {
+  readonly type = "document-storage" as const;
+  storageType: "unencrypted" = "unencrypted";
+
+  fileStorage?: FileStorage;
+  milestoneStorage?: MilestoneStorage;
+
+  abstract handleUpdate(
+    documentId: Document["id"],
+    update: Update,
+  ): Promise<void>;
+  abstract getDocument(documentId: Document["id"]): Promise<Document | null>;
+  abstract writeDocumentMetadata(
+    documentId: Document["id"],
+    metadata: DocumentMetadata,
+  ): Promise<void>;
+  abstract getDocumentMetadata(
+    documentId: Document["id"],
+  ): Promise<DocumentMetadata>;
+  abstract deleteDocument(documentId: Document["id"]): Promise<void>;
+  transaction<T>(documentId: Document["id"], cb: () => Promise<T>): Promise<T> {
+    return cb();
+  }
+
   async handleSyncStep1(
-    key: string,
+    documentId: Document["id"],
     syncStep1: StateVector,
-  ): Promise<{
-    update: SyncStep2Update;
-    stateVector: StateVector;
-  }> {
-    const { update, stateVector } = (await this.fetch(key)) ?? {
-      update: getEmptyUpdate(),
-      stateVector: getEmptyStateVector(),
+  ): Promise<Document> {
+    const now = Date.now();
+    const doc = (await this.getDocument(documentId)) ?? {
+      id: documentId,
+      metadata: defaultMetadata(now, false),
+      content: {
+        update: getEmptyUpdate(),
+        stateVector: getEmptyStateVector(),
+      },
     };
 
+    const update = Y.diffUpdateV2(doc.content.update, syncStep1) as Update;
+
     return {
-      update: Y.diffUpdateV2(update, syncStep1) as SyncStep2Update,
-      stateVector,
+      ...doc,
+      content: {
+        update,
+        stateVector: doc.content.stateVector,
+      },
     };
   }
 
-  /**
-   * Implements a default sync implementation that writes the sync step 2 to the storage.
-   *
-   * This is useful for unencrypted documents, where the update is not encrypted and can be merged by Y.js.
-   */
   async handleSyncStep2(
-    key: string,
+    documentId: Document["id"],
     syncStep2: SyncStep2Update,
   ): Promise<void> {
     // when unencrypted, there is no difference between the sync step 2 and the update message type
-    await this.write(key, syncStep2 as unknown as Update);
+    await this.handleUpdate(documentId, syncStep2 as unknown as Update);
   }
 }

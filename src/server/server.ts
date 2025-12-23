@@ -528,8 +528,6 @@ export class Server<Context extends ServerContext> {
                 });
 
                 // Check if file storage is available for this document
-                // We need to access the storage implementation to check for fileStorage
-                // @ts-ignore - we know the storage has fileStorage if it supports files
                 const fileStorage = session.storage.fileStorage;
 
                 if (!fileStorage) {

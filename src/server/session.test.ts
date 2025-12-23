@@ -8,7 +8,7 @@ import type {
   Update,
 } from "teleportal";
 import { DocMessage, InMemoryPubSub } from "teleportal";
-import { DocumentStorage } from "teleportal/storage";
+import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 import { Session } from "./session";
 import { Client } from "./client";
 
@@ -29,53 +29,82 @@ class MockClient<Context extends ServerContext> {
 }
 
 // Mock DocumentStorage for testing
-class MockDocumentStorage extends DocumentStorage {
-  handleSyncStep1(
-    key: string,
+class MockDocumentStorage implements DocumentStorage {
+  readonly type = "document-storage" as const;
+  storageType: "encrypted" | "unencrypted" = "unencrypted";
+
+  fileStorage = undefined;
+  milestoneStorage = undefined;
+
+  public mockGetDocument = false;
+  public mockHandleUpdate = false;
+  public mockHandleSyncStep2 = false;
+  public storedUpdate: Update | null = null;
+  public lastSyncStep2: SyncStep2Update | null = null;
+  public metadata: Map<string, DocumentMetadata> = new Map();
+
+  async handleSyncStep1(
+    documentId: string,
     syncStep1: StateVector,
-  ): Promise<{ update: SyncStep2Update; stateVector: StateVector }> {
-    return Promise.resolve({
-      update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
-      stateVector: syncStep1,
-    });
+  ): Promise<Document> {
+    return {
+      id: documentId,
+      metadata: await this.getDocumentMetadata(documentId),
+      content: {
+        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        stateVector: syncStep1,
+      },
+    };
   }
-  handleSyncStep2(key: string, syncStep2: SyncStep2Update): Promise<void> {
+
+  async handleSyncStep2(_key: string, syncStep2: SyncStep2Update): Promise<void> {
     this.mockHandleSyncStep2 = true;
     this.lastSyncStep2 = syncStep2;
-    return Promise.resolve();
-  }
-  public get fileStorage() {
-    return undefined;
-  }
-  public encrypted = false;
-  public mockFetch = false;
-  public mockWrite = false;
-  public mockHandleSyncStep2 = false;
-  public storedData: any = null;
-  public lastSyncStep2: SyncStep2Update | null = null;
-  public metadata: Map<string, any> = new Map();
-
-  async fetch(documentId: string) {
-    this.mockFetch = true;
-    return this.storedData;
   }
 
-  async write(documentId: string, update: Update) {
-    this.mockWrite = true;
-    this.storedData = update;
+  async handleUpdate(_documentId: string, update: Update): Promise<void> {
+    this.mockHandleUpdate = true;
+    this.storedUpdate = update;
   }
 
-  async writeDocumentMetadata(key: string, metadata: any): Promise<void> {
-    this.metadata.set(key, metadata);
+  async getDocument(documentId: string): Promise<Document | null> {
+    this.mockGetDocument = true;
+    if (!this.storedUpdate) return null;
+    return {
+      id: documentId,
+      metadata: await this.getDocumentMetadata(documentId),
+      content: {
+        update: this.storedUpdate,
+        stateVector: new Uint8Array() as unknown as StateVector,
+      },
+    };
   }
 
-  async fetchDocumentMetadata(key: string): Promise<any> {
-    return this.metadata.get(key) || {};
+  async writeDocumentMetadata(
+    documentId: string,
+    metadata: DocumentMetadata,
+  ): Promise<void> {
+    this.metadata.set(documentId, metadata);
   }
 
-  async deleteDocument(key: string): Promise<void> {
-    this.metadata.delete(key);
-    this.storedData = null;
+  async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+    const now = Date.now();
+    return (
+      this.metadata.get(documentId) ?? {
+        createdAt: now,
+        updatedAt: now,
+        encrypted: false,
+      }
+    );
+  }
+
+  async deleteDocument(documentId: string): Promise<void> {
+    this.metadata.delete(documentId);
+    this.storedUpdate = null;
+  }
+
+  transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
   }
 }
 
@@ -406,8 +435,8 @@ describe("Session", () => {
       const update = new Uint8Array([1, 2, 3]) as Update;
       await session.write(update);
 
-      expect(storage.mockWrite).toBe(true);
-      expect(storage.storedData).toBe(update);
+      expect(storage.mockHandleUpdate).toBe(true);
+      expect(storage.storedUpdate).toBe(update);
     });
   });
 
@@ -494,7 +523,7 @@ describe("Session", () => {
         await session.apply(message, client1 as any);
 
         // Should write to storage
-        expect(storage.mockWrite).toBe(true);
+        expect(storage.mockHandleUpdate).toBe(true);
         // Should broadcast to other clients
         expect(client2.sentMessages.length).toBe(1);
         // Should not send to originating client
