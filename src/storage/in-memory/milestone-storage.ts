@@ -43,4 +43,35 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
       this.milestones.delete(i);
     });
   }
+
+  async updateMilestoneName(
+    _documentId: Document["id"],
+    id: Milestone["id"],
+    name: string,
+  ): Promise<void> {
+    const milestone = this.milestones.get(id);
+    if (!milestone) {
+      throw new Error("Milestone not found", { cause: { id } });
+    }
+    if (milestone.loaded) {
+      const snapshot = await milestone.fetchSnapshot();
+      const updatedMilestone = new Milestone({
+        id: milestone.id,
+        name,
+        documentId: milestone.documentId,
+        createdAt: milestone.createdAt,
+        snapshot,
+      });
+      this.milestones.set(id, updatedMilestone);
+    } else {
+      const updatedMilestone = new Milestone({
+        id: milestone.id,
+        name,
+        documentId: milestone.documentId,
+        createdAt: milestone.createdAt,
+        getSnapshot: milestone["getSnapshot"]!,
+      });
+      this.milestones.set(id, updatedMilestone);
+    }
+  }
 }

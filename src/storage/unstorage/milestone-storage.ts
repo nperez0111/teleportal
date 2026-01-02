@@ -196,4 +196,46 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
       );
     });
   }
+
+  /**
+   * Update the name of a milestone
+   */
+  async updateMilestoneName(
+    documentId: Document["id"],
+    id: Milestone["id"],
+    name: string,
+  ): Promise<void> {
+    return this.transaction(this.#getMetadataKey(documentId), async (key) => {
+      const milestones = await this.getMilestones(documentId);
+      const milestoneIndex = milestones.findIndex((m) => m.id === id);
+      if (milestoneIndex === -1) {
+        throw new Error("Milestone not found", { cause: { documentId, id } });
+      }
+
+      const milestone = milestones[milestoneIndex];
+      let updatedMilestone: Milestone;
+      if (milestone.loaded) {
+        const snapshot = await milestone.fetchSnapshot();
+        updatedMilestone = new Milestone({
+          id: milestone.id,
+          name,
+          documentId: milestone.documentId,
+          createdAt: milestone.createdAt,
+          snapshot,
+        });
+      } else {
+        updatedMilestone = new Milestone({
+          id: milestone.id,
+          name,
+          documentId: milestone.documentId,
+          createdAt: milestone.createdAt,
+          getSnapshot: milestone["getSnapshot"]!,
+        });
+      }
+
+      milestones[milestoneIndex] = updatedMilestone;
+
+      await this.storage.setItemRaw(key, Milestone.encodeMetaDoc(milestones));
+    });
+  }
 }
