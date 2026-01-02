@@ -750,7 +750,7 @@ describe("Session", () => {
 
       // Create a test milestone
       const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
-      await storage.milestoneStorage!.createMilestone({
+      const milestoneId = await storage.milestoneStorage!.createMilestone({
         name: "v1.0.0",
         documentId: "test-doc",
         createdAt: Date.now(),
@@ -761,6 +761,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "milestone-list-request",
+          snapshotIds: [],
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -779,6 +780,52 @@ describe("Session", () => {
       }
     });
 
+    it("should filter out known milestones from milestone-list-request", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      // Create two test milestones
+      const snapshot1 = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
+      const milestoneId1 = await storage.milestoneStorage!.createMilestone({
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot: snapshot1,
+      });
+
+      const snapshot2 = new Uint8Array([4, 5, 6]) as MilestoneSnapshot;
+      const milestoneId2 = await storage.milestoneStorage!.createMilestone({
+        name: "v2.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot: snapshot2,
+      });
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-list-request",
+          snapshotIds: [milestoneId1], // Client already knows about milestoneId1
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-list-response"
+      ) {
+        // Should only return milestoneId2, not milestoneId1
+        expect(response.payload.milestones.length).toBe(1);
+        expect(response.payload.milestones[0].id).toBe(milestoneId2);
+        expect(response.payload.milestones[0].name).toBe("v2.0.0");
+      }
+    });
+
     it("should return error when milestone storage is not available", async () => {
       await session.load();
       session.addClient(client1AsClient);
@@ -788,6 +835,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "milestone-list-request",
+          snapshotIds: [],
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -867,6 +915,7 @@ describe("Session", () => {
         expect(response.payload.reason).toContain("not found");
       }
     });
+
 
     it("should handle milestone-create-request with name", async () => {
       await session.load();
@@ -1062,6 +1111,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "milestone-list-request",
+          snapshotIds: [],
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );

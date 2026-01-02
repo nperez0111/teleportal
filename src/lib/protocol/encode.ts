@@ -105,6 +105,12 @@ export function encodeMessage(update: Message): BinaryMessage {
           case "milestone-list-request": {
             // message type
             encoding.writeUint8(encoder, 5);
+            // snapshotIds array length
+            encoding.writeVarUint(encoder, update.payload.snapshotIds.length);
+            // snapshotIds array
+            for (const snapshotId of update.payload.snapshotIds) {
+              encoding.writeVarString(encoder, snapshotId);
+            }
             break;
           }
           case "milestone-list-response": {

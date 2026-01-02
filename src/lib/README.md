@@ -132,8 +132,8 @@ Document messages handle Y.js document synchronization and updates. They include
 #### 6. Milestone List Request (0x05)
 
 **Purpose**: Requests a list of all milestones for a document
-**Payload**: None
-**Usage**: Client requests milestone metadata (without snapshot content)
+**Payload**: SnapshotIds count (varint) + SnapshotIds array (varint strings)
+**Usage**: Client requests milestone metadata (without snapshot content). The client can provide a list of snapshot IDs so the server can send only milestones that are not already known.
 
 #### 7. Milestone List Response (0x06)
 
@@ -595,7 +595,8 @@ const fileDownload = new FileMessage("my-document", {
 
 // Requesting milestone list
 const milestoneListRequest = new DocMessage("my-document", {
-  type: "milestone-list-request"
+  type: "milestone-list-request",
+  snapshotIds: ["known-id-1", "known-id-2"] // Optional: list of snapshot IDs already known to the client
 });
 
 // Requesting milestone snapshot

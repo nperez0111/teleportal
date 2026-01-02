@@ -23,13 +23,12 @@ import type {
   DecodedFileUpload,
   DecodedMilestoneAuthMessage,
   DecodedMilestoneCreateRequest,
-  DecodedMilestoneCreateResponse,
   DecodedMilestoneListRequest,
   DecodedMilestoneListResponse,
+  DecodedMilestoneResponse,
   DecodedMilestoneSnapshotRequest,
   DecodedMilestoneSnapshotResponse,
   DecodedMilestoneUpdateNameRequest,
-  DecodedMilestoneUpdateNameResponse,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -147,11 +146,11 @@ function decodeDocStepWithDecoder<
                     : D extends MilestoneCreateRequest
                       ? DecodedMilestoneCreateRequest
                       : D extends MilestoneCreateResponse
-                        ? DecodedMilestoneCreateResponse
+                        ? DecodedMilestoneResponse
                         : D extends MilestoneUpdateNameRequest
                           ? DecodedMilestoneUpdateNameRequest
                           : D extends MilestoneUpdateNameResponse
-                            ? DecodedMilestoneUpdateNameResponse
+                            ? DecodedMilestoneResponse
                             : D extends MilestoneAuthMessage
                               ? DecodedMilestoneAuthMessage
                               : never,
@@ -191,8 +190,14 @@ function decodeDocStepWithDecoder<
       }
       case 0x05: {
         // milestone-list-request
+        const snapshotIdsLength = decoding.readVarUint(decoder);
+        const snapshotIds: string[] = [];
+        for (let i = 0; i < snapshotIdsLength; i++) {
+          snapshotIds.push(decoding.readVarString(decoder));
+        }
         return {
           type: "milestone-list-request",
+          snapshotIds,
         } as E;
       }
       case 0x06: {
@@ -350,11 +355,11 @@ export function decodeDocStep<
                     : D extends MilestoneCreateRequest
                       ? DecodedMilestoneCreateRequest
                       : D extends MilestoneCreateResponse
-                        ? DecodedMilestoneCreateResponse
+                        ? DecodedMilestoneResponse
                         : D extends MilestoneUpdateNameRequest
                           ? DecodedMilestoneUpdateNameRequest
                           : D extends MilestoneUpdateNameResponse
-                            ? DecodedMilestoneUpdateNameResponse
+                            ? DecodedMilestoneResponse
                             : D extends MilestoneAuthMessage
                               ? DecodedMilestoneAuthMessage
                               : never,

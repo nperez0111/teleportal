@@ -634,6 +634,7 @@ describe("can encode and decode", () => {
       decodeMessage(
         new DocMessage("test-doc", {
           type: "milestone-list-request",
+          snapshotIds: ["known-1", "known-2"],
         }).encoded,
       ),
     ).toMatchInlineSnapshot(`
@@ -642,6 +643,10 @@ describe("can encode and decode", () => {
         "document": "test-doc",
         "encrypted": false,
         "payload": {
+          "snapshotIds": [
+            "known-1",
+            "known-2",
+          ],
           "type": "milestone-list-request",
         },
         "type": "doc",
@@ -862,6 +867,7 @@ describe("can encode and decode", () => {
       "test-doc",
       {
         type: "milestone-list-request",
+        snapshotIds: [],
       },
       { userId: "user-123" },
     );
@@ -876,6 +882,7 @@ describe("can encode and decode", () => {
       "test-doc",
       {
         type: "milestone-list-request",
+        snapshotIds: [],
       },
       {},
       true, // encrypted

@@ -83,8 +83,6 @@ sequenceDiagram
     Session->>Client: DocMessage(milestone-update-name-response)
 ```
 
-
-
 ## Implementation Details
 
 ### 1. New Message Types
@@ -179,8 +177,6 @@ When creating a milestone without a name:
 }
 ```
 
-
-
 ### Get Snapshot Request/Response
 
 **Request:**
@@ -201,8 +197,6 @@ When creating a milestone without a name:
   snapshot: MilestoneSnapshot  // Uint8Array - binary encoded snapshot data (format is flexible)
 }
 ```
-
-
 
 ### Create Milestone Request/Response
 
@@ -229,8 +223,6 @@ When creating a milestone without a name:
 }
 ```
 
-
-
 ### Update Name Request/Response
 
 **Request:**
@@ -256,8 +248,6 @@ When creating a milestone without a name:
   }
 }
 ```
-
-
 
 ## Error Handling
 

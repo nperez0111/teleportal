@@ -1,6 +1,7 @@
 import {
   decodeMessage,
   DocMessage,
+  type DecodedMilestoneListRequest,
   type Message,
   type MilestoneSnapshot,
   type PubSub,
@@ -533,10 +534,12 @@ export class Session<Context extends ServerContext> {
               return;
             }
             case "milestone-list-request": {
+              const payload = message.payload as DecodedMilestoneListRequest;
               log
                 .with({
                   messageId: message.id,
                   documentId: this.documentId,
+                  snapshotIds: payload.snapshotIds,
                 })
                 .trace("Processing milestone-list-request");
 
@@ -570,7 +573,11 @@ export class Session<Context extends ServerContext> {
                   await this.#storage.milestoneStorage.getMilestones(
                     this.namespacedDocumentId,
                   );
-                const milestoneMetadata = milestones.map((m) => m.toJSON());
+                const snapshotIds = payload.snapshotIds ?? [];
+                // Filter out milestones that are already known
+                const milestoneMetadata = milestones
+                  .filter((m) => !snapshotIds.includes(m.id))
+                  .map((m) => m.toJSON());
 
                 await client.send(
                   new DocMessage(
@@ -589,6 +596,7 @@ export class Session<Context extends ServerContext> {
                     messageId: message.id,
                     documentId: this.documentId,
                     milestoneCount: milestoneMetadata.length,
+                    filteredCount: milestones.length - milestoneMetadata.length,
                   })
                   .trace("Milestone list sent");
               } catch (error) {

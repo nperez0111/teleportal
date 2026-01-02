@@ -290,24 +290,30 @@ export type DecodedFileAuthMessage = {
 export type MilestoneSnapshot = Tag<Uint8Array, "milestone-snapshot">;
 
 /**
- * A milestone list request message.
+ * An encoded {@link MilestoneListRequest} message.
  */
 export type MilestoneListRequest = Tag<Uint8Array, "milestone-list-request">;
 
 /**
- * A decoded milestone list request message.
+ * A decoded {@link MilestoneListRequest} message.
+ * Includes a list of snapshot IDs so the response can send only milestones that are not already known.
  */
 export type DecodedMilestoneListRequest = {
   type: "milestone-list-request";
+  /**
+   * List of snapshot IDs that the client already knows.
+   * The server should only send milestones that are not in this list.
+   */
+  snapshotIds: string[];
 };
 
 /**
- * A milestone list response message.
+ * An encoded {@link DecodedMilestoneListResponse} message.
  */
 export type MilestoneListResponse = Tag<Uint8Array, "milestone-list-response">;
 
 /**
- * A decoded milestone list response message.
+ * A decoded {@link MilestoneListResponse} message.
  */
 export type DecodedMilestoneListResponse = {
   type: "milestone-list-response";
@@ -320,7 +326,7 @@ export type DecodedMilestoneListResponse = {
 };
 
 /**
- * A milestone snapshot request message.
+ * An encoded {@link MilestoneSnapshotRequest} message.
  */
 export type MilestoneSnapshotRequest = Tag<
   Uint8Array,
@@ -328,7 +334,7 @@ export type MilestoneSnapshotRequest = Tag<
 >;
 
 /**
- * A decoded milestone snapshot request message.
+ * A decoded {@link MilestoneSnapshotRequest} message.
  */
 export type DecodedMilestoneSnapshotRequest = {
   type: "milestone-snapshot-request";
@@ -336,7 +342,7 @@ export type DecodedMilestoneSnapshotRequest = {
 };
 
 /**
- * A milestone snapshot response message.
+ * An encoded {@link MilestoneSnapshotResponse} message.
  */
 export type MilestoneSnapshotResponse = Tag<
   Uint8Array,
@@ -344,7 +350,7 @@ export type MilestoneSnapshotResponse = Tag<
 >;
 
 /**
- * A decoded milestone snapshot response message.
+ * A decoded {@link MilestoneSnapshotResponse} message.
  */
 export type DecodedMilestoneSnapshotResponse = {
   type: "milestone-snapshot-response";
@@ -353,7 +359,7 @@ export type DecodedMilestoneSnapshotResponse = {
 };
 
 /**
- * A milestone create request message.
+ * An encoded {@link MilestoneCreateRequest} message.
  */
 export type MilestoneCreateRequest = Tag<
   Uint8Array,
@@ -361,7 +367,7 @@ export type MilestoneCreateRequest = Tag<
 >;
 
 /**
- * A decoded milestone create request message.
+ * A decoded {@link MilestoneCreateRequest} message.
  */
 export type DecodedMilestoneCreateRequest = {
   type: "milestone-create-request";
@@ -369,7 +375,7 @@ export type DecodedMilestoneCreateRequest = {
 };
 
 /**
- * A milestone create response message.
+ * An encoded {@link MilestoneCreateResponse} message.
  */
 export type MilestoneCreateResponse = Tag<
   Uint8Array,
@@ -377,10 +383,10 @@ export type MilestoneCreateResponse = Tag<
 >;
 
 /**
- * A decoded milestone create response message.
+ * A decoded {@link MilestoneCreateResponse} or {@link MilestoneUpdateNameResponse} message.
  */
-export type DecodedMilestoneCreateResponse = {
-  type: "milestone-create-response";
+export type DecodedMilestoneResponse = {
+  type: "milestone-create-response" | "milestone-update-name-response";
   milestone: {
     id: string;
     name: string;
@@ -390,7 +396,7 @@ export type DecodedMilestoneCreateResponse = {
 };
 
 /**
- * A milestone update name request message.
+ * An encoded {@link MilestoneUpdateNameRequest} message.
  */
 export type MilestoneUpdateNameRequest = Tag<
   Uint8Array,
@@ -398,7 +404,7 @@ export type MilestoneUpdateNameRequest = Tag<
 >;
 
 /**
- * A decoded milestone update name request message.
+ * A decoded {@link MilestoneUpdateNameRequest} message.
  */
 export type DecodedMilestoneUpdateNameRequest = {
   type: "milestone-update-name-request";
@@ -407,7 +413,7 @@ export type DecodedMilestoneUpdateNameRequest = {
 };
 
 /**
- * A milestone update name response message.
+ * An encoded {@link MilestoneUpdateNameResponse} message.
  */
 export type MilestoneUpdateNameResponse = Tag<
   Uint8Array,
@@ -415,25 +421,12 @@ export type MilestoneUpdateNameResponse = Tag<
 >;
 
 /**
- * A decoded milestone update name response message.
- */
-export type DecodedMilestoneUpdateNameResponse = {
-  type: "milestone-update-name-response";
-  milestone: {
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-  };
-};
-
-/**
- * A milestone auth message (error response).
+ * An encoded {@link MilestoneAuthMessage} message.
  */
 export type MilestoneAuthMessage = Tag<Uint8Array, "milestone-auth-message">;
 
 /**
- * A decoded milestone auth message.
+ * A decoded {@link MilestoneAuthMessage} message.
  */
 export type DecodedMilestoneAuthMessage = {
   type: "milestone-auth-message";
