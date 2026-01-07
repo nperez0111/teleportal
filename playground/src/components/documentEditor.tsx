@@ -2,6 +2,8 @@ import { useState, useEffect, Suspense } from "react";
 import { Editor } from "./editor";
 import { Document, fileService } from "../services/fileService";
 import { useProvider } from "../utils/providers";
+import { MilestonePanel } from "./milestonePanel";
+import { Milestone } from "teleportal";
 
 interface DocumentEditorProps {
   documentId: string | null;
@@ -18,6 +20,10 @@ export function DocumentEditor({
   const document = fileService.getDocument(documentId);
   const [, forceUpdate] = useState<number>(0);
   const { provider } = useProvider(document?.id, document?.encryptedKey);
+  const [isMilestonePanelOpen, setIsMilestonePanelOpen] = useState(false);
+  const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(
+    null,
+  );
 
   useEffect(() => {
     const unsubscribe = fileService.on("documents", () => {
@@ -115,7 +121,28 @@ export function DocumentEditor({
               updated {new Date(document.updatedAt).toLocaleDateString()}
             </p>
           </div>
-          <div className="flex items-center space-x-2 shrink-0"></div>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={() => setIsMilestonePanelOpen(true)}
+              className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-2"
+              title="View document versions"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              <span className="hidden md:inline">Versions</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -132,11 +159,23 @@ export function DocumentEditor({
                 </div>
               }
             >
-              <Editor provider={provider} key={provider.doc.clientID} />
+              <Editor
+                selectedMilestone={selectedMilestone}
+                provider={provider}
+                key={provider.doc.clientID}
+              />
             </Suspense>
           )}
         </div>
       </div>
+
+      {/* Milestone Panel */}
+      <MilestonePanel
+        onChangeSelectedMilestone={setSelectedMilestone}
+        provider={provider}
+        isOpen={isMilestonePanelOpen}
+        onClose={() => setIsMilestonePanelOpen(false)}
+      />
     </div>
   );
 }

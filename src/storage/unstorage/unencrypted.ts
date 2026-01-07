@@ -4,7 +4,13 @@ import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import type { Document, DocumentMetadata, FileStorage } from "../types";
+import type {
+  Document,
+  DocumentMetadata,
+  FileStorage,
+  MilestoneStorage,
+} from "../types";
+import { UnstorageMilestoneStorage } from "./milestone-storage";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -19,12 +25,19 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
   constructor(
     storage: Storage,
-    options?: { scanKeys?: boolean; ttl?: number; fileStorage?: FileStorage },
+    options?: {
+      scanKeys?: boolean;
+      ttl?: number;
+      fileStorage?: FileStorage;
+      milestoneStorage?: MilestoneStorage;
+    },
   ) {
     super();
     this.storage = storage;
     this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
     this.fileStorage = options?.fileStorage;
+    this.milestoneStorage =
+      options?.milestoneStorage ?? new UnstorageMilestoneStorage(storage);
   }
 
   /**

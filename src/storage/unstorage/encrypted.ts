@@ -6,7 +6,8 @@ import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
-import type { FileStorage } from "../types";
+import type { FileStorage, MilestoneStorage } from "../types";
+import { UnstorageMilestoneStorage } from "./milestone-storage";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
@@ -14,12 +15,13 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
 
   constructor(
     storage: Storage,
-    options?: { ttl?: number; fileStorage?: FileStorage },
+    options?: { ttl?: number; fileStorage?: FileStorage; milestoneStorage?: MilestoneStorage },
   ) {
     super();
     this.storage = storage;
     this.options = { ttl: 5 * 1000, ...options };
     this.fileStorage = options?.fileStorage;
+    this.milestoneStorage = options?.milestoneStorage ?? new UnstorageMilestoneStorage(storage);
   }
 
   /**

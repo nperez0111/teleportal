@@ -151,6 +151,7 @@ export function encodeMessage(update: Message): BinaryMessage {
               // name
               encoding.writeVarString(encoder, update.payload.name);
             }
+            encoding.writeVarUint8Array(encoder, update.payload.snapshot);
             break;
           }
           case "milestone-create-response": {
@@ -161,7 +162,10 @@ export function encodeMessage(update: Message): BinaryMessage {
             // milestone.name
             encoding.writeVarString(encoder, update.payload.milestone.name);
             // milestone.documentId
-            encoding.writeVarString(encoder, update.payload.milestone.documentId);
+            encoding.writeVarString(
+              encoder,
+              update.payload.milestone.documentId,
+            );
             // milestone.createdAt
             encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
             break;
@@ -183,7 +187,10 @@ export function encodeMessage(update: Message): BinaryMessage {
             // milestone.name
             encoding.writeVarString(encoder, update.payload.milestone.name);
             // milestone.documentId
-            encoding.writeVarString(encoder, update.payload.milestone.documentId);
+            encoding.writeVarString(
+              encoder,
+              update.payload.milestone.documentId,
+            );
             // milestone.createdAt
             encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
             break;

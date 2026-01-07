@@ -236,9 +236,12 @@ function decodeDocStepWithDecoder<
         // milestone-create-request
         const hasName = decoding.readUint8(decoder) === 1;
         const name = hasName ? decoding.readVarString(decoder) : undefined;
+        // snapshot (required)
+        const snapshot = decoding.readVarUint8Array(decoder) as MilestoneSnapshot;
         return {
           type: "milestone-create-request",
           name,
+          snapshot,
         } as E;
       }
       case 0x0a: {

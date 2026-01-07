@@ -734,10 +734,12 @@ describe("can encode and decode", () => {
   });
 
   it("can encode and decode a milestone-create-request with name", () => {
+    const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as import(".").MilestoneSnapshot;
     const decoded = decodeMessage(
       new DocMessage("test-doc", {
         type: "milestone-create-request",
         name: "v1.0.0",
+        snapshot,
       }).encoded,
     );
 
@@ -748,13 +750,16 @@ describe("can encode and decode", () => {
       decoded.payload.type === "milestone-create-request"
     ) {
       expect(decoded.payload.name).toBe("v1.0.0");
+      expect(decoded.payload.snapshot).toEqual(snapshot);
     }
   });
 
   it("can encode and decode a milestone-create-request without name", () => {
+    const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as import(".").MilestoneSnapshot;
     const decoded = decodeMessage(
       new DocMessage("test-doc", {
         type: "milestone-create-request",
+        snapshot,
       }).encoded,
     );
 
@@ -765,6 +770,48 @@ describe("can encode and decode", () => {
       decoded.payload.type === "milestone-create-request"
     ) {
       expect(decoded.payload.name).toBeUndefined();
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-request with snapshot", () => {
+    const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as import(".").MilestoneSnapshot;
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-request",
+        name: "v1.0.0",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-request"
+    ) {
+      expect(decoded.payload.name).toBe("v1.0.0");
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-request with snapshot but no name", () => {
+    const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as import(".").MilestoneSnapshot;
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-request",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-request"
+    ) {
+      expect(decoded.payload.name).toBeUndefined();
+      expect(decoded.payload.snapshot).toEqual(snapshot);
     }
   });
 

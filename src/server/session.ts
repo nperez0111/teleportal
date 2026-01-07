@@ -758,18 +758,19 @@ export class Session<Context extends ServerContext> {
 
               try {
                 const requestedName = (message.payload as any).name;
-                const doc = await this.#storage.getDocument(
-                  this.namespacedDocumentId,
-                );
+                const clientSnapshot = (message.payload as any).snapshot as
+                  | MilestoneSnapshot
+                  | undefined;
 
-                if (!doc) {
+                // Require snapshot from client - server never generates it
+                if (!clientSnapshot) {
                   await client.send(
                     new DocMessage(
                       this.documentId,
                       {
                         type: "milestone-auth-message",
                         permission: "denied",
-                        reason: "Document not found",
+                        reason: "Snapshot is required from client",
                       },
                       message.context,
                       this.encrypted,
@@ -778,10 +779,7 @@ export class Session<Context extends ServerContext> {
                   return;
                 }
 
-                // Create snapshot from current document state
-                // Using the document's update as the snapshot
-                const snapshot = doc.content
-                  .update as unknown as MilestoneSnapshot;
+                const snapshot = clientSnapshot;
 
                 // Auto-generate name if not provided
                 let name = requestedName;

@@ -52,13 +52,15 @@ const server = new Server<TokenPayload & { clientId: string }>({
 
     const fileStorage = new UnstorageFileStorage(backingStorage, {
       keyPrefix: "file",
+      temporaryUploadStorage: new UnstorageTemporaryUploadStorage(
+        backingStorage,
+        { keyPrefix: "file" },
+      ),
     });
-    fileStorage.temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
-      backingStorage,
-      { keyPrefix: "file" },
-    );
 
-    let documentStorage: UnstorageDocumentStorage | UnstorageEncryptedDocumentStorage;
+    let documentStorage:
+      | UnstorageDocumentStorage
+      | UnstorageEncryptedDocumentStorage;
     if (ctx.documentId.includes("encrypted")) {
       documentStorage = new UnstorageEncryptedDocumentStorage(backingStorage, {
         fileStorage,

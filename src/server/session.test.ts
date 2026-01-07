@@ -921,11 +921,13 @@ describe("Session", () => {
       await session.load();
       session.addClient(client1AsClient);
 
+      const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
       const message = new DocMessage<ServerContext>(
         "test-doc",
         {
           type: "milestone-create-request",
           name: "v1.0.0",
+          snapshot,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -948,10 +950,12 @@ describe("Session", () => {
       await session.load();
       session.addClient(client1AsClient);
 
+      const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as MilestoneSnapshot;
       const message = new DocMessage<ServerContext>(
         "test-doc",
         {
           type: "milestone-create-request",
+          snapshot,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -975,20 +979,24 @@ describe("Session", () => {
       session.addClient(client1AsClient);
 
       // Create first milestone
+      const snapshot1 = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
       const message1 = new DocMessage<ServerContext>(
         "test-doc",
         {
           type: "milestone-create-request",
+          snapshot: snapshot1,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
       await session.apply(message1, client1AsClient);
 
       // Create second milestone
+      const snapshot2 = new Uint8Array([4, 5, 6]) as MilestoneSnapshot;
       const message2 = new DocMessage<ServerContext>(
         "test-doc",
         {
           type: "milestone-create-request",
+          snapshot: snapshot2,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -1012,32 +1020,22 @@ describe("Session", () => {
       }
     });
 
-    it("should return error when document not found for milestone creation", async () => {
-      await session.load();
-      session.addClient(client1AsClient);
-      storage.storedUpdate = null; // No document
-
-      const message = new DocMessage<ServerContext>(
-        "test-doc",
-        {
-          type: "milestone-create-request",
-          name: "v1.0.0",
-        },
-        { clientId: "client-1", userId: "user-1", room: "room" },
-      );
-
-      await session.apply(message, client1AsClient);
-
-      expect(client1.sentMessages.length).toBe(1);
-      const response = client1.sentMessages[0];
-      expect(response).toBeInstanceOf(DocMessage);
-      if (
-        response instanceof DocMessage &&
-        response.payload.type === "milestone-auth-message"
-      ) {
-        expect(response.payload.permission).toBe("denied");
-        expect(response.payload.reason).toContain("Document not found");
-      }
+    it("should fail encoding when snapshot is missing for milestone creation", async () => {
+      // Test that encoding fails when snapshot is missing
+      // This ensures clients cannot send messages without snapshots
+      expect(() => {
+        const message = new DocMessage<ServerContext>(
+          "test-doc",
+          {
+            type: "milestone-create-request",
+            name: "v1.0.0",
+            // Missing snapshot
+          } as any,
+          { clientId: "client-1", userId: "user-1", room: "room" },
+        );
+        // Accessing .encoded will trigger encoding, which should fail
+        void message.encoded;
+      }).toThrow();
     });
 
     it("should handle milestone-update-name-request", async () => {

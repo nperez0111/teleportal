@@ -372,6 +372,7 @@ export type MilestoneCreateRequest = Tag<
 export type DecodedMilestoneCreateRequest = {
   type: "milestone-create-request";
   name?: string;
+  snapshot: MilestoneSnapshot;
 };
 
 /**
