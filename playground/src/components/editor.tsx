@@ -82,24 +82,42 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
   });
 
   useEffect(() => {
+    let isActive = true;
+
     if (selectedMilestone) {
-      selectedMilestone.fetchSnapshot().then((snapshot) => {
-        editor.getExtension(ForkYDocExtension)?.fork();
-        const doc = new Y.Doc();
-        Y.applyUpdateV2(doc, snapshot);
-        const node = yXmlFragmentToProseMirrorRootNode(
-          doc.getXmlFragment("document"),
-          editor.pmSchema,
-        );
-        editor.transact((tr) => {
-          tr.replace(0, tr.doc.content.size - 2, node.slice(0));
+      selectedMilestone
+        .fetchSnapshot()
+        .then((snapshot) => {
+          // Ignore if this effect has been cleaned up (milestone deselected)
+          if (!isActive) return;
+
+          editor.getExtension(ForkYDocExtension)?.fork();
+          const doc = new Y.Doc();
+          Y.applyUpdateV2(doc, snapshot);
+          const node = yXmlFragmentToProseMirrorRootNode(
+            doc.getXmlFragment("document"),
+            editor.pmSchema,
+          );
+          editor.transact((tr) => {
+            tr.replace(0, tr.doc.content.size - 2, node.slice(0));
+          });
+        })
+        .catch((error) => {
+          // Only log errors if the effect is still active
+          if (isActive) {
+            console.error("Failed to fetch milestone snapshot:", error);
+            // Optionally show user-facing error feedback here
+          }
         });
-      });
     } else {
-      console.log("clearing state");
       editor.getExtension(ForkYDocExtension)?.merge({ keepChanges: false });
     }
-  }, [selectedMilestone]);
+
+    // Cleanup: mark as inactive to ignore in-flight fetches
+    return () => {
+      isActive = false;
+    };
+  }, [selectedMilestone, editor]);
 
   return (
     <div className="h-full w-full flex flex-col touch-manipulation">

@@ -128,7 +128,10 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
+  async removeFileFromDocument(
+    documentId: string,
+    fileId: string,
+  ): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
@@ -939,7 +942,6 @@ describe("Session", () => {
         expect(response.payload.reason).toContain("not found");
       }
     });
-
 
     it("should handle milestone-create-request with name", async () => {
       await session.load();
