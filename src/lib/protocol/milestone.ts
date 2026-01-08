@@ -87,13 +87,17 @@ export class Milestone {
       return this.#loadingPromise;
     }
     if (this.getSnapshot) {
-      this.#loadingPromise = this.getSnapshot(this.documentId, this.id).then(
-        (snapshot) => {
+      this.#loadingPromise = this.getSnapshot(this.documentId, this.id)
+        .then((snapshot) => {
           this.snapshot = snapshot;
           this.#loadingPromise = undefined;
           return snapshot;
-        },
-      );
+        })
+        .catch((error) => {
+          // Clear the loading promise on error to allow retry
+          this.#loadingPromise = undefined;
+          throw error;
+        });
       return this.#loadingPromise;
     }
     throw new Error(

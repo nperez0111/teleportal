@@ -113,9 +113,15 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
       editor.getExtension(ForkYDocExtension)?.merge({ keepChanges: false });
     }
 
-    // Cleanup: mark as inactive to ignore in-flight fetches
+    // Cleanup: restore original document state before switching to a new milestone
     return () => {
       isActive = false;
+      // If we were viewing a milestone, merge back to restore original state
+      // This ensures that when switching between milestones (A → B), we merge
+      // before the new effect forks again for the new milestone
+      if (selectedMilestone) {
+        editor.getExtension(ForkYDocExtension)?.merge({ keepChanges: false });
+      }
     };
   }, [selectedMilestone, editor]);
 

@@ -339,6 +339,38 @@ describe("Milestone", () => {
       const snapshot = await milestone.fetchSnapshot();
       expect(snapshot).toBeDefined();
     });
+
+    it("allows retry after fetchSnapshot failure", async () => {
+      let callCount = 0;
+      const snapshot = createTestSnapshot();
+      const getSnapshot = async (): Promise<MilestoneSnapshot> => {
+        callCount++;
+        if (callCount === 1) {
+          // First call fails
+          throw new Error("Network error");
+        }
+        // Second call succeeds
+        return snapshot;
+      };
+
+      const milestone = new Milestone({
+        id: "retry-test",
+        name: "v1.0.0",
+        documentId: "doc-123",
+        createdAt: 1234567890,
+        getSnapshot,
+      });
+
+      // First call should fail
+      await expect(milestone.fetchSnapshot()).rejects.toThrow("Network error");
+      expect(callCount).toBe(1);
+
+      // Second call should succeed (retry)
+      const fetchedSnapshot = await milestone.fetchSnapshot();
+      expect(callCount).toBe(2);
+      expect(fetchedSnapshot).toEqual(snapshot);
+      expect(milestone.loaded).toBe(true);
+    });
   });
 
   describe("round-trip encoding/decoding", () => {
