@@ -1,6 +1,7 @@
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type {
   Document,
+  DocumentMetadataUpdater,
   DocumentStorage,
   File,
   FileMetadata,
@@ -20,15 +21,33 @@ export class InMemoryFileStorage implements FileStorage {
   readonly type = "file-storage" as const;
 
   temporaryUploadStorage?: TemporaryUploadStorage;
+  #metadataUpdater?: DocumentMetadataUpdater;
   #documentStorage?: DocumentStorage;
   #files = new Map<string, File>();
 
   constructor(options?: {
+    metadataUpdater?: DocumentMetadataUpdater;
     documentStorage?: DocumentStorage;
     temporaryUploadStorage?: TemporaryUploadStorage;
   }) {
     this.#documentStorage = options?.documentStorage;
+    // If documentStorage is provided, use it as metadataUpdater too
+    // (since DocumentStorage extends DocumentMetadataUpdater)
+    this.#metadataUpdater = options?.metadataUpdater ?? options?.documentStorage;
     this.temporaryUploadStorage = options?.temporaryUploadStorage;
+  }
+
+  /**
+   * Set the document storage reference after construction.
+   * This is used by factory functions to wire up the circular dependency.
+   */
+  setDocumentStorage(documentStorage: DocumentStorage): void {
+    this.#documentStorage = documentStorage;
+    // Also set metadataUpdater if not already set
+    // DocumentStorage implements DocumentMetadataUpdater
+    if (!this.#metadataUpdater) {
+      this.#metadataUpdater = documentStorage as DocumentMetadataUpdater;
+    }
   }
 
   /**
@@ -39,18 +58,9 @@ export class InMemoryFileStorage implements FileStorage {
     this.#files.set(file.id, file);
 
     const documentId = file.metadata.documentId;
-    if (!this.#documentStorage || !documentId) return;
-
-    await this.#documentStorage.transaction(documentId, async () => {
-      const metadata =
-        await this.#documentStorage!.getDocumentMetadata(documentId);
-      const files = Array.from(new Set([...(metadata.files ?? []), file.id]));
-      await this.#documentStorage!.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
+    if (this.#metadataUpdater && documentId) {
+      await this.#metadataUpdater.addFileToDocument(documentId, file.id);
+    }
   }
 
   async getFile(fileId: File["id"]): Promise<File | null> {
@@ -71,18 +81,9 @@ export class InMemoryFileStorage implements FileStorage {
     const file = this.#deleteFileData(fileId);
 
     const documentId = file?.metadata.documentId;
-    if (!this.#documentStorage || !documentId) return;
-
-    await this.#documentStorage.transaction(documentId, async () => {
-      const metadata =
-        await this.#documentStorage!.getDocumentMetadata(documentId);
-      const files = (metadata.files ?? []).filter((id) => id !== fileId);
-      await this.#documentStorage!.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
+    if (this.#metadataUpdater && documentId) {
+      await this.#metadataUpdater.removeFileFromDocument(documentId, fileId);
+    }
   }
 
   async listFileMetadataByDocument(

@@ -11,17 +11,27 @@ import { UnstorageMilestoneStorage } from "./milestone-storage";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
-  private readonly options: { ttl: number };
+  private readonly options: { ttl: number; keyPrefix: string };
 
   constructor(
     storage: Storage,
-    options?: { ttl?: number; fileStorage?: FileStorage; milestoneStorage?: MilestoneStorage },
+    options?: { ttl?: number; keyPrefix?: string; fileStorage?: FileStorage; milestoneStorage?: MilestoneStorage },
   ) {
     super();
     this.storage = storage;
-    this.options = { ttl: 5 * 1000, ...options };
+    this.options = { ttl: 5 * 1000, keyPrefix: "", ...options };
     this.fileStorage = options?.fileStorage;
-    this.milestoneStorage = options?.milestoneStorage ?? new UnstorageMilestoneStorage(storage);
+    this.milestoneStorage =
+      options?.milestoneStorage ??
+      new UnstorageMilestoneStorage(storage, {
+        keyPrefix: this.options.keyPrefix
+          ? `${this.options.keyPrefix}:milestone`
+          : "milestone",
+      });
+  }
+
+  #getKey(key: string): string {
+    return this.options.keyPrefix ? `${this.options.keyPrefix}:${key}` : key;
   }
 
   /**
@@ -31,7 +41,8 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
    * @returns The TTL of the lock
    */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
-    const meta = await this.storage.getMeta(key);
+    const prefixedKey = this.#getKey(key);
+    const meta = await this.storage.getMeta(prefixedKey);
     const lockedTTL = meta?.ttl;
     if (lockedTTL && lockedTTL > Date.now()) {
       // Wait for the lock to be released with jitter to avoid thundering herd
@@ -41,9 +52,9 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       return await this.transaction(key, cb);
     }
     const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
+    await this.storage.setMeta(prefixedKey, { ttl, ...meta });
     const result = await cb();
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
+    await this.storage.setMeta(prefixedKey, { ttl: Date.now(), ...meta });
     return result;
   }
 
@@ -51,12 +62,14 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     key: string,
     metadata: EncryptedDocumentMetadata,
   ): Promise<void> {
-    await this.storage.setItem(key + ":meta", metadata);
+    const prefixedKey = this.#getKey(key);
+    await this.storage.setItem(prefixedKey + ":meta", metadata);
   }
 
   async getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
     const now = Date.now();
-    const metadata = await this.storage.getItem(key + ":meta");
+    const prefixedKey = this.#getKey(key);
+    const metadata = await this.storage.getItem(prefixedKey + ":meta");
     if (!metadata) {
       return {
         createdAt: now,
@@ -79,8 +92,9 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     messageId: EncryptedMessageId,
     payload: EncryptedBinary,
   ): Promise<void> {
+    const prefixedKey = this.#getKey(key);
     await this.storage.setItemRaw<EncryptedBinary>(
-      key + ":" + messageId,
+      prefixedKey + ":" + messageId,
       payload,
     );
   }
@@ -89,8 +103,9 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     key: string,
     messageId: EncryptedMessageId,
   ): Promise<EncryptedBinary | null> {
+    const prefixedKey = this.#getKey(key);
     const payload = await this.storage.getItemRaw<EncryptedBinary>(
-      key + ":" + messageId,
+      prefixedKey + ":" + messageId,
     );
     return payload;
   }
@@ -101,18 +116,19 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     }
 
     const metadata = await this.getDocumentMetadata(key);
+    const prefixedKey = this.#getKey(key);
 
     // Delete all messages
     const promises = [];
     for (const clientId in metadata.seenMessages) {
       for (const counter in metadata.seenMessages[clientId]) {
         const messageId = metadata.seenMessages[clientId][counter];
-        promises.push(this.storage.removeItem(key + ":" + messageId));
+        promises.push(this.storage.removeItem(prefixedKey + ":" + messageId));
       }
     }
     await Promise.all(promises);
 
     // Delete metadata
-    await this.storage.removeItem(key + ":meta");
+    await this.storage.removeItem(prefixedKey + ":meta");
   }
 }

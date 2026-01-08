@@ -21,23 +21,33 @@ import { UnstorageMilestoneStorage } from "./milestone-storage";
  */
 export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   private readonly storage: Storage;
-  private readonly options: { scanKeys: boolean; ttl: number };
+  private readonly options: { scanKeys: boolean; ttl: number; keyPrefix: string };
 
   constructor(
     storage: Storage,
     options?: {
       scanKeys?: boolean;
       ttl?: number;
+      keyPrefix?: string;
       fileStorage?: FileStorage;
       milestoneStorage?: MilestoneStorage;
     },
   ) {
     super();
     this.storage = storage;
-    this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
+    this.options = { scanKeys: false, ttl: 5 * 1000, keyPrefix: "", ...options };
     this.fileStorage = options?.fileStorage;
     this.milestoneStorage =
-      options?.milestoneStorage ?? new UnstorageMilestoneStorage(storage);
+      options?.milestoneStorage ??
+      new UnstorageMilestoneStorage(storage, {
+        keyPrefix: this.options.keyPrefix
+          ? `${this.options.keyPrefix}:milestone`
+          : "milestone",
+      });
+  }
+
+  #getKey(key: string): string {
+    return this.options.keyPrefix ? `${this.options.keyPrefix}:${key}` : key;
   }
 
   /**
@@ -47,7 +57,8 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
    * @returns The TTL of the lock
    */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
-    const meta = await this.storage.getMeta(key);
+    const prefixedKey = this.#getKey(key);
+    const meta = await this.storage.getMeta(prefixedKey);
     const lockedTTL = meta?.ttl;
     if (lockedTTL && lockedTTL > Date.now()) {
       // Wait for the lock to be released with jitter to avoid thundering herd
@@ -57,9 +68,9 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       return await this.transaction(key, cb);
     }
     const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
+    await this.storage.setMeta(prefixedKey, { ttl, ...meta });
     const result = await cb();
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
+    await this.storage.setMeta(prefixedKey, { ttl: Date.now(), ...meta });
     return result;
   }
 
@@ -71,18 +82,19 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     update: Update,
     overwriteKeys?: boolean,
   ): Promise<void> {
-    const updateKey = key + "-update-" + uuidv4();
+    const prefixedKey = this.#getKey(key);
+    const updateKey = prefixedKey + "-update-" + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
     if (this.options.scanKeys) {
       return;
     }
     await this.transaction(key, async () => {
-      const doc = await this.storage.getItem<{ keys: string[] }>(key);
+      const doc = await this.storage.getItem<{ keys: string[] }>(prefixedKey);
       if (doc && Array.isArray(doc.keys) && !overwriteKeys) {
         doc.keys = Array.from(new Set(doc.keys.concat(updateKey)));
-        await this.storage.setItem(key, doc);
+        await this.storage.setItem(prefixedKey, doc);
       } else {
-        await this.storage.setItem(key, { keys: [updateKey] });
+        await this.storage.setItem(prefixedKey, { keys: [updateKey] });
       }
     });
 
@@ -120,9 +132,10 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     key: string,
     asyncDeleteKeys = true,
   ): Promise<Update | null> {
+    const prefixedKey = this.#getKey(key);
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
+      ? new Set(await this.storage.getKeys(prefixedKey + "-update-"))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))?.keys ??
         new Set());
 
     if (keys.size === 0) {
@@ -163,13 +176,15 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     key: string,
     metadata: DocumentMetadata,
   ): Promise<void> {
-    await this.storage.setItem(key + ":meta", metadata);
+    const prefixedKey = this.#getKey(key);
+    await this.storage.setItem(prefixedKey + ":meta", metadata);
   }
 
   async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
     const now = Date.now();
+    const prefixedKey = this.#getKey(key);
     const existing = (await this.storage.getItem(
-      key + ":meta",
+      prefixedKey + ":meta",
     )) as DocumentMetadata | null;
 
     if (!existing) {
@@ -197,13 +212,14 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       await this.fileStorage.deleteFilesByDocument(key);
     }
 
+    const prefixedKey = this.#getKey(key);
     // Delete metadata
-    await this.storage.removeItem(key + ":meta");
+    await this.storage.removeItem(prefixedKey + ":meta");
 
     // Delete updates and index
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
+      ? new Set(await this.storage.getKeys(prefixedKey + "-update-"))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))?.keys ??
         new Set());
 
     if (keys.size > 0) {
@@ -212,6 +228,6 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       );
     }
 
-    await this.storage.removeItem(key);
+    await this.storage.removeItem(prefixedKey);
   }
 }

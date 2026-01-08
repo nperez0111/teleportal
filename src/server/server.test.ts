@@ -85,6 +85,30 @@ class MockDocumentStorage implements DocumentStorage {
   transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
     return cb();
   }
+
+  async addFileToDocument(documentId: string, fileId: string): Promise<void> {
+    await this.transaction(documentId, async () => {
+      const metadata = await this.getDocumentMetadata(documentId);
+      const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+      await this.writeDocumentMetadata(documentId, {
+        ...metadata,
+        files,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
+    await this.transaction(documentId, async () => {
+      const metadata = await this.getDocumentMetadata(documentId);
+      const files = (metadata.files ?? []).filter((id) => id !== fileId);
+      await this.writeDocumentMetadata(documentId, {
+        ...metadata,
+        files,
+        updatedAt: Date.now(),
+      });
+    });
+  }
 }
 
 // Mock Transport for testing

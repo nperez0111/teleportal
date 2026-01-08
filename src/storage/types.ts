@@ -170,6 +170,31 @@ export interface File {
   contentId: Uint8Array;
 }
 
+/**
+ * Interface for updating document metadata when files are stored.
+ * This allows FileStorage to update document metadata without creating
+ * a circular dependency with DocumentStorage.
+ */
+export interface DocumentMetadataUpdater {
+  /**
+   * Add a file ID to a document's metadata.
+   * This should be called within a transaction to ensure atomicity.
+   *
+   * @param documentId - The document ID
+   * @param fileId - The file ID to add
+   */
+  addFileToDocument(documentId: Document["id"], fileId: string): Promise<void>;
+
+  /**
+   * Remove a file ID from a document's metadata.
+   * This should be called within a transaction to ensure atomicity.
+   *
+   * @param documentId - The document ID
+   * @param fileId - The file ID to remove
+   */
+  removeFileFromDocument(documentId: Document["id"], fileId: string): Promise<void>;
+}
+
 export interface FileStorage {
   /**
    * The type of the storage.
@@ -344,7 +369,7 @@ export interface Document {
 /**
  * A storage interface for a document.
  */
-export interface DocumentStorage {
+export interface DocumentStorage extends DocumentMetadataUpdater {
   /**
    * The type of the storage.
    */

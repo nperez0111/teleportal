@@ -5,10 +5,7 @@ import fsDriver from "unstorage/drivers/fs";
 
 import { Server } from "teleportal/server";
 import {
-  UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
-  UnstorageFileStorage,
-  UnstorageTemporaryUploadStorage,
+  createUnstorage,
 } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
@@ -30,23 +27,11 @@ const tokenManager = createTokenManager({
 
 const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
-    const backingStorage = memoryStorage;
-    const fileStorage = new UnstorageFileStorage(backingStorage, { keyPrefix: "file" });
-    fileStorage.temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
-      backingStorage,
-      { keyPrefix: "file" },
-    );
-
-    let documentStorage: UnstorageDocumentStorage | UnstorageEncryptedDocumentStorage;
-    if (ctx.documentId.includes("encrypted")) {
-      documentStorage = new UnstorageEncryptedDocumentStorage(backingStorage, { fileStorage });
-    } else {
-      documentStorage = new UnstorageDocumentStorage(backingStorage, {
-        scanKeys: false,
-        fileStorage,
-      });
-    }
-    fileStorage.setDocumentStorage(documentStorage);
+    const { documentStorage } = createUnstorage(memoryStorage, {
+      fileKeyPrefix: "file",
+      encrypted: ctx.documentId.includes("encrypted"),
+      scanKeys: false,
+    });
     return documentStorage;
   },
 });

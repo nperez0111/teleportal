@@ -8,9 +8,7 @@ import dbDriver from "unstorage/drivers/db0";
 import type { ServerContext } from "teleportal";
 import { Server } from "teleportal/server";
 import {
-  UnstorageDocumentStorage,
-  UnstorageFileStorage,
-  UnstorageTemporaryUploadStorage,
+  createUnstorage,
 } from "teleportal/storage";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 import {
@@ -43,16 +41,10 @@ const serverInstance = new Server({
     context: ServerContext;
     encrypted: boolean;
   }) => {
-    const fileStorage = new UnstorageFileStorage(storage, { keyPrefix: "file" });
-    fileStorage.temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
-      storage,
-      { keyPrefix: "file" },
-    );
-    const documentStorage = new UnstorageDocumentStorage(storage, {
+    const { documentStorage } = createUnstorage(storage, {
+      fileKeyPrefix: "file",
       scanKeys: false,
-      fileStorage,
     });
-    fileStorage.setDocumentStorage(documentStorage);
     return documentStorage;
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager) as any,
