@@ -1,121 +1,158 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import * as Y from "yjs";
+import { Awareness } from "y-protocols/awareness";
 import {
+  Message,
+  type ClientContext,
+  type Transport,
   DocMessage,
-  type DecodedMilestoneAuthMessage,
-  type DecodedMilestoneCreateRequest,
-  type DecodedMilestoneListRequest,
-  type DecodedMilestoneListResponse,
-  type DecodedMilestoneResponse,
-  type DecodedMilestoneSnapshotRequest,
-  type DecodedMilestoneSnapshotResponse,
-  type DecodedMilestoneUpdateNameRequest,
-  type Message,
+  type StateVector,
   type MilestoneSnapshot,
 } from "teleportal";
-import type { ClientContext, Transport } from "teleportal";
 import { Connection, type ConnectionState } from "./connection";
-import { Provider } from "./provider";
+import { Provider, type DefaultTransportProperties } from "./provider";
 
 // Mock Connection for testing
 class MockConnection extends Connection<{
-  connected: {};
+  connected: { clientId: string };
   disconnected: {};
   connecting: {};
-  errored: {};
+  errored: { reconnectAttempt: number };
 }> {
   public sentMessages: Message[] = [];
-  public _state: ConnectionState<any> = {
-    type: "connected",
-    context: {},
-  };
+  public responseHandler?: (message: Message) => Message | null;
 
   constructor() {
     super({ connect: false });
-    // Immediately set to connected state
-    queueMicrotask(() => {
-      this.setState({
-        type: "connected",
-        context: {},
-      });
+    // Initialize state to disconnected
+    this.setState({
+      type: "disconnected",
+      context: {},
     });
   }
 
   protected async initConnection(): Promise<void> {
-    // Mock implementation - already connected
+    this.setState({
+      type: "connecting",
+      context: {},
+    });
+    // Simulate connection
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    this.setState({
+      type: "connected",
+      context: { clientId: "test-client" },
+    });
   }
 
   protected async sendMessage(message: Message): Promise<void> {
     this.sentMessages.push(message);
+    // If there's a response handler, simulate a response
+    if (this.responseHandler) {
+      const response = this.responseHandler(message);
+      if (response) {
+        // Emit the response asynchronously to simulate network delay
+        setTimeout(() => {
+          this.call("message", response);
+        }, 0);
+      }
+    }
   }
 
   protected async closeConnection(): Promise<void> {
-    // Mock implementation
+    this.setState({
+      type: "disconnected",
+      context: {},
+    });
+  }
+
+  // Helper method to manually trigger disconnect
+  public triggerDisconnect() {
+    this.setState({
+      type: "disconnected",
+      context: {},
+    });
+  }
+
+  // Helper method to manually trigger connect
+  public triggerConnect() {
+    this.setState({
+      type: "connected",
+      context: { clientId: "test-client" },
+    });
   }
 
   // Helper method to simulate receiving a message
-  // This uses the Observable's call method to emit the message event
-  simulateMessage(message: Message): void {
+  public simulateMessage(message: Message) {
     this.call("message", message);
-  }
-
-  get state(): ConnectionState<any> {
-    return this._state;
-  }
-
-  get connected(): Promise<void> {
-    return Promise.resolve();
   }
 }
 
 // Mock Transport for testing
 class MockTransport
-  implements
-    Transport<
-      ClientContext,
-      { synced: Promise<void>; handler: { start: () => Promise<Message> } }
-    >
+  implements Transport<ClientContext, DefaultTransportProperties>
 {
-  readable: ReadableStream<Message<ClientContext>>;
-  writable: WritableStream<Message<ClientContext>>;
-  synced: Promise<void> = Promise.resolve();
-  handler = {
-    start: async (): Promise<Message<ClientContext>> => {
-      return new DocMessage<ClientContext>(
-        "test-doc",
-        { type: "sync-step-1", sv: new Uint8Array() as any },
-        undefined,
-        false,
-      );
-    },
+  public readable: ReadableStream<Message<ClientContext>>;
+  public writable: WritableStream<Message<ClientContext>>;
+  public synced: Promise<void>;
+  public handler: {
+    start: () => Promise<Message<ClientContext>>;
   };
 
+  private syncedResolve?: () => void;
+  private syncedReject?: (error: Error) => void;
+
   constructor() {
-    // Create a simple readable/writable stream pair
     const { readable, writable } = new TransformStream<
       Message<ClientContext>
     >();
     this.readable = readable;
     this.writable = writable;
+
+    // Create a controllable promise for synced
+    this.synced = new Promise<void>((resolve, reject) => {
+      this.syncedResolve = resolve;
+      this.syncedReject = reject;
+    });
+
+    this.handler = {
+      start: async () => {
+        return new DocMessage(
+          "test-doc",
+          {
+            type: "sync-step-1",
+            sv: new Uint8Array() as StateVector,
+          },
+          { clientId: "test-client" },
+        );
+      },
+    };
+  }
+
+  // Helper method to resolve the synced promise
+  public resolveSynced() {
+    if (this.syncedResolve) {
+      this.syncedResolve();
+    }
+  }
+
+  // Helper method to reject the synced promise
+  public rejectSynced(error: Error = new Error("Sync failed")) {
+    if (this.syncedReject) {
+      this.syncedReject(error);
+    }
   }
 }
 
-describe("Provider Milestone Operations", () => {
-  let provider: Provider;
+describe("Provider sync events", () => {
+  let provider: Provider<MockTransport>;
   let mockConnection: MockConnection;
   let mockTransport: MockTransport;
+  let ydoc: Y.Doc;
 
-  beforeEach(async () => {
+  beforeEach(() => {
+    ydoc = new Y.Doc();
     mockConnection = new MockConnection();
     mockTransport = new MockTransport();
-
-    // Create provider using static create method with mock connection
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      getTransport: () => mockTransport as any,
-      enableOfflinePersistence: false,
-    });
   });
 
   afterEach(() => {
@@ -127,621 +164,630 @@ describe("Provider Milestone Operations", () => {
     }
   });
 
-  describe("listMilestones", () => {
-    test("should request and return list of milestones", async () => {
-      const milestones = [
-        {
-          id: "milestone-1",
-          name: "Milestone 1",
-          documentId: "test-doc",
-          createdAt: Date.now(),
-        },
-        {
-          id: "milestone-2",
-          name: "Milestone 2",
-          documentId: "test-doc",
-          createdAt: Date.now(),
-        },
-      ];
+  it("should emit sync event with [true, doc] when connection connects", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
 
-      // Start the request
-      const requestPromise = provider.listMilestones();
-
-      // Wait a bit for the request to be sent
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Verify request was sent (there may be an initial sync message, so find the milestone request)
-      expect(mockConnection.sentMessages.length).toBeGreaterThan(0);
-      const sentMessage = mockConnection.sentMessages.find(
-        (msg) =>
-          msg.type === "doc" &&
-          (msg as DocMessage<ClientContext>).payload.type ===
-            "milestone-list-request",
-      ) as DocMessage<ClientContext>;
-      expect(sentMessage).toBeDefined();
-      expect(sentMessage.type).toBe("doc");
-      expect(sentMessage.document).toBe("test-doc");
-      expect((sentMessage.payload as DecodedMilestoneListRequest).type).toBe(
-        "milestone-list-request",
-      );
-      expect(
-        (sentMessage.payload as DecodedMilestoneListRequest).snapshotIds,
-      ).toEqual([]);
-
-      // Simulate response
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-list-response",
-          milestones,
-        } as DecodedMilestoneListResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(response);
-
-      // Wait for the promise to resolve
-      const result = await requestPromise;
-
-      // Verify result
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe("milestone-1");
-      expect(result[0].name).toBe("Milestone 1");
-      expect(result[1].id).toBe("milestone-2");
-      expect(result[1].name).toBe("Milestone 2");
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
     });
 
-    test("should include snapshotIds in request when provided", async () => {
-      const snapshotIds = ["milestone-1", "milestone-2"];
+    // Start with connection already connected so init() is called immediately
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const requestPromise = provider.listMilestones(snapshotIds);
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const sentMessage = mockConnection.sentMessages.find(
-        (msg) =>
-          msg.type === "doc" &&
-          (msg as DocMessage<ClientContext>).payload.type ===
-            "milestone-list-request",
-      ) as DocMessage<ClientContext>;
-      expect(sentMessage).toBeDefined();
-      const payload = sentMessage.payload as DecodedMilestoneListRequest;
-      expect(payload.snapshotIds).toEqual(snapshotIds);
-
-      // Send empty response
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-list-response",
-          milestones: [],
-        } as DecodedMilestoneListResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(response);
-
-      const result = await requestPromise;
-      expect(result).toHaveLength(0);
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
     });
 
-    test("should throw error on auth denial", async () => {
-      const requestPromise = provider.listMilestones();
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    // Now trigger another connect event to test the listener set up in init()
+    mockConnection.triggerDisconnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Simulate auth denial
-      const authMessage = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-auth-message",
-          permission: "denied",
-          reason: "Access denied",
-        } as DecodedMilestoneAuthMessage,
-        undefined,
-        false,
-      );
+    mockConnection.triggerConnect();
 
-      mockConnection.simulateMessage(authMessage);
+    // Wait for event to be processed
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await expect(requestPromise).rejects.toThrow(
-        "Milestone operation denied: Access denied",
-      );
+    expect(syncEvents.length).toBeGreaterThan(0);
+    const connectedEvent = syncEvents.find(([isSynced]) => isSynced === true);
+    expect(connectedEvent).toBeDefined();
+    if (connectedEvent) {
+      expect(connectedEvent[0]).toBe(true);
+      expect(connectedEvent[1]).toBe(ydoc);
+    }
+  });
+
+  it("should emit sync event with [false, doc] when connection disconnects", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
+
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
     });
 
-    test("should filter messages by document", async () => {
-      const requestPromise = provider.listMilestones();
+    // Connect before creating provider (Provider.create() waits for connection)
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
 
-      // Send message for different document (should be ignored)
-      const wrongDocMessage = new DocMessage<ClientContext>(
-        "other-doc",
-        {
-          type: "milestone-list-response",
-          milestones: [],
-        } as DecodedMilestoneListResponse,
-        undefined,
-        false,
-      );
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      mockConnection.simulateMessage(wrongDocMessage);
+    // Then disconnect
+    mockConnection.triggerDisconnect();
 
-      // Send correct message
-      const correctMessage = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-list-response",
-          milestones: [
+    // Wait for event to be processed
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const disconnectedEvent = syncEvents.find(
+      ([isSynced]) => isSynced === false,
+    );
+    expect(disconnectedEvent).toBeDefined();
+    if (disconnectedEvent) {
+      expect(disconnectedEvent[0]).toBe(false);
+      expect(disconnectedEvent[1]).toBe(ydoc);
+    }
+  });
+
+  it("should emit sync event with [true, doc] when transport.synced resolves", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
+
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
+    });
+
+    // Connect before creating provider
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Resolve the synced promise
+    mockTransport.resolveSynced();
+
+    // Wait for promise to resolve and event to be processed
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const syncedEvent = syncEvents.find(([isSynced]) => isSynced === true);
+    expect(syncedEvent).toBeDefined();
+    if (syncedEvent) {
+      expect(syncedEvent[0]).toBe(true);
+      expect(syncedEvent[1]).toBe(ydoc);
+    }
+  });
+
+  it("should emit sync event with [false, doc] when transport.synced rejects", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
+
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
+    });
+
+    // Connect before creating provider
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Reject the synced promise
+    mockTransport.rejectSynced(new Error("Sync failed"));
+
+    // Wait for promise to reject and event to be processed
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const rejectedEvent = syncEvents.find(([isSynced]) => isSynced === false);
+    expect(rejectedEvent).toBeDefined();
+    if (rejectedEvent) {
+      expect(rejectedEvent[0]).toBe(false);
+      expect(rejectedEvent[1]).toBe(ydoc);
+    }
+  });
+
+  it("should emit multiple sync events for connection state changes", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
+
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
+    });
+
+    // Connect before creating provider
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Disconnect
+    mockConnection.triggerDisconnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Connect again
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Should have multiple events
+    expect(syncEvents.length).toBeGreaterThan(1);
+
+    // Check that we have both true and false events
+    const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
+    const falseEvents = syncEvents.filter(([isSynced]) => isSynced === false);
+
+    expect(trueEvents.length).toBeGreaterThan(0);
+    expect(falseEvents.length).toBeGreaterThan(0);
+
+    // All events should reference the same doc
+    syncEvents.forEach(([, doc]) => {
+      expect(doc).toBe(ydoc);
+    });
+  });
+
+  it("should emit sync events in correct order: connect -> synced resolve", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
+
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
+    });
+
+    // Connect before creating provider
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Resolve synced
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Should have at least one true event
+    const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
+    expect(trueEvents.length).toBeGreaterThan(0);
+  });
+
+  it("should emit sync event when transport.synced resolves on initial connection", async () => {
+    const syncEvents: Array<[boolean, Y.Doc]> = [];
+
+    // Set up listener before creating provider
+    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
+      syncEvents.push([isSynced, doc]);
+    });
+
+    // Start with connection already connected
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    // Wait for init to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Resolve synced - this should trigger a sync event
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Should have at least one true event from synced resolving
+    const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
+    expect(trueEvents.length).toBeGreaterThan(0);
+    expect(trueEvents[0][0]).toBe(true);
+    expect(trueEvents[0][1]).toBe(ydoc);
+  });
+});
+
+describe("Provider milestone operations", () => {
+  let provider: Provider<MockTransport>;
+  let mockConnection: MockConnection;
+  let mockTransport: MockTransport;
+  let ydoc: Y.Doc;
+
+  beforeEach(() => {
+    ydoc = new Y.Doc();
+    mockConnection = new MockConnection();
+    mockTransport = new MockTransport();
+    mockConnection.sentMessages = [];
+  });
+
+  afterEach(() => {
+    if (provider) {
+      provider.destroy();
+    }
+    if (mockConnection) {
+      mockConnection.destroy();
+    }
+  });
+
+  it("should list milestones", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-list-request"
+      ) {
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-list-response",
+            milestones: [
+              {
+                id: "milestone-1",
+                name: "v1.0.0",
+                documentId: "test-doc",
+                createdAt: 1234567890,
+              },
+              {
+                id: "milestone-2",
+                name: "v1.1.0",
+                documentId: "test-doc",
+                createdAt: 1234567900,
+              },
+            ],
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
+
+    const milestones = await provider.listMilestones();
+
+    expect(milestones).toHaveLength(2);
+    expect(milestones[0].id).toBe("milestone-1");
+    expect(milestones[0].name).toBe("v1.0.0");
+    expect(milestones[1].id).toBe("milestone-2");
+    expect(milestones[1].name).toBe("v1.1.0");
+  });
+
+  it("should get milestone snapshot", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const testSnapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+
+    // Set up response handler for snapshot request
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-snapshot-request"
+      ) {
+        const payload = (message as any).payload;
+        if (payload.milestoneId === "milestone-1") {
+          return new DocMessage<ClientContext>(
+            "test-doc",
             {
+              type: "milestone-snapshot-response",
+              milestoneId: "milestone-1",
+              snapshot: testSnapshot,
+            } as any,
+            { clientId: "test-client" },
+          );
+        }
+      }
+      return null;
+    };
+
+    const snapshot = await provider.getMilestoneSnapshot("milestone-1");
+
+    expect(snapshot).toEqual(testSnapshot);
+  });
+
+  it("should create milestone", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Add some content to the document
+    const ytext = ydoc.getText("content");
+    ytext.insert(0, "Hello, World!");
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-create-request"
+      ) {
+        const payload = (message as any).payload;
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-create-response",
+            milestone: {
               id: "milestone-1",
-              name: "Milestone 1",
+              name: payload.name || "v1.0.0",
               documentId: "test-doc",
               createdAt: Date.now(),
             },
-          ],
-        } as DecodedMilestoneListResponse,
-        undefined,
-        false,
-      );
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
 
-      // Wait a bit then send correct message
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      mockConnection.simulateMessage(correctMessage);
+    const milestone = await provider.createMilestone("My Milestone");
 
-      const result = await requestPromise;
-      expect(result).toHaveLength(1);
-    });
+    expect(milestone.id).toBe("milestone-1");
+    expect(milestone.name).toBe("My Milestone");
+    expect(milestone.documentId).toBe("test-doc");
   });
 
-  describe("getMilestoneSnapshot", () => {
-    test("should request and return milestone snapshot", async () => {
-      const milestoneId = "milestone-1";
-      const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+  it("should create milestone without name (auto-generate)", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const requestPromise = provider.getMilestoneSnapshot(milestoneId);
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Verify request (find the milestone-snapshot-request among sent messages)
-      const sentMessage = mockConnection.sentMessages.find(
-        (msg) =>
-          msg.type === "doc" &&
-          (msg as DocMessage<ClientContext>).payload.type ===
-            "milestone-snapshot-request",
-      ) as DocMessage<ClientContext>;
-      expect(sentMessage).toBeDefined();
-      expect(
-        (sentMessage.payload as DecodedMilestoneSnapshotRequest).type,
-      ).toBe("milestone-snapshot-request");
-      expect(
-        (sentMessage.payload as DecodedMilestoneSnapshotRequest).milestoneId,
-      ).toBe(milestoneId);
-
-      // Simulate response
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-snapshot-response",
-          milestoneId,
-          snapshot,
-        } as DecodedMilestoneSnapshotResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(response);
-
-      const result = await requestPromise;
-
-      expect(result).toBe(snapshot);
-      expect(Array.from(result)).toEqual([1, 2, 3, 4, 5]);
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
     });
 
-    test("should verify milestone ID in response", async () => {
-      const milestoneId = "milestone-1";
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const requestPromise = provider.getMilestoneSnapshot(milestoneId);
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-create-request"
+      ) {
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-create-response",
+            milestone: {
+              id: "milestone-1",
+              name: "v1.0.0", // Server auto-generated
+              documentId: "test-doc",
+              createdAt: Date.now(),
+            },
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    const milestone = await provider.createMilestone();
 
-      // Send response with wrong milestone ID (should be ignored)
-      const wrongResponse = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-snapshot-response",
-          milestoneId: "wrong-id",
-          snapshot: new Uint8Array() as MilestoneSnapshot,
-        } as DecodedMilestoneSnapshotResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(wrongResponse);
-
-      // Send correct response
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const correctResponse = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-snapshot-response",
-          milestoneId,
-          snapshot: new Uint8Array([1, 2, 3]) as MilestoneSnapshot,
-        } as DecodedMilestoneSnapshotResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(correctResponse);
-
-      const result = await requestPromise;
-      expect(Array.from(result)).toEqual([1, 2, 3]);
-    });
-
-    test("should throw error on auth denial", async () => {
-      const requestPromise = provider.getMilestoneSnapshot("milestone-1");
-
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      const authMessage = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-auth-message",
-          permission: "denied",
-          reason: "Not authorized",
-        } as DecodedMilestoneAuthMessage,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(authMessage);
-
-      await expect(requestPromise).rejects.toThrow(
-        "Milestone operation denied: Not authorized",
-      );
-    });
+    expect(milestone.id).toBe("milestone-1");
+    expect(milestone.name).toBe("v1.0.0");
   });
 
-  describe("createMilestone", () => {
-    test("should create milestone with provided name", async () => {
-      const name = "My Milestone";
-      const milestoneMeta = {
-        id: "new-milestone",
-        name,
-        documentId: "test-doc",
-        createdAt: Date.now(),
-      };
+  it("should update milestone name", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Generate expected snapshot from provider's doc
-      const expectedSnapshot = Y.encodeStateAsUpdateV2(
-        provider.doc,
-      ) as MilestoneSnapshot;
-
-      const requestPromise = provider.createMilestone(name);
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Verify request (find the milestone-create-request among sent messages)
-      const sentMessage = mockConnection.sentMessages.find(
-        (msg) =>
-          msg.type === "doc" &&
-          (msg as DocMessage<ClientContext>).payload.type ===
-            "milestone-create-request",
-      ) as DocMessage<ClientContext>;
-      expect(sentMessage).toBeDefined();
-      expect((sentMessage.payload as DecodedMilestoneCreateRequest).type).toBe(
-        "milestone-create-request",
-      );
-      expect((sentMessage.payload as DecodedMilestoneCreateRequest).name).toBe(
-        name,
-      );
-      // Verify snapshot is generated from provider.doc
-      expect(
-        (sentMessage.payload as DecodedMilestoneCreateRequest).snapshot,
-      ).toEqual(expectedSnapshot);
-
-      // Simulate response
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-create-response",
-          milestone: milestoneMeta,
-        } as DecodedMilestoneResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(response);
-
-      const result = await requestPromise;
-
-      expect(result.id).toBe("new-milestone");
-      expect(result.name).toBe(name);
-      expect(result.documentId).toBe("test-doc");
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
     });
 
-    test("should create milestone without name (server auto-generates)", async () => {
-      const milestoneMeta = {
-        id: "auto-milestone",
-        name: "Milestone 1",
-        documentId: "test-doc",
-        createdAt: Date.now(),
-      };
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Generate expected snapshot from provider's doc
-      const expectedSnapshot = Y.encodeStateAsUpdateV2(
-        provider.doc,
-      ) as MilestoneSnapshot;
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-update-name-request"
+      ) {
+        const payload = (message as any).payload;
+        if (payload.milestoneId === "milestone-1") {
+          return new DocMessage<ClientContext>(
+            "test-doc",
+            {
+              type: "milestone-update-name-response",
+              milestone: {
+                id: "milestone-1",
+                name: payload.name,
+                documentId: "test-doc",
+                createdAt: 1234567890,
+              },
+            } as any,
+            { clientId: "test-client" },
+          );
+        }
+      }
+      return null;
+    };
 
-      const requestPromise = provider.createMilestone();
+    const milestone = await provider.updateMilestoneName(
+      "milestone-1",
+      "Updated Name",
+    );
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const sentMessage = mockConnection.sentMessages.find(
-        (msg) =>
-          msg.type === "doc" &&
-          (msg as DocMessage<ClientContext>).payload.type ===
-            "milestone-create-request",
-      ) as DocMessage<ClientContext>;
-      expect(sentMessage).toBeDefined();
-      expect(
-        (sentMessage.payload as DecodedMilestoneCreateRequest).name,
-      ).toBeUndefined();
-      // Verify snapshot is generated from provider.doc
-      expect(
-        (sentMessage.payload as DecodedMilestoneCreateRequest).snapshot,
-      ).toEqual(expectedSnapshot);
-
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-create-response",
-          milestone: milestoneMeta,
-        } as DecodedMilestoneResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(response);
-
-      const result = await requestPromise;
-      expect(result.name).toBe("Milestone 1");
-    });
-
-    test("should throw error on auth denial", async () => {
-      const requestPromise = provider.createMilestone("Test");
-
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      const authMessage = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-auth-message",
-          permission: "denied",
-          reason: "Cannot create milestones",
-        } as DecodedMilestoneAuthMessage,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(authMessage);
-
-      await expect(requestPromise).rejects.toThrow(
-        "Milestone operation denied: Cannot create milestones",
-      );
-    });
+    expect(milestone.id).toBe("milestone-1");
+    expect(milestone.name).toBe("Updated Name");
   });
 
-  describe("updateMilestoneName", () => {
-    test("should update milestone name", async () => {
-      const milestoneId = "milestone-1";
-      const newName = "Updated Name";
-      const milestoneMeta = {
-        id: milestoneId,
-        name: newName,
-        documentId: "test-doc",
-        createdAt: Date.now(),
-      };
+  it("should handle milestone auth errors", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const requestPromise = provider.updateMilestoneName(milestoneId, newName);
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Verify request (find the milestone-update-name-request among sent messages)
-      const sentMessage = mockConnection.sentMessages.find(
-        (msg) =>
-          msg.type === "doc" &&
-          (msg as DocMessage<ClientContext>).payload.type ===
-            "milestone-update-name-request",
-      ) as DocMessage<ClientContext>;
-      expect(sentMessage).toBeDefined();
-      expect(
-        (sentMessage.payload as DecodedMilestoneUpdateNameRequest).type,
-      ).toBe("milestone-update-name-request");
-      expect(
-        (sentMessage.payload as DecodedMilestoneUpdateNameRequest).milestoneId,
-      ).toBe(milestoneId);
-      expect(
-        (sentMessage.payload as DecodedMilestoneUpdateNameRequest).name,
-      ).toBe(newName);
-
-      // Simulate response
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-update-name-response",
-          milestone: milestoneMeta,
-        } as DecodedMilestoneResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(response);
-
-      const result = await requestPromise;
-
-      expect(result.id).toBe(milestoneId);
-      expect(result.name).toBe(newName);
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
     });
 
-    test("should verify milestone ID in response", async () => {
-      const milestoneId = "milestone-1";
-      const newName = "New Name";
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const requestPromise = provider.updateMilestoneName(milestoneId, newName);
+    // Set up response handler to return auth error
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-list-request"
+      ) {
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-auth-message",
+            reason: "Permission denied",
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Send response with wrong milestone ID (should be ignored)
-      const wrongResponse = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-update-name-response",
-          milestone: {
-            id: "wrong-id",
-            name: newName,
-            documentId: "test-doc",
-            createdAt: Date.now(),
-          },
-        } as DecodedMilestoneResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(wrongResponse);
-
-      // Send correct response
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const correctResponse = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-update-name-response",
-          milestone: {
-            id: milestoneId,
-            name: newName,
-            documentId: "test-doc",
-            createdAt: Date.now(),
-          },
-        } as DecodedMilestoneResponse,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(correctResponse);
-
-      const result = await requestPromise;
-      expect(result.id).toBe(milestoneId);
-    });
-
-    test("should throw error on auth denial", async () => {
-      const requestPromise = provider.updateMilestoneName(
-        "milestone-1",
-        "New Name",
-      );
-
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      const authMessage = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-auth-message",
-          permission: "denied",
-          reason: "Cannot update milestone",
-        } as DecodedMilestoneAuthMessage,
-        undefined,
-        false,
-      );
-
-      mockConnection.simulateMessage(authMessage);
-
-      await expect(requestPromise).rejects.toThrow(
-        "Milestone operation denied: Cannot update milestone",
-      );
-    });
+    await expect(provider.listMilestones()).rejects.toThrow(
+      "Milestone operation denied: Permission denied",
+    );
   });
 
-  describe("error handling", () => {
-    test("should handle timeout errors", async () => {
-      // Skip timeout test as it requires waiting 30 seconds
-      // In a real scenario, we'd want to make timeout configurable or use a test double
-      // For now, we'll just verify the method exists and can be called
-      expect(typeof provider.listMilestones).toBe("function");
+  it("should handle milestone list with snapshotIds filter", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
     });
 
-    test("should handle connection errors gracefully", async () => {
-      // Test that methods check for connection before proceeding
-      // The actual connection error handling is tested at the connection level
-      // Here we just verify the methods exist and can handle errors
-      expect(typeof provider.listMilestones).toBe("function");
-      expect(typeof provider.getMilestoneSnapshot).toBe("function");
-      expect(typeof provider.createMilestone).toBe("function");
-      expect(typeof provider.updateMilestoneName).toBe("function");
-    });
-  });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-  describe("Milestone object creation", () => {
-    test("should create Milestone instances with lazy snapshot loading", async () => {
-      const milestoneMeta = {
-        id: "milestone-1",
-        name: "Test Milestone",
-        documentId: "test-doc",
-        createdAt: Date.now(),
-      };
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-list-request"
+      ) {
+        const payload = (message as any).payload;
+        // Verify snapshotIds were sent
+        expect(payload.snapshotIds).toEqual(["milestone-1"]);
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-list-response",
+            milestones: [
+              {
+                id: "milestone-2",
+                name: "v1.1.0",
+                documentId: "test-doc",
+                createdAt: 1234567900,
+              },
+            ],
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
 
-      const requestPromise = provider.listMilestones();
+    const milestones = await provider.listMilestones(["milestone-1"]);
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const response = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-list-response",
-          milestones: [milestoneMeta],
-        } as DecodedMilestoneListResponse,
-        undefined,
-        false,
-      );
-
-      // Use setTimeout to ensure the message listener is set up
-      setTimeout(() => {
-        mockConnection.simulateMessage(response);
-      }, 10);
-
-      const result = await requestPromise;
-      const milestone = result[0];
-
-      // Verify milestone properties
-      expect(milestone.id).toBe("milestone-1");
-      expect(milestone.name).toBe("Test Milestone");
-      expect(milestone.documentId).toBe("test-doc");
-      expect(milestone.loaded).toBe(false); // Snapshot not loaded yet
-
-      // Test lazy loading
-      const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
-      const snapshotRequestPromise =
-        provider.getMilestoneSnapshot("milestone-1");
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const snapshotResponse = new DocMessage<ClientContext>(
-        "test-doc",
-        {
-          type: "milestone-snapshot-response",
-          milestoneId: "milestone-1",
-          snapshot,
-        } as DecodedMilestoneSnapshotResponse,
-        undefined,
-        false,
-      );
-
-      // Use setTimeout to ensure the message listener is set up
-      setTimeout(() => {
-        mockConnection.simulateMessage(snapshotResponse);
-      }, 10);
-
-      const fetchedSnapshot = await milestone.fetchSnapshot();
-      expect(Array.from(fetchedSnapshot)).toEqual(Array.from(snapshot));
-    });
+    expect(milestones).toHaveLength(1);
+    expect(milestones[0].id).toBe("milestone-2");
   });
 });

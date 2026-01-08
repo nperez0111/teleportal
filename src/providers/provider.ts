@@ -164,6 +164,19 @@ export class Provider<
   private init = async () => {
     try {
       this.#underlyingConnection.send(await this.transport.handler.start());
+      this.#underlyingConnection.on("disconnected", () => {
+        this.doc.emit("sync", [false, this.doc]);
+      });
+      this.#underlyingConnection.on("connected", () => {
+        this.doc.emit("sync", [true, this.doc]);
+      });
+      this.transport.synced
+        .then(() => {
+          this.doc.emit("sync", [true, this.doc]);
+        })
+        .catch(() => {
+          this.doc.emit("sync", [false, this.doc]);
+        });
     } catch (error) {
       console.error("Failed to send sync-step-1", error);
     }
