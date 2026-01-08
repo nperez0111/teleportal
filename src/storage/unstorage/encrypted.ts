@@ -8,13 +8,19 @@ import {
 } from "../encrypted";
 import type { FileStorage, MilestoneStorage } from "../types";
 import { UnstorageMilestoneStorage } from "./milestone-storage";
+import { withTransaction } from "./transaction";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { ttl: number; keyPrefix: string };
   constructor(
     storage: Storage,
-    options?: { ttl?: number; keyPrefix?: string; fileStorage?: FileStorage; milestoneStorage?: MilestoneStorage },
+    options?: {
+      ttl?: number;
+      keyPrefix?: string;
+      fileStorage?: FileStorage;
+      milestoneStorage?: MilestoneStorage;
+    },
   ) {
     super();
     this.storage = storage;
@@ -43,20 +49,9 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
    */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     const prefixedKey = this.#getKey(key);
-    const meta = await this.storage.getMeta(prefixedKey);
-    const lockedTTL = meta?.ttl;
-    if (lockedTTL && lockedTTL > Date.now()) {
-      // Wait for the lock to be released with jitter to avoid thundering herd
-      const jitter = Math.random() * 1000; // Random delay between 0-1000ms
-      const waitTime = lockedTTL - Date.now() + jitter;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
-    }
-    const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(prefixedKey, { ttl, ...meta });
-    const result = await cb();
-    await this.storage.setMeta(prefixedKey, { ttl: Date.now(), ...meta });
-    return result;
+    return withTransaction(this.storage, prefixedKey, async () => cb(), {
+      ttl: this.options.ttl,
+    });
   }
 
   async writeDocumentMetadata(
@@ -120,7 +115,9 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     for (const clientId in metadata.seenMessages) {
       for (const counter in metadata.seenMessages[clientId]) {
         const messageId = metadata.seenMessages[clientId][counter];
-        promises.push(this.storage.removeItem(this.#getMessageKey(key, messageId)));
+        promises.push(
+          this.storage.removeItem(this.#getMessageKey(key, messageId)),
+        );
       }
     }
     await Promise.all(promises);

@@ -11,6 +11,7 @@ import type {
   MilestoneStorage,
 } from "../types";
 import { UnstorageMilestoneStorage } from "./milestone-storage";
+import { withTransaction } from "./transaction";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -68,20 +69,9 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
    */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     const prefixedKey = this.#getKey(key);
-    const meta = await this.storage.getMeta(prefixedKey);
-    const lockedTTL = meta?.ttl;
-    if (lockedTTL && lockedTTL > Date.now()) {
-      // Wait for the lock to be released with jitter to avoid thundering herd
-      const jitter = Math.random() * 1000; // Random delay between 0-1000ms
-      const waitTime = lockedTTL - Date.now() + jitter;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
-    }
-    const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(prefixedKey, { ttl, ...meta });
-    const result = await cb();
-    await this.storage.setMeta(prefixedKey, { ttl: Date.now(), ...meta });
-    return result;
+    return withTransaction(this.storage, prefixedKey, async () => cb(), {
+      ttl: this.options.ttl,
+    });
   }
 
   /**

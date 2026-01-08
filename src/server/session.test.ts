@@ -1138,10 +1138,11 @@ describe("Session", () => {
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
 
+      // Apply message without providing a client
       await session.apply(message);
 
-      // Should not throw, but also shouldn't send any messages
-      expect(true).toBe(true); // Just verify it doesn't throw
+      // Verify no messages were sent (no client was provided, so no response should be sent)
+      expect(client1.sentMessages.length).toBe(0);
     });
   });
 });

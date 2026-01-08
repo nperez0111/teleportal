@@ -266,8 +266,7 @@ export function getYDocSink<Context extends ClientContext>({
           // same underlying transport.
           if (
             (chunk.type === "doc" || chunk.type === "awareness") &&
-            (chunk.document !== document ||
-              chunk.context.clientId === "local")
+            (chunk.document !== document || chunk.context.clientId === "local")
           ) {
             return;
           }
@@ -293,8 +292,9 @@ export function getYDocSink<Context extends ClientContext>({
                   break;
                 }
                 default: {
-                  // @ts-expect-error - this should be unreachable due to type checking
-                  chunk.payload.type;
+                  // This should be unreachable due to type checking
+                  const _exhaustive: never = chunk.payload;
+                  _exhaustive;
                   throw new Error("Invalid chunk.payload.type", {
                     cause: { chunk },
                   });

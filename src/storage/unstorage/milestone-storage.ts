@@ -2,6 +2,7 @@ import { Milestone, type MilestoneSnapshot } from "teleportal";
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 import type { Document, MilestoneStorage } from "../types";
+import { withTransaction } from "./transaction";
 
 /**
  * Unstorage storage for {@link Milestone}s
@@ -36,20 +37,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
     key: string,
     cb: (key: string) => Promise<T>,
   ): Promise<T> {
-    const meta = await this.storage.getMeta(key);
-    const lockedTTL = meta?.ttl;
-    if (lockedTTL && lockedTTL > Date.now()) {
-      // Wait for the lock to be released with jitter to avoid thundering herd
-      const jitter = Math.random() * 1000; // Random delay between 0-1000ms
-      const waitTime = lockedTTL - Date.now() + jitter;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
-    }
-    const ttl = Date.now() + this.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
-    const result = await cb(key);
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
-    return result;
+    return withTransaction(this.storage, key, cb, { ttl: this.ttl });
   }
 
   #getMetadataKey(documentId: string) {

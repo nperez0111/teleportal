@@ -91,13 +91,15 @@ describe("UnstorageDocumentStorage", () => {
         encrypted: false,
       });
 
-      // Note: getDocument in scanKeys mode uses getKeys which may not work
-      // with all storage backends. This test verifies the update was stored
-      // even though getDocument might return null if getKeys doesn't support patterns.
-      // The important thing is that handleUpdate doesn't throw and stores the update.
-      await scanStorage.handleUpdate(key, update);
-      // Should not throw
-      expect(true).toBe(true);
+      // Verify the document can be retrieved (if getKeys supports pattern matching)
+      const retrieved = await scanStorage.getDocument(key);
+      if (retrieved !== null) {
+        const newDoc = new Y.Doc();
+        Y.applyUpdateV2(newDoc, retrieved.content.update);
+        expect(newDoc.getText("content").toString()).toBe("Scan mode test");
+      }
+      // If getKeys doesn't support pattern matching, retrieved will be null,
+      // but handleUpdate should still work without throwing
     });
   });
 
@@ -257,6 +259,8 @@ describe("UnstorageDocumentStorage", () => {
         scanKeys: true,
       });
       const doc = new Y.Doc();
+      const text = doc.getText("content");
+      text.insert(0, "Test content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
       await scanStorage.handleUpdate(key, update);
@@ -267,16 +271,21 @@ describe("UnstorageDocumentStorage", () => {
         encrypted: false,
       });
 
+      // Verify document exists before deletion (if getKeys supports pattern matching)
+      const beforeDelete = await scanStorage.getDocument(key);
+      if (beforeDelete !== null) {
+        // Verify we can retrieve the document before deletion
+        const newDoc = new Y.Doc();
+        Y.applyUpdateV2(newDoc, beforeDelete.content.update);
+        expect(newDoc.getText("content").toString()).toBe("Test content");
+      }
+
       // deleteDocument should not throw even if getKeys doesn't work
       await scanStorage.deleteDocument(key);
-      // Should not throw
-      expect(true).toBe(true);
 
-      // After deletion, getDocument should return null (if getKeys works)
-      // or might still return null if getKeys doesn't support patterns
+      // After deletion, getDocument should return null
       const result = await scanStorage.getDocument(key);
-      // Result may be null if getKeys doesn't work with pattern matching
-      expect(result === null || result !== null).toBe(true);
+      expect(result).toBeNull();
     });
   });
 
