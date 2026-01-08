@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { createStorage } from "unstorage";
 import * as Y from "yjs";
-import type { StateVector, Update } from "teleportal";
+import type { MilestoneSnapshot, StateVector, Update } from "teleportal";
 import { getEmptyStateVector } from "../../lib/protocol/utils";
 import { UnstorageDocumentStorage } from "./unencrypted";
-import type { FileStorage } from "../types";
+import { UnstorageMilestoneStorage } from "./milestone-storage";
+import type { FileStorage, MilestoneStorage } from "../types";
 
 describe("UnstorageDocumentStorage", () => {
   let storage: UnstorageDocumentStorage;
@@ -82,7 +83,7 @@ describe("UnstorageDocumentStorage", () => {
       // In scanKeys mode, handleUpdate stores the update but returns early
       // without updating the index. The update is stored with a unique key.
       await scanStorage.handleUpdate(key, update);
-      
+
       // In scanKeys mode, we need to manually update metadata since handleUpdate returns early
       await scanStorage.writeDocumentMetadata(key, {
         createdAt: Date.now(),
@@ -90,13 +91,15 @@ describe("UnstorageDocumentStorage", () => {
         encrypted: false,
       });
 
-      // Note: getDocument in scanKeys mode uses getKeys which may not work
-      // with all storage backends. This test verifies the update was stored
-      // even though getDocument might return null if getKeys doesn't support patterns.
-      // The important thing is that handleUpdate doesn't throw and stores the update.
-      await scanStorage.handleUpdate(key, update);
-      // Should not throw
-      expect(true).toBe(true);
+      // Verify the document can be retrieved (if getKeys supports pattern matching)
+      const retrieved = await scanStorage.getDocument(key);
+      if (retrieved !== null) {
+        const newDoc = new Y.Doc();
+        Y.applyUpdateV2(newDoc, retrieved.content.update);
+        expect(newDoc.getText("content").toString()).toBe("Scan mode test");
+      }
+      // If getKeys doesn't support pattern matching, retrieved will be null,
+      // but handleUpdate should still work without throwing
     });
   });
 
@@ -256,6 +259,8 @@ describe("UnstorageDocumentStorage", () => {
         scanKeys: true,
       });
       const doc = new Y.Doc();
+      const text = doc.getText("content");
+      text.insert(0, "Test content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
       await scanStorage.handleUpdate(key, update);
@@ -266,16 +271,21 @@ describe("UnstorageDocumentStorage", () => {
         encrypted: false,
       });
 
+      // Verify document exists before deletion (if getKeys supports pattern matching)
+      const beforeDelete = await scanStorage.getDocument(key);
+      if (beforeDelete !== null) {
+        // Verify we can retrieve the document before deletion
+        const newDoc = new Y.Doc();
+        Y.applyUpdateV2(newDoc, beforeDelete.content.update);
+        expect(newDoc.getText("content").toString()).toBe("Test content");
+      }
+
       // deleteDocument should not throw even if getKeys doesn't work
       await scanStorage.deleteDocument(key);
-      // Should not throw
-      expect(true).toBe(true);
-      
-      // After deletion, getDocument should return null (if getKeys works)
-      // or might still return null if getKeys doesn't support patterns
+
+      // After deletion, getDocument should return null
       const result = await scanStorage.getDocument(key);
-      // Result may be null if getKeys doesn't work with pattern matching
-      expect(result === null || result !== null).toBe(true);
+      expect(result).toBeNull();
     });
   });
 
@@ -410,5 +420,88 @@ describe("UnstorageDocumentStorage", () => {
       expect(newDoc.getText("content").toString()).toBe("First Second");
     });
   });
-});
 
+  describe("milestoneStorage", () => {
+    it("should be undefined when not provided", () => {
+      const testStorage = new UnstorageDocumentStorage(createStorage());
+      expect(testStorage.milestoneStorage).toBeUndefined();
+    });
+
+    it("should use provided milestoneStorage when provided", () => {
+      const customMilestoneStorage: MilestoneStorage = {
+        type: "milestone-storage",
+        createMilestone: async () => "custom-id",
+        getMilestone: async () => null,
+        getMilestones: async () => [],
+        deleteMilestone: async () => {},
+        updateMilestoneName: async () => {},
+      };
+
+      const testStorage = new UnstorageDocumentStorage(createStorage(), {
+        milestoneStorage: customMilestoneStorage,
+      });
+
+      expect(testStorage.milestoneStorage).toBe(customMilestoneStorage);
+    });
+
+    it("should allow creating milestones when milestoneStorage is provided", async () => {
+      const testStorage = new UnstorageDocumentStorage(createStorage(), {
+        milestoneStorage: new UnstorageMilestoneStorage(createStorage()),
+      });
+      const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+
+      const milestoneId = await testStorage.milestoneStorage!.createMilestone({
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot,
+      });
+
+      expect(typeof milestoneId).toBe("string");
+      expect(milestoneId.length).toBeGreaterThan(0);
+
+      const milestone = await testStorage.milestoneStorage!.getMilestone(
+        "test-doc",
+        milestoneId,
+      );
+      expect(milestone).not.toBeNull();
+      expect(milestone!.id).toBe(milestoneId);
+      expect(milestone!.name).toBe("v1.0.0");
+    });
+
+    it("should allow creating milestones with custom milestoneStorage", async () => {
+      let createMilestoneCalled = false;
+      let createMilestoneCtx: any;
+
+      const customMilestoneStorage: MilestoneStorage = {
+        type: "milestone-storage",
+        createMilestone: async (ctx) => {
+          createMilestoneCalled = true;
+          createMilestoneCtx = ctx;
+          return "custom-milestone-id";
+        },
+        getMilestone: async () => null,
+        getMilestones: async () => [],
+        deleteMilestone: async () => {},
+        updateMilestoneName: async () => {},
+      };
+
+      const testStorage = new UnstorageDocumentStorage(createStorage(), {
+        milestoneStorage: customMilestoneStorage,
+      });
+
+      const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
+      const milestoneId = await testStorage.milestoneStorage!.createMilestone({
+        name: "custom-milestone",
+        documentId: "test-doc",
+        createdAt: 1234567890,
+        snapshot,
+      });
+
+      expect(createMilestoneCalled).toBe(true);
+      expect(createMilestoneCtx.name).toBe("custom-milestone");
+      expect(createMilestoneCtx.documentId).toBe("test-doc");
+      expect(milestoneId).toBe("custom-milestone-id");
+    });
+  });
+});

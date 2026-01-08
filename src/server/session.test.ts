@@ -7,8 +7,14 @@ import type {
   SyncStep2Update,
   Update,
 } from "teleportal";
-import { DocMessage, InMemoryPubSub } from "teleportal";
-import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
+import { DocMessage, InMemoryPubSub, MilestoneSnapshot } from "teleportal";
+import type {
+  Document,
+  DocumentMetadata,
+  DocumentStorage,
+  MilestoneStorage,
+} from "teleportal/storage";
+import { InMemoryMilestoneStorage } from "teleportal/storage";
 import { Session } from "./session";
 import { Client } from "./client";
 
@@ -34,7 +40,7 @@ class MockDocumentStorage implements DocumentStorage {
   storageType: "encrypted" | "unencrypted" = "unencrypted";
 
   fileStorage = undefined;
-  milestoneStorage = undefined;
+  milestoneStorage: MilestoneStorage | undefined = undefined;
 
   public mockGetDocument = false;
   public mockHandleUpdate = false;
@@ -57,7 +63,10 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(_key: string, syncStep2: SyncStep2Update): Promise<void> {
+  async handleSyncStep2(
+    _key: string,
+    syncStep2: SyncStep2Update,
+  ): Promise<void> {
     this.mockHandleSyncStep2 = true;
     this.lastSyncStep2 = syncStep2;
   }
@@ -105,6 +114,33 @@ class MockDocumentStorage implements DocumentStorage {
 
   transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
     return cb();
+  }
+
+  async addFileToDocument(documentId: string, fileId: string): Promise<void> {
+    await this.transaction(documentId, async () => {
+      const metadata = await this.getDocumentMetadata(documentId);
+      const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+      await this.writeDocumentMetadata(documentId, {
+        ...metadata,
+        files,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  async removeFileFromDocument(
+    documentId: string,
+    fileId: string,
+  ): Promise<void> {
+    await this.transaction(documentId, async () => {
+      const metadata = await this.getDocumentMetadata(documentId);
+      const files = (metadata.files ?? []).filter((id) => id !== fileId);
+      await this.writeDocumentMetadata(documentId, {
+        ...metadata,
+        files,
+        updatedAt: Date.now(),
+      });
+    });
   }
 }
 
@@ -726,6 +762,389 @@ describe("Session", () => {
           done();
         }, 100);
       });
+    });
+  });
+
+  describe("milestone operations", () => {
+    beforeEach(() => {
+      storage.milestoneStorage = new InMemoryMilestoneStorage();
+      storage.storedUpdate = new Uint8Array([1, 2, 3]) as Update;
+    });
+
+    it("should handle milestone-list-request", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      // Create a test milestone
+      const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
+      const milestoneId = await storage.milestoneStorage!.createMilestone({
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot,
+      });
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-list-request",
+          snapshotIds: [],
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-list-response"
+      ) {
+        expect(response.payload.milestones.length).toBe(1);
+        expect(response.payload.milestones[0].name).toBe("v1.0.0");
+      }
+    });
+
+    it("should filter out known milestones from milestone-list-request", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      // Create two test milestones
+      const snapshot1 = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
+      const milestoneId1 = await storage.milestoneStorage!.createMilestone({
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot: snapshot1,
+      });
+
+      const snapshot2 = new Uint8Array([4, 5, 6]) as MilestoneSnapshot;
+      const milestoneId2 = await storage.milestoneStorage!.createMilestone({
+        name: "v2.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot: snapshot2,
+      });
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-list-request",
+          snapshotIds: [milestoneId1], // Client already knows about milestoneId1
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-list-response"
+      ) {
+        // Should only return milestoneId2, not milestoneId1
+        expect(response.payload.milestones.length).toBe(1);
+        expect(response.payload.milestones[0].id).toBe(milestoneId2);
+        expect(response.payload.milestones[0].name).toBe("v2.0.0");
+      }
+    });
+
+    it("should return error when milestone storage is not available", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+      storage.milestoneStorage = undefined;
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-list-request",
+          snapshotIds: [],
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-auth-message"
+      ) {
+        expect(response.payload.permission).toBe("denied");
+        expect(response.payload.reason).toContain("not available");
+      }
+    });
+
+    it("should handle milestone-snapshot-request", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+      const milestoneId = await storage.milestoneStorage!.createMilestone({
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot,
+      });
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-snapshot-request",
+          milestoneId,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-snapshot-response"
+      ) {
+        expect(response.payload.milestoneId).toBe(milestoneId);
+        expect(response.payload.snapshot).toEqual(snapshot);
+      }
+    });
+
+    it("should return error for non-existent milestone snapshot", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-snapshot-request",
+          milestoneId: "non-existent-id",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-auth-message"
+      ) {
+        expect(response.payload.permission).toBe("denied");
+        expect(response.payload.reason).toContain("not found");
+      }
+    });
+
+    it("should handle milestone-create-request with name", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-create-request",
+          name: "v1.0.0",
+          snapshot,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-create-response"
+      ) {
+        expect(response.payload.milestone.name).toBe("v1.0.0");
+        expect(response.payload.milestone.documentId).toBe("test-doc");
+      }
+    });
+
+    it("should handle milestone-create-request without name (auto-generate)", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as MilestoneSnapshot;
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-create-request",
+          snapshot,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-create-response"
+      ) {
+        expect(response.payload.milestone.name).toBe("Milestone 1");
+        expect(response.payload.milestone.documentId).toBe("test-doc");
+      }
+    });
+
+    it("should auto-generate sequential milestone names", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      // Create first milestone
+      const snapshot1 = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
+      const message1 = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-create-request",
+          snapshot: snapshot1,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+      await session.apply(message1, client1AsClient);
+
+      // Create second milestone
+      const snapshot2 = new Uint8Array([4, 5, 6]) as MilestoneSnapshot;
+      const message2 = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-create-request",
+          snapshot: snapshot2,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+      await session.apply(message2, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(2);
+      const response1 = client1.sentMessages[0];
+      const response2 = client1.sentMessages[1];
+
+      if (
+        response1 instanceof DocMessage &&
+        response1.payload.type === "milestone-create-response"
+      ) {
+        expect(response1.payload.milestone.name).toBe("Milestone 1");
+      }
+      if (
+        response2 instanceof DocMessage &&
+        response2.payload.type === "milestone-create-response"
+      ) {
+        expect(response2.payload.milestone.name).toBe("Milestone 2");
+      }
+    });
+
+    it("should fail encoding when snapshot is missing for milestone creation", async () => {
+      // Test that encoding fails when snapshot is missing
+      // This ensures clients cannot send messages without snapshots
+      expect(() => {
+        const message = new DocMessage<ServerContext>(
+          "test-doc",
+          {
+            type: "milestone-create-request",
+            name: "v1.0.0",
+            // Missing snapshot
+          } as any,
+          { clientId: "client-1", userId: "user-1", room: "room" },
+        );
+        // Accessing .encoded will trigger encoding, which should fail
+        void message.encoded;
+      }).toThrow();
+    });
+
+    it("should handle milestone-update-name-request", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
+      const milestoneId = await storage.milestoneStorage!.createMilestone({
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: Date.now(),
+        snapshot,
+      });
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-update-name-request",
+          milestoneId,
+          name: "v1.0.1",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-update-name-response"
+      ) {
+        expect(response.payload.milestone.id).toBe(milestoneId);
+        expect(response.payload.milestone.name).toBe("v1.0.1");
+      }
+    });
+
+    it("should return error for non-existent milestone update", async () => {
+      await session.load();
+      session.addClient(client1AsClient);
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-update-name-request",
+          milestoneId: "non-existent-id",
+          name: "v1.0.1",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client1AsClient);
+
+      expect(client1.sentMessages.length).toBe(1);
+      const response = client1.sentMessages[0];
+      expect(response).toBeInstanceOf(DocMessage);
+      if (
+        response instanceof DocMessage &&
+        response.payload.type === "milestone-auth-message"
+      ) {
+        expect(response.payload.permission).toBe("denied");
+        expect(response.payload.reason).toContain("not found");
+      }
+    });
+
+    it("should not respond to milestone requests without client", async () => {
+      await session.load();
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "milestone-list-request",
+          snapshotIds: [],
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      // Apply message without providing a client
+      await session.apply(message);
+
+      // Verify no messages were sent (no client was provided, so no response should be sent)
+      expect(client1.sentMessages.length).toBe(0);
     });
   });
 });

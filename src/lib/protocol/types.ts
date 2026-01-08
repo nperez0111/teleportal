@@ -129,7 +129,16 @@ export type DocStep =
   | SyncStep2
   | SyncDone
   | UpdateStep
-  | AuthMessage;
+  | AuthMessage
+  | MilestoneListRequest
+  | MilestoneListResponse
+  | MilestoneSnapshotRequest
+  | MilestoneSnapshotResponse
+  | MilestoneCreateRequest
+  | MilestoneCreateResponse
+  | MilestoneUpdateNameRequest
+  | MilestoneUpdateNameResponse
+  | MilestoneAuthMessage;
 
 /**
  * Any Y.js update which contains awareness updates.
@@ -279,3 +288,149 @@ export type DecodedFileAuthMessage = {
  * A {@link MilestoneSnapshot} is a binary encoded snapshot of a document at a point in time.
  */
 export type MilestoneSnapshot = Tag<Uint8Array, "milestone-snapshot">;
+
+/**
+ * An encoded {@link MilestoneListRequest} message.
+ */
+export type MilestoneListRequest = Tag<Uint8Array, "milestone-list-request">;
+
+/**
+ * A decoded {@link MilestoneListRequest} message.
+ * Includes a list of snapshot IDs so the response can send only milestones that are not already known.
+ */
+export type DecodedMilestoneListRequest = {
+  type: "milestone-list-request";
+  /**
+   * List of snapshot IDs that the client already knows.
+   * The server should only send milestones that are not in this list.
+   */
+  snapshotIds: string[];
+};
+
+/**
+ * An encoded {@link DecodedMilestoneListResponse} message.
+ */
+export type MilestoneListResponse = Tag<Uint8Array, "milestone-list-response">;
+
+/**
+ * A decoded {@link MilestoneListResponse} message.
+ */
+export type DecodedMilestoneListResponse = {
+  type: "milestone-list-response";
+  milestones: Array<{
+    id: string;
+    name: string;
+    documentId: string;
+    createdAt: number;
+  }>;
+};
+
+/**
+ * An encoded {@link MilestoneSnapshotRequest} message.
+ */
+export type MilestoneSnapshotRequest = Tag<
+  Uint8Array,
+  "milestone-snapshot-request"
+>;
+
+/**
+ * A decoded {@link MilestoneSnapshotRequest} message.
+ */
+export type DecodedMilestoneSnapshotRequest = {
+  type: "milestone-snapshot-request";
+  milestoneId: string;
+};
+
+/**
+ * An encoded {@link MilestoneSnapshotResponse} message.
+ */
+export type MilestoneSnapshotResponse = Tag<
+  Uint8Array,
+  "milestone-snapshot-response"
+>;
+
+/**
+ * A decoded {@link MilestoneSnapshotResponse} message.
+ */
+export type DecodedMilestoneSnapshotResponse = {
+  type: "milestone-snapshot-response";
+  milestoneId: string;
+  snapshot: MilestoneSnapshot;
+};
+
+/**
+ * An encoded {@link MilestoneCreateRequest} message.
+ */
+export type MilestoneCreateRequest = Tag<
+  Uint8Array,
+  "milestone-create-request"
+>;
+
+/**
+ * A decoded {@link MilestoneCreateRequest} message.
+ */
+export type DecodedMilestoneCreateRequest = {
+  type: "milestone-create-request";
+  name?: string;
+  snapshot: MilestoneSnapshot;
+};
+
+/**
+ * An encoded {@link MilestoneCreateResponse} message.
+ */
+export type MilestoneCreateResponse = Tag<
+  Uint8Array,
+  "milestone-create-response"
+>;
+
+/**
+ * A decoded {@link MilestoneCreateResponse} or {@link MilestoneUpdateNameResponse} message.
+ */
+export type DecodedMilestoneResponse = {
+  type: "milestone-create-response" | "milestone-update-name-response";
+  milestone: {
+    id: string;
+    name: string;
+    documentId: string;
+    createdAt: number;
+  };
+};
+
+/**
+ * An encoded {@link MilestoneUpdateNameRequest} message.
+ */
+export type MilestoneUpdateNameRequest = Tag<
+  Uint8Array,
+  "milestone-update-name-request"
+>;
+
+/**
+ * A decoded {@link MilestoneUpdateNameRequest} message.
+ */
+export type DecodedMilestoneUpdateNameRequest = {
+  type: "milestone-update-name-request";
+  milestoneId: string;
+  name: string;
+};
+
+/**
+ * An encoded {@link MilestoneUpdateNameResponse} message.
+ */
+export type MilestoneUpdateNameResponse = Tag<
+  Uint8Array,
+  "milestone-update-name-response"
+>;
+
+/**
+ * An encoded {@link MilestoneAuthMessage} message.
+ */
+export type MilestoneAuthMessage = Tag<Uint8Array, "milestone-auth-message">;
+
+/**
+ * A decoded {@link MilestoneAuthMessage} message.
+ */
+export type DecodedMilestoneAuthMessage = {
+  type: "milestone-auth-message";
+  permission: "denied";
+  reason: string;
+};

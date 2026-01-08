@@ -276,10 +276,16 @@ describe("EncryptedMemoryStorage", () => {
       const payload = new Uint8Array([1, 2, 3]) as EncryptedUpdatePayload;
 
       await storage.storeEncryptedMessage(key, messageId, payload);
+      
+      // Verify document exists before deletion
+      expect(EncryptedMemoryStorage.docs.has(key)).toBe(true);
 
       await storage.deleteDocument(key);
-      // Should not throw
-      expect(true).toBe(true);
+      
+      // Verify document is deleted
+      expect(EncryptedMemoryStorage.docs.has(key)).toBe(false);
+      const result = await storage.fetchEncryptedMessage(key, messageId);
+      expect(result).toBeNull();
     });
   });
 

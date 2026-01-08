@@ -4,7 +4,14 @@ import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import type { Document, DocumentMetadata, FileStorage } from "../types";
+import type {
+  Document,
+  DocumentMetadata,
+  FileStorage,
+  MilestoneStorage,
+} from "../types";
+import { UnstorageMilestoneStorage } from "./milestone-storage";
+import { withTransaction } from "./transaction";
 
 /**
  * A storage implementation that is backed by unstorage.
@@ -15,16 +22,43 @@ import type { Document, DocumentMetadata, FileStorage } from "../types";
  */
 export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   private readonly storage: Storage;
-  private readonly options: { scanKeys: boolean; ttl: number };
-
+  private readonly options: {
+    scanKeys: boolean;
+    ttl: number;
+    keyPrefix: string;
+  };
   constructor(
     storage: Storage,
-    options?: { scanKeys?: boolean; ttl?: number; fileStorage?: FileStorage },
+    options?: {
+      scanKeys?: boolean;
+      ttl?: number;
+      keyPrefix?: string;
+      fileStorage?: FileStorage;
+      milestoneStorage?: MilestoneStorage;
+    },
   ) {
     super();
     this.storage = storage;
-    this.options = { scanKeys: false, ttl: 5 * 1000, ...options };
+    this.options = {
+      scanKeys: false,
+      ttl: 5 * 1000,
+      keyPrefix: "",
+      ...options,
+    };
     this.fileStorage = options?.fileStorage;
+    this.milestoneStorage = options?.milestoneStorage;
+  }
+
+  #getKey(key: string): string {
+    return this.options.keyPrefix ? `${this.options.keyPrefix}:${key}` : key;
+  }
+
+  #getUpdateKeyPrefix(key: string): string {
+    return this.#getKey(key) + "-update-";
+  }
+
+  #getMetadataKey(key: string): string {
+    return this.#getKey(key) + ":meta";
   }
 
   /**
@@ -34,20 +68,10 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
    * @returns The TTL of the lock
    */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
-    const meta = await this.storage.getMeta(key);
-    const lockedTTL = meta?.ttl;
-    if (lockedTTL && lockedTTL > Date.now()) {
-      // Wait for the lock to be released with jitter to avoid thundering herd
-      const jitter = Math.random() * 1000; // Random delay between 0-1000ms
-      const waitTime = lockedTTL - Date.now() + jitter;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
-    }
-    const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
-    const result = await cb();
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
-    return result;
+    const prefixedKey = this.#getKey(key);
+    return withTransaction(this.storage, prefixedKey, async () => cb(), {
+      ttl: this.options.ttl,
+    });
   }
 
   /**
@@ -58,23 +82,21 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     update: Update,
     overwriteKeys?: boolean,
   ): Promise<void> {
-    const updateKey = key + "-update-" + uuidv4();
+    const prefixedKey = this.#getKey(key);
+    const updateKey = this.#getUpdateKeyPrefix(key) + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
     if (this.options.scanKeys) {
       return;
     }
     await this.transaction(key, async () => {
-      const doc = await this.storage.getItem<{ keys: string[] }>(key);
+      const doc = await this.storage.getItem<{ keys: string[] }>(prefixedKey);
       if (doc && Array.isArray(doc.keys) && !overwriteKeys) {
         doc.keys = Array.from(new Set(doc.keys.concat(updateKey)));
-        await this.storage.setItem(key, doc);
+        await this.storage.setItem(prefixedKey, doc);
       } else {
-        await this.storage.setItem(key, { keys: [updateKey] });
+        await this.storage.setItem(prefixedKey, { keys: [updateKey] });
       }
-    });
 
-    // Best-effort: bump updatedAt for the document.
-    await this.transaction(key, async () => {
       const meta = await this.getDocumentMetadata(key);
       await this.writeDocumentMetadata(key, { ...meta, updatedAt: Date.now() });
     });
@@ -107,10 +129,11 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     key: string,
     asyncDeleteKeys = true,
   ): Promise<Update | null> {
+    const prefixedKey = this.#getKey(key);
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
-        new Set());
+      ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))
+          ?.keys ?? new Set());
 
     if (keys.size === 0) {
       return null;
@@ -150,13 +173,13 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     key: string,
     metadata: DocumentMetadata,
   ): Promise<void> {
-    await this.storage.setItem(key + ":meta", metadata);
+    await this.storage.setItem(this.#getMetadataKey(key), metadata);
   }
 
   async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
     const now = Date.now();
     const existing = (await this.storage.getItem(
-      key + ":meta",
+      this.#getMetadataKey(key),
     )) as DocumentMetadata | null;
 
     if (!existing) {
@@ -184,14 +207,15 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       await this.fileStorage.deleteFilesByDocument(key);
     }
 
+    const prefixedKey = this.#getKey(key);
     // Delete metadata
-    await this.storage.removeItem(key + ":meta");
+    await this.storage.removeItem(this.#getMetadataKey(key));
 
     // Delete updates and index
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(key + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(key))?.keys ??
-        new Set());
+      ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))
+          ?.keys ?? new Set());
 
     if (keys.size > 0) {
       await Promise.all(
@@ -199,6 +223,6 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       );
     }
 
-    await this.storage.removeItem(key);
+    await this.storage.removeItem(prefixedKey);
   }
 }

@@ -628,6 +628,317 @@ describe("can encode and decode", () => {
     expect(payload.statusCode).toBe(filePayload.statusCode);
     expect(payload.reason).toBe(filePayload.reason);
   });
+
+  it("can encode and decode a milestone-list-request", () => {
+    expect(
+      decodeMessage(
+        new DocMessage("test-doc", {
+          type: "milestone-list-request",
+          snapshotIds: ["known-1", "known-2"],
+        }).encoded,
+      ),
+    ).toMatchInlineSnapshot(`
+      DocMessage {
+        "context": {},
+        "document": "test-doc",
+        "encrypted": false,
+        "payload": {
+          "snapshotIds": [
+            "known-1",
+            "known-2",
+          ],
+          "type": "milestone-list-request",
+        },
+        "type": "doc",
+      }
+    `);
+  });
+
+  it("can encode and decode a milestone-list-response", () => {
+    const milestones = [
+      {
+        id: "milestone-1",
+        name: "v1.0.0",
+        documentId: "test-doc",
+        createdAt: 1234567890,
+      },
+      {
+        id: "milestone-2",
+        name: "v1.0.1",
+        documentId: "test-doc",
+        createdAt: 1234567891,
+      },
+    ];
+
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-list-response",
+        milestones,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-list-response"
+    ) {
+      expect(decoded.payload.milestones).toEqual(milestones);
+    }
+  });
+
+  it("can encode and decode a milestone-snapshot-request", () => {
+    expect(
+      decodeMessage(
+        new DocMessage("test-doc", {
+          type: "milestone-snapshot-request",
+          milestoneId: "milestone-123",
+        }).encoded,
+      ),
+    ).toMatchInlineSnapshot(`
+      DocMessage {
+        "context": {},
+        "document": "test-doc",
+        "encrypted": false,
+        "payload": {
+          "milestoneId": "milestone-123",
+          "type": "milestone-snapshot-request",
+        },
+        "type": "doc",
+      }
+    `);
+  });
+
+  it("can encode and decode a milestone-snapshot-response", () => {
+    const snapshot = new Uint8Array([
+      1, 2, 3, 4, 5,
+    ]) as import(".").MilestoneSnapshot;
+
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-snapshot-response",
+        milestoneId: "milestone-123",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-snapshot-response"
+    ) {
+      expect(decoded.payload.milestoneId).toBe("milestone-123");
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-request with name", () => {
+    const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as import(".").MilestoneSnapshot;
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-request",
+        name: "v1.0.0",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-request"
+    ) {
+      expect(decoded.payload.name).toBe("v1.0.0");
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-request without name", () => {
+    const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as import(".").MilestoneSnapshot;
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-request",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-request"
+    ) {
+      expect(decoded.payload.name).toBeUndefined();
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-request with snapshot", () => {
+    const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as import(".").MilestoneSnapshot;
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-request",
+        name: "v1.0.0",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-request"
+    ) {
+      expect(decoded.payload.name).toBe("v1.0.0");
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-request with snapshot but no name", () => {
+    const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as import(".").MilestoneSnapshot;
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-request",
+        snapshot,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-request"
+    ) {
+      expect(decoded.payload.name).toBeUndefined();
+      expect(decoded.payload.snapshot).toEqual(snapshot);
+    }
+  });
+
+  it("can encode and decode a milestone-create-response", () => {
+    const milestone = {
+      id: "milestone-123",
+      name: "v1.0.0",
+      documentId: "test-doc",
+      createdAt: 1234567890,
+    };
+
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-create-response",
+        milestone,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-create-response"
+    ) {
+      expect(decoded.payload.milestone).toEqual(milestone);
+    }
+  });
+
+  it("can encode and decode a milestone-update-name-request", () => {
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-update-name-request",
+        milestoneId: "milestone-123",
+        name: "v1.0.1",
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-update-name-request"
+    ) {
+      expect(decoded.payload.milestoneId).toBe("milestone-123");
+      expect(decoded.payload.name).toBe("v1.0.1");
+    }
+  });
+
+  it("can encode and decode a milestone-update-name-response", () => {
+    const milestone = {
+      id: "milestone-123",
+      name: "v1.0.1",
+      documentId: "test-doc",
+      createdAt: 1234567890,
+    };
+
+    const decoded = decodeMessage(
+      new DocMessage("test-doc", {
+        type: "milestone-update-name-response",
+        milestone,
+      }).encoded,
+    );
+
+    expect(decoded).toBeInstanceOf(DocMessage);
+    expect(decoded.document).toBe("test-doc");
+    if (
+      decoded instanceof DocMessage &&
+      decoded.payload.type === "milestone-update-name-response"
+    ) {
+      expect(decoded.payload.milestone).toEqual(milestone);
+    }
+  });
+
+  it("can encode and decode a milestone-auth-message", () => {
+    expect(
+      decodeMessage(
+        new DocMessage("test-doc", {
+          type: "milestone-auth-message",
+          permission: "denied",
+          reason: "Milestone not found",
+        }).encoded,
+      ),
+    ).toMatchInlineSnapshot(`
+      DocMessage {
+        "context": {},
+        "document": "test-doc",
+        "encrypted": false,
+        "payload": {
+          "permission": "denied",
+          "reason": "Milestone not found",
+          "type": "milestone-auth-message",
+        },
+        "type": "doc",
+      }
+    `);
+  });
+
+  it("can encode and decode milestone messages with context", () => {
+    const milestoneRequest = new DocMessage(
+      "test-doc",
+      {
+        type: "milestone-list-request",
+        snapshotIds: [],
+      },
+      { userId: "user-123" },
+    );
+
+    expect(milestoneRequest.context).toEqual({ userId: "user-123" });
+    const decoded = decodeMessage(milestoneRequest.encoded);
+    expect(decoded.context).toEqual({});
+  });
+
+  it("can encode and decode milestone messages with encryption", () => {
+    const milestoneRequest = new DocMessage(
+      "test-doc",
+      {
+        type: "milestone-list-request",
+        snapshotIds: [],
+      },
+      {},
+      true, // encrypted
+    );
+
+    expect(milestoneRequest.encrypted).toBe(true);
+    const decoded = decodeMessage(milestoneRequest.encoded);
+    expect(decoded.encrypted).toBe(true);
+  });
 });
 
 describe("ping pong", () => {

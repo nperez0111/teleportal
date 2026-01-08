@@ -2,6 +2,7 @@ import { Milestone, type MilestoneSnapshot } from "teleportal";
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 import type { Document, MilestoneStorage } from "../types";
+import { withTransaction } from "./transaction";
 
 /**
  * Unstorage storage for {@link Milestone}s
@@ -36,20 +37,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
     key: string,
     cb: (key: string) => Promise<T>,
   ): Promise<T> {
-    const meta = await this.storage.getMeta(key);
-    const lockedTTL = meta?.ttl;
-    if (lockedTTL && lockedTTL > Date.now()) {
-      // Wait for the lock to be released with jitter to avoid thundering herd
-      const jitter = Math.random() * 1000; // Random delay between 0-1000ms
-      const waitTime = lockedTTL - Date.now() + jitter;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
-    }
-    const ttl = Date.now() + this.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
-    const result = await cb(key);
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
-    return result;
+    return withTransaction(this.storage, key, cb, { ttl: this.ttl });
   }
 
   #getMetadataKey(documentId: string) {
@@ -194,6 +182,48 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
             ),
           ),
       );
+    });
+  }
+
+  /**
+   * Update the name of a milestone
+   */
+  async updateMilestoneName(
+    documentId: Document["id"],
+    id: Milestone["id"],
+    name: string,
+  ): Promise<void> {
+    return this.transaction(this.#getMetadataKey(documentId), async (key) => {
+      const milestones = await this.getMilestones(documentId);
+      const milestoneIndex = milestones.findIndex((m) => m.id === id);
+      if (milestoneIndex === -1) {
+        throw new Error("Milestone not found", { cause: { documentId, id } });
+      }
+
+      const milestone = milestones[milestoneIndex];
+      let updatedMilestone: Milestone;
+      if (milestone.loaded) {
+        const snapshot = await milestone.fetchSnapshot();
+        updatedMilestone = new Milestone({
+          id: milestone.id,
+          name,
+          documentId: milestone.documentId,
+          createdAt: milestone.createdAt,
+          snapshot,
+        });
+      } else {
+        updatedMilestone = new Milestone({
+          id: milestone.id,
+          name,
+          documentId: milestone.documentId,
+          createdAt: milestone.createdAt,
+          getSnapshot: milestone["getSnapshot"]!,
+        });
+      }
+
+      milestones[milestoneIndex] = updatedMilestone;
+
+      await this.storage.setItemRaw(key, Milestone.encodeMetaDoc(milestones));
     });
   }
 }

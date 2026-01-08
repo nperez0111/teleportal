@@ -6,12 +6,7 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 import "../src/backend/logger";
 import { Server } from "teleportal/server";
-import {
-  UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
-  UnstorageFileStorage,
-  UnstorageTemporaryUploadStorage,
-} from "teleportal/storage";
+import { createUnstorage } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
   createTokenManager,
@@ -50,26 +45,11 @@ const server = new Server<TokenPayload & { clientId: string }>({
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
-    const fileStorage = new UnstorageFileStorage(backingStorage, {
-      keyPrefix: "file",
+    const { documentStorage } = createUnstorage(backingStorage, {
+      fileKeyPrefix: "file",
+      encrypted: ctx.documentId.includes("encrypted"),
+      scanKeys: false,
     });
-    fileStorage.temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
-      backingStorage,
-      { keyPrefix: "file" },
-    );
-
-    let documentStorage: UnstorageDocumentStorage | UnstorageEncryptedDocumentStorage;
-    if (ctx.documentId.includes("encrypted")) {
-      documentStorage = new UnstorageEncryptedDocumentStorage(backingStorage, {
-        fileStorage,
-      });
-    } else {
-      documentStorage = new UnstorageDocumentStorage(backingStorage, {
-        scanKeys: false,
-        fileStorage,
-      });
-    }
-    fileStorage.setDocumentStorage(documentStorage);
     return documentStorage;
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),

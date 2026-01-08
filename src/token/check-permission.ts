@@ -12,6 +12,12 @@ export function checkPermissionWithTokenManager(
       switch (message.payload.type) {
         case "sync-done":
         case "sync-step-1":
+        case "milestone-list-request":
+        case "milestone-snapshot-response":
+        case "milestone-snapshot-request":
+        case "milestone-list-response":
+        case "milestone-update-name-response":
+        case "milestone-create-response":
           return tokenManager.hasDocumentPermission(
             context,
             documentId,
@@ -19,12 +25,15 @@ export function checkPermissionWithTokenManager(
           );
         case "sync-step-2":
         case "update":
+        case "milestone-create-request":
+        case "milestone-update-name-request":
           return tokenManager.hasDocumentPermission(
             context,
             documentId,
             "write",
           );
         case "auth-message":
+        case "milestone-auth-message":
           // TODO what should we do here?
           console.log("Got an auth message, denying it?");
           // We shouldn't really be getting auth messages here, so we'll just deny them from being broadcasted

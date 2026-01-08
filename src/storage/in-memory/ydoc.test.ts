@@ -224,10 +224,15 @@ describe("YDocStorage", () => {
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
       await storage.handleUpdate(key, update);
+      
+      // Verify document exists before deletion
+      expect(YDocStorage.docs.has(key)).toBe(true);
 
       await storage.deleteDocument(key);
-      // Should not throw
-      expect(true).toBe(true);
+      
+      // Verify document and metadata are deleted
+      expect(YDocStorage.docs.has(key)).toBe(false);
+      expect(YDocStorage.metadata.has(key)).toBe(false);
     });
   });
 

@@ -2,6 +2,7 @@ import type { Storage } from "unstorage";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type {
   Document,
+  DocumentMetadataUpdater,
   DocumentStorage,
   File,
   FileMetadata,
@@ -22,12 +23,14 @@ export class UnstorageFileStorage implements FileStorage {
   temporaryUploadStorage?: TemporaryUploadStorage;
   #storage: Storage;
   #keyPrefix: string;
+  #metadataUpdater?: DocumentMetadataUpdater;
   #documentStorage?: DocumentStorage;
 
   constructor(
     storage: Storage,
     options?: {
       keyPrefix?: string;
+      metadataUpdater?: DocumentMetadataUpdater;
       documentStorage?: DocumentStorage;
       temporaryUploadStorage?: TemporaryUploadStorage;
     },
@@ -35,19 +38,31 @@ export class UnstorageFileStorage implements FileStorage {
     this.#storage = storage;
     this.#keyPrefix = options?.keyPrefix ?? "file";
     this.#documentStorage = options?.documentStorage;
+    // If documentStorage is provided, use it as metadataUpdater too
+    // (since DocumentStorage extends DocumentMetadataUpdater)
+    this.#metadataUpdater = options?.metadataUpdater ?? options?.documentStorage;
     this.temporaryUploadStorage = options?.temporaryUploadStorage;
   }
 
   /**
    * Set the document storage reference after construction.
-   * This is needed when the file storage is created before the document storage.
+   * This is used by factory functions to wire up the circular dependency.
    */
   setDocumentStorage(documentStorage: DocumentStorage): void {
     this.#documentStorage = documentStorage;
+    // Also set metadataUpdater if not already set
+    // DocumentStorage implements DocumentMetadataUpdater
+    if (!this.#metadataUpdater) {
+      this.#metadataUpdater = documentStorage as DocumentMetadataUpdater;
+    }
   }
 
   #getFileKey(fileId: string): string {
     return `${this.#keyPrefix}:file:${fileId}`;
+  }
+
+  #getChunkKey(fileKey: string, chunkIndex: number): string {
+    return `${fileKey}:chunk:${chunkIndex}`;
   }
 
   /**
@@ -60,28 +75,19 @@ export class UnstorageFileStorage implements FileStorage {
     await this.#storage.setItem(fileKey, {
       metadata: file.metadata,
       contentId: Array.from(file.contentId),
-      chunkKeys: file.chunks.map((_, index) => `${fileKey}:chunk:${index}`),
+      chunkKeys: file.chunks.map((_, index) => this.#getChunkKey(fileKey, index)),
     });
 
     await Promise.all(
       file.chunks.map((chunk, index) =>
-        this.#storage.setItemRaw(`${fileKey}:chunk:${index}`, chunk),
+        this.#storage.setItemRaw(this.#getChunkKey(fileKey, index), chunk),
       ),
     );
 
     const documentId = file.metadata.documentId;
-    if (!this.#documentStorage || !documentId) return;
-
-    await this.#documentStorage.transaction(documentId, async () => {
-      const metadata =
-        await this.#documentStorage!.getDocumentMetadata(documentId);
-      const files = Array.from(new Set([...(metadata.files ?? []), file.id]));
-      await this.#documentStorage!.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
+    if (this.#metadataUpdater && documentId) {
+      await this.#metadataUpdater.addFileToDocument(documentId, file.id);
+    }
   }
 
   async getFile(fileId: File["id"]): Promise<File | null> {
@@ -135,18 +141,9 @@ export class UnstorageFileStorage implements FileStorage {
     const fileMetadata = await this.#deleteFileData(fileId);
 
     const documentId = fileMetadata?.documentId;
-    if (!this.#documentStorage || !documentId) return;
-
-    await this.#documentStorage.transaction(documentId, async () => {
-      const metadata =
-        await this.#documentStorage!.getDocumentMetadata(documentId);
-      const files = (metadata.files ?? []).filter((id) => id !== fileId);
-      await this.#documentStorage!.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
+    if (this.#metadataUpdater && documentId) {
+      await this.#metadataUpdater.removeFileFromDocument(documentId, fileId);
+    }
   }
 
   async listFileMetadataByDocument(
@@ -193,30 +190,19 @@ export class UnstorageFileStorage implements FileStorage {
       contentId: Array.from(uploadResult.contentId),
       chunkKeys: Array.from(
         { length: expectedChunks },
-        (_, i) => `${fileKey}:chunk:${i}`,
+        (_, i) => this.#getChunkKey(fileKey, i),
       ),
     });
 
     // Fetch and store chunks incrementally
     for (let i = 0; i < expectedChunks; i++) {
       const chunk = await uploadResult.getChunk(i);
-      await this.#storage.setItemRaw(`${fileKey}:chunk:${i}`, chunk);
+      await this.#storage.setItemRaw(this.#getChunkKey(fileKey, i), chunk);
     }
 
     const documentId = uploadResult.progress.metadata.documentId;
-    if (!this.#documentStorage || !documentId) return;
-
-    await this.#documentStorage.transaction(documentId, async () => {
-      const docMetadata =
-        await this.#documentStorage!.getDocumentMetadata(documentId);
-      const files = Array.from(
-        new Set([...(docMetadata.files ?? []), uploadResult.fileId]),
-      );
-      await this.#documentStorage!.writeDocumentMetadata(documentId, {
-        ...docMetadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
+    if (this.#metadataUpdater && documentId) {
+      await this.#metadataUpdater.addFileToDocument(documentId, uploadResult.fileId);
+    }
   }
 }
