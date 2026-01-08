@@ -61,6 +61,10 @@ export class UnstorageFileStorage implements FileStorage {
     return `${this.#keyPrefix}:file:${fileId}`;
   }
 
+  #getChunkKey(fileKey: string, chunkIndex: number): string {
+    return `${fileKey}:chunk:${chunkIndex}`;
+  }
+
   /**
    * Store a completed file (helper for temporary upload storage composition).
    * This is intentionally not part of the public `FileStorage` interface.
@@ -71,12 +75,12 @@ export class UnstorageFileStorage implements FileStorage {
     await this.#storage.setItem(fileKey, {
       metadata: file.metadata,
       contentId: Array.from(file.contentId),
-      chunkKeys: file.chunks.map((_, index) => `${fileKey}:chunk:${index}`),
+      chunkKeys: file.chunks.map((_, index) => this.#getChunkKey(fileKey, index)),
     });
 
     await Promise.all(
       file.chunks.map((chunk, index) =>
-        this.#storage.setItemRaw(`${fileKey}:chunk:${index}`, chunk),
+        this.#storage.setItemRaw(this.#getChunkKey(fileKey, index), chunk),
       ),
     );
 
@@ -186,14 +190,14 @@ export class UnstorageFileStorage implements FileStorage {
       contentId: Array.from(uploadResult.contentId),
       chunkKeys: Array.from(
         { length: expectedChunks },
-        (_, i) => `${fileKey}:chunk:${i}`,
+        (_, i) => this.#getChunkKey(fileKey, i),
       ),
     });
 
     // Fetch and store chunks incrementally
     for (let i = 0; i < expectedChunks; i++) {
       const chunk = await uploadResult.getChunk(i);
-      await this.#storage.setItemRaw(`${fileKey}:chunk:${i}`, chunk);
+      await this.#storage.setItemRaw(this.#getChunkKey(fileKey, i), chunk);
     }
 
     const documentId = uploadResult.progress.metadata.documentId;

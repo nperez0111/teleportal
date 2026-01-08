@@ -21,8 +21,11 @@ import { UnstorageMilestoneStorage } from "./milestone-storage";
  */
 export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   private readonly storage: Storage;
-  private readonly options: { scanKeys: boolean; ttl: number; keyPrefix: string };
-
+  private readonly options: {
+    scanKeys: boolean;
+    ttl: number;
+    keyPrefix: string;
+  };
   constructor(
     storage: Storage,
     options?: {
@@ -35,19 +38,26 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   ) {
     super();
     this.storage = storage;
-    this.options = { scanKeys: false, ttl: 5 * 1000, keyPrefix: "", ...options };
+    this.options = {
+      scanKeys: false,
+      ttl: 5 * 1000,
+      keyPrefix: "",
+      ...options,
+    };
     this.fileStorage = options?.fileStorage;
-    this.milestoneStorage =
-      options?.milestoneStorage ??
-      new UnstorageMilestoneStorage(storage, {
-        keyPrefix: this.options.keyPrefix
-          ? `${this.options.keyPrefix}:milestone`
-          : "milestone",
-      });
+    this.milestoneStorage = options?.milestoneStorage;
   }
 
   #getKey(key: string): string {
     return this.options.keyPrefix ? `${this.options.keyPrefix}:${key}` : key;
+  }
+
+  #getUpdateKeyPrefix(key: string): string {
+    return this.#getKey(key) + "-update-";
+  }
+
+  #getMetadataKey(key: string): string {
+    return this.#getKey(key) + ":meta";
   }
 
   /**
@@ -83,7 +93,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     overwriteKeys?: boolean,
   ): Promise<void> {
     const prefixedKey = this.#getKey(key);
-    const updateKey = prefixedKey + "-update-" + uuidv4();
+    const updateKey = this.#getUpdateKeyPrefix(key) + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
     if (this.options.scanKeys) {
       return;
@@ -96,10 +106,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       } else {
         await this.storage.setItem(prefixedKey, { keys: [updateKey] });
       }
-    });
 
-    // Best-effort: bump updatedAt for the document.
-    await this.transaction(key, async () => {
       const meta = await this.getDocumentMetadata(key);
       await this.writeDocumentMetadata(key, { ...meta, updatedAt: Date.now() });
     });
@@ -134,9 +141,9 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   ): Promise<Update | null> {
     const prefixedKey = this.#getKey(key);
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(prefixedKey + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))?.keys ??
-        new Set());
+      ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))
+          ?.keys ?? new Set());
 
     if (keys.size === 0) {
       return null;
@@ -176,15 +183,13 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     key: string,
     metadata: DocumentMetadata,
   ): Promise<void> {
-    const prefixedKey = this.#getKey(key);
-    await this.storage.setItem(prefixedKey + ":meta", metadata);
+    await this.storage.setItem(this.#getMetadataKey(key), metadata);
   }
 
   async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
     const now = Date.now();
-    const prefixedKey = this.#getKey(key);
     const existing = (await this.storage.getItem(
-      prefixedKey + ":meta",
+      this.#getMetadataKey(key),
     )) as DocumentMetadata | null;
 
     if (!existing) {
@@ -214,13 +219,13 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
     const prefixedKey = this.#getKey(key);
     // Delete metadata
-    await this.storage.removeItem(prefixedKey + ":meta");
+    await this.storage.removeItem(this.#getMetadataKey(key));
 
     // Delete updates and index
     const keys = this.options.scanKeys
-      ? new Set(await this.storage.getKeys(prefixedKey + "-update-"))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))?.keys ??
-        new Set());
+      ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))
+          ?.keys ?? new Set());
 
     if (keys.size > 0) {
       await Promise.all(

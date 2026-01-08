@@ -413,12 +413,9 @@ describe("UnstorageDocumentStorage", () => {
   });
 
   describe("milestoneStorage", () => {
-    it("should default to UnstorageMilestoneStorage when not provided", () => {
+    it("should be undefined when not provided", () => {
       const testStorage = new UnstorageDocumentStorage(createStorage());
-      expect(testStorage.milestoneStorage).toBeDefined();
-      expect(testStorage.milestoneStorage).toBeInstanceOf(
-        UnstorageMilestoneStorage,
-      );
+      expect(testStorage.milestoneStorage).toBeUndefined();
     });
 
     it("should use provided milestoneStorage when provided", () => {
@@ -438,8 +435,10 @@ describe("UnstorageDocumentStorage", () => {
       expect(testStorage.milestoneStorage).toBe(customMilestoneStorage);
     });
 
-    it("should allow creating milestones with default milestoneStorage", async () => {
-      const testStorage = new UnstorageDocumentStorage(createStorage());
+    it("should allow creating milestones when milestoneStorage is provided", async () => {
+      const testStorage = new UnstorageDocumentStorage(createStorage(), {
+        milestoneStorage: new UnstorageMilestoneStorage(createStorage()),
+      });
       const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
 
       const milestoneId = await testStorage.milestoneStorage!.createMilestone({

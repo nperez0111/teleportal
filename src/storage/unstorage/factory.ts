@@ -1,13 +1,10 @@
 import type { Storage } from "unstorage";
 
-import type {
-  DocumentStorage,
-  FileStorage,
-} from "../types";
 import { UnstorageEncryptedDocumentStorage } from "./encrypted";
 import { UnstorageFileStorage } from "./file-storage";
-import { UnstorageDocumentStorage } from "./unencrypted";
+import { UnstorageMilestoneStorage } from "./milestone-storage";
 import { UnstorageTemporaryUploadStorage } from "./temporary-upload-storage";
+import { UnstorageDocumentStorage } from "./unencrypted";
 
 /**
  * Options for creating unstorage-based storage
@@ -23,6 +20,11 @@ export interface CreateUnstorageOptions {
    * @default ""
    */
   documentKeyPrefix?: string;
+  /**
+   * Key prefix for milestone storage
+   * @default "{documentKeyPrefix}:milestone" or "milestone" if documentKeyPrefix is empty
+   */
+  milestoneKeyPrefix?: string;
   /**
    * Whether to use encrypted document storage
    * @default false
@@ -67,7 +69,7 @@ export function createUnstorage(
   options?: CreateUnstorageOptions,
 ): UnstorageStorage {
   const fileKeyPrefix = options?.fileKeyPrefix ?? "file";
-  const documentKeyPrefix = options?.documentKeyPrefix ?? "";
+  const documentKeyPrefix = options?.documentKeyPrefix ?? "document";
 
   const fileStorage = new UnstorageFileStorage(storage, {
     keyPrefix: fileKeyPrefix,
@@ -76,12 +78,22 @@ export function createUnstorage(
     }),
   });
 
-  let documentStorage: UnstorageDocumentStorage | UnstorageEncryptedDocumentStorage;
+  const milestoneKeyPrefix =
+    options?.milestoneKeyPrefix ?? `${documentKeyPrefix}-milestone`;
+
+  const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+    keyPrefix: milestoneKeyPrefix,
+  });
+
+  let documentStorage:
+    | UnstorageDocumentStorage
+    | UnstorageEncryptedDocumentStorage;
   if (options?.encrypted) {
     documentStorage = new UnstorageEncryptedDocumentStorage(storage, {
       ttl: options?.ttl,
       keyPrefix: documentKeyPrefix,
       fileStorage,
+      milestoneStorage,
     });
   } else {
     documentStorage = new UnstorageDocumentStorage(storage, {
@@ -89,6 +101,7 @@ export function createUnstorage(
       ttl: options?.ttl,
       keyPrefix: documentKeyPrefix,
       fileStorage,
+      milestoneStorage,
     });
   }
 

@@ -12,7 +12,6 @@ import { UnstorageMilestoneStorage } from "./milestone-storage";
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
   private readonly options: { ttl: number; keyPrefix: string };
-
   constructor(
     storage: Storage,
     options?: { ttl?: number; keyPrefix?: string; fileStorage?: FileStorage; milestoneStorage?: MilestoneStorage },
@@ -21,17 +20,19 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     this.storage = storage;
     this.options = { ttl: 5 * 1000, keyPrefix: "", ...options };
     this.fileStorage = options?.fileStorage;
-    this.milestoneStorage =
-      options?.milestoneStorage ??
-      new UnstorageMilestoneStorage(storage, {
-        keyPrefix: this.options.keyPrefix
-          ? `${this.options.keyPrefix}:milestone`
-          : "milestone",
-      });
+    this.milestoneStorage = options?.milestoneStorage;
   }
 
   #getKey(key: string): string {
     return this.options.keyPrefix ? `${this.options.keyPrefix}:${key}` : key;
+  }
+
+  #getMetadataKey(key: string): string {
+    return this.#getKey(key) + ":meta";
+  }
+
+  #getMessageKey(key: string, messageId: string): string {
+    return this.#getKey(key) + ":" + messageId;
   }
 
   /**
@@ -62,14 +63,12 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     key: string,
     metadata: EncryptedDocumentMetadata,
   ): Promise<void> {
-    const prefixedKey = this.#getKey(key);
-    await this.storage.setItem(prefixedKey + ":meta", metadata);
+    await this.storage.setItem(this.#getMetadataKey(key), metadata);
   }
 
   async getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
     const now = Date.now();
-    const prefixedKey = this.#getKey(key);
-    const metadata = await this.storage.getItem(prefixedKey + ":meta");
+    const metadata = await this.storage.getItem(this.#getMetadataKey(key));
     if (!metadata) {
       return {
         createdAt: now,
@@ -92,9 +91,8 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     messageId: EncryptedMessageId,
     payload: EncryptedBinary,
   ): Promise<void> {
-    const prefixedKey = this.#getKey(key);
     await this.storage.setItemRaw<EncryptedBinary>(
-      prefixedKey + ":" + messageId,
+      this.#getMessageKey(key, messageId),
       payload,
     );
   }
@@ -103,9 +101,8 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     key: string,
     messageId: EncryptedMessageId,
   ): Promise<EncryptedBinary | null> {
-    const prefixedKey = this.#getKey(key);
     const payload = await this.storage.getItemRaw<EncryptedBinary>(
-      prefixedKey + ":" + messageId,
+      this.#getMessageKey(key, messageId),
     );
     return payload;
   }
@@ -123,12 +120,12 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     for (const clientId in metadata.seenMessages) {
       for (const counter in metadata.seenMessages[clientId]) {
         const messageId = metadata.seenMessages[clientId][counter];
-        promises.push(this.storage.removeItem(prefixedKey + ":" + messageId));
+        promises.push(this.storage.removeItem(this.#getMessageKey(key, messageId)));
       }
     }
     await Promise.all(promises);
 
     // Delete metadata
-    await this.storage.removeItem(prefixedKey + ":meta");
+    await this.storage.removeItem(this.#getMetadataKey(key));
   }
 }
