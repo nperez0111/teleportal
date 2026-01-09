@@ -91,10 +91,8 @@ export function computeCursor(clientCursor?: string | null): string {
     clientCursor && /^[0-9]+$/.test(clientCursor)
       ? Number.parseInt(clientCursor, 10)
       : null;
-  if (parsed !== null && Number.isFinite(parsed)) {
-    if (parsed >= current) {
-      return String(parsed + 1);
-    }
+  if (parsed !== null && Number.isFinite(parsed) && parsed >= current) {
+    return String(parsed + 1);
   }
   return String(current);
 }

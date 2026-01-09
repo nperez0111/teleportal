@@ -7,6 +7,7 @@ export * from "./passthrough";
 export * from "./pubSub";
 export * from "./rate-limiter";
 export * from "./sse";
+export * from "./durable-streams";
 export * from "./ydoc";
 export * from "./utils";
 export * from "./send-file";
