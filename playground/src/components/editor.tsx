@@ -101,6 +101,8 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
           editor.transact((tr) => {
             tr.replace(0, tr.doc.content.size - 2, node.slice(0));
           });
+          // Destroy the temporary doc immediately after extracting the node
+          doc.destroy();
         })
         .catch((error) => {
           // Only log errors if the effect is still active
@@ -109,18 +111,18 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
             // Optionally show user-facing error feedback here
           }
         });
-    } else {
+    } else if (selectedMilestone === null) {
       editor.getExtension(ForkYDocExtension)?.merge({ keepChanges: false });
     }
 
     // Cleanup: restore original document state before switching to a new milestone
     return () => {
       isActive = false;
-      // If we were viewing a milestone, merge back to restore original state
-      // This ensures that when switching between milestones (A → B), we merge
-      // before the new effect forks again for the new milestone
-      if (selectedMilestone) {
-        editor.getExtension(ForkYDocExtension)?.merge({ keepChanges: false });
+      // Only merge if we actually have an active fork
+      // This handles transitions: milestone → null, milestone → milestone, and unmount
+      const forkExtension = editor.getExtension(ForkYDocExtension);
+      if (forkExtension?.store.state.isForked) {
+        forkExtension.merge({ keepChanges: false });
       }
     };
   }, [selectedMilestone, editor]);
