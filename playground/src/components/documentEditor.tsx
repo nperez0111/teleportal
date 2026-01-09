@@ -34,6 +34,12 @@ export function DocumentEditor({
     };
   }, []);
 
+  // Reset milestone state when document changes
+  useEffect(() => {
+    setSelectedMilestone(null);
+    setIsMilestonePanelOpen(false);
+  }, [documentId]);
+
   if (!documentId || !document) {
     return (
       <div className="flex-1 flex items-center justify-center p-4">
