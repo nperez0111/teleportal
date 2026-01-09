@@ -6,21 +6,39 @@ import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
-import { FileStorage } from "../file-storage";
+import type { FileStorage, MilestoneStorage } from "../types";
+import { UnstorageMilestoneStorage } from "./milestone-storage";
+import { withTransaction } from "./transaction";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
-  private readonly options: { ttl: number };
-  public readonly fileStorage: FileStorage | undefined;
-
+  private readonly options: { ttl: number; keyPrefix: string };
   constructor(
     storage: Storage,
-    options?: { ttl?: number; fileStorage?: FileStorage },
+    options?: {
+      ttl?: number;
+      keyPrefix?: string;
+      fileStorage?: FileStorage;
+      milestoneStorage?: MilestoneStorage;
+    },
   ) {
     super();
     this.storage = storage;
-    this.options = { ttl: 5 * 1000, ...options };
+    this.options = { ttl: 5 * 1000, keyPrefix: "", ...options };
     this.fileStorage = options?.fileStorage;
+    this.milestoneStorage = options?.milestoneStorage;
+  }
+
+  #getKey(key: string): string {
+    return this.options.keyPrefix ? `${this.options.keyPrefix}:${key}` : key;
+  }
+
+  #getMetadataKey(key: string): string {
+    return this.#getKey(key) + ":meta";
+  }
+
+  #getMessageKey(key: string, messageId: string): string {
+    return this.#getKey(key) + ":" + messageId;
   }
 
   /**
@@ -30,35 +48,37 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
    * @returns The TTL of the lock
    */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
-    const meta = await this.storage.getMeta(key);
-    const lockedTTL = meta?.ttl;
-    if (lockedTTL && lockedTTL > Date.now()) {
-      // Wait for the lock to be released with jitter to avoid thundering herd
-      const jitter = Math.random() * 1000; // Random delay between 0-1000ms
-      const waitTime = lockedTTL - Date.now() + jitter;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      return await this.transaction(key, cb);
-    }
-    const ttl = Date.now() + this.options.ttl;
-    await this.storage.setMeta(key, { ttl, ...meta });
-    const result = await cb();
-    await this.storage.setMeta(key, { ttl: Date.now(), ...meta });
-    return result;
+    const prefixedKey = this.#getKey(key);
+    return withTransaction(this.storage, prefixedKey, async () => cb(), {
+      ttl: this.options.ttl,
+    });
   }
 
   async writeDocumentMetadata(
     key: string,
     metadata: EncryptedDocumentMetadata,
   ): Promise<void> {
-    await this.storage.setItem(key + ":meta", metadata);
+    await this.storage.setItem(this.#getMetadataKey(key), metadata);
   }
 
-  async fetchDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
-    const metadata = await this.storage.getItem(key + ":meta");
+  async getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
+    const now = Date.now();
+    const metadata = await this.storage.getItem(this.#getMetadataKey(key));
     if (!metadata) {
-      return { seenMessages: {} };
+      return {
+        createdAt: now,
+        updatedAt: now,
+        encrypted: true,
+        seenMessages: {},
+      };
     }
-    return metadata as EncryptedDocumentMetadata;
+    const m = metadata as EncryptedDocumentMetadata;
+    return {
+      ...m,
+      createdAt: typeof m.createdAt === "number" ? m.createdAt : now,
+      updatedAt: typeof m.updatedAt === "number" ? m.updatedAt : now,
+      encrypted: typeof m.encrypted === "boolean" ? m.encrypted : true,
+    };
   }
 
   async storeEncryptedMessage(
@@ -67,7 +87,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     payload: EncryptedBinary,
   ): Promise<void> {
     await this.storage.setItemRaw<EncryptedBinary>(
-      key + ":" + messageId,
+      this.#getMessageKey(key, messageId),
       payload,
     );
   }
@@ -77,7 +97,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     messageId: EncryptedMessageId,
   ): Promise<EncryptedBinary | null> {
     const payload = await this.storage.getItemRaw<EncryptedBinary>(
-      key + ":" + messageId,
+      this.#getMessageKey(key, messageId),
     );
     return payload;
   }
@@ -87,19 +107,22 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       await this.fileStorage.deleteFilesByDocument(key);
     }
 
-    const metadata = await this.fetchDocumentMetadata(key);
+    const metadata = await this.getDocumentMetadata(key);
+    const prefixedKey = this.#getKey(key);
 
     // Delete all messages
     const promises = [];
     for (const clientId in metadata.seenMessages) {
       for (const counter in metadata.seenMessages[clientId]) {
         const messageId = metadata.seenMessages[clientId][counter];
-        promises.push(this.storage.removeItem(key + ":" + messageId));
+        promises.push(
+          this.storage.removeItem(this.#getMessageKey(key, messageId)),
+        );
       }
     }
     await Promise.all(promises);
 
     // Delete metadata
-    await this.storage.removeItem(key + ":meta");
+    await this.storage.removeItem(this.#getMetadataKey(key));
   }
 }

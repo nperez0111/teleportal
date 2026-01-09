@@ -6,7 +6,7 @@ import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
-import { FileStorage } from "../file-storage";
+import type { FileStorage } from "../types";
 
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   constructor(
@@ -18,21 +18,25 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
           updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
         },
       ) => Promise<void>;
-      fetch: (key: string) => Promise<{
-        metadata: EncryptedDocumentMetadata;
-        updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
-      }>;
+      fetch: (key: string) => Promise<
+        | {
+            metadata: EncryptedDocumentMetadata;
+            updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
+          }
+        | undefined
+      >;
     } = {
       write: async (key, doc) => {
         EncryptedMemoryStorage.docs.set(key, doc);
       },
       fetch: async (key) => {
-        return EncryptedMemoryStorage.docs.get(key)!;
+        return EncryptedMemoryStorage.docs.get(key);
       },
     },
-    public readonly fileStorage: FileStorage | undefined = undefined,
+    fileStorage: FileStorage | undefined = undefined,
   ) {
     super();
+    this.fileStorage = fileStorage;
   }
   public static docs = new Map<
     string,
@@ -46,26 +50,31 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     key: string,
     metadata: EncryptedDocumentMetadata,
   ): Promise<void> {
-    let doc = await this.options.fetch(key);
-    if (!doc) {
-      doc = {
-        metadata,
-        updates: new Map(),
-      };
-    } else {
-      doc.metadata = metadata;
-    }
-    await this.options.write(key, doc);
+    const existing = await this.options.fetch(key);
+    await this.options.write(key, {
+      metadata,
+      updates: existing?.updates ?? new Map(),
+    });
   }
 
-  async fetchDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
+  async getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata> {
+    const now = Date.now();
     const doc = await this.options.fetch(key);
     if (!doc) {
       return {
+        createdAt: now,
+        updatedAt: now,
+        encrypted: true,
         seenMessages: {},
       };
     }
-    return doc.metadata;
+    const m = doc.metadata;
+    return {
+      ...m,
+      createdAt: typeof m.createdAt === "number" ? m.createdAt : now,
+      updatedAt: typeof m.updatedAt === "number" ? m.updatedAt : now,
+      encrypted: typeof m.encrypted === "boolean" ? m.encrypted : true,
+    };
   }
 
   async storeEncryptedMessage(
@@ -73,28 +82,34 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     messageId: EncryptedMessageId,
     payload: EncryptedUpdatePayload,
   ): Promise<void> {
-    let doc = await this.options.fetch(key);
-    if (!doc) {
-      doc = {
-        metadata: { seenMessages: {} },
-        updates: new Map(),
-      };
-    }
-    doc.updates.set(messageId, payload);
-    await this.options.write(key, doc);
+    const now = Date.now();
+    const existing = await this.options.fetch(key);
+    const updates = existing?.updates ?? new Map();
+    updates.set(messageId, payload);
+    await this.options.write(key, {
+      metadata:
+        existing?.metadata ??
+        ({
+          createdAt: now,
+          updatedAt: now,
+          encrypted: true,
+          seenMessages: {},
+        } satisfies EncryptedDocumentMetadata),
+      updates,
+    });
   }
 
   async fetchEncryptedMessage(
     key: string,
     messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdatePayload> {
+  ): Promise<EncryptedUpdatePayload | null> {
     const doc = await this.options.fetch(key);
     if (!doc) {
-      throw new Error("Document not found");
+      return null;
     }
     const update = doc.updates.get(messageId);
     if (!update) {
-      throw new Error("Message not found");
+      return null;
     }
     return update;
   }

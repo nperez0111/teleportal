@@ -3,10 +3,21 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
+  DocMessage,
   Message,
+  Milestone,
   Observable,
   RawReceivedMessage,
   type ClientContext,
+  type DecodedMilestoneAuthMessage,
+  type DecodedMilestoneCreateRequest,
+  type DecodedMilestoneListRequest,
+  type DecodedMilestoneListResponse,
+  type DecodedMilestoneResponse,
+  type DecodedMilestoneSnapshotRequest,
+  type DecodedMilestoneSnapshotResponse,
+  type DecodedMilestoneUpdateNameRequest,
+  type MilestoneSnapshot,
   type Transport,
 } from "teleportal";
 import {
@@ -343,6 +354,320 @@ export class Provider<
 
   public [Symbol.dispose]() {
     this.destroy();
+  }
+
+  /**
+   * Wait for a specific response message matching the predicate.
+   * @param predicate - Function that returns true if the message matches, or throws if it's an error response
+   * @param timeout - Timeout in milliseconds (default: 30000)
+   * @returns Promise that resolves with the matched message
+   */
+  #waitForResponse<T extends Message>(
+    predicate: (message: RawReceivedMessage) => message is T,
+    timeout: number = 30000,
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let resolved = false;
+      let unsubscribe: (() => void) | undefined;
+
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = undefined;
+        }
+        if (unsubscribe) {
+          unsubscribe();
+          unsubscribe = undefined;
+        }
+      };
+
+      const handleMessage = (message: RawReceivedMessage) => {
+        if (resolved) return;
+
+        try {
+          if (predicate(message)) {
+            resolved = true;
+            cleanup();
+            resolve(message);
+          }
+        } catch (error) {
+          // Predicate threw an error (e.g., auth denied)
+          resolved = true;
+          cleanup();
+          reject(error);
+        }
+      };
+
+      // Set up timeout
+      timeoutId = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          reject(new Error("Timeout waiting for response message"));
+        }
+      }, timeout);
+
+      // Listen for messages from the connection
+      unsubscribe = this.#underlyingConnection.on("message", handleMessage);
+    });
+  }
+
+  /**
+   * Request a list of all milestones for the current document.
+   * @param snapshotIds - Optional array of snapshot IDs to exclude from the response (for incremental updates)
+   * @returns Promise that resolves with an array of Milestone instances
+   * @throws Error if the operation is denied or if the connection fails
+   */
+  async listMilestones(snapshotIds?: string[]): Promise<Milestone[]> {
+    // Ensure we're connected
+    await this.synced;
+
+    // Send the request
+    const request = new DocMessage(
+      this.document,
+      {
+        type: "milestone-list-request",
+        snapshotIds: snapshotIds ?? [],
+      } as DecodedMilestoneListRequest,
+      undefined,
+      false, // TODO: Determine encryption from document/transport
+    );
+
+    await this.#underlyingConnection.send(request);
+
+    // Wait for response and handle errors
+    try {
+      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
+        (msg): msg is DocMessage<ClientContext> => {
+          if (msg.type !== "doc" || msg.document !== this.document)
+            return false;
+          const payload = msg.payload as any;
+          // Check for auth errors first
+          if (payload.type === "milestone-auth-message") {
+            const authMsg = payload as DecodedMilestoneAuthMessage;
+            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
+          }
+          return payload.type === "milestone-list-response";
+        },
+      );
+
+      const payload = response.payload as DecodedMilestoneListResponse;
+
+      // Convert metadata to Milestone instances with lazy snapshot loading
+      return payload.milestones.map(
+        (meta) =>
+          new Milestone({
+            id: meta.id,
+            name: meta.name,
+            documentId: meta.documentId,
+            createdAt: meta.createdAt,
+            getSnapshot: (documentId: string, id: string) =>
+              this.getMilestoneSnapshot(id),
+          }),
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("denied")) {
+        throw error;
+      }
+      throw new Error(
+        `Failed to list milestones: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Request the snapshot content for a specific milestone.
+   * @param milestoneId - The ID of the milestone to fetch
+   * @returns Promise that resolves with the MilestoneSnapshot (Uint8Array)
+   * @throws Error if the operation is denied or if the connection fails
+   */
+  async getMilestoneSnapshot(milestoneId: string): Promise<MilestoneSnapshot> {
+    // Ensure we're connected
+    await this.synced;
+
+    // Send the request
+    const request = new DocMessage(
+      this.document,
+      {
+        type: "milestone-snapshot-request",
+        milestoneId,
+      } as DecodedMilestoneSnapshotRequest,
+      undefined,
+      false, // TODO: Determine encryption from document/transport
+    );
+
+    await this.#underlyingConnection.send(request);
+
+    // Wait for response and handle errors
+    try {
+      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
+        (msg): msg is DocMessage<ClientContext> => {
+          if (msg.type !== "doc" || msg.document !== this.document)
+            return false;
+          const payload = msg.payload as any;
+          // Check for auth errors first
+          if (payload.type === "milestone-auth-message") {
+            const authMsg = payload as DecodedMilestoneAuthMessage;
+            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
+          }
+          // Verify this is the response for the requested milestone
+          if (payload.type === "milestone-snapshot-response") {
+            return (
+              (payload as DecodedMilestoneSnapshotResponse).milestoneId ===
+              milestoneId
+            );
+          }
+          return false;
+        },
+      );
+
+      const payload = response.payload as DecodedMilestoneSnapshotResponse;
+      return payload.snapshot;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("denied")) {
+        throw error;
+      }
+      throw new Error(
+        `Failed to get milestone snapshot: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Create a new milestone from the current document state.
+   * @param name - Optional name for the milestone. If not provided, the server will auto-generate one.
+   * @returns Promise that resolves with the created Milestone instance
+   * @throws Error if the operation is denied or if the connection fails
+   */
+  async createMilestone(name?: string): Promise<Milestone> {
+    // Ensure we're connected
+    await this.synced;
+    // TODO encrypted milestones?
+    const snapshot = Y.encodeStateAsUpdateV2(this.doc) as MilestoneSnapshot;
+
+    // Send the request
+    const request = new DocMessage(
+      this.document,
+      {
+        type: "milestone-create-request",
+        name,
+        snapshot,
+      } as DecodedMilestoneCreateRequest,
+      undefined,
+      false, // TODO: Determine encryption from document/transport
+    );
+
+    await this.#underlyingConnection.send(request);
+
+    // Wait for response and handle errors
+    try {
+      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
+        (msg): msg is DocMessage<ClientContext> => {
+          if (msg.type !== "doc" || msg.document !== this.document)
+            return false;
+          const payload = msg.payload as any;
+          // Check for auth errors first
+          if (payload.type === "milestone-auth-message") {
+            const authMsg = payload as DecodedMilestoneAuthMessage;
+            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
+          }
+          return payload.type === "milestone-create-response";
+        },
+      );
+
+      const payload = response.payload as DecodedMilestoneResponse;
+      const meta = payload.milestone;
+
+      // Convert to Milestone instance with lazy snapshot loading
+      return new Milestone({
+        id: meta.id,
+        name: meta.name,
+        documentId: meta.documentId,
+        createdAt: meta.createdAt,
+        getSnapshot: (documentId: string, id: string) =>
+          this.getMilestoneSnapshot(id),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("denied")) {
+        throw error;
+      }
+      throw new Error(
+        `Failed to create milestone: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Update the name of an existing milestone.
+   * @param milestoneId - The ID of the milestone to update
+   * @param name - The new name for the milestone
+   * @returns Promise that resolves with the updated Milestone instance
+   * @throws Error if the operation is denied or if the connection fails
+   */
+  async updateMilestoneName(
+    milestoneId: string,
+    name: string,
+  ): Promise<Milestone> {
+    // Ensure we're connected
+    await this.synced;
+
+    // Send the request
+    const request = new DocMessage(
+      this.document,
+      {
+        type: "milestone-update-name-request",
+        milestoneId,
+        name,
+      } as DecodedMilestoneUpdateNameRequest,
+      undefined,
+      false, // TODO: Determine encryption from document/transport
+    );
+
+    await this.#underlyingConnection.send(request);
+
+    // Wait for response and handle errors
+    try {
+      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
+        (msg): msg is DocMessage<ClientContext> => {
+          if (msg.type !== "doc" || msg.document !== this.document)
+            return false;
+          const payload = msg.payload as any;
+          // Check for auth errors first
+          if (payload.type === "milestone-auth-message") {
+            const authMsg = payload as DecodedMilestoneAuthMessage;
+            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
+          }
+          // Verify this is the response for the requested milestone
+          if (payload.type === "milestone-update-name-response") {
+            return (
+              (payload as DecodedMilestoneResponse).milestone.id === milestoneId
+            );
+          }
+          return false;
+        },
+      );
+
+      const payload = response.payload as DecodedMilestoneResponse;
+      const meta = payload.milestone;
+
+      // Convert to Milestone instance with lazy snapshot loading
+      return new Milestone({
+        id: meta.id,
+        name: meta.name,
+        documentId: meta.documentId,
+        createdAt: meta.createdAt,
+        getSnapshot: (documentId: string, id: string) =>
+          this.getMilestoneSnapshot(id),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("denied")) {
+        throw error;
+      }
+      throw new Error(
+        `Failed to update milestone name: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

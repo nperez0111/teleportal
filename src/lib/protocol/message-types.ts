@@ -12,6 +12,14 @@ import type {
   DecodedFileDownload,
   DecodedFilePart,
   DecodedFileUpload,
+  DecodedMilestoneAuthMessage,
+  DecodedMilestoneCreateRequest,
+  DecodedMilestoneListRequest,
+  DecodedMilestoneListResponse,
+  DecodedMilestoneResponse,
+  DecodedMilestoneSnapshotRequest,
+  DecodedMilestoneSnapshotResponse,
+  DecodedMilestoneUpdateNameRequest,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -152,7 +160,15 @@ export class DocMessage<
       | DecodedSyncStep2
       | DecodedSyncDone
       | DecodedUpdateStep
-      | DecodedAuthMessage,
+      | DecodedAuthMessage
+      | DecodedMilestoneListRequest
+      | DecodedMilestoneListResponse
+      | DecodedMilestoneSnapshotRequest
+      | DecodedMilestoneSnapshotResponse
+      | DecodedMilestoneCreateRequest
+      | DecodedMilestoneResponse
+      | DecodedMilestoneUpdateNameRequest
+      | DecodedMilestoneAuthMessage,
     context?: Context,
     public encrypted: boolean = false,
     encoded?: EncodedDocUpdateMessage<DocStep>,

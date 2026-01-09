@@ -2,11 +2,13 @@ import crossws from "crossws/adapters/bun";
 import { createDatabase } from "db0";
 import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
-// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
+// @ts-ignore - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
 
 import { Server } from "teleportal/server";
-import { UnstorageEncryptedDocumentStorage } from "teleportal/storage";
+import {
+  createUnstorage,
+} from "teleportal/storage";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import {
@@ -36,7 +38,11 @@ const tokenManager = createTokenManager({
 
 const server = new Server({
   getStorage: async (ctx) => {
-    return new UnstorageEncryptedDocumentStorage(storage);
+    const { documentStorage } = createUnstorage(storage, {
+      fileKeyPrefix: "file",
+      encrypted: true,
+    });
+    return documentStorage;
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
 });

@@ -2,15 +2,11 @@ import crossws from "crossws/adapters/bun";
 import { createDatabase } from "db0";
 import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
-// @ts-expect-error - unstorage driver types can't be resolved via exports but work at runtime
+// @ts-ignore - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
 import "../src/backend/logger";
 import { Server } from "teleportal/server";
-import {
-  UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
-  UnstorageFileStorage,
-} from "teleportal/storage";
+import { createUnstorage } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
   createTokenManager,
@@ -49,19 +45,12 @@ const server = new Server<TokenPayload & { clientId: string }>({
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
-    const fileStorage = new UnstorageFileStorage(backingStorage, {
-      keyPrefix: "file",
-    });
-
-    if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(backingStorage, {
-        fileStorage,
-      });
-    }
-    return new UnstorageDocumentStorage(backingStorage, {
+    const { documentStorage } = createUnstorage(backingStorage, {
+      fileKeyPrefix: "file",
+      encrypted: ctx.documentId.includes("encrypted"),
       scanKeys: false,
-      fileStorage,
     });
+    return documentStorage;
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
   // pubSub: new RedisPubSub({

@@ -7,6 +7,7 @@ import {
   type Transport,
   DocMessage,
   type StateVector,
+  type MilestoneSnapshot,
 } from "teleportal";
 import { Connection, type ConnectionState } from "./connection";
 import { Provider, type DefaultTransportProperties } from "./provider";
@@ -18,6 +19,9 @@ class MockConnection extends Connection<{
   connecting: {};
   errored: { reconnectAttempt: number };
 }> {
+  public sentMessages: Message[] = [];
+  public responseHandler?: (message: Message) => Message | null;
+
   constructor() {
     super({ connect: false });
     // Initialize state to disconnected
@@ -41,7 +45,17 @@ class MockConnection extends Connection<{
   }
 
   protected async sendMessage(message: Message): Promise<void> {
-    // Mock implementation
+    this.sentMessages.push(message);
+    // If there's a response handler, simulate a response
+    if (this.responseHandler) {
+      const response = this.responseHandler(message);
+      if (response) {
+        // Emit the response asynchronously to simulate network delay
+        setTimeout(() => {
+          this.call("message", response);
+        }, 0);
+      }
+    }
   }
 
   protected async closeConnection(): Promise<void> {
@@ -65,6 +79,11 @@ class MockConnection extends Connection<{
       type: "connected",
       context: { clientId: "test-client" },
     });
+  }
+
+  // Helper method to simulate receiving a message
+  public simulateMessage(message: Message) {
+    this.call("message", message);
   }
 }
 
@@ -410,5 +429,365 @@ describe("Provider sync events", () => {
     expect(trueEvents.length).toBeGreaterThan(0);
     expect(trueEvents[0][0]).toBe(true);
     expect(trueEvents[0][1]).toBe(ydoc);
+  });
+});
+
+describe("Provider milestone operations", () => {
+  let provider: Provider<MockTransport>;
+  let mockConnection: MockConnection;
+  let mockTransport: MockTransport;
+  let ydoc: Y.Doc;
+
+  beforeEach(() => {
+    ydoc = new Y.Doc();
+    mockConnection = new MockConnection();
+    mockTransport = new MockTransport();
+    mockConnection.sentMessages = [];
+  });
+
+  afterEach(() => {
+    if (provider) {
+      provider.destroy();
+    }
+    if (mockConnection) {
+      mockConnection.destroy();
+    }
+  });
+
+  it("should list milestones", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-list-request"
+      ) {
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-list-response",
+            milestones: [
+              {
+                id: "milestone-1",
+                name: "v1.0.0",
+                documentId: "test-doc",
+                createdAt: 1234567890,
+              },
+              {
+                id: "milestone-2",
+                name: "v1.1.0",
+                documentId: "test-doc",
+                createdAt: 1234567900,
+              },
+            ],
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
+
+    const milestones = await provider.listMilestones();
+
+    expect(milestones).toHaveLength(2);
+    expect(milestones[0].id).toBe("milestone-1");
+    expect(milestones[0].name).toBe("v1.0.0");
+    expect(milestones[1].id).toBe("milestone-2");
+    expect(milestones[1].name).toBe("v1.1.0");
+  });
+
+  it("should get milestone snapshot", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const testSnapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+
+    // Set up response handler for snapshot request
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-snapshot-request"
+      ) {
+        const payload = (message as any).payload;
+        if (payload.milestoneId === "milestone-1") {
+          return new DocMessage<ClientContext>(
+            "test-doc",
+            {
+              type: "milestone-snapshot-response",
+              milestoneId: "milestone-1",
+              snapshot: testSnapshot,
+            } as any,
+            { clientId: "test-client" },
+          );
+        }
+      }
+      return null;
+    };
+
+    const snapshot = await provider.getMilestoneSnapshot("milestone-1");
+
+    expect(snapshot).toEqual(testSnapshot);
+  });
+
+  it("should create milestone", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Add some content to the document
+    const ytext = ydoc.getText("content");
+    ytext.insert(0, "Hello, World!");
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-create-request"
+      ) {
+        const payload = (message as any).payload;
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-create-response",
+            milestone: {
+              id: "milestone-1",
+              name: payload.name || "v1.0.0",
+              documentId: "test-doc",
+              createdAt: Date.now(),
+            },
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
+
+    const milestone = await provider.createMilestone("My Milestone");
+
+    expect(milestone.id).toBe("milestone-1");
+    expect(milestone.name).toBe("My Milestone");
+    expect(milestone.documentId).toBe("test-doc");
+  });
+
+  it("should create milestone without name (auto-generate)", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-create-request"
+      ) {
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-create-response",
+            milestone: {
+              id: "milestone-1",
+              name: "v1.0.0", // Server auto-generated
+              documentId: "test-doc",
+              createdAt: Date.now(),
+            },
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
+
+    const milestone = await provider.createMilestone();
+
+    expect(milestone.id).toBe("milestone-1");
+    expect(milestone.name).toBe("v1.0.0");
+  });
+
+  it("should update milestone name", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-update-name-request"
+      ) {
+        const payload = (message as any).payload;
+        if (payload.milestoneId === "milestone-1") {
+          return new DocMessage<ClientContext>(
+            "test-doc",
+            {
+              type: "milestone-update-name-response",
+              milestone: {
+                id: "milestone-1",
+                name: payload.name,
+                documentId: "test-doc",
+                createdAt: 1234567890,
+              },
+            } as any,
+            { clientId: "test-client" },
+          );
+        }
+      }
+      return null;
+    };
+
+    const milestone = await provider.updateMilestoneName(
+      "milestone-1",
+      "Updated Name",
+    );
+
+    expect(milestone.id).toBe("milestone-1");
+    expect(milestone.name).toBe("Updated Name");
+  });
+
+  it("should handle milestone auth errors", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Set up response handler to return auth error
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-list-request"
+      ) {
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-auth-message",
+            reason: "Permission denied",
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
+
+    await expect(provider.listMilestones()).rejects.toThrow(
+      "Milestone operation denied: Permission denied",
+    );
+  });
+
+  it("should handle milestone list with snapshotIds filter", async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    provider = await Provider.create({
+      client: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    mockTransport.resolveSynced();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Set up response handler
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "doc" &&
+        (message as any).payload?.type === "milestone-list-request"
+      ) {
+        const payload = (message as any).payload;
+        // Verify snapshotIds were sent
+        expect(payload.snapshotIds).toEqual(["milestone-1"]);
+        return new DocMessage<ClientContext>(
+          "test-doc",
+          {
+            type: "milestone-list-response",
+            milestones: [
+              {
+                id: "milestone-2",
+                name: "v1.1.0",
+                documentId: "test-doc",
+                createdAt: 1234567900,
+              },
+            ],
+          } as any,
+          { clientId: "test-client" },
+        );
+      }
+      return null;
+    };
+
+    const milestones = await provider.listMilestones(["milestone-1"]);
+
+    expect(milestones).toHaveLength(1);
+    expect(milestones[0].id).toBe("milestone-2");
   });
 });

@@ -7,7 +7,7 @@ import {
   expect,
   test,
 } from "bun:test";
-import { fromBase64, toBase64 } from "lib0/buffer";
+import { toBase64 } from "lib0/buffer";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import {
@@ -22,6 +22,7 @@ import { ConnectionState } from "../connection";
 import { HttpConnection } from "./connection";
 import { FileHandler } from "../../server/file-handler";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
+import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
 import { noopTransport } from "../../transports/passthrough";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type { ServerContext } from "teleportal";
@@ -1097,6 +1098,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload file through HTTP connection", async () => {
       const testClientId = "test-client-file";
       const fileStorage = new InMemoryFileStorage();
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
@@ -1228,12 +1230,14 @@ describe("HttpConnection with MSW", () => {
         "test-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const contentId = fromBase64(fileId);
-      const storedFile = await fileStorage.getFile(contentId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -1245,6 +1249,7 @@ describe("HttpConnection with MSW", () => {
     test("should handle multiple chunk file upload via HTTP", async () => {
       const testClientId = "test-client-large-file";
       const fileStorage = new InMemoryFileStorage();
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
@@ -1372,12 +1377,14 @@ describe("HttpConnection with MSW", () => {
         "test-large-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const contentId = fromBase64(fileId);
-      const storedFile = await fileStorage.getFile(contentId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
@@ -1389,6 +1396,7 @@ describe("HttpConnection with MSW", () => {
     test("should upload and download file through HTTP connection (round-trip)", async () => {
       const testClientId = "test-client-roundtrip";
       const fileStorage = new InMemoryFileStorage();
+      fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
       const fileHandler = new FileHandler(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
@@ -1521,12 +1529,14 @@ describe("HttpConnection with MSW", () => {
         "test-file-id",
       );
 
-      // wait for the storage to be updated
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // wait for the storage to be updated with retries
+      let storedFile = await fileStorage.getFile(fileId);
+      for (let i = 0; i < 10 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        storedFile = await fileStorage.getFile(fileId);
+      }
 
       // Verify file was stored
-      const contentId = fromBase64(fileId);
-      const storedFile = await fileStorage.getFile(contentId);
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);

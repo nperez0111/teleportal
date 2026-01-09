@@ -102,6 +102,111 @@ export function encodeMessage(update: Message): BinaryMessage {
             encoding.writeVarString(encoder, update.payload.reason);
             break;
           }
+          case "milestone-list-request": {
+            // message type
+            encoding.writeUint8(encoder, 5);
+            // snapshotIds array length
+            encoding.writeVarUint(encoder, update.payload.snapshotIds.length);
+            // snapshotIds array
+            for (const snapshotId of update.payload.snapshotIds) {
+              encoding.writeVarString(encoder, snapshotId);
+            }
+            break;
+          }
+          case "milestone-list-response": {
+            // message type
+            encoding.writeUint8(encoder, 6);
+            // milestones array length
+            encoding.writeVarUint(encoder, update.payload.milestones.length);
+            for (const milestone of update.payload.milestones) {
+              encoding.writeVarString(encoder, milestone.id);
+              encoding.writeVarString(encoder, milestone.name);
+              encoding.writeVarString(encoder, milestone.documentId);
+              encoding.writeFloat64(encoder, milestone.createdAt);
+            }
+            break;
+          }
+          case "milestone-snapshot-request": {
+            // message type
+            encoding.writeUint8(encoder, 7);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
+            break;
+          }
+          case "milestone-snapshot-response": {
+            // message type
+            encoding.writeUint8(encoder, 8);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
+            // snapshot
+            encoding.writeVarUint8Array(encoder, update.payload.snapshot);
+            break;
+          }
+          case "milestone-create-request": {
+            // message type
+            encoding.writeUint8(encoder, 9);
+            // has name?
+            encoding.writeUint8(encoder, update.payload.name ? 1 : 0);
+            if (update.payload.name) {
+              // name
+              encoding.writeVarString(encoder, update.payload.name);
+            }
+            encoding.writeVarUint8Array(encoder, update.payload.snapshot);
+            break;
+          }
+          case "milestone-create-response": {
+            // message type
+            encoding.writeUint8(encoder, 10);
+            // milestone.id
+            encoding.writeVarString(encoder, update.payload.milestone.id);
+            // milestone.name
+            encoding.writeVarString(encoder, update.payload.milestone.name);
+            // milestone.documentId
+            encoding.writeVarString(
+              encoder,
+              update.payload.milestone.documentId,
+            );
+            // milestone.createdAt
+            encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
+            break;
+          }
+          case "milestone-update-name-request": {
+            // message type
+            encoding.writeUint8(encoder, 11);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
+            // name
+            encoding.writeVarString(encoder, update.payload.name);
+            break;
+          }
+          case "milestone-update-name-response": {
+            // message type
+            encoding.writeUint8(encoder, 12);
+            // milestone.id
+            encoding.writeVarString(encoder, update.payload.milestone.id);
+            // milestone.name
+            encoding.writeVarString(encoder, update.payload.milestone.name);
+            // milestone.documentId
+            encoding.writeVarString(
+              encoder,
+              update.payload.milestone.documentId,
+            );
+            // milestone.createdAt
+            encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
+            break;
+          }
+          case "milestone-auth-message": {
+            // message type
+            encoding.writeUint8(encoder, 13);
+            // permission
+            encoding.writeUint8(
+              encoder,
+              update.payload.permission === "denied" ? 0 : 1,
+            );
+            // reason
+            encoding.writeVarString(encoder, update.payload.reason);
+            break;
+          }
           default: {
             // @ts-expect-error - this should be unreachable due to type checking
             update.payload.type;
