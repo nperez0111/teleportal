@@ -1952,5 +1952,48 @@ describe("Server", () => {
       transport.closeReadable();
       await serverWithToken[Symbol.asyncDispose]();
     });
+
+    it("should track message types in metrics", async () => {
+      // Check initial status
+      const initialStatus = await server.getStatus();
+      expect(initialStatus.messageTypeBreakdown).toEqual({});
+
+      // Create a client
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      // Create ack messages (simpler than doc messages for testing)
+      const ackMessage1: Message<ServerContext> = {
+        type: "ack",
+        id: "test-msg-1",
+        document: "metrics-test-doc",
+      } as any;
+
+      const ackMessage2: Message<ServerContext> = {
+        type: "ack",
+        id: "test-msg-2",
+        document: "metrics-test-doc",
+      } as any;
+
+      // Process ack messages
+      transport.enqueueMessage(ackMessage1);
+      transport.enqueueMessage(ackMessage2);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // Allow async processing
+
+      // Check that ack messages were tracked
+      const statusAfterAck = await server.getStatus();
+      expect(statusAfterAck.messageTypeBreakdown).toEqual({ ack: 2 });
+      expect(statusAfterAck.totalMessagesProcessed).toBe(2);
+
+      // Check metrics output contains the message types
+      const metrics = await server.getMetrics();
+      expect(metrics).toContain('teleportal_messages_total{type="ack"} 2');
+      expect(metrics).toContain("teleportal_messages_total_all 2");
+
+      transport.closeReadable();
+    });
   });
 });

@@ -22,6 +22,7 @@
       "teleportal/protocol": ["./src/lib/protocol/index.ts"],
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
+      "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
       "teleportal/merkle-tree": ["./src/lib/merkle-tree/index.ts"],
       "teleportal": ["./src/lib/index.ts"],

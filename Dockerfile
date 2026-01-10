@@ -23,4 +23,9 @@ RUN bun run build:demo
 ENV NODE_ENV=production
 USER bun
 EXPOSE 3000/tcp
+
+# Health check using the /health endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
 ENTRYPOINT [ "bun", "run", "./playground/bun/server.ts" ]

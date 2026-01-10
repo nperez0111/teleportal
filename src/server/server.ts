@@ -12,9 +12,15 @@ import type { DocumentStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import { toErrorDetails } from "../logging";
 import { getLogger } from "@logtape/logtape";
+import { register } from "../monitoring/metrics";
 import { Session } from "./session";
 import { Client } from "./client";
 import { FileHandler } from "./file-handler";
+import {
+  HealthStatus,
+  StatusData,
+  MetricsCollector,
+} from "teleportal/monitoring";
 
 export type ServerOptions<Context extends ServerContext> = {
   /**
@@ -72,6 +78,14 @@ export class Server<Context extends ServerContext> {
    * Maps composite document ID to the promise that will resolve to the session.
    */
   #pendingSessions = new Map<string, Promise<Session<Context>>>();
+  /**
+   * Server start time for uptime calculation.
+   */
+  #startTime = Date.now();
+  /**
+   * Metrics collector for all monitoring data.
+   */
+  #metrics!: MetricsCollector;
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -79,6 +93,7 @@ export class Server<Context extends ServerContext> {
 
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
+    this.#metrics = new MetricsCollector(register);
 
     logger.info("Server initialized", {
       nodeId: this.#nodeId,
@@ -228,6 +243,10 @@ export class Server<Context extends ServerContext> {
 
         await session.load();
         this.#sessions.set(compositeDocumentId, session);
+
+        // Record session creation metrics
+        this.#metrics.sessionsActive.inc();
+        this.#metrics.documentsOpenedTotal.inc();
 
         sessionLogger
           .with({
@@ -512,7 +531,9 @@ export class Server<Context extends ServerContext> {
         new WritableStream<Message<Context>>({
           write: async (message) => {
             if (message.type === "ack") {
-              // client ack'd, we don't care about it
+              // client ack'd, we don't care about it for processing
+              // but still track it in metrics
+              this.#metrics.incrementMessage(message.type);
               return;
             }
 
@@ -596,9 +617,18 @@ export class Server<Context extends ServerContext> {
                 // Create a temporary handler for this message using the session's file storage
                 const fileHandler = new FileHandler<Context>(fileStorage);
 
+                const startTime = Date.now();
                 await fileHandler.handle(message, async (response) => {
                   await client.send(response);
                 });
+                const duration = (Date.now() - startTime) / 1000;
+
+                // Record message metrics
+                this.#metrics.incrementMessage(message.type);
+                this.#metrics.messageDuration.observe(
+                  { type: message.type },
+                  duration,
+                );
 
                 msgLogger
                   .with({
@@ -615,7 +645,16 @@ export class Server<Context extends ServerContext> {
 
                 msgLogger.debug("Client added to session, applying message");
 
+                const startTime = Date.now();
                 await session.apply(message, client);
+                const duration = (Date.now() - startTime) / 1000;
+
+                // Record message metrics
+                this.#metrics.incrementMessage(message.type);
+                this.#metrics.messageDuration.observe(
+                  { type: message.type },
+                  duration,
+                );
 
                 msgLogger
                   .with({
@@ -669,6 +708,9 @@ export class Server<Context extends ServerContext> {
 
     logger.with({ clientId: id }).info("Client created and connected");
 
+    // Record client connect metric
+    this.#metrics.clientsActive.inc();
+
     if (abortSignal) {
       abortSignal.addEventListener("abort", () => {
         this.disconnectClient(client.id);
@@ -698,6 +740,9 @@ export class Server<Context extends ServerContext> {
         totalSessions: this.#sessions.size,
       })
       .info("Client disconnected from sessions");
+
+    // Record client disconnect metric
+    this.#metrics.clientsActive.dec();
   }
 
   /**
@@ -723,6 +768,10 @@ export class Server<Context extends ServerContext> {
         .info("Cleaning up session with no clients");
 
       this.#sessions.delete(session.namespacedDocumentId);
+
+      // Record session cleanup metric
+      this.#metrics.sessionsActive.dec();
+
       session[Symbol.asyncDispose]().catch((error) => {
         logger
           .with({
@@ -798,6 +847,55 @@ export class Server<Context extends ServerContext> {
         nodeId: this.#nodeId,
       })
       .info("Server disposed");
+  }
+
+  /**
+   * Get Prometheus-formatted metrics.
+   */
+  async getMetrics(): Promise<string> {
+    return register.format();
+  }
+
+  /**
+   * Perform health checks and return status.
+   */
+  async getHealth(): Promise<HealthStatus> {
+    const checks: Record<string, "healthy" | "unhealthy" | "unknown"> = {};
+    let overallStatus: "healthy" | "unhealthy" = "healthy";
+
+    return {
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      checks,
+      uptime: Math.floor((Date.now() - this.#startTime) / 1000),
+    };
+  }
+
+  /**
+   * Get current operational status.
+   */
+  async getStatus(): Promise<StatusData> {
+    // Count total clients across all sessions
+    const activeClients = Array.from(this.#sessions.values()).reduce(
+      (total, session) => total + Array.from(session.clients).length,
+      0,
+    );
+
+    // Get total messages processed from metrics
+    const totalMessagesProcessed =
+      this.#metrics.totalMessagesProcessed.getValue();
+
+    return {
+      nodeId: this.#nodeId,
+      activeClients,
+      activeSessions: this.#sessions.size,
+      pendingSessions: this.#pendingSessions.size,
+      totalMessagesProcessed,
+      totalDocumentsOpened: this.#metrics.documentsOpenedTotal.getValue(),
+      messageTypeBreakdown: this.#metrics.getMessageCountsByType(),
+      uptime: Math.floor((Date.now() - this.#startTime) / 1000),
+      timestamp: new Date().toISOString(),
+    };
   }
 
   toString() {

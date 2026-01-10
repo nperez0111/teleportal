@@ -13,6 +13,11 @@ import {
   TokenPayload,
 } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
+import {
+  getHealthHandler,
+  getMetricsHandler,
+  getStatusHandler,
+} from "teleportal/monitoring";
 
 import homepage from "../src/index.html";
 // import { RedisPubSub } from "teleportal/transports/redis";
@@ -65,26 +70,37 @@ const ws = crossws(
   }),
 );
 
+const healthHandler = getHealthHandler(server);
+const metricsHandler = getMetricsHandler(server);
+const statusHandler = getStatusHandler(server);
+
 const instance = Bun.serve({
   development: {
     // hmr: false,
   },
-  routes:
-    Bun.env.NODE_ENV !== "production"
-      ? {
-          // In development, serve the homepage
-          "/": homepage,
-        }
-      : undefined,
+
   websocket: ws.websocket,
-  async fetch(request, server) {
+  async fetch(request, bunServer) {
     if (request.headers.get("upgrade") === "websocket") {
-      return ws.handleUpgrade(request, server);
+      return ws.handleUpgrade(request, bunServer);
     }
 
     const url = new URL(request.url);
     const pathname = url.pathname;
     const distDir = import.meta.dir + "/../dist";
+
+    // Monitoring endpoints
+    if (pathname === "/health") {
+      return await healthHandler(request);
+    }
+
+    if (pathname === "/metrics") {
+      return await metricsHandler(request);
+    }
+
+    if (pathname === "/status") {
+      return await statusHandler(request);
+    }
 
     // Just serve the index.html file for the root path
     if (pathname === "/") {
