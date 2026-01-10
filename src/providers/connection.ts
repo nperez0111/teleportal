@@ -1,6 +1,6 @@
 import { Message, Observable, RawReceivedMessage } from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
-import { ExponentialBackoff } from "./utils";
+import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
 /**
  * The context of a {@link Connection}.
@@ -102,6 +102,12 @@ export type ConnectionOptions = {
    * @default 30000
    */
   messageReconnectTimeout?: number;
+  /**
+   * Timer implementation for dependency injection (testing)
+   *
+   * @default defaultTimer
+   */
+  timer?: Timer;
 };
 
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
@@ -117,21 +123,22 @@ export abstract class Connection<
   connected: () => void;
   disconnected: () => void;
   ping: () => void;
+  "messages-in-flight": (hasInFlight: boolean) => void;
 }> {
-  // Static timer functions that can be overridden for testing
-  static setTimeout = globalThis.setTimeout.bind(globalThis);
-  static setInterval = globalThis.setInterval.bind(globalThis);
-  static clearTimeout = globalThis.clearTimeout.bind(globalThis);
-  static clearInterval = globalThis.clearInterval.bind(globalThis);
   static location: { hostname: string } | undefined = globalThis.location;
+
+  // Timer management
+  protected timerManager: TimerManager;
+
+  // Connection intent state - single source of truth
+  // "auto" = should auto-connect/reconnect, "manual" = user explicitly disconnected, "destroyed" = destroyed
+  #connectionIntent: "auto" | "manual" | "destroyed" = "auto";
 
   // Reconnection state
   #reconnectAttempt = 0;
   #backoff: ExponentialBackoff;
   #maxReconnectAttempts: number;
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-  #shouldConnect = true;
-  #disconnected = false;
 
   // Online/offline state
   #eventTarget: EventTarget;
@@ -147,10 +154,14 @@ export abstract class Connection<
 
   // Heartbeat and connection check state
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  #checkInterval: ReturnType<typeof setInterval> | null = null;
+  #timeoutCheckTimer: ReturnType<typeof setTimeout> | null = null;
   #lastMessageReceived = 0;
   #heartbeatIntervalMs: number;
   #messageReconnectTimeoutMs: number;
+
+  // Cached promise for connected getter
+  #connectedPromise: Promise<void> | null = null;
+  #connectedPromiseUnsubscribe: (() => void) | null = null;
 
   // Fan out writer for message distribution
   private fanOutWriter = createFanOutWriter<RawReceivedMessage>();
@@ -170,8 +181,12 @@ export abstract class Connection<
     isOnline,
     heartbeatInterval = 0,
     messageReconnectTimeout = DEFAULT_MESSAGE_RECONNECT_TIMEOUT,
+    timer,
   }: ConnectionOptions = {}) {
     super();
+
+    // Initialize timer manager
+    this.timerManager = new TimerManager(timer);
 
     // Initialize backoff strategy
     const maxExponent = Math.floor(
@@ -201,13 +216,15 @@ export abstract class Connection<
       this.#setupOnlineOfflineListeners();
     }
 
-    // Set up heartbeat and connection check if enabled
+    // Set up heartbeat if enabled
     this.#setupHeartbeat();
-    this.#setupConnectionCheck();
+
+    // Set up event-driven connection timeout check
+    this.#setupConnectionTimeoutCheck();
 
     if (connect) {
       // Attempt to connect on next tick to allow for initialization
-      Connection.setTimeout(() => {
+      this.timerManager.setTimeout(() => {
         // Don't attempt to connect if the connection has been destroyed
         if (this.destroyed) {
           return;
@@ -229,6 +246,8 @@ export abstract class Connection<
         const messageId = message.payload.messageId;
         if (this.#inFlightMessages.has(messageId)) {
           this.#inFlightMessages.delete(messageId);
+          // Emit event with current in-flight status
+          this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
       }
     });
@@ -238,6 +257,29 @@ export abstract class Connection<
     const previousState = this._state;
     this._state = state;
     this.call("update", state);
+
+    // Invalidate cached connected promise only when transitioning away from connected/errored
+    // or when already in connected/errored state (to allow fresh promises)
+    // Don't clear when transitioning TO connecting/connected (that would break the promise)
+    if (
+      previousState.type !== state.type &&
+      (previousState.type === "connected" ||
+        previousState.type === "errored" ||
+        state.type === "connected" ||
+        state.type === "errored")
+    ) {
+      // Only clear if we're already connected/errored (to allow fresh promises)
+      // or if we're transitioning away from connected/errored
+      if (
+        previousState.type === "connected" ||
+        previousState.type === "errored" ||
+        (state.type === "connected" && previousState.type !== "connecting") ||
+        (state.type === "errored" && previousState.type !== "connecting")
+      ) {
+        this.#clearConnectedPromise();
+      }
+    }
+
     switch (state.type) {
       case "connected":
         if (previousState.type !== "connected") {
@@ -252,12 +294,13 @@ export abstract class Connection<
           this.call("disconnected");
         }
         // Clear in-flight messages when disconnected (they'll need to be re-sent)
+        const hadInFlightMessages = this.#inFlightMessages.size > 0;
         this.#inFlightMessages.clear();
+        if (hadInFlightMessages) {
+          this.call("messages-in-flight", false);
+        }
         // If we were previously connected and should reconnect, schedule reconnection
-        if (
-          previousState.type === "connected" &&
-          this.shouldAttemptConnection()
-        ) {
+        if (previousState.type === "connected" && this.shouldReconnect()) {
           this.scheduleReconnect();
         }
         break;
@@ -273,8 +316,7 @@ export abstract class Connection<
 
       // If we were disconnected due to being offline and should connect, try to reconnect
       if (
-        this.#shouldConnect &&
-        !this.#disconnected &&
+        this.#connectionIntent === "auto" &&
         this.state.type === "disconnected"
       ) {
         this.#backoff.reset();
@@ -288,7 +330,7 @@ export abstract class Connection<
 
       // Cancel any pending reconnection attempts when going offline
       if (this.#reconnectTimeout) {
-        clearTimeout(this.#reconnectTimeout);
+        this.timerManager.clearTimeout(this.#reconnectTimeout);
         this.#reconnectTimeout = null;
       }
     };
@@ -307,7 +349,7 @@ export abstract class Connection<
    */
   #setupHeartbeat() {
     if (this.#heartbeatIntervalMs > 0) {
-      this.#heartbeatInterval = Connection.setInterval(() => {
+      this.#heartbeatInterval = this.timerManager.setInterval(() => {
         if (this.state.type === "connected") {
           this.sendHeartbeat();
         }
@@ -316,20 +358,50 @@ export abstract class Connection<
   }
 
   /**
-   * Set up connection check if enabled
+   * Set up event-driven connection timeout check
+   * Uses a timeout that reschedules itself when messages are received
    */
-  #setupConnectionCheck() {
+  #setupConnectionTimeoutCheck() {
     if (this.#messageReconnectTimeoutMs > 0) {
-      this.#checkInterval = Connection.setInterval(() => {
-        if (
-          this.state.type === "connected" &&
-          this.#messageReconnectTimeoutMs <
-            Date.now() - this.#lastMessageReceived
-        ) {
-          this.#handleConnectionTimeout();
-        }
-      }, this.#messageReconnectTimeoutMs / 10);
+      this.#scheduleTimeoutCheck();
     }
+  }
+
+  /**
+   * Schedule a timeout check for connection health
+   */
+  #scheduleTimeoutCheck() {
+    // Clear existing timeout check
+    if (this.#timeoutCheckTimer) {
+      this.timerManager.clearTimeout(this.#timeoutCheckTimer);
+      this.#timeoutCheckTimer = null;
+    }
+
+    // Only schedule if connected
+    if (this.state.type !== "connected") {
+      return;
+    }
+
+    const timeSinceLastMessage = Date.now() - this.#lastMessageReceived;
+    const timeUntilTimeout =
+      this.#messageReconnectTimeoutMs - timeSinceLastMessage;
+
+    if (timeUntilTimeout <= 0) {
+      // Already timed out
+      this.#handleConnectionTimeout();
+      return;
+    }
+
+    // Schedule check for when timeout would occur
+    this.#timeoutCheckTimer = this.timerManager.setTimeout(() => {
+      this.#timeoutCheckTimer = null;
+      if (
+        this.state.type === "connected" &&
+        this.#messageReconnectTimeoutMs < Date.now() - this.#lastMessageReceived
+      ) {
+        this.#handleConnectionTimeout();
+      }
+    }, timeUntilTimeout);
   }
 
   /**
@@ -342,31 +414,39 @@ export abstract class Connection<
   }
 
   /**
+   * Check if the connection should attempt to connect (for initial connections or reconnections)
+   */
+  protected shouldAttemptConnection(): boolean {
+    return (
+      this.#connectionIntent === "auto" && !this.destroyed && this.#isOnline
+    );
+  }
+
+  /**
+   * Check if the connection should attempt to reconnect (specifically for reconnection logic)
+   */
+  protected shouldReconnect(): boolean {
+    return this.shouldAttemptConnection();
+  }
+
+  /**
    * Schedule a reconnection attempt
    */
   protected scheduleReconnect() {
     if (this.#reconnectTimeout) {
-      Connection.clearTimeout(this.#reconnectTimeout);
+      this.timerManager.clearTimeout(this.#reconnectTimeout);
+      this.#reconnectTimeout = null;
     }
 
-    // Don't schedule reconnection if:
-    // - We shouldn't connect
-    // - We're destroyed
-    // - We're manually disconnected
-    // - We're offline
-    if (
-      !this.#shouldConnect ||
-      this.destroyed ||
-      this.#disconnected ||
-      !this.#isOnline
-    ) {
+    if (!this.shouldReconnect()) {
       return;
     }
 
     // Use exponential backoff for delay calculation
     const delay = this.#backoff.next();
 
-    this.#reconnectTimeout = Connection.setTimeout(() => {
+    this.#reconnectTimeout = this.timerManager.setTimeout(() => {
+      this.#reconnectTimeout = null;
       if (this.#reconnectAttempt >= this.#maxReconnectAttempts) {
         this.setState({
           type: "errored",
@@ -384,10 +464,10 @@ export abstract class Connection<
   /**
    * Handle connection errors and schedule reconnection if needed
    */
-  protected handleConnectionError(error: Error, reconnectAttempt?: number) {
+  protected handleConnectionError(error: Error) {
     this.setState({
       type: "errored",
-      context: { reconnectAttempt: reconnectAttempt ?? this.#reconnectAttempt },
+      context: { reconnectAttempt: this.#reconnectAttempt },
       error,
     });
     this.scheduleReconnect();
@@ -401,22 +481,32 @@ export abstract class Connection<
       throw new Error("Connection is destroyed, create a new instance");
     }
 
-    if (this.#disconnected) {
+    if (this.#connectionIntent === "manual") {
       return; // Don't send if manually disconnected
     }
 
     if (this.state.type === "connected") {
       // Track non-ack, non-awareness messages as in-flight
       if (message.type !== "ack" && message.type !== "awareness") {
+        const wasEmpty = this.#inFlightMessages.size === 0;
         this.#inFlightMessages.set(message.id, message);
+        // Emit event when messages become in-flight
+        if (wasEmpty) {
+          this.call("messages-in-flight", true);
+        }
       }
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails
         if (message.type !== "ack" && message.type !== "awareness") {
           this.#inFlightMessages.delete(message.id);
+          // Emit event with current in-flight status
+          this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
-        // There is some bug with rejected promises in bun, so we need to wait a bit
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        // Workaround for Bun promise rejection handling bug
+        // See: https://github.com/oven-sh/bun/issues/XXX
+        await new Promise<void>((resolve) => {
+          this.timerManager.setTimeout(() => resolve(), 1);
+        });
         const error =
           err instanceof Error
             ? err
@@ -442,17 +532,14 @@ export abstract class Connection<
   }
 
   /**
-   * Check if the connection should attempt to connect
-   */
-  protected shouldAttemptConnection(): boolean {
-    return this.#shouldConnect && !this.#disconnected && this.#isOnline;
-  }
-
-  /**
    * Update the last message received timestamp
    */
   protected updateLastMessageReceived(): void {
     this.#lastMessageReceived = Date.now();
+    // Reschedule timeout check when message received
+    if (this.#messageReconnectTimeoutMs > 0) {
+      this.#scheduleTimeoutCheck();
+    }
   }
 
   /**
@@ -487,8 +574,7 @@ export abstract class Connection<
     if (this.destroyed) {
       throw new Error("Connection is destroyed, create a new instance");
     }
-    this.#shouldConnect = true;
-    this.#disconnected = false;
+    this.#connectionIntent = "auto";
     this.#reconnectAttempt = 0;
     this.#backoff.reset();
     if (this.state.type === "disconnected" && this.#isOnline) {
@@ -504,10 +590,10 @@ export abstract class Connection<
     if (this.destroyed) {
       throw new Error("Connection is destroyed, create a new instance");
     }
-    this.#shouldConnect = false;
-    this.#disconnected = true;
+    this.#connectionIntent = "manual";
     if (this.#reconnectTimeout) {
-      clearTimeout(this.#reconnectTimeout);
+      this.timerManager.clearTimeout(this.#reconnectTimeout);
+      this.#reconnectTimeout = null;
     }
     await this.closeConnection();
   }
@@ -532,13 +618,6 @@ export abstract class Connection<
   }
 
   /**
-   * Check if there are any in-flight messages (excluding awareness messages)
-   */
-  get hasInFlightMessages(): boolean {
-    return this.#inFlightMessages.size > 0;
-  }
-
-  /**
    * Get the number of in-flight messages (excluding awareness messages)
    */
   get inFlightMessageCount(): number {
@@ -547,36 +626,64 @@ export abstract class Connection<
 
   /**
    * A promise that resolves when the connection is connected
+   *
+   * This promise is automatically invalidated when the connection state changes
+   * to disconnected or errored, ensuring fresh promises for new connection attempts.
    */
   get connected(): Promise<void> {
     const currentState = this.state;
-    switch (currentState.type) {
-      case "disconnected":
-      case "connecting": {
-        return new Promise((resolve, reject) => {
-          let handled = false;
-          const unsubscribe = this.on("update", (state) => {
-            if (!handled) {
-              if (state.type === "connected") {
-                handled = true;
-                unsubscribe();
-                resolve();
-              } else if (state.type === "errored") {
-                handled = true;
-                unsubscribe();
-                reject(state.error);
-              }
-            }
-          });
-        });
-      }
-      case "connected": {
-        return Promise.resolve();
-      }
-      case "errored": {
-        return Promise.reject(currentState.error);
-      }
+
+    // If already connected, return resolved promise
+    if (currentState.type === "connected") {
+      // Clear any cached promise and unsubscribe
+      this.#clearConnectedPromise();
+      return Promise.resolve();
     }
+
+    // If errored, return rejected promise and clear cache
+    if (currentState.type === "errored") {
+      this.#clearConnectedPromise();
+      return Promise.reject(currentState.error);
+    }
+
+    // If we have a cached promise for disconnected/connecting state, reuse it
+    // The promise will be invalidated automatically when state changes
+    if (this.#connectedPromise) {
+      return this.#connectedPromise;
+    }
+
+    // Create new promise and cache it
+    this.#connectedPromise = new Promise((resolve, reject) => {
+      let handled = false;
+      this.#connectedPromiseUnsubscribe = this.on("update", (state) => {
+        if (!handled) {
+          if (state.type === "connected") {
+            handled = true;
+            this.#clearConnectedPromise();
+            resolve();
+          } else if (state.type === "errored") {
+            handled = true;
+            this.#clearConnectedPromise();
+            reject(state.error);
+          }
+          // Note: We don't handle disconnected/connecting here because
+          // the promise should remain pending until connected or errored
+        }
+      });
+    });
+
+    return this.#connectedPromise;
+  }
+
+  /**
+   * Clear the cached connected promise and unsubscribe
+   */
+  #clearConnectedPromise() {
+    if (this.#connectedPromiseUnsubscribe) {
+      this.#connectedPromiseUnsubscribe();
+      this.#connectedPromiseUnsubscribe = null;
+    }
+    this.#connectedPromise = null;
   }
 
   /**
@@ -593,6 +700,7 @@ export abstract class Connection<
     }
     super.destroy();
     this.destroyed = true;
+    this.#connectionIntent = "destroyed";
 
     // Clean up online/offline listeners
     if (this.#onlineHandler) {
@@ -602,24 +710,17 @@ export abstract class Connection<
       this.#eventTarget.removeEventListener("offline", this.#offlineHandler);
     }
 
-    // Clear reconnection timeout
-    if (this.#reconnectTimeout) {
-      Connection.clearTimeout(this.#reconnectTimeout);
-    }
-
-    // Clear heartbeat and connection check intervals
-    if (this.#heartbeatInterval) {
-      Connection.clearInterval(this.#heartbeatInterval);
-    }
-    if (this.#checkInterval) {
-      Connection.clearInterval(this.#checkInterval);
-    }
+    // Clear all timers using timer manager
+    this.timerManager.clearAll();
 
     // Clear message buffer
     this.#messageBuffer = [];
 
     // Clear in-flight messages
     this.#inFlightMessages.clear();
+
+    // Clear connected promise
+    this.#clearConnectedPromise();
 
     // Release the writer lock, then close the fan out writer
     this.writer.releaseLock();

@@ -768,7 +768,7 @@ describe("Provider milestone operations", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(syncedResolved).toBe(false);
-      expect(mockConnection.hasInFlightMessages).toBe(true);
+      expect(mockConnection.inFlightMessageCount).toBeGreaterThan(0);
 
       // Send ACK for the message
       const { AckMessage } = await import("teleportal");
@@ -787,7 +787,7 @@ describe("Provider milestone operations", () => {
       // Now synced should resolve
       await syncedPromise;
       expect(syncedResolved).toBe(true);
-      expect(mockConnection.hasInFlightMessages).toBe(false);
+      expect(mockConnection.inFlightMessageCount).toBe(0);
     });
 
     it("should resolve synced immediately when no in-flight messages", async () => {
@@ -880,7 +880,7 @@ describe("Provider milestone operations", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // synced should resolve even with awareness message sent (not tracked)
-      expect(mockConnection.hasInFlightMessages).toBe(false);
+      expect(mockConnection.inFlightMessageCount).toBe(0);
 
       // Access synced after sending awareness message
       const startTime = Date.now();

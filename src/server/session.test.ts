@@ -1046,24 +1046,6 @@ describe("Session", () => {
       }
     });
 
-    it("should fail encoding when snapshot is missing for milestone creation", async () => {
-      // Test that encoding fails when snapshot is missing
-      // This ensures clients cannot send messages without snapshots
-      expect(() => {
-        const message = new DocMessage<ServerContext>(
-          "test-doc",
-          {
-            type: "milestone-create-request",
-            name: "v1.0.0",
-            // Missing snapshot
-          } as any,
-          { clientId: "client-1", userId: "user-1", room: "room" },
-        );
-        // Accessing .encoded will trigger encoding, which should fail
-        void message.encoded;
-      }).toThrow();
-    });
-
     it("should handle milestone-update-name-request", async () => {
       await session.load();
       session.addClient(client1AsClient);

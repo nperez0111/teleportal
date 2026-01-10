@@ -27,6 +27,33 @@ import {
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 
+/**
+ * Error thrown when a milestone operation is denied
+ */
+export class MilestoneOperationDeniedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`Milestone operation denied: ${reason}`);
+    this.name = "MilestoneOperationDeniedError";
+  }
+}
+
+/**
+ * Error thrown when a milestone operation fails
+ */
+export class MilestoneOperationError extends Error {
+  constructor(
+    public readonly operation: string,
+    cause?: unknown,
+  ) {
+    const message =
+      cause instanceof Error
+        ? `Failed to ${operation}: ${cause.message}`
+        : `Failed to ${operation}: ${String(cause)}`;
+    super(message, { cause });
+    this.name = "MilestoneOperationError";
+  }
+}
+
 export type DefaultTransportProperties = {
   synced: Promise<void>;
   handler: {
@@ -89,6 +116,11 @@ export class Provider<
   #enableOfflinePersistence: boolean;
   #indexedDBPrefix: string;
   #localLoaded: boolean = false;
+
+  // Event listener cleanup for init method
+  #disconnectedUnsubscribe: (() => void) | null = null;
+  #connectedUnsubscribe: (() => void) | null = null;
+  #initInProgress = false;
 
   private constructor({
     client,
@@ -162,14 +194,36 @@ export class Provider<
   }
 
   private init = async () => {
+    // Make init idempotent - if already in progress, wait for it
+    if (this.#initInProgress) {
+      return;
+    }
+
+    this.#initInProgress = true;
     try {
+      // Clean up previous listeners if they exist
+      if (this.#disconnectedUnsubscribe) {
+        this.#disconnectedUnsubscribe();
+        this.#disconnectedUnsubscribe = null;
+      }
+      if (this.#connectedUnsubscribe) {
+        this.#connectedUnsubscribe();
+        this.#connectedUnsubscribe = null;
+      }
+
       this.#underlyingConnection.send(await this.transport.handler.start());
-      this.#underlyingConnection.on("disconnected", () => {
-        this.doc.emit("sync", [false, this.doc]);
-      });
-      this.#underlyingConnection.on("connected", () => {
-        this.doc.emit("sync", [true, this.doc]);
-      });
+      this.#disconnectedUnsubscribe = this.#underlyingConnection.on(
+        "disconnected",
+        () => {
+          this.doc.emit("sync", [false, this.doc]);
+        },
+      );
+      this.#connectedUnsubscribe = this.#underlyingConnection.on(
+        "connected",
+        () => {
+          this.doc.emit("sync", [true, this.doc]);
+        },
+      );
       this.transport.synced
         .then(() => {
           this.doc.emit("sync", [true, this.doc]);
@@ -179,6 +233,8 @@ export class Provider<
         });
     } catch (error) {
       console.error("Failed to send sync-step-1", error);
+    } finally {
+      this.#initInProgress = false;
     }
   };
 
@@ -228,6 +284,20 @@ export class Provider<
 
   /**
    * Switch this provider to a new document, destroying this provider instance.
+   *
+   * **Lifecycle:**
+   * - The current provider instance is destroyed (this instance becomes unusable)
+   * - The current Y.Doc is destroyed (all local data is lost)
+   * - All event listeners, offline persistence, and cached promises are cleaned up
+   * - The underlying connection is preserved and reused for the new document
+   * - Pending in-flight messages for the old document are abandoned
+   * - A new provider instance is created and returned for the new document
+   *
+   * **Use case:** Efficiently switch between documents while maintaining the same
+   * connection, avoiding the overhead of establishing a new connection.
+   *
+   * @param options - Provider options for the new document (excluding `client`, which is reused)
+   * @returns A new Provider instance for the new document
    */
   public switchDocument(
     options: Omit<ProviderOptions<T>, "client">,
@@ -257,6 +327,7 @@ export class Provider<
   }
 
   #synced: Promise<void> | null = null;
+  #syncedUnsubscribe: (() => void) | null = null;
   #loaded: Promise<void> | null = null;
 
   /**
@@ -306,11 +377,28 @@ export class Provider<
     ]).then(() => {});
 
     this.#synced = synced;
-    // if the underlying connection changes, then clear out the cached promise
-    this.#underlyingConnection.once("update", () => {
-      this.#synced = null;
-    });
+    // Invalidate cached promise when connection state changes to disconnected or errored
+    // (but not on every update, only when it matters)
+    this.#syncedUnsubscribe = this.#underlyingConnection.on(
+      "update",
+      (state) => {
+        if (state.type === "disconnected" || state.type === "errored") {
+          this.#clearSyncedPromise();
+        }
+      },
+    );
     return synced;
+  }
+
+  /**
+   * Clear the cached synced promise and unsubscribe
+   */
+  #clearSyncedPromise() {
+    if (this.#syncedUnsubscribe) {
+      this.#syncedUnsubscribe();
+      this.#syncedUnsubscribe = null;
+    }
+    this.#synced = null;
   }
 
   /**
@@ -319,39 +407,32 @@ export class Provider<
   #waitForInFlightMessages(): Promise<void> {
     return new Promise((resolve) => {
       // If there are no in-flight messages, resolve immediately
-      if (!this.#underlyingConnection.hasInFlightMessages) {
+      if (this.#underlyingConnection.inFlightMessageCount === 0) {
         resolve();
         return;
       }
 
-      let checkInterval: ReturnType<typeof setInterval> | null = null;
       let unsubscribe: (() => void) | null = null;
       let resolved = false;
 
       const cleanup = () => {
-        if (checkInterval) {
-          clearInterval(checkInterval);
-          checkInterval = null;
-        }
         if (unsubscribe) {
           unsubscribe();
           unsubscribe = null;
         }
       };
 
-      const checkAndResolve = () => {
-        if (!resolved && !this.#underlyingConnection.hasInFlightMessages) {
-          resolved = true;
-          cleanup();
-          resolve();
-        }
-      };
-
-      // Poll periodically to check for in-flight messages
-      checkInterval = setInterval(checkAndResolve, 10); // Check every 10ms
-
-      // Also listen for message events to catch acks faster
-      unsubscribe = this.#underlyingConnection.on("message", checkAndResolve);
+      // Listen for the messages-in-flight event
+      unsubscribe = this.#underlyingConnection.on(
+        "messages-in-flight",
+        (hasInFlight) => {
+          if (!resolved && !hasInFlight) {
+            resolved = true;
+            cleanup();
+            resolve();
+          }
+        },
+      );
     });
   }
 
@@ -385,8 +466,22 @@ export class Provider<
       this.#localPersistence = undefined;
     }
 
-    // TODO how to clean up the transport?
-    // this.transport.readable
+    // Clean up event listeners from init
+    if (this.#disconnectedUnsubscribe) {
+      this.#disconnectedUnsubscribe();
+      this.#disconnectedUnsubscribe = null;
+    }
+    if (this.#connectedUnsubscribe) {
+      this.#connectedUnsubscribe();
+      this.#connectedUnsubscribe = null;
+    }
+
+    // Clean up synced promise
+    this.#clearSyncedPromise();
+
+    // Clean up transport streams
+    // The transport readable/writable streams are closed when the connection is destroyed
+    // or when the provider is destroyed, so we don't need explicit cleanup here
     this.#messageReader.unsubscribe();
     if (destroyConnection) {
       this.#underlyingConnection.destroy();
@@ -401,19 +496,107 @@ export class Provider<
   }
 
   /**
+   * Helper method to send a milestone request and wait for response
+   * @param request - The request message to send
+   * @param responseType - The expected response type (e.g., "milestone-list-response")
+   * @param operationName - Name of the operation for error messages
+   * @param additionalCheck - Optional additional check function for the response payload
+   * @returns Promise that resolves with the response message
+   */
+  async #sendMilestoneRequest<T extends DocMessage<ClientContext>>(
+    request: DocMessage<any>,
+    responseType: string,
+    operationName: string,
+    additionalCheck?: (payload: any) => boolean,
+  ): Promise<T> {
+    // Ensure we're connected
+    await this.synced;
+
+    // Send the request
+    await this.#underlyingConnection.send(request);
+
+    // Wait for response and handle errors
+    try {
+      return await this.#waitForResponse<T>(
+        this.#createMilestonePredicate<T>(responseType, additionalCheck),
+        this.#createMilestoneErrorChecker(),
+      );
+    } catch (error) {
+      if (error instanceof MilestoneOperationDeniedError) {
+        throw error;
+      }
+      throw new MilestoneOperationError(operationName, error);
+    }
+  }
+
+  /**
+   * Helper to create a predicate that checks for milestone responses
+   */
+  #createMilestonePredicate<T extends DocMessage<ClientContext>>(
+    responseType: string,
+    additionalCheck?: (payload: any) => boolean,
+  ): (msg: RawReceivedMessage) => msg is T {
+    return (msg): msg is T => {
+      if (msg.type !== "doc" || msg.document !== this.document) return false;
+      const payload = msg.payload as any;
+      if (payload.type === responseType) {
+        return additionalCheck ? additionalCheck(payload) : true;
+      }
+      return false;
+    };
+  }
+
+  /**
+   * Helper to create an error checker for milestone auth errors
+   */
+  #createMilestoneErrorChecker(): (msg: RawReceivedMessage) => void {
+    return (msg: RawReceivedMessage) => {
+      if (msg.type === "doc" && msg.document === this.document) {
+        const payload = msg.payload as any;
+        if (payload.type === "milestone-auth-message") {
+          const authMsg = payload as DecodedMilestoneAuthMessage;
+          throw new MilestoneOperationDeniedError(authMsg.reason);
+        }
+      }
+    };
+  }
+
+  /**
+   * Helper to create a Milestone instance from metadata
+   */
+  #createMilestoneFromMeta(meta: {
+    id: string;
+    name: string;
+    documentId: string;
+    createdAt: number;
+  }): Milestone {
+    return new Milestone({
+      id: meta.id,
+      name: meta.name,
+      documentId: meta.documentId,
+      createdAt: meta.createdAt,
+      getSnapshot: (documentId: string, id: string) =>
+        this.getMilestoneSnapshot(id),
+    });
+  }
+
+  /**
    * Wait for a specific response message matching the predicate.
-   * @param predicate - Function that returns true if the message matches, or throws if it's an error response
+   * @param predicate - Function that returns true if the message matches
+   * @param errorChecker - Optional function that checks for errors and throws if found
    * @param timeout - Timeout in milliseconds (default: 30000)
    * @returns Promise that resolves with the matched message
    */
   #waitForResponse<T extends Message>(
     predicate: (message: RawReceivedMessage) => message is T,
+    errorChecker?: (message: RawReceivedMessage) => void,
     timeout: number = 30000,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       let resolved = false;
       let unsubscribe: (() => void) | undefined;
+      let disconnectUnsubscribe: (() => void) | undefined;
 
       const cleanup = () => {
         if (timeoutId) {
@@ -424,22 +607,32 @@ export class Provider<
           unsubscribe();
           unsubscribe = undefined;
         }
+        if (disconnectUnsubscribe) {
+          disconnectUnsubscribe();
+          disconnectUnsubscribe = undefined;
+        }
       };
 
       const handleMessage = (message: RawReceivedMessage) => {
         if (resolved) return;
 
-        try {
-          if (predicate(message)) {
+        // Check for errors first (separate from predicate)
+        if (errorChecker) {
+          try {
+            errorChecker(message);
+          } catch (error) {
             resolved = true;
             cleanup();
-            resolve(message);
+            reject(error);
+            return;
           }
-        } catch (error) {
-          // Predicate threw an error (e.g., auth denied)
+        }
+
+        // Check if message matches predicate
+        if (predicate(message)) {
           resolved = true;
           cleanup();
-          reject(error);
+          resolve(message);
         }
       };
 
@@ -454,6 +647,21 @@ export class Provider<
 
       // Listen for messages from the connection
       unsubscribe = this.#underlyingConnection.on("message", handleMessage);
+
+      // Listen for disconnection to ensure cleanup
+      disconnectUnsubscribe = this.#underlyingConnection.on(
+        "update",
+        (state) => {
+          if (
+            !resolved &&
+            (state.type === "disconnected" || state.type === "errored")
+          ) {
+            resolved = true;
+            cleanup();
+            reject(new Error("Connection lost while waiting for response"));
+          }
+        },
+      );
     });
   }
 
@@ -464,10 +672,6 @@ export class Provider<
    * @throws Error if the operation is denied or if the connection fails
    */
   async listMilestones(snapshotIds?: string[]): Promise<Milestone[]> {
-    // Ensure we're connected
-    await this.synced;
-
-    // Send the request
     const request = new DocMessage(
       this.document,
       {
@@ -478,46 +682,14 @@ export class Provider<
       false, // TODO: Determine encryption from document/transport
     );
 
-    await this.#underlyingConnection.send(request);
+    const response = await this.#sendMilestoneRequest<
+      DocMessage<ClientContext>
+    >(request, "milestone-list-response", "list milestones");
 
-    // Wait for response and handle errors
-    try {
-      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
-        (msg): msg is DocMessage<ClientContext> => {
-          if (msg.type !== "doc" || msg.document !== this.document)
-            return false;
-          const payload = msg.payload as any;
-          // Check for auth errors first
-          if (payload.type === "milestone-auth-message") {
-            const authMsg = payload as DecodedMilestoneAuthMessage;
-            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
-          }
-          return payload.type === "milestone-list-response";
-        },
-      );
-
-      const payload = response.payload as DecodedMilestoneListResponse;
-
-      // Convert metadata to Milestone instances with lazy snapshot loading
-      return payload.milestones.map(
-        (meta) =>
-          new Milestone({
-            id: meta.id,
-            name: meta.name,
-            documentId: meta.documentId,
-            createdAt: meta.createdAt,
-            getSnapshot: (documentId: string, id: string) =>
-              this.getMilestoneSnapshot(id),
-          }),
-      );
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("denied")) {
-        throw error;
-      }
-      throw new Error(
-        `Failed to list milestones: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const payload = response.payload as DecodedMilestoneListResponse;
+    return payload.milestones.map((meta) =>
+      this.#createMilestoneFromMeta(meta),
+    );
   }
 
   /**
@@ -527,10 +699,6 @@ export class Provider<
    * @throws Error if the operation is denied or if the connection fails
    */
   async getMilestoneSnapshot(milestoneId: string): Promise<MilestoneSnapshot> {
-    // Ensure we're connected
-    await this.synced;
-
-    // Send the request
     const request = new DocMessage(
       this.document,
       {
@@ -541,41 +709,19 @@ export class Provider<
       false, // TODO: Determine encryption from document/transport
     );
 
-    await this.#underlyingConnection.send(request);
+    const response = await this.#sendMilestoneRequest<
+      DocMessage<ClientContext>
+    >(
+      request,
+      "milestone-snapshot-response",
+      "get milestone snapshot",
+      (payload) =>
+        (payload as DecodedMilestoneSnapshotResponse).milestoneId ===
+        milestoneId,
+    );
 
-    // Wait for response and handle errors
-    try {
-      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
-        (msg): msg is DocMessage<ClientContext> => {
-          if (msg.type !== "doc" || msg.document !== this.document)
-            return false;
-          const payload = msg.payload as any;
-          // Check for auth errors first
-          if (payload.type === "milestone-auth-message") {
-            const authMsg = payload as DecodedMilestoneAuthMessage;
-            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
-          }
-          // Verify this is the response for the requested milestone
-          if (payload.type === "milestone-snapshot-response") {
-            return (
-              (payload as DecodedMilestoneSnapshotResponse).milestoneId ===
-              milestoneId
-            );
-          }
-          return false;
-        },
-      );
-
-      const payload = response.payload as DecodedMilestoneSnapshotResponse;
-      return payload.snapshot;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("denied")) {
-        throw error;
-      }
-      throw new Error(
-        `Failed to get milestone snapshot: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const payload = response.payload as DecodedMilestoneSnapshotResponse;
+    return payload.snapshot;
   }
 
   /**
@@ -585,12 +731,9 @@ export class Provider<
    * @throws Error if the operation is denied or if the connection fails
    */
   async createMilestone(name?: string): Promise<Milestone> {
-    // Ensure we're connected
-    await this.synced;
     // TODO encrypted milestones?
     const snapshot = Y.encodeStateAsUpdateV2(this.doc) as MilestoneSnapshot;
 
-    // Send the request
     const request = new DocMessage(
       this.document,
       {
@@ -602,44 +745,12 @@ export class Provider<
       false, // TODO: Determine encryption from document/transport
     );
 
-    await this.#underlyingConnection.send(request);
+    const response = await this.#sendMilestoneRequest<
+      DocMessage<ClientContext>
+    >(request, "milestone-create-response", "create milestone");
 
-    // Wait for response and handle errors
-    try {
-      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
-        (msg): msg is DocMessage<ClientContext> => {
-          if (msg.type !== "doc" || msg.document !== this.document)
-            return false;
-          const payload = msg.payload as any;
-          // Check for auth errors first
-          if (payload.type === "milestone-auth-message") {
-            const authMsg = payload as DecodedMilestoneAuthMessage;
-            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
-          }
-          return payload.type === "milestone-create-response";
-        },
-      );
-
-      const payload = response.payload as DecodedMilestoneResponse;
-      const meta = payload.milestone;
-
-      // Convert to Milestone instance with lazy snapshot loading
-      return new Milestone({
-        id: meta.id,
-        name: meta.name,
-        documentId: meta.documentId,
-        createdAt: meta.createdAt,
-        getSnapshot: (documentId: string, id: string) =>
-          this.getMilestoneSnapshot(id),
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("denied")) {
-        throw error;
-      }
-      throw new Error(
-        `Failed to create milestone: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const payload = response.payload as DecodedMilestoneResponse;
+    return this.#createMilestoneFromMeta(payload.milestone);
   }
 
   /**
@@ -653,10 +764,6 @@ export class Provider<
     milestoneId: string,
     name: string,
   ): Promise<Milestone> {
-    // Ensure we're connected
-    await this.synced;
-
-    // Send the request
     const request = new DocMessage(
       this.document,
       {
@@ -668,50 +775,18 @@ export class Provider<
       false, // TODO: Determine encryption from document/transport
     );
 
-    await this.#underlyingConnection.send(request);
+    const response = await this.#sendMilestoneRequest<
+      DocMessage<ClientContext>
+    >(
+      request,
+      "milestone-update-name-response",
+      "update milestone name",
+      (payload) =>
+        (payload as DecodedMilestoneResponse).milestone.id === milestoneId,
+    );
 
-    // Wait for response and handle errors
-    try {
-      const response = await this.#waitForResponse<DocMessage<ClientContext>>(
-        (msg): msg is DocMessage<ClientContext> => {
-          if (msg.type !== "doc" || msg.document !== this.document)
-            return false;
-          const payload = msg.payload as any;
-          // Check for auth errors first
-          if (payload.type === "milestone-auth-message") {
-            const authMsg = payload as DecodedMilestoneAuthMessage;
-            throw new Error(`Milestone operation denied: ${authMsg.reason}`);
-          }
-          // Verify this is the response for the requested milestone
-          if (payload.type === "milestone-update-name-response") {
-            return (
-              (payload as DecodedMilestoneResponse).milestone.id === milestoneId
-            );
-          }
-          return false;
-        },
-      );
-
-      const payload = response.payload as DecodedMilestoneResponse;
-      const meta = payload.milestone;
-
-      // Convert to Milestone instance with lazy snapshot loading
-      return new Milestone({
-        id: meta.id,
-        name: meta.name,
-        documentId: meta.documentId,
-        createdAt: meta.createdAt,
-        getSnapshot: (documentId: string, id: string) =>
-          this.getMilestoneSnapshot(id),
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("denied")) {
-        throw error;
-      }
-      throw new Error(
-        `Failed to update milestone name: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const payload = response.payload as DecodedMilestoneResponse;
+    return this.#createMilestoneFromMeta(payload.milestone);
   }
 
   /**

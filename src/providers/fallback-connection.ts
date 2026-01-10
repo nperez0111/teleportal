@@ -182,6 +182,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
       protocols: this.#websocketOptions.protocols,
       WebSocket: this.#websocketOptions.WebSocket,
       connect: false, // We'll connect manually
+      timer: this.timerManager.underlyingTimer,
     });
 
     // Check if attempt is still valid after creating WebSocket
@@ -217,7 +218,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
+        timeout = this.timerManager.setTimeout(() => {
           isTimedOut = true;
           wsConnection.destroy().finally(() => {
             reject(new Error("WebSocket connection timeout"));
@@ -238,7 +239,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
       this.setupMessagePipe();
     } finally {
       if (timeout) {
-        clearTimeout(timeout);
+        this.timerManager.clearTimeout(timeout);
       }
     }
   }
@@ -250,6 +251,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
       fetch: this.#httpOptions.fetch,
       EventSource: this.#httpOptions.EventSource,
       connect: false, // We'll connect manually
+      timer: this.timerManager.underlyingTimer,
     });
 
     // Check if attempt is still valid after creating HttpConnection
@@ -303,10 +305,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
             return;
           }
 
-          this.handleConnectionError(
-            state.error,
-            state.context?.reconnectAttempt,
-          );
+          this.handleConnectionError(state.error);
           return;
         }
 

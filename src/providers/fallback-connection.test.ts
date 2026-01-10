@@ -1,14 +1,7 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeEach,
-  afterEach,
-  beforeAll,
-  afterAll,
-} from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { FallbackConnection } from "./fallback-connection";
 import { Connection, ConnectionState } from "./connection";
+import { type Timer } from "./utils";
 
 process.on("uncaughtException", (err) => {
   console.error("[GLOBAL] Uncaught Exception:", err);
@@ -18,33 +11,29 @@ process.on("unhandledRejection", (err) => {
   console.error("[GLOBAL] Unhandled Rejection:", err);
 });
 
-beforeAll(() => {
-  // Override timer functions for testing
-  Connection.setTimeout = ((
-    fn: Function,
-    delay: number = 0,
-    ...args: any[]
-  ) => {
+// Create a test timer that speeds up delays for faster tests
+const createTestTimer = (): Timer => ({
+  setTimeout: (fn: () => void, delay: number) => {
     return setTimeout(fn, Math.min(delay, 5)) as any;
-  }) as any;
-  Connection.setInterval = ((
-    fn: Function,
-    delay: number = 0,
-    ...args: any[]
-  ) => {
-    return setInterval(fn, Math.min(delay, 5)) as any;
-  }) as any;
-  Connection.clearTimeout = clearTimeout;
-  Connection.clearInterval = clearInterval;
+  },
+  setInterval: (fn: () => void, interval: number) => {
+    return setInterval(fn, Math.min(interval, 5)) as any;
+  },
+  clearTimeout: clearTimeout,
+  clearInterval: clearInterval,
 });
 
-afterAll(() => {
-  // Restore original timer functions
-  Connection.setTimeout = globalThis.setTimeout.bind(globalThis);
-  Connection.setInterval = globalThis.setInterval.bind(globalThis);
-  Connection.clearTimeout = globalThis.clearTimeout.bind(globalThis);
-  Connection.clearInterval = globalThis.clearInterval.bind(globalThis);
-});
+const testTimer = createTestTimer();
+
+// Helper to create FallbackConnection with test timer
+function createTestConnection(
+  options: Omit<ConstructorParameters<typeof FallbackConnection>[0], "timer">,
+): FallbackConnection {
+  return new FallbackConnection({
+    ...options,
+    timer: testTimer,
+  } as any);
+}
 
 // Mock WebSocket implementation that can be configured to fail
 class MockWebSocket {
@@ -291,7 +280,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should implement the Connection interface", () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       connect: false, // Don't connect automatically for testing
     });
@@ -309,7 +298,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should start in disconnected state", () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       connect: false, // Don't connect automatically for testing
     });
@@ -319,7 +308,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should successfully connect via WebSocket when WebSocket works", async () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -339,7 +328,7 @@ describe("FallbackConnection", () => {
   test("should fallback to HTTP when WebSocket fails", async () => {
     MockWebSocket.setShouldFail(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -372,7 +361,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should handle state updates", (done: () => void) => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -397,7 +386,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should be destroyed after calling destroy", async () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -414,7 +403,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should provide a reader", () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       connect: false, // Don't connect automatically for testing
     });
@@ -427,7 +416,7 @@ describe("FallbackConnection", () => {
   test("should convert HTTP URL to WebSocket URL correctly", async () => {
     MockWebSocket.setShouldFail(false);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080/path",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -448,7 +437,7 @@ describe("FallbackConnection", () => {
   test("should convert HTTPS URL to WSS URL correctly", async () => {
     MockWebSocket.setShouldFail(false);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "https://localhost:8080/path",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -464,7 +453,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should handle multiple destroy calls", async () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -488,7 +477,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should handle connection after destroy", async () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       connect: false,
     });
@@ -505,7 +494,7 @@ describe("FallbackConnection", () => {
   // New comprehensive tests for race conditions and edge cases
 
   test("should prevent race conditions when connect() is called multiple times rapidly", async () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -539,7 +528,7 @@ describe("FallbackConnection", () => {
   test("should handle WebSocket timeout and fallback to HTTP without creating multiple connections", async () => {
     MockWebSocket.setShouldTimeout(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -579,7 +568,7 @@ describe("FallbackConnection", () => {
   test("should properly clean up connections when destroyed during connection attempt", async () => {
     MockWebSocket.setShouldTimeout(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -613,7 +602,7 @@ describe("FallbackConnection", () => {
   });
 
   test("should handle rapid connect/disconnect cycles without creating multiple connections", async () => {
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -646,7 +635,7 @@ describe("FallbackConnection", () => {
     MockWebSocket.setShouldFail(true);
     mockFetch.setShouldSucceed(false);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -674,7 +663,7 @@ describe("FallbackConnection", () => {
   test("should not create multiple HTTP connections when WebSocket consistently fails", async () => {
     MockWebSocket.setShouldFail(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -714,7 +703,7 @@ describe("FallbackConnection", () => {
   test("should handle WebSocket success after initial failure on reconnection", async () => {
     MockWebSocket.setShouldFail(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -752,7 +741,7 @@ describe("FallbackConnection", () => {
   test("should cancel ongoing connection attempts when destroyed", async () => {
     MockWebSocket.setShouldTimeout(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,
@@ -794,7 +783,7 @@ describe("FallbackConnection", () => {
   test("should handle concurrent connect calls during WebSocket timeout", async () => {
     MockWebSocket.setShouldTimeout(true);
 
-    client = new FallbackConnection({
+    client = createTestConnection({
       url: "http://localhost:8080",
       websocketOptions: {
         WebSocket: MockWebSocket as any,

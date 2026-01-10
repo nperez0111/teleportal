@@ -104,7 +104,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       this.setState({ type: "connecting", context: { ws: websocket } });
 
       // Set up connection timeout (10 seconds) to handle cases where connection gets stuck
-      this.#connectionTimeout = Connection.setTimeout(() => {
+      this.#connectionTimeout = this.timerManager.setTimeout(() => {
         if (
           this.#currentWebSocket === websocket &&
           this.state.type === "connecting"
@@ -182,7 +182,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
           // Clear connection timeout
           if (this.#connectionTimeout) {
-            clearTimeout(this.#connectionTimeout);
+            this.timerManager.clearTimeout(this.#connectionTimeout);
             this.#connectionTimeout = null;
           }
 
@@ -233,7 +233,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
           // Clear connection timeout since connection succeeded
           if (this.#connectionTimeout) {
-            clearTimeout(this.#connectionTimeout);
+            this.timerManager.clearTimeout(this.#connectionTimeout);
             this.#connectionTimeout = null;
           }
 
@@ -270,7 +270,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
   async #cleanupCurrentWebSocket(): Promise<void> {
     // Clear connection timeout
     if (this.#connectionTimeout) {
-      Connection.clearTimeout(this.#connectionTimeout);
+      this.timerManager.clearTimeout(this.#connectionTimeout);
       this.#connectionTimeout = null;
     }
 
@@ -340,7 +340,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
     // Clear connection timeout
     if (this.#connectionTimeout) {
-      Connection.clearTimeout(this.#connectionTimeout);
+      this.timerManager.clearTimeout(this.#connectionTimeout);
       this.#connectionTimeout = null;
     }
 
