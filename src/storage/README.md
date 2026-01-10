@@ -149,7 +149,11 @@ You can create custom storage implementations for any backend. Here's how:
 ### Example: Custom DocumentStorage
 
 ```typescript
-import type { DocumentStorage, Document, DocumentMetadata } from "teleportal/storage";
+import type {
+  DocumentStorage,
+  Document,
+  DocumentMetadata,
+} from "teleportal/storage";
 import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
 
 export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
@@ -186,7 +190,7 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
   }
 
   async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
-    return await myBackend.getMetadata(documentId) ?? defaultMetadata();
+    return (await myBackend.getMetadata(documentId)) ?? defaultMetadata();
   }
 
   async deleteDocument(documentId: string): Promise<void> {
@@ -203,7 +207,12 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
 ### Example: Custom FileStorage
 
 ```typescript
-import type { FileStorage, File, FileMetadata, FileUploadResult } from "teleportal/storage";
+import type {
+  FileStorage,
+  File,
+  FileMetadata,
+  FileUploadResult,
+} from "teleportal/storage";
 
 export class S3FileStorage implements FileStorage {
   readonly type = "file-storage" as const;
@@ -216,7 +225,7 @@ export class S3FileStorage implements FileStorage {
 
     // Fetch chunks from S3
     const chunks = await Promise.all(
-      metadata.chunkKeys.map(key => s3.getObject(key))
+      metadata.chunkKeys.map((key) => s3.getObject(key)),
     );
 
     return {
@@ -241,7 +250,7 @@ export class S3FileStorage implements FileStorage {
 
   async deleteFilesByDocument(documentId: string): Promise<void> {
     const files = await this.listFileMetadataByDocument(documentId);
-    await Promise.all(files.map(f => this.deleteFile(f.id)));
+    await Promise.all(files.map((f) => this.deleteFile(f.id)));
   }
 
   async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {
@@ -276,6 +285,53 @@ const { documentStorage, fileStorage } = createUnstorage(redisStorage, {
 });
 ```
 
+### VirtualStorage Wrapper
+
+**VirtualStorage** is a configurable wrapper that adds batching and buffering to any `DocumentStorage` implementation, improving write performance by reducing DB I/O operations.
+
+**Key Features:**
+
+- **Write Buffering**: Buffers document updates and metadata in memory
+- **Batched Persistence**: Uses TanStack Pacer to batch writes (configurable max size and time)
+- **Read Consistency**: Flushes pending writes on reads to ensure data consistency
+- **Framework-Agnostic**: Works with any `DocumentStorage` implementation
+
+**Usage:**
+
+```typescript
+import { VirtualStorage } from "teleportal/storage";
+
+// Wrap any existing storage with batching
+const batchedStorage = new VirtualStorage(existingDocumentStorage, {
+  batchMaxSize: 100, // Batch every 100 updates
+  batchWaitMs: 2000, // Or every 2 seconds
+});
+
+// Use as normal DocumentStorage
+await batchedStorage.handleUpdate("doc1", update);
+const doc = await batchedStorage.getDocument("doc1"); // Flushes pending writes
+```
+
+**When to Use:**
+
+- High-frequency collaborative updates
+- Slow storage backends (remote DBs, object storage)
+- Reducing I/O overhead in write-heavy applications
+
+**Configuration:**
+
+- `batchMaxSize`: Maximum updates per batch (default: 100)
+- `batchWaitMs`: Maximum time to wait before flushing (default: 2000ms)
+- Batches flush when either limit is reached
+
+**Performance Impact:**
+
+- **Writes**: Faster acknowledgment (buffered), reduced DB calls
+- **Reads**: Slight overhead from potential flush, but ensures consistency
+- **Memory**: Uses memory for buffering (proportional to batch size)
+
+This wrapper is especially useful for collaborative apps where many small updates need to be persisted efficiently.
+
 ## Factory Functions
 
 Factory functions simplify creating storage pairs that work together:
@@ -286,11 +342,11 @@ Creates document and file storage based on the same unstorage instance with diff
 
 ```typescript
 const { documentStorage, fileStorage } = createUnstorage(storage, {
-  fileKeyPrefix: "file",        // Default: "file"
-  documentKeyPrefix: "doc",     // Default: ""
-  encrypted: false,             // Default: false
-  scanKeys: false,              // Default: false
-  ttl: 5000,                   // Default: 5000ms
+  fileKeyPrefix: "file", // Default: "file"
+  documentKeyPrefix: "doc", // Default: ""
+  encrypted: false, // Default: false
+  scanKeys: false, // Default: false
+  ttl: 5000, // Default: 5000ms
 });
 ```
 
@@ -300,8 +356,8 @@ Creates in-memory document and file storage.
 
 ```typescript
 const { documentStorage, fileStorage } = createInMemory({
-  encrypted: false,    // Default: false
-  useYDoc: false,      // Default: false
+  encrypted: false, // Default: false
+  useYDoc: false, // Default: false
 });
 ```
 
@@ -326,8 +382,8 @@ When using the same storage backend for multiple storage types, use key prefixes
 
 ```typescript
 createUnstorage(storage, {
-  fileKeyPrefix: "file",        // Files stored as "file:file:..."
-  documentKeyPrefix: "doc",     // Documents stored as "doc:..."
+  fileKeyPrefix: "file", // Files stored as "file:file:..."
+  documentKeyPrefix: "doc", // Documents stored as "doc:..."
 });
 ```
 

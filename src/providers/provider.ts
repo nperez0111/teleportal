@@ -479,9 +479,16 @@ export class Provider<
     // Clean up synced promise
     this.#clearSyncedPromise();
 
-    // Clean up transport streams
-    // The transport readable/writable streams are closed when the connection is destroyed
-    // or when the provider is destroyed, so we don't need explicit cleanup here
+    // Clean up transport streams properly
+    try {
+      // Cancel the transport readable stream to stop piping
+      this.transport.readable.cancel().catch(() => {});
+      // Close the transport writable stream
+      this.transport.writable.close().catch(() => {});
+    } catch (error) {
+      // Ignore stream cleanup errors
+    }
+
     this.#messageReader.unsubscribe();
     if (destroyConnection) {
       this.#underlyingConnection.destroy();

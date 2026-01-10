@@ -108,7 +108,9 @@
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
+    "@logtape/logtape": "^1.2.0",
     "@nats-io/transport-node": "^3.2.0",
+    "@tanstack/pacer": "0.17.1",
     "crossws": "^0.4.1",
     "db0": "^0.3.4",
     "eventsource": "^4.0.0",
@@ -116,7 +118,6 @@
     "ioredis": "^5.8.2",
     "jose": "^6.1.1",
     "lib0": "^0.2.114",
-    "@logtape/logtape": "^1.2.0",
     "srvx": "^0.9.6",
     "unstorage": "^1.17.2",
     "y-indexeddb": "^9.0.12",

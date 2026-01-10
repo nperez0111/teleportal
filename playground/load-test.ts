@@ -18,7 +18,7 @@ const token = await createTokenManager({
 );
 
 const websocketClient = new websocket.WebSocketConnection({
-  url: `ws://localhost:1234/?token=${token}`,
+  url: `ws://localhost:1235/?token=${token}`,
 });
 
 await websocketClient.connected;
@@ -39,12 +39,29 @@ const provider = await Provider.create({
 });
 
 await provider.synced;
-for (let i = 0; i < 100000; i++) {
-  console.log("writing");
-  provider.doc.getText("test").insert(1, "abc");
-  await new Promise((r) => setTimeout(r, 1));
+
+const numUpdates = 1000; // Adjust as needed
+console.log(`Starting load test with ${numUpdates} updates...`);
+
+const startTime = performance.now();
+
+for (let i = 0; i < numUpdates; i++) {
+  provider.doc.getText("test").insert(i % 10, "x"); // Vary insertion point
 }
-setTimeout(() => {
-  console.log(provider.doc.getText("test").toJSON());
-  provider.destroy();
-}, 0);
+
+const endTime = performance.now();
+const totalTime = endTime - startTime;
+const updatesPerSecond = numUpdates / (totalTime / 1000);
+
+console.log(totalTime.toFixed(2));
+
+console.log("Final document length:", provider.doc.getText("test").length);
+
+try {
+  await provider.destroy();
+  console.log("Provider destroyed successfully");
+} catch (e) {
+  console.error("Error destroying provider:", e);
+}
+
+process.exit(0);
