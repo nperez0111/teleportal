@@ -142,6 +142,9 @@ export abstract class Connection<
   // Message buffering
   #messageBuffer: Message[] = [];
 
+  // In-flight message tracking (messages sent but not yet acked, excluding awareness)
+  #inFlightMessages = new Map<string, Message>();
+
   // Heartbeat and connection check state
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #checkInterval: ReturnType<typeof setInterval> | null = null;
@@ -215,6 +218,16 @@ export abstract class Connection<
     this.on("ping", () => {
       this.updateLastMessageReceived();
     });
+
+    // Listen for ack messages to remove them from in-flight tracking
+    this.on("message", (message) => {
+      if (message.type === "ack") {
+        const messageId = message.payload.messageId;
+        if (this.#inFlightMessages.has(messageId)) {
+          this.#inFlightMessages.delete(messageId);
+        }
+      }
+    });
   }
 
   protected setState(state: ConnectionState<Context>) {
@@ -234,6 +247,8 @@ export abstract class Connection<
         if (previousState.type !== "disconnected") {
           this.call("disconnected");
         }
+        // Clear in-flight messages when disconnected (they'll need to be re-sent)
+        this.#inFlightMessages.clear();
         // If we were previously connected and should reconnect, schedule reconnection
         if (
           previousState.type === "connected" &&
@@ -387,7 +402,15 @@ export abstract class Connection<
     }
 
     if (this.state.type === "connected") {
+      // Track non-ack, non-awareness messages as in-flight
+      if (message.type !== "ack" && message.type !== "awareness") {
+        this.#inFlightMessages.set(message.id, message);
+      }
       this.sendMessage(message).catch(async (err) => {
+        // Remove from in-flight if send fails
+        if (message.type !== "ack" && message.type !== "awareness") {
+          this.#inFlightMessages.delete(message.id);
+        }
         // There is some bug with rejected promises in bun, so we need to wait a bit
         await new Promise((resolve) => setTimeout(resolve, 1));
         const error =
@@ -505,6 +528,20 @@ export abstract class Connection<
   }
 
   /**
+   * Check if there are any in-flight messages (excluding awareness messages)
+   */
+  get hasInFlightMessages(): boolean {
+    return this.#inFlightMessages.size > 0;
+  }
+
+  /**
+   * Get the number of in-flight messages (excluding awareness messages)
+   */
+  get inFlightMessageCount(): number {
+    return this.#inFlightMessages.size;
+  }
+
+  /**
    * A promise that resolves when the connection is connected
    */
   get connected(): Promise<void> {
@@ -576,6 +613,9 @@ export abstract class Connection<
 
     // Clear message buffer
     this.#messageBuffer = [];
+
+    // Clear in-flight messages
+    this.#inFlightMessages.clear();
 
     // Release the writer lock, then close the fan out writer
     this.writer.releaseLock();

@@ -1,5 +1,6 @@
 import { uuidv4 } from "lib0/random";
 import {
+  AckMessage,
   DocMessage,
   FileMessage,
   InMemoryPubSub,
@@ -559,6 +560,22 @@ export class Server<Context extends ServerContext> {
                     );
                   }
 
+                  // Send ACK even for failed file messages (file messages are never ACK messages)
+                  const ackMessage = new AckMessage(
+                    {
+                      type: "ack",
+                      messageId: message.id,
+                    },
+                    message.context,
+                  );
+                  await client.send(ackMessage);
+                  msgLogger
+                    .with({
+                      messageId: message.id,
+                      ackMessageId: ackMessage.id,
+                    })
+                    .trace("Sent ACK for message (file storage unavailable)");
+
                   return; // Don't throw, just return
                 }
 
@@ -594,6 +611,24 @@ export class Server<Context extends ServerContext> {
                     documentId: message.document,
                   })
                   .debug("Message applied successfully");
+              }
+
+              // Send ACK for all non-ACK messages after successful processing
+              if (message.type !== "ack") {
+                const ackMessage = new AckMessage(
+                  {
+                    type: "ack",
+                    messageId: message.id,
+                  },
+                  message.context,
+                );
+                await client.send(ackMessage);
+                msgLogger
+                  .with({
+                    messageId: message.id,
+                    ackMessageId: ackMessage.id,
+                  })
+                  .trace("Sent ACK for message");
               }
             } catch (error) {
               msgLogger

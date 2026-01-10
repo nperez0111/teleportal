@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { getLogger } from "@logtape/logtape";
 import { Server } from "./server";
 import { Client } from "./client";
-import { InMemoryPubSub, DocMessage } from "teleportal";
+import { AckMessage, InMemoryPubSub, DocMessage } from "teleportal";
 import type {
   ServerContext,
   Message,
@@ -1128,6 +1128,193 @@ describe("Server", () => {
       // Clean up
       server.disconnectClient("client-1");
       server.disconnectClient("client-2");
+    });
+  });
+
+  describe("ACK message handling", () => {
+    it("should send ACK for doc messages", async () => {
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Create a transport that captures messages sent to client
+      const transport = new MockTransport<ServerContext>();
+      // Override the writable to capture messages
+      transport.writable = writable;
+      
+      const client = server.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      // Enqueue message to transport
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should have received an ACK message
+      const ackMessages = writtenMessages.filter(
+        (m) => m.type === "ack",
+      ) as AckMessage<ServerContext>[];
+      expect(ackMessages.length).toBe(1);
+      expect(ackMessages[0].payload.messageId).toBe(message.id);
+
+      transport.closeReadable();
+    });
+
+    it("should send ACK for file messages", async () => {
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Create a transport that captures messages sent to client
+      const transport = new MockTransport<ServerContext>();
+      // Override the writable to capture messages
+      transport.writable = writable;
+      
+      const client = server.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const { FileMessage } = await import("teleportal");
+      const message = new FileMessage(
+        "test-doc",
+        {
+          type: "file-download",
+          fileId: "test-file-id",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      // Enqueue message to transport
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should have received an ACK message
+      const ackMessages = writtenMessages.filter(
+        (m) => m.type === "ack",
+      ) as AckMessage<ServerContext>[];
+      expect(ackMessages.length).toBe(1);
+      expect(ackMessages[0].payload.messageId).toBe(message.id);
+
+      transport.closeReadable();
+    });
+
+    it("should NOT send ACK for ack messages (to avoid loops)", async () => {
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Create a transport that captures messages sent to client
+      const transport = new MockTransport<ServerContext>();
+      // Override the writable to capture messages
+      transport.writable = writable;
+      
+      const client = server.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const { AckMessage } = await import("teleportal");
+      const ackMessage = new AckMessage(
+        {
+          type: "ack",
+          messageId: "some-message-id",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      // Enqueue message to transport
+      transport.enqueueMessage(ackMessage);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should NOT have received another ACK (would cause loop)
+      const ackMessages = writtenMessages.filter((m) => m.type === "ack");
+      expect(ackMessages.length).toBe(0);
+
+      // Clean up - try to close, but ignore errors if already closed
+      try {
+        transport.closeReadable();
+      } catch (error) {
+        // Ignore errors if already closed
+      }
+    });
+
+    it("should send ACK even when file storage is unavailable", async () => {
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      // Create server with storage that has no file storage
+      const mockStorage = new MockDocumentStorage();
+      mockStorage.fileStorage = undefined;
+      const serverWithoutFileStorage = new Server({
+        getStorage: () => Promise.resolve(mockStorage),
+        pubSub,
+      });
+
+      // Create a transport that captures messages sent to client
+      const transport = new MockTransport<ServerContext>();
+      // Override the writable to capture messages
+      transport.writable = writable;
+      
+      const client = serverWithoutFileStorage.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const { FileMessage } = await import("teleportal");
+      const message = new FileMessage(
+        "test-doc",
+        {
+          type: "file-download",
+          fileId: "test-file-id",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      // Enqueue message to transport
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should have received an ACK message even though file storage is unavailable
+      const ackMessages = writtenMessages.filter(
+        (m) => m.type === "ack",
+      ) as AckMessage<ServerContext>[];
+      expect(ackMessages.length).toBe(1);
+      expect(ackMessages[0].payload.messageId).toBe(message.id);
+
+      transport.closeReadable();
+      await serverWithoutFileStorage[Symbol.asyncDispose]();
     });
   });
 });

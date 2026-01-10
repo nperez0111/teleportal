@@ -291,6 +291,7 @@ export class Provider<
    * Resolves when both
    *  - the underlying connection is connected
    *  - the transport is ready (i.e. we've synced the ydoc)
+   *  - there are no in-flight messages (excluding awareness messages)
    */
   public get synced(): Promise<void> {
     if (this.#synced) {
@@ -301,6 +302,7 @@ export class Provider<
     const synced = Promise.all([
       this.#underlyingConnection.connected,
       this.transport.synced,
+      this.#waitForInFlightMessages(),
     ]).then(() => {});
 
     this.#synced = synced;
@@ -309,6 +311,48 @@ export class Provider<
       this.#synced = null;
     });
     return synced;
+  }
+
+  /**
+   * Wait for all in-flight messages (excluding awareness) to be acked
+   */
+  #waitForInFlightMessages(): Promise<void> {
+    return new Promise((resolve) => {
+      // If there are no in-flight messages, resolve immediately
+      if (!this.#underlyingConnection.hasInFlightMessages) {
+        resolve();
+        return;
+      }
+
+      let checkInterval: ReturnType<typeof setInterval> | null = null;
+      let unsubscribe: (() => void) | null = null;
+      let resolved = false;
+
+      const cleanup = () => {
+        if (checkInterval) {
+          clearInterval(checkInterval);
+          checkInterval = null;
+        }
+        if (unsubscribe) {
+          unsubscribe();
+          unsubscribe = null;
+        }
+      };
+
+      const checkAndResolve = () => {
+        if (!resolved && !this.#underlyingConnection.hasInFlightMessages) {
+          resolved = true;
+          cleanup();
+          resolve();
+        }
+      };
+
+      // Poll periodically to check for in-flight messages
+      checkInterval = setInterval(checkAndResolve, 10); // Check every 10ms
+
+      // Also listen for message events to catch acks faster
+      unsubscribe = this.#underlyingConnection.on("message", checkAndResolve);
+    });
   }
 
   public get state() {

@@ -454,10 +454,9 @@ describe("Provider milestone operations", () => {
     }
   });
 
-  it("should list milestones", async () => {
+  // Helper function to set up provider and ack initial messages
+  async function setupProvider() {
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
     provider = await Provider.create({
       client: mockConnection,
       document: "test-doc",
@@ -466,9 +465,28 @@ describe("Provider milestone operations", () => {
       enableOfflinePersistence: false,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Ack any initial messages sent during provider creation
+    const initialMessages = mockConnection.sentMessages;
+    if (initialMessages.length > 0) {
+      const { AckMessage } = await import("teleportal");
+      for (const msg of initialMessages) {
+        if (msg.type !== "ack" && msg.type !== "awareness") {
+          const ack = new AckMessage(
+            { type: "ack", messageId: msg.id },
+            { clientId: "test-client" },
+          );
+          mockConnection.simulateMessage(ack);
+        }
+      }
+    }
+
     mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Wait for synced to resolve (should be fast now that messages are acked)
+    await provider.synced;
+  }
+
+  it("should list milestones", async () => {
+    await setupProvider();
 
     // Set up response handler
     mockConnection.responseHandler = (message) => {
@@ -511,20 +529,7 @@ describe("Provider milestone operations", () => {
   });
 
   it("should get milestone snapshot", async () => {
-    mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setupProvider();
 
     const testSnapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
 
@@ -556,20 +561,7 @@ describe("Provider milestone operations", () => {
   });
 
   it("should create milestone", async () => {
-    mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setupProvider();
 
     // Add some content to the document
     const ytext = ydoc.getText("content");
@@ -607,20 +599,7 @@ describe("Provider milestone operations", () => {
   });
 
   it("should create milestone without name (auto-generate)", async () => {
-    mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setupProvider();
 
     // Set up response handler
     mockConnection.responseHandler = (message) => {
@@ -652,20 +631,7 @@ describe("Provider milestone operations", () => {
   });
 
   it("should update milestone name", async () => {
-    mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setupProvider();
 
     // Set up response handler
     mockConnection.responseHandler = (message) => {
@@ -703,20 +669,7 @@ describe("Provider milestone operations", () => {
   });
 
   it("should handle milestone auth errors", async () => {
-    mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setupProvider();
 
     // Set up response handler to return auth error
     mockConnection.responseHandler = (message) => {
@@ -742,20 +695,7 @@ describe("Provider milestone operations", () => {
   });
 
   it("should handle milestone list with snapshotIds filter", async () => {
-    mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    provider = await Provider.create({
-      client: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setupProvider();
 
     // Set up response handler
     mockConnection.responseHandler = (message) => {
@@ -789,5 +729,166 @@ describe("Provider milestone operations", () => {
 
     expect(milestones).toHaveLength(1);
     expect(milestones[0].id).toBe("milestone-2");
+  });
+
+  describe("synced with in-flight messages", () => {
+    it("should wait for in-flight messages to be acked before synced resolves", async () => {
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      mockTransport.resolveSynced();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Send a message that will be tracked as in-flight
+      const docMessage = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array() as StateVector,
+        },
+        { clientId: "test-client" },
+      );
+
+      await mockConnection.send(docMessage);
+
+      // synced should not resolve yet (has in-flight message)
+      let syncedResolved = false;
+      const syncedPromise = provider.synced.then(() => {
+        syncedResolved = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(syncedResolved).toBe(false);
+      expect(mockConnection.hasInFlightMessages).toBe(true);
+
+      // Send ACK for the message
+      const { AckMessage } = await import("teleportal");
+      const ackMessage = new AckMessage(
+        {
+          type: "ack",
+          messageId: docMessage.id,
+        },
+        { clientId: "test-client" },
+      );
+      mockConnection.simulateMessage(ackMessage);
+
+      // Wait for ACK to be processed
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Now synced should resolve
+      await syncedPromise;
+      expect(syncedResolved).toBe(true);
+      expect(mockConnection.hasInFlightMessages).toBe(false);
+    });
+
+    it("should resolve synced immediately when no in-flight messages", async () => {
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Ack any initial messages sent during provider creation
+      const initialMessages = mockConnection.sentMessages;
+      if (initialMessages.length > 0) {
+        const { AckMessage } = await import("teleportal");
+        for (const msg of initialMessages) {
+          if (msg.type !== "ack" && msg.type !== "awareness") {
+            const ack = new AckMessage(
+              { type: "ack", messageId: msg.id },
+              { clientId: "test-client" },
+            );
+            mockConnection.simulateMessage(ack);
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      mockTransport.resolveSynced();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // No in-flight messages, synced should resolve quickly
+      const startTime = Date.now();
+      await provider.synced;
+      const endTime = Date.now();
+
+      // Should resolve quickly (within 500ms to account for all async operations)
+      expect(endTime - startTime).toBeLessThan(500);
+    });
+
+    it("should not wait for awareness messages to be acked", async () => {
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Ack any initial messages sent during provider creation
+      const initialMessages = mockConnection.sentMessages;
+      if (initialMessages.length > 0) {
+        const { AckMessage } = await import("teleportal");
+        for (const msg of initialMessages) {
+          if (msg.type !== "ack" && msg.type !== "awareness") {
+            const ack = new AckMessage(
+              { type: "ack", messageId: msg.id },
+              { clientId: "test-client" },
+            );
+            mockConnection.simulateMessage(ack);
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      mockTransport.resolveSynced();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Send an awareness message (should not be tracked)
+      const { AwarenessMessage } = await import("teleportal");
+      const awarenessMessage = new AwarenessMessage(
+        "test-doc",
+        {
+          type: "awareness-update",
+          update: new Uint8Array([1, 2, 3]) as any,
+        },
+        { clientId: "test-client" },
+      );
+
+      await mockConnection.send(awarenessMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // synced should resolve even with awareness message sent (not tracked)
+      expect(mockConnection.hasInFlightMessages).toBe(false);
+
+      // Access synced after sending awareness message
+      const startTime = Date.now();
+      await provider.synced;
+      const endTime = Date.now();
+
+      // Should resolve quickly (within 500ms to account for all async operations)
+      expect(endTime - startTime).toBeLessThan(500);
+    });
   });
 });
