@@ -1,6 +1,7 @@
 import {
   decodeMessage,
   DocMessage,
+  Observable,
   type DecodedMilestoneListRequest,
   type Message,
   type MilestoneSnapshot,
@@ -14,6 +15,7 @@ import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 import { getLogger, Logger } from "@logtape/logtape";
 import { toErrorDetails } from "../logging";
+import type { TeleportalServerEventReason, TeleportalServerEvents } from "./events";
 
 /**
  * A session is a collection of clients which are connected to a document.
@@ -47,6 +49,7 @@ export class Session<Context extends ServerContext> {
   #cleanupTimeoutId: ReturnType<typeof setTimeout> | undefined;
   #onCleanupScheduled: (session: Session<Context>) => void;
   readonly #CLEANUP_DELAY_MS = 60_000;
+  #events?: Observable<TeleportalServerEvents<Context>>;
 
   constructor(args: {
     documentId: string;
@@ -58,6 +61,7 @@ export class Session<Context extends ServerContext> {
     nodeId: string;
     dedupe?: TtlDedupe;
     onCleanupScheduled: (session: Session<Context>) => void;
+    events?: Observable<TeleportalServerEvents<Context>>;
   }) {
     this.documentId = args.documentId;
     this.namespacedDocumentId = args.namespacedDocumentId;
@@ -74,6 +78,7 @@ export class Session<Context extends ServerContext> {
     });
     this.#dedupe = args.dedupe ?? new TtlDedupe();
     this.#onCleanupScheduled = args.onCleanupScheduled;
+    this.#events = args.events;
 
     this.#logger
       .with({
@@ -157,6 +162,23 @@ export class Session<Context extends ServerContext> {
             );
 
             if (!shouldAccept) {
+              this.#events
+                ?.call("document-message", {
+                  ts: new Date().toISOString(),
+                  nodeId: this.#nodeId,
+                  source: "replication",
+                  sourceNodeId: sourceId,
+                  documentId: this.documentId,
+                  namespacedDocumentId: this.namespacedDocumentId,
+                  sessionId: this.id,
+                  encrypted: this.encrypted,
+                  message,
+                  messageType: message.type,
+                  payloadType: (message as any).payload?.type,
+                  deduped: true,
+                })
+                .catch(() => {});
+
               replicationLogger
                 .with({
                   messageId: message.id,
@@ -167,7 +189,10 @@ export class Session<Context extends ServerContext> {
               return;
             }
 
-            await this.apply(message);
+            await this.apply(message, undefined, {
+              source: "replication",
+              sourceNodeId: sourceId,
+            });
 
             replicationLogger
               .with({
@@ -227,12 +252,29 @@ export class Session<Context extends ServerContext> {
       .debug(
         hadClient ? "Client re-added to session" : "Client added to session",
       );
+
+    if (!hadClient) {
+      this.#events
+        ?.call("document-client-connect", {
+          ts: new Date().toISOString(),
+          nodeId: this.#nodeId,
+          clientId: client.id,
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sessionId: this.id,
+          encrypted: this.encrypted,
+        })
+        .catch(() => {});
+    }
   }
 
   /**
    * Remove a client from the session.
    */
-  removeClient(clientId: string | Client<Context>) {
+  removeClient(
+    clientId: string | Client<Context>,
+    reason: TeleportalServerEventReason = "manual",
+  ) {
     const id = typeof clientId === "string" ? clientId : clientId.id;
     const hadClient = this.#clients.has(id);
     this.#clients.delete(id);
@@ -246,6 +288,19 @@ export class Session<Context extends ServerContext> {
           totalClients: this.#clients.size,
         })
         .debug("Client removed from session");
+
+      this.#events
+        ?.call("document-client-disconnect", {
+          ts: new Date().toISOString(),
+          nodeId: this.#nodeId,
+          clientId: id,
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sessionId: this.id,
+          encrypted: this.encrypted,
+          reason,
+        })
+        .catch(() => {});
 
       // Schedule cleanup if no clients remain
       if (this.#clients.size === 0) {
@@ -338,6 +393,10 @@ export class Session<Context extends ServerContext> {
   async apply(
     message: Message<Context>,
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
+    meta?: {
+      source?: "client" | "replication";
+      sourceNodeId?: string;
+    },
   ) {
     const log = this.#logger.with({
       messageId: message.id,
@@ -356,6 +415,23 @@ export class Session<Context extends ServerContext> {
         clientId: client?.id,
       })
       .debug("Applying message to session");
+
+    this.#events
+      ?.call("document-message", {
+        ts: new Date().toISOString(),
+        nodeId: this.#nodeId,
+        source: meta?.source ?? (client ? "client" : "replication"),
+        sourceNodeId: meta?.sourceNodeId,
+        clientId: client?.id,
+        documentId: this.documentId,
+        namespacedDocumentId: this.namespacedDocumentId,
+        sessionId: this.id,
+        encrypted: this.encrypted,
+        message,
+        messageType: message.type,
+        payloadType: (message as any).payload?.type,
+      })
+      .catch(() => {});
 
     // Validate encryption consistency
     if (message.encrypted !== this.encrypted) {

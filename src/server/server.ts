@@ -4,6 +4,7 @@ import {
   DocMessage,
   FileMessage,
   InMemoryPubSub,
+  Observable,
   type Message,
   type PubSub,
   type ServerContext,
@@ -16,6 +17,7 @@ import { register } from "../monitoring/metrics";
 import { Session } from "./session";
 import { Client } from "./client";
 import { FileHandler } from "./file-handler";
+import type { TeleportalServerEventReason, TeleportalServerEvents } from "./events";
 import {
   HealthStatus,
   StatusData,
@@ -86,6 +88,10 @@ export class Server<Context extends ServerContext> {
    * Metrics collector for all monitoring data.
    */
   #metrics!: MetricsCollector;
+  /**
+   * Observable event stream for important server lifecycle/message events.
+   */
+  readonly events: Observable<TeleportalServerEvents<Context>>;
 
   constructor(options: ServerOptions<Context>) {
     this.#options = options;
@@ -94,6 +100,7 @@ export class Server<Context extends ServerContext> {
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
     this.#metrics = new MetricsCollector(register);
+    this.events = new Observable<TeleportalServerEvents<Context>>();
 
     logger.info("Server initialized", {
       nodeId: this.#nodeId,
@@ -239,10 +246,23 @@ export class Server<Context extends ServerContext> {
           pubSub: this.pubSub,
           nodeId: this.#nodeId,
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
+          events: this.events,
         });
 
         await session.load();
         this.#sessions.set(compositeDocumentId, session);
+
+        this.events
+          .call("document-load", {
+            ts: new Date().toISOString(),
+            nodeId: this.#nodeId,
+            documentId,
+            namespacedDocumentId: compositeDocumentId,
+            sessionId: id,
+            encrypted,
+            context,
+          })
+          .catch(() => {});
 
         // Record session creation metrics
         this.#metrics.sessionsActive.inc();
@@ -319,6 +339,18 @@ export class Server<Context extends ServerContext> {
     // Close existing session if any
     const session = this.#sessions.get(compositeDocumentId);
     if (session) {
+      this.events
+        .call("document-unload", {
+          ts: new Date().toISOString(),
+          nodeId: this.#nodeId,
+          documentId: session.documentId,
+          namespacedDocumentId: session.namespacedDocumentId,
+          sessionId: session.id,
+          encrypted: session.encrypted,
+          reason: "delete",
+        })
+        .catch(() => {});
+
       // Disconnect all clients
       for (const client of session.clients) {
         // Optionally notify clients about deletion
@@ -342,6 +374,17 @@ export class Server<Context extends ServerContext> {
 
     // Delete document data via storage (this handles cascade deletion of files)
     await storage.deleteDocument(compositeDocumentId);
+
+    this.events
+      .call("document-delete", {
+        ts: new Date().toISOString(),
+        nodeId: this.#nodeId,
+        documentId,
+        namespacedDocumentId: compositeDocumentId,
+        encrypted,
+        context,
+      })
+      .catch(() => {});
 
     logger
       .with({
@@ -374,6 +417,8 @@ export class Server<Context extends ServerContext> {
     const client = new Client<Context>({
       id,
       writable: transport.writable,
+      events: this.events,
+      nodeId: this.#nodeId,
     });
 
     withMessageValidator(transport, {
@@ -530,6 +575,21 @@ export class Server<Context extends ServerContext> {
       .readable.pipeTo(
         new WritableStream<Message<Context>>({
           write: async (message) => {
+            // Best-effort event emission for inbound messages.
+            this.events
+              .call("client-message", {
+                ts: new Date().toISOString(),
+                nodeId: this.#nodeId,
+                clientId: client.id,
+                direction: "in",
+                message,
+                messageType: message.type,
+                payloadType: (message as any).payload?.type,
+                documentId: message.document ?? undefined,
+                encrypted: (message as any).encrypted,
+              })
+              .catch(() => {});
+
             if (message.type === "ack") {
               // client ack'd, we don't care about it for processing
               // but still track it in metrics
@@ -703,7 +763,7 @@ export class Server<Context extends ServerContext> {
         logger
           .with({ clientId: id })
           .info("Client stream ended, disconnecting client");
-        this.disconnectClient(client.id);
+        this.disconnectClient(client.id, "stream-ended");
       });
 
     logger.with({ clientId: id }).info("Client created and connected");
@@ -711,9 +771,17 @@ export class Server<Context extends ServerContext> {
     // Record client connect metric
     this.#metrics.clientsActive.inc();
 
+    this.events
+      .call("client-connect", {
+        ts: new Date().toISOString(),
+        nodeId: this.#nodeId,
+        clientId: client.id,
+      })
+      .catch(() => {});
+
     if (abortSignal) {
       abortSignal.addEventListener("abort", () => {
-        this.disconnectClient(client.id);
+        this.disconnectClient(client.id, "abort");
       });
     }
 
@@ -724,14 +792,17 @@ export class Server<Context extends ServerContext> {
    * Disconnect a client from all sessions.
    * @param client - The client or client ID to disconnect.
    */
-  disconnectClient(client: string | Client<Context>) {
+  disconnectClient(
+    client: string | Client<Context>,
+    reason: TeleportalServerEventReason = "manual",
+  ) {
     const clientId = typeof client === "string" ? client : client.id;
     const logger = getLogger(["teleportal", "server"]).with({ clientId });
 
     logger.with({ clientId }).info("Disconnecting client from all sessions");
 
     for (const s of this.#sessions.values()) {
-      s.removeClient(client);
+      s.removeClient(client, reason);
     }
 
     logger
@@ -743,6 +814,15 @@ export class Server<Context extends ServerContext> {
 
     // Record client disconnect metric
     this.#metrics.clientsActive.dec();
+
+    this.events
+      .call("client-disconnect", {
+        ts: new Date().toISOString(),
+        nodeId: this.#nodeId,
+        clientId,
+        reason,
+      })
+      .catch(() => {});
   }
 
   /**
@@ -766,6 +846,18 @@ export class Server<Context extends ServerContext> {
           sessionId: session.id,
         })
         .info("Cleaning up session with no clients");
+
+      this.events
+        .call("document-unload", {
+          ts: new Date().toISOString(),
+          nodeId: this.#nodeId,
+          documentId: session.documentId,
+          namespacedDocumentId: session.namespacedDocumentId,
+          sessionId: session.id,
+          encrypted: session.encrypted,
+          reason: "cleanup",
+        })
+        .catch(() => {});
 
       this.#sessions.delete(session.namespacedDocumentId);
 
@@ -822,6 +914,18 @@ export class Server<Context extends ServerContext> {
 
     for (const s of this.#sessions.values()) {
       try {
+        this.events
+          .call("document-unload", {
+            ts: new Date().toISOString(),
+            nodeId: this.#nodeId,
+            documentId: s.documentId,
+            namespacedDocumentId: s.namespacedDocumentId,
+            sessionId: s.id,
+            encrypted: s.encrypted,
+            reason: "dispose",
+          })
+          .catch(() => {});
+
         await s[Symbol.asyncDispose]();
       } catch (error) {
         logger
