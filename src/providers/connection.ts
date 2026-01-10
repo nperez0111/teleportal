@@ -208,6 +208,10 @@ export abstract class Connection<
     if (connect) {
       // Attempt to connect on next tick to allow for initialization
       Connection.setTimeout(() => {
+        // Don't attempt to connect if the connection has been destroyed
+        if (this.destroyed) {
+          return;
+        }
         this.connect().catch((error) => {
           // Handle any errors from the initial connection attempt
           // This prevents unhandled promise rejections
