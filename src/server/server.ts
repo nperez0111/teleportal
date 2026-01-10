@@ -373,6 +373,12 @@ export class Server<Context extends ServerContext> {
 
         const msgLogger = logger.with({ messageId: message.id });
 
+        // Skip permission check for ACK messages (they're acknowledgments, not requests)
+        if (message.type === "ack") {
+          msgLogger.debug("Skipping permission check for ACK message");
+          return true;
+        }
+
         // Skip permission check for file-auth-message (they're responses, not requests)
         if (
           message.type === "file" &&
@@ -489,6 +495,7 @@ export class Server<Context extends ServerContext> {
           }
           return true;
         } catch (error) {
+          console.log(error);
           msgLogger
             .with({
               error: toErrorDetails(error as Error),
@@ -504,6 +511,11 @@ export class Server<Context extends ServerContext> {
       .readable.pipeTo(
         new WritableStream<Message<Context>>({
           write: async (message) => {
+            if (message.type === "ack") {
+              // client ack'd, we don't care about it
+              return;
+            }
+
             const msgLogger = logger.with({
               messageId: message.id,
               documentId: message.document,
@@ -614,22 +626,21 @@ export class Server<Context extends ServerContext> {
               }
 
               // Send ACK for all non-ACK messages after successful processing
-              if (message.type !== "ack") {
-                const ackMessage = new AckMessage(
-                  {
-                    type: "ack",
-                    messageId: message.id,
-                  },
-                  message.context,
-                );
-                await client.send(ackMessage);
-                msgLogger
-                  .with({
-                    messageId: message.id,
-                    ackMessageId: ackMessage.id,
-                  })
-                  .trace("Sent ACK for message");
-              }
+
+              const ackMessage = new AckMessage(
+                {
+                  type: "ack",
+                  messageId: message.id,
+                },
+                message.context,
+              );
+              await client.send(ackMessage);
+              msgLogger
+                .with({
+                  messageId: message.id,
+                  ackMessageId: ackMessage.id,
+                })
+                .trace("Sent ACK for message");
             } catch (error) {
               msgLogger
                 .with({

@@ -1,14 +1,30 @@
 import type { ServerOptions } from "teleportal/server";
-import type { TokenManager } from ".";
+import type { TokenManager, TokenPayload } from ".";
 
 export function checkPermissionWithTokenManager(
   tokenManager: TokenManager,
 ): ServerOptions<any>["checkPermission"] {
-  return async ({ context, documentId, fileId, message }) => {
+  return async ({ context, documentId, message }) => {
+    // ACK messages don't require permission checks - they're acknowledgments
+    if (message.type === "ack") {
+      return true;
+    }
+
+    // Awareness messages don't require permission checks - they're presence updates
+    if (message.type === "awareness") {
+      return true;
+    }
+
     if (message.type === "doc") {
       if (!documentId) {
         throw new Error("documentId is required for doc messages");
       }
+
+      // Extract token payload from context
+      // The context should contain the token payload fields (userId, room, documentAccess)
+      // when using token authentication
+      const tokenPayload = context as unknown as TokenPayload;
+
       switch (message.payload.type) {
         case "sync-done":
         case "sync-step-1":
@@ -19,7 +35,7 @@ export function checkPermissionWithTokenManager(
         case "milestone-update-name-response":
         case "milestone-create-response":
           return tokenManager.hasDocumentPermission(
-            context,
+            tokenPayload,
             documentId,
             "read",
           );
@@ -28,19 +44,18 @@ export function checkPermissionWithTokenManager(
         case "milestone-create-request":
         case "milestone-update-name-request":
           return tokenManager.hasDocumentPermission(
-            context,
+            tokenPayload,
             documentId,
             "write",
           );
         case "auth-message":
         case "milestone-auth-message":
-          // TODO what should we do here?
-          console.log("Got an auth message, denying it?");
-          // We shouldn't really be getting auth messages here, so we'll just deny them from being broadcasted
+          // Auth messages are responses from the server, not requests from clients
+          // They should not be broadcasted, so deny them
           return false;
         default:
           throw new Error(
-            `Unknown message type: ${(message.payload as any).type}`,
+            `Unknown doc message payload type: ${(message.payload as any).type}`,
           );
       }
     }
@@ -49,10 +64,11 @@ export function checkPermissionWithTokenManager(
       // File messages use fileId instead of documentId
       // For now, we allow all file messages through
       // In the future, you could implement file-specific permission checks here
+      // Note: file-auth-message is already filtered out by the server before this is called
       return true;
     }
 
-    // we just allow all other message types through for now
+    // Allow all other message types through (shouldn't happen, but be permissive)
     return true;
   };
 }

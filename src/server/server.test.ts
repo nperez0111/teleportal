@@ -3,6 +3,10 @@ import { getLogger } from "@logtape/logtape";
 import { Server } from "./server";
 import { Client } from "./client";
 import { AckMessage, InMemoryPubSub, DocMessage } from "teleportal";
+import {
+  createTokenManager,
+  checkPermissionWithTokenManager,
+} from "teleportal/token";
 import type {
   ServerContext,
   Message,
@@ -11,7 +15,11 @@ import type {
   SyncStep2Update,
   Update,
 } from "teleportal";
-import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
+import type {
+  Document,
+  DocumentMetadata,
+  DocumentStorage,
+} from "teleportal/storage";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage implements DocumentStorage {
@@ -38,7 +46,10 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(_key: string, _syncStep2: SyncStep2Update): Promise<void> {
+  async handleSyncStep2(
+    _key: string,
+    _syncStep2: SyncStep2Update,
+  ): Promise<void> {
     return;
   }
 
@@ -98,7 +109,10 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
+  async removeFileFromDocument(
+    documentId: string,
+    fileId: string,
+  ): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
@@ -1144,7 +1158,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       // Override the writable to capture messages
       transport.writable = writable;
-      
+
       const client = server.createClient({
         transport,
         id: "client-1",
@@ -1185,7 +1199,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       // Override the writable to capture messages
       transport.writable = writable;
-      
+
       const client = server.createClient({
         transport,
         id: "client-1",
@@ -1230,7 +1244,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       // Override the writable to capture messages
       transport.writable = writable;
-      
+
       const client = server.createClient({
         transport,
         id: "client-1",
@@ -1283,7 +1297,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       // Override the writable to capture messages
       transport.writable = writable;
-      
+
       const client = serverWithoutFileStorage.createClient({
         transport,
         id: "client-1",
@@ -1315,6 +1329,628 @@ describe("Server", () => {
 
       transport.closeReadable();
       await serverWithoutFileStorage[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("checkPermissionWithTokenManager integration", () => {
+    it("should allow ACK messages without permission checks", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const ackMessage = new AckMessage(
+        {
+          type: "ack",
+          messageId: "some-message-id",
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      transport.enqueueMessage(ackMessage);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should not have sent any error messages
+      const errorMessages = writtenMessages.filter(
+        (m) => m.type === "doc" && (m as any).payload?.type === "auth-message",
+      );
+      expect(errorMessages.length).toBe(0);
+
+      // Clean up - try to close, but ignore errors if already closed
+      try {
+        transport.closeReadable();
+      } catch (error) {
+        // Ignore errors if already closed
+      }
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should allow awareness messages without permission checks", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const { AwarenessMessage } = await import("teleportal");
+      const awarenessMessage = new AwarenessMessage(
+        "test-doc",
+        {
+          type: "awareness-update",
+          update: new Uint8Array([1, 2, 3]) as any,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      transport.enqueueMessage(awarenessMessage);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should not have sent any error messages
+      const errorMessages = writtenMessages.filter(
+        (m) => m.type === "doc" && (m as any).payload?.type === "auth-message",
+      );
+      expect(errorMessages.length).toBe(0);
+
+      // Clean up - try to close, but ignore errors if already closed
+      try {
+        transport.closeReadable();
+      } catch (error) {
+        // Ignore errors if already closed
+      }
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should check read permission for sync-step-1", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        {
+          clientId: "client-1",
+          ...payload.payload,
+        } as ServerContext,
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should not have sent any auth error messages
+      const errorMessages = writtenMessages.filter(
+        (m) =>
+          m.type === "doc" &&
+          (m as any).payload?.type === "auth-message" &&
+          (m as any).payload?.permission === "denied",
+      );
+      expect(errorMessages.length).toBe(0);
+
+      transport.closeReadable();
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should deny read permission for sync-step-1 when user lacks access", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "other-doc", permissions: ["read"] },
+      ]);
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        {
+          clientId: "client-1",
+          ...payload.payload,
+        } as ServerContext,
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should have sent an auth error message
+      const errorMessages = writtenMessages.filter(
+        (m) =>
+          m.type === "doc" &&
+          (m as any).payload?.type === "auth-message" &&
+          (m as any).payload?.permission === "denied",
+      );
+      expect(errorMessages.length).toBeGreaterThan(0);
+
+      transport.closeReadable();
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should check write permission for update", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["write"] },
+      ]);
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        {
+          clientId: "client-1",
+          userId: payload.payload.userId,
+          room: payload.payload.room,
+        },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should not have sent any auth error messages
+      const errorMessages = writtenMessages.filter(
+        (m) =>
+          m.type === "doc" &&
+          (m as any).payload?.type === "auth-message" &&
+          (m as any).payload?.permission === "denied",
+      );
+      expect(errorMessages.length).toBe(0);
+
+      transport.closeReadable();
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should deny write permission for update when user only has read", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        {
+          clientId: "client-1",
+          ...payload.payload,
+        } as ServerContext,
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Should have sent an auth error message
+      const errorMessages = writtenMessages.filter(
+        (m) =>
+          m.type === "doc" &&
+          (m as any).payload?.type === "auth-message" &&
+          (m as any).payload?.permission === "denied",
+      );
+      expect(errorMessages.length).toBeGreaterThan(0);
+
+      // Verify the auth-message structure
+      const authMessage = errorMessages[0];
+      if (
+        authMessage &&
+        authMessage.type === "doc" &&
+        authMessage.payload.type === "auth-message"
+      ) {
+        expect(authMessage.payload.type).toBe("auth-message");
+        expect(authMessage.payload.permission).toBe("denied");
+        expect(authMessage.payload.reason).toContain(
+          "Insufficient permissions",
+        );
+        expect(authMessage.payload.reason).toContain("test-doc");
+        expect(authMessage.document).toBe("test-doc");
+      }
+
+      // Clean up - try to close, but ignore errors if already closed
+      try {
+        transport.closeReadable();
+      } catch (error) {
+        // Ignore errors if already closed
+      }
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should send sync-done (not auth-message) when sync-step-2 is denied due to write permissions", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        {
+          clientId: "client-1",
+          ...payload.payload,
+        } as ServerContext,
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // sync-step-2 gets special handling - should receive sync-done, not auth-message
+      const syncDoneMessages = writtenMessages.filter(
+        (m) => m.type === "doc" && (m as any).payload?.type === "sync-done",
+      );
+      expect(syncDoneMessages.length).toBeGreaterThan(0);
+
+      // Should NOT have sent an auth-message
+      const authMessages = writtenMessages.filter(
+        (m) => m.type === "doc" && (m as any).payload?.type === "auth-message",
+      );
+      expect(authMessages.length).toBe(0);
+
+      // Verify the sync-done message structure
+      const syncDone = syncDoneMessages[0];
+      if (syncDone && syncDone.type === "doc") {
+        expect(syncDone.payload.type).toBe("sync-done");
+        expect(syncDone.document).toBe("test-doc");
+      }
+
+      // Clean up - try to close, but ignore errors if already closed
+      try {
+        transport.closeReadable();
+      } catch (error) {
+        // Ignore errors if already closed
+      }
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should send auth-message when milestone-create-request is denied due to write permissions", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      const message = new DocMessage(
+        "test-doc",
+        {
+          type: "milestone-create-request",
+          name: "v1.0.0",
+          snapshot: new Uint8Array([1, 2, 3]) as any,
+        },
+        {
+          clientId: "client-1",
+          ...payload.payload,
+        } as ServerContext,
+        false,
+      );
+
+      transport.enqueueMessage(message);
+
+      // Wait for message to be processed
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Should have sent an auth error message
+      const errorMessages = writtenMessages.filter(
+        (m) =>
+          m.type === "doc" &&
+          (m as any).payload?.type === "auth-message" &&
+          (m as any).payload?.permission === "denied",
+      );
+      expect(errorMessages.length).toBeGreaterThan(0);
+
+      // Verify the auth-message structure
+      const authMessage = errorMessages[0];
+      if (
+        authMessage &&
+        authMessage.type === "doc" &&
+        authMessage.payload.type === "auth-message"
+      ) {
+        expect(authMessage.payload.type).toBe("auth-message");
+        expect(authMessage.payload.permission).toBe("denied");
+        expect(authMessage.payload.reason).toContain(
+          "Insufficient permissions",
+        );
+        expect(authMessage.payload.reason).toContain("test-doc");
+        expect(authMessage.document).toBe("test-doc");
+      }
+
+      // Clean up - try to close, but ignore errors if already closed
+      try {
+        transport.closeReadable();
+      } catch (error) {
+        // Ignore errors if already closed
+      }
+      await serverWithToken[Symbol.asyncDispose]();
+    });
+
+    it("should allow admin users to perform both read and write operations", async () => {
+      const tokenManager = createTokenManager({
+        secret: "test-secret",
+      });
+      const token = await tokenManager.createAdminToken("user-1", "room-1");
+
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) {
+        throw new Error("Token verification failed");
+      }
+
+      const serverWithToken = new Server({
+        getStorage: mockGetStorage,
+        pubSub,
+        checkPermission: checkPermissionWithTokenManager(tokenManager),
+      });
+
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      transport.writable = writable;
+
+      const client = serverWithToken.createClient({
+        transport,
+        id: "client-1",
+      });
+
+      // Test read operation
+      const readMessage = new DocMessage(
+        "test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        {
+          clientId: "client-1",
+          userId: payload.payload.userId,
+          room: payload.payload.room,
+        },
+        false,
+      );
+
+      transport.enqueueMessage(readMessage);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Test write operation
+      const writeMessage = new DocMessage(
+        "test-doc",
+        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        {
+          clientId: "client-1",
+          userId: payload.payload.userId,
+          room: payload.payload.room,
+        },
+        false,
+      );
+
+      transport.enqueueMessage(writeMessage);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should not have sent any auth error messages
+      const errorMessages = writtenMessages.filter(
+        (m) =>
+          m.type === "doc" &&
+          (m as any).payload?.type === "auth-message" &&
+          (m as any).payload?.permission === "denied",
+      );
+      expect(errorMessages.length).toBe(0);
+
+      transport.closeReadable();
+      await serverWithToken[Symbol.asyncDispose]();
     });
   });
 });
