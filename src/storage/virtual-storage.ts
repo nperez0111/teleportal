@@ -1,4 +1,4 @@
-import { batch } from "@tanstack/pacer";
+import { batch } from "./batch";
 import type {
   DocumentStorage,
   DocumentMetadata,
@@ -10,6 +10,11 @@ export interface VirtualStorageOptions {
   batchMaxSize: number;
   batchWaitMs: number;
 }
+
+const defaultOptions: VirtualStorageOptions = {
+  batchMaxSize: 100,
+  batchWaitMs: 2000,
+};
 
 /**
  * VirtualStorage is an in-memory abstraction layer over DocumentStorage that batches writes
@@ -33,10 +38,7 @@ export class VirtualStorage implements DocumentStorage {
 
   constructor(
     storage: DocumentStorage,
-    options: VirtualStorageOptions = {
-      batchMaxSize: 100,
-      batchWaitMs: 2000,
-    },
+    options: VirtualStorageOptions = defaultOptions,
   ) {
     this.#storage = storage;
     this.storageType = storage.storageType;
