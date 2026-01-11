@@ -1,0 +1,144 @@
+import type { ServerContext } from "teleportal";
+
+export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
+
+export type ClientDisconnectReason =
+  | "abort"
+  | "stream-ended"
+  | "manual"
+  | "error";
+
+export type ClientMessageDirection = "in" | "out";
+
+export type DocumentMessageSource = "client" | "replication";
+
+export type SessionEvents<Context extends ServerContext = ServerContext> = {
+  /**
+   * Emitted when a client joins this session.
+   */
+  "client-join": (data: {
+    clientId: string;
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+    context?: Context;
+  }) => void;
+
+  /**
+   * Emitted when a client leaves this session.
+   */
+  "client-leave": (data: {
+    clientId: string;
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+  }) => void;
+
+  /**
+   * Emitted when a message is applied to the document.
+   * This provides visibility into document-level message processing.
+   * Source "client" means from an authenticated client, "replication" means from another node.
+   */
+  "document-message": (data: {
+    clientId: string | undefined;
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+    messageId: string;
+    messageType: string;
+    payloadType: string | undefined;
+    encrypted: boolean;
+    context: Context;
+    source: DocumentMessageSource;
+    sourceNodeId?: string;
+    deduped?: boolean;
+  }) => void;
+};
+
+export type ServerEvents<Context extends ServerContext = ServerContext> = {
+  /**
+   * Emitted when a document session is created and loaded.
+   * This happens when the first client connects to a document.
+   */
+  "document-load": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+    encrypted: boolean;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a document session is unloaded/disposed.
+   * This happens when all clients disconnect and the session times out,
+   * when the document is deleted, or when the server is disposing.
+   */
+  "document-unload": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+    encrypted: boolean;
+    reason: DocumentUnloadReason;
+  }) => void;
+
+  /**
+   * Emitted when a document is deleted from storage.
+   * This happens when deleteDocument is called.
+   */
+  "document-delete": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    encrypted: boolean;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a client connects to the server.
+   * This happens when createClient is called.
+   * Note: The context may not be available yet (comes with first message).
+   */
+  "client-connect": (data: { clientId: string; context?: Context }) => void;
+
+  /**
+   * Emitted when a client disconnects from the server.
+   * This happens when disconnectClient is called or the client stream ends.
+   * Note: The context may reflect the state at disconnect time.
+   */
+  "client-disconnect": (data: {
+    clientId: string;
+    reason: ClientDisconnectReason;
+    context?: Context;
+  }) => void;
+
+  /**
+   * Emitted when a message flows between client and server.
+   * This provides visibility into all traffic for metrics or webhooks.
+   * Direction "in" is client->server, "out" is server->client.
+   */
+  "client-message": (data: {
+    clientId: string;
+    messageId: string;
+    documentId: string | undefined;
+    messageType: string;
+    payloadType: string | undefined;
+    encrypted: boolean;
+    context: Context;
+    direction: ClientMessageDirection;
+    error?: string;
+  }) => void;
+
+  /**
+   * Emitted when the server starts shutting down.
+   * This happens before sessions are disposed.
+   */
+  "before-server-shutdown": (data: {
+    nodeId: string;
+    activeSessions: number;
+    pendingSessions: number;
+  }) => void;
+
+  /**
+   * Emitted when the server has completed shutting down.
+   */
+  "after-server-shutdown": (data: { nodeId: string }) => void;
+};

@@ -14,11 +14,15 @@ import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 import { getLogger, Logger } from "@logtape/logtape";
 import { toErrorDetails } from "../logging";
+import { Observable } from "../lib/utils";
+import type { DocumentMessageSource, SessionEvents } from "./events";
 
 /**
  * A session is a collection of clients which are connected to a document.
  */
-export class Session<Context extends ServerContext> {
+export class Session<Context extends ServerContext> extends Observable<
+  SessionEvents<Context>
+> {
   /**
    * The client-facing document ID (original document name from client).
    */
@@ -59,6 +63,7 @@ export class Session<Context extends ServerContext> {
     dedupe?: TtlDedupe;
     onCleanupScheduled: (session: Session<Context>) => void;
   }) {
+    super();
     this.documentId = args.documentId;
     this.namespacedDocumentId = args.namespacedDocumentId;
     this.id = args.id;
@@ -164,10 +169,22 @@ export class Session<Context extends ServerContext> {
                   sourceNodeId: sourceId,
                 })
                 .debug("Replicated message rejected by dedupe");
+
+              this.#emitDocumentMessage(
+                message,
+                undefined,
+                "replication",
+                sourceId,
+                true,
+              );
+
               return;
             }
 
-            await this.apply(message);
+            await this.apply(message, undefined, {
+              sourceNodeId: sourceId,
+              deduped: false,
+            });
 
             replicationLogger
               .with({
@@ -216,6 +233,15 @@ export class Session<Context extends ServerContext> {
       this.#cancelCleanup();
     }
 
+    if (!hadClient) {
+      this.call("client-join", {
+        clientId: client.id,
+        documentId: this.documentId,
+        namespacedDocumentId: this.namespacedDocumentId,
+        sessionId: this.id,
+      });
+    }
+
     this.#logger
       .with({
         clientId: client.id,
@@ -238,6 +264,13 @@ export class Session<Context extends ServerContext> {
     this.#clients.delete(id);
 
     if (hadClient) {
+      this.call("client-leave", {
+        clientId: id,
+        documentId: this.documentId,
+        namespacedDocumentId: this.namespacedDocumentId,
+        sessionId: this.id,
+      });
+
       this.#logger
         .with({
           clientId: id,
@@ -332,12 +365,39 @@ export class Session<Context extends ServerContext> {
     }
   }
 
+  #emitDocumentMessage(
+    message: Message<Context>,
+    client: { id: string } | undefined,
+    source: DocumentMessageSource,
+    sourceNodeId?: string,
+    deduped?: boolean,
+  ) {
+    this.call("document-message", {
+      clientId: client?.id,
+      documentId: this.documentId,
+      namespacedDocumentId: this.namespacedDocumentId,
+      sessionId: this.id,
+      messageId: message.id,
+      messageType: message.type,
+      payloadType: (message as any).payload?.type,
+      encrypted: message.encrypted,
+      context: message.context,
+      source,
+      sourceNodeId,
+      deduped,
+    });
+  }
+
   /**
    * Apply a message to the session.
+   * @param message - The message to apply.
+   * @param client - The client that sent the message (undefined for replication).
+   * @param replicationMeta - Metadata for replication messages.
    */
   async apply(
     message: Message<Context>,
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
+    replicationMeta?: { sourceNodeId: string; deduped: boolean },
   ) {
     const log = this.#logger.with({
       messageId: message.id,
@@ -463,6 +523,14 @@ export class Session<Context extends ServerContext> {
                 })
                 .trace("Update message processed and replicated");
 
+              this.#emitDocumentMessage(
+                message,
+                client,
+                replicationMeta?.sourceNodeId ? "replication" : "client",
+                replicationMeta?.sourceNodeId,
+                replicationMeta?.deduped,
+              );
+
               return;
             }
             case "sync-step-2": {
@@ -485,6 +553,15 @@ export class Session<Context extends ServerContext> {
                   this.#nodeId,
                 ),
               ]);
+
+              // Emit document-message before the client check
+              this.#emitDocumentMessage(
+                message,
+                client,
+                replicationMeta?.sourceNodeId ? "replication" : "client",
+                replicationMeta?.sourceNodeId,
+                replicationMeta?.deduped,
+              );
 
               if (!client) {
                 log
@@ -1012,6 +1089,14 @@ export class Session<Context extends ServerContext> {
               messageType: message.type,
             })
             .debug("Non-doc message processed");
+
+          this.#emitDocumentMessage(
+            message,
+            client,
+            replicationMeta?.sourceNodeId ? "replication" : "client",
+            replicationMeta?.sourceNodeId,
+            replicationMeta?.deduped,
+          );
 
           return;
         }

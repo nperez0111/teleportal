@@ -1129,4 +1129,185 @@ describe("Session", () => {
       expect(client1.sentMessages.length).toBe(0);
     });
   });
+
+  describe("events", () => {
+    let session: Session<ServerContext>;
+    let cleanupScheduled = false;
+    let onCleanupScheduled = () => {
+      cleanupScheduled = true;
+    };
+
+    beforeEach(async () => {
+      cleanupScheduled = false;
+      const storage = new MockDocumentStorage();
+      const pubSub = new InMemoryPubSub();
+
+      session = new Session({
+        documentId: "test-doc",
+        namespacedDocumentId: "test-doc",
+        id: "session-1",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId: "node-1",
+        onCleanupScheduled,
+      });
+
+      await session.load();
+    });
+
+    afterEach(async () => {
+      await session[Symbol.asyncDispose]();
+    });
+
+    it("should emit client-join event when a client is added", async () => {
+      const events: any[] = [];
+      session.on("client-join", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+
+      expect(events.length).toBe(1);
+      expect(events[0].clientId).toBe("client-1");
+      expect(events[0].documentId).toBe("test-doc");
+      expect(events[0].sessionId).toBe("session-1");
+    });
+
+    it("should not emit client-join when re-adding same client", async () => {
+      const events: any[] = [];
+      session.on("client-join", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+      session.addClient(client as any); // Re-add same client
+
+      expect(events.length).toBe(1); // Only one event
+    });
+
+    it("should emit client-leave event when a client is removed", async () => {
+      const events: any[] = [];
+      session.on("client-leave", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+      session.removeClient(client as any);
+
+      expect(events.length).toBe(1);
+      expect(events[0].clientId).toBe("client-1");
+      expect(events[0].documentId).toBe("test-doc");
+      expect(events[0].sessionId).toBe("session-1");
+    });
+
+    it("should emit document-message event when update message is applied", async () => {
+      const events: any[] = [];
+      session.on("document-message", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      await session.apply(message, client as any);
+
+      const docMsgEvents = events.filter((e) => e.messageType === "doc");
+      expect(docMsgEvents.length).toBeGreaterThan(0);
+      expect(docMsgEvents[0].documentId).toBe("test-doc");
+      expect(docMsgEvents[0].source).toBe("client");
+      expect(docMsgEvents[0].clientId).toBe("client-1");
+    });
+
+    it("should emit document-message with source 'replication' for replicated messages", async () => {
+      const events: any[] = [];
+      session.on("document-message", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      // Call apply with replication meta to simulate replicated message
+      await session.apply(message, undefined, {
+        sourceNodeId: "node-2",
+        deduped: false,
+      });
+
+      const replEvents = events.filter(
+        (e) => e.source === "replication" && e.deduped === false,
+      );
+      expect(replEvents.length).toBeGreaterThan(0);
+      expect(replEvents[0].sourceNodeId).toBe("node-2");
+    });
+
+    it("should emit document-message with deduped: true for deduped replication", async () => {
+      const events: any[] = [];
+      session.on("document-message", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+
+      const message = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+
+      // Apply message with deduped: true
+      await session.apply(message, undefined, {
+        sourceNodeId: "node-2",
+        deduped: true,
+      });
+
+      const dedupedEvents = events.filter((e) => e.deduped === true);
+      expect(dedupedEvents.length).toBeGreaterThan(0);
+    });
+
+    it("should emit multiple document-message events for different message types", async () => {
+      const events: any[] = [];
+      session.on("document-message", (data) => events.push(data));
+
+      const client = new MockClient<ServerContext>("client-1");
+      session.addClient(client as any);
+
+      // Send sync-step-2 (update)
+      const updateMessage = new DocMessage<ServerContext>(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+        },
+        { clientId: "client-1", userId: "user-1", room: "room" },
+      );
+      await session.apply(updateMessage, client as any);
+
+      // Send awareness message (non-doc type)
+      const awarenessMessage = {
+        type: "awareness" as const,
+        id: "awareness-1",
+        document: "test-doc",
+        encoded: new Uint8Array([1, 2, 3]),
+        context: { clientId: "client-1", userId: "user-1", room: "room" },
+        encrypted: false,
+      } as Message<ServerContext>;
+      await session.apply(awarenessMessage, client as any);
+
+      expect(events.length).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

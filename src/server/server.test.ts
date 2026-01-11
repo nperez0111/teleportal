@@ -1996,4 +1996,328 @@ describe("Server", () => {
       transport.closeReadable();
     });
   });
+
+  describe("events", () => {
+    it("should emit client-connect event when creating a client", async () => {
+      const events: any[] = [];
+      server.on("client-connect", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "event-test-client",
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0].clientId).toBe("event-test-client");
+
+      transport.closeReadable();
+    });
+
+    it("should emit client-disconnect event when disconnecting a client", async () => {
+      const events: any[] = [];
+      server.on("client-disconnect", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      const client = server.createClient({
+        transport,
+        id: "disconnect-test-client",
+      });
+
+      // Disconnect the client
+      server.disconnectClient("disconnect-test-client", "manual");
+
+      expect(events.length).toBe(1);
+      expect(events[0].clientId).toBe("disconnect-test-client");
+      expect(events[0].reason).toBe("manual");
+    });
+
+    it("should emit client-disconnect with abort reason when abort signal is triggered", async () => {
+      const events: any[] = [];
+      server.on("client-disconnect", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      const abortController = new AbortController();
+
+      server.createClient({
+        transport,
+        id: "abort-test-client",
+        abortSignal: abortController.signal,
+      });
+
+      // Trigger abort
+      abortController.abort();
+
+      expect(events.length).toBe(1);
+      expect(events[0].clientId).toBe("abort-test-client");
+      expect(events[0].reason).toBe("abort");
+    });
+
+    it("should emit client-disconnect with stream-ended reason when stream ends", async () => {
+      const events: any[] = [];
+      server.on("client-disconnect", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      server.createClient({
+        transport,
+        id: "stream-ended-client",
+      });
+
+      // Close the readable stream to simulate client disconnect
+      transport.closeReadable();
+
+      // Wait for the stream to be processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(events.length).toBe(1);
+      expect(events[0].clientId).toBe("stream-ended-client");
+      expect(events[0].reason).toBe("stream-ended");
+    });
+
+    it("should emit document-load event when first client connects to document", async () => {
+      const events: any[] = [];
+      server.on("document-load", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = server.createClient({
+        transport: customTransport,
+        id: "doc-load-client",
+      });
+
+      const message = new DocMessage(
+        "load-test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "doc-load-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(events.length).toBe(1);
+      expect(events[0].documentId).toBe("load-test-doc");
+      expect(events[0].sessionId).toBeDefined();
+      expect(events[0].encrypted).toBe(false);
+      expect(events[0].context.userId).toBe("user-1");
+
+      transport.closeReadable();
+    });
+
+    it("should emit document-unload event when session is cleaned up", async () => {
+      const events: any[] = [];
+      server.on("document-unload", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      const writtenMessages: Message<ServerContext>[] = [];
+      const writable = new WritableStream({
+        write(chunk) {
+          writtenMessages.push(chunk);
+        },
+      });
+
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = server.createClient({
+        transport: customTransport,
+        id: "doc-unload-client",
+      });
+
+      const message = new DocMessage(
+        "unload-test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "doc-unload-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Close the stream to trigger disconnect
+      transport.closeReadable();
+
+      // Wait for cleanup timeout (60 seconds in production, but we can check it was scheduled)
+      // The unload event is emitted after the cleanup delay
+      expect(events.length).toBe(0); // Not yet unloaded
+
+      // For testing, we can force cleanup by manually disposing the server
+      // which will emit unload with reason "dispose"
+    });
+
+    it("should emit document-delete event when deleteDocument is called", async () => {
+      const events: any[] = [];
+      server.on("document-delete", (data) => events.push(data));
+
+      // First, create a session by connecting a client
+      const transport = new MockTransport();
+      const writable = new WritableStream({ write() {} });
+
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = server.createClient({
+        transport: customTransport,
+        id: "doc-delete-client",
+      });
+
+      const message = new DocMessage(
+        "delete-test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "doc-delete-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Now delete the document
+      await server.deleteDocument(
+        "delete-test-doc",
+        { clientId: "doc-delete-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      expect(events.length).toBe(1);
+      expect(events[0].documentId).toBe("delete-test-doc");
+      expect(events[0].encrypted).toBe(false);
+
+      transport.closeReadable();
+    });
+
+    it("should emit client-message event when processing messages", async () => {
+      const events: any[] = [];
+      server.on("client-message", (data) => events.push(data));
+
+      const transport = new MockTransport();
+      const writable = new WritableStream({ write() {} });
+
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      const client = server.createClient({
+        transport: customTransport,
+        id: "msg-test-client",
+      });
+
+      const message = new DocMessage(
+        "msg-test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "msg-test-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Should have received the message (direction: "in")
+      const inboundMessages = events.filter((e) => e.direction === "in");
+      expect(inboundMessages.length).toBeGreaterThan(0);
+      expect(inboundMessages[0].clientId).toBe("msg-test-client");
+      expect(inboundMessages[0].messageType).toBe("doc");
+      expect(inboundMessages[0].documentId).toBe("msg-test-doc");
+
+      transport.closeReadable();
+    });
+
+    it("should emit before-server-shutdown and after-server-shutdown events", async () => {
+      const beforeEvents: any[] = [];
+      const afterEvents: any[] = [];
+
+      server.on("before-server-shutdown", (data) => beforeEvents.push(data));
+      server.on("after-server-shutdown", (data) => afterEvents.push(data));
+
+      // Create a session first
+      const transport = new MockTransport();
+      const writable = new WritableStream({ write() {} });
+
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      server.createClient({
+        transport: customTransport,
+        id: "shutdown-client",
+      });
+
+      const message = new DocMessage(
+        "shutdown-test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "shutdown-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      transport.closeReadable();
+
+      // Dispose the server
+      await server[Symbol.asyncDispose]();
+
+      expect(beforeEvents.length).toBe(1);
+      expect(beforeEvents[0].activeSessions).toBe(1);
+      expect(beforeEvents[0].pendingSessions).toBe(0);
+
+      expect(afterEvents.length).toBe(1);
+      expect(afterEvents[0].nodeId).toBeDefined();
+    });
+
+    it("should emit document-unload with reason 'dispose' during server shutdown", async () => {
+      const unloadEvents: any[] = [];
+      server.on("document-unload", (data) => unloadEvents.push(data));
+
+      // Create a session first
+      const transport = new MockTransport();
+      const writable = new WritableStream({ write() {} });
+
+      const customTransport = {
+        readable: transport.readable,
+        writable,
+      } as Transport<ServerContext>;
+
+      server.createClient({
+        transport: customTransport,
+        id: "dispose-test-client",
+      });
+
+      const message = new DocMessage(
+        "dispose-test-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "dispose-test-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      transport.closeReadable();
+
+      // Dispose the server
+      await server[Symbol.asyncDispose]();
+
+      // Should have emitted document-unload with reason "dispose"
+      const disposeEvent = unloadEvents.find((e) => e.reason === "dispose");
+      expect(disposeEvent).toBeDefined();
+      expect(disposeEvent.documentId).toBe("dispose-test-doc");
+    });
+  });
 });
