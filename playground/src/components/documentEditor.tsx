@@ -67,9 +67,9 @@ export function DocumentEditor({
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Document Header */}
-      <div className="border-b h-auto min-h-[60px] md:h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 md:px-6 py-3 md:py-4">
+      <div className="border-b h-auto min-h-[60px] md:h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 md:px-6 py-3 md:py-4 shrink-0">
         <div className="flex items-start md:items-center justify-between flex-col md:flex-row gap-2 md:gap-0">
           <div className="min-w-0 flex-1 flex items-center gap-2">
             {/* Hamburger button for mobile */}
@@ -152,36 +152,39 @@ export function DocumentEditor({
         </div>
       </div>
 
-      {/* Editor Area */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="h-full max-w-5xl mx-auto w-full px-4 md:px-6 lg:px-8 py-4 md:py-6">
-          {provider && (
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-32">
-                  <div className="text-gray-500 dark:text-gray-400">
-                    Loading editor...
+      {/* Editor Area with Versions Panel */}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 overflow-y-auto">
+          <div className="h-full max-w-5xl mx-auto w-full px-4 md:px-6 lg:px-8 py-4 md:py-6">
+            {provider && (
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-32">
+                    <div className="text-gray-500 dark:text-gray-400">
+                      Loading editor...
+                    </div>
                   </div>
-                </div>
-              }
-            >
-              <Editor
-                selectedMilestone={selectedMilestone}
-                provider={provider}
-                key={provider.doc.clientID}
-              />
-            </Suspense>
-          )}
+                }
+              >
+                <Editor
+                  selectedMilestone={selectedMilestone}
+                  provider={provider}
+                  key={provider.doc.clientID}
+                />
+              </Suspense>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Milestone Panel */}
-      <MilestonePanel
-        onChangeSelectedMilestone={setSelectedMilestone}
-        provider={provider}
-        isOpen={isMilestonePanelOpen}
-        onClose={() => setIsMilestonePanelOpen(false)}
-      />
+        {/* Milestone Panel - pushes content instead of overlaying */}
+        <MilestonePanel
+          onChangeSelectedMilestone={setSelectedMilestone}
+          selectedMilestone={selectedMilestone}
+          provider={provider}
+          isOpen={isMilestonePanelOpen}
+          onClose={() => setIsMilestonePanelOpen(false)}
+        />
+      </div>
     </div>
   );
 }
