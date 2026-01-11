@@ -78,7 +78,13 @@ const instance = Bun.serve({
   development: {
     // hmr: false,
   },
-
+  routes:
+    Bun.env.NODE_ENV !== "production"
+      ? {
+          // In development, serve the homepage
+          "/": homepage,
+        }
+      : undefined,
   websocket: ws.websocket,
   async fetch(request, bunServer) {
     if (request.headers.get("upgrade") === "websocket") {
