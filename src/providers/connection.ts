@@ -1,7 +1,6 @@
 import { Message, Observable, RawReceivedMessage } from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
-import { teleportalEventClient } from "../devtools/event-client.js";
 
 /**
  * The context of a {@link Connection}.
@@ -253,13 +252,7 @@ export abstract class Connection<
       }
     });
 
-    this.on("message", (message) => {
-      teleportalEventClient.emit("message-log", {
-        direction: "received",
-        message,
-        timestamp: Date.now(),
-      });
-    });
+    // Message logging is handled by devtool if enabled
   }
 
   private getPayloadType(message: Message): string | undefined {
@@ -319,47 +312,6 @@ export abstract class Connection<
           this.scheduleReconnect();
         }
         break;
-    }
-
-    this.emitDevtoolsConnectionState(state);
-  }
-
-  private emitDevtoolsConnectionState(state: ConnectionState<Context>): void {
-    const timestamp = Date.now();
-    let transport: "websocket" | "http" | null = null;
-
-    if ("context" in state && state.context) {
-      const context = state.context as { connectionType?: string };
-      if ("connectionType" in context) {
-        transport = context.connectionType as "websocket" | "http";
-      }
-    }
-
-    if (state.type === "connected") {
-      teleportalEventClient.emit("connection-state", {
-        type: "connected",
-        transport: transport as "websocket" | "http",
-        timestamp,
-      });
-    } else if (state.type === "connecting") {
-      teleportalEventClient.emit("connection-state", {
-        type: "connecting",
-        transport: transport as "websocket" | "http" | null,
-        timestamp,
-      });
-    } else if (state.type === "disconnected") {
-      teleportalEventClient.emit("connection-state", {
-        type: "disconnected",
-        transport: null,
-        timestamp,
-      });
-    } else {
-      teleportalEventClient.emit("connection-state", {
-        type: "errored",
-        error: state.error?.message ?? "Unknown error",
-        transport: null,
-        timestamp,
-      });
     }
   }
 
@@ -552,11 +504,7 @@ export abstract class Connection<
         }
       }
 
-      teleportalEventClient.emit("message-log", {
-        message,
-        direction: "sent",
-        timestamp: Date.now(),
-      });
+      // Message logging is handled by devtool if enabled
 
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails

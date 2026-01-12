@@ -26,7 +26,6 @@ import {
 } from "teleportal/transports";
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
-import { teleportalEventClient } from "../devtools/event-client.js";
 
 /**
  * Error thrown when a milestone operation is denied
@@ -111,6 +110,7 @@ export class Provider<
   #messageReader: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
+  #devtool?: any; // Lazy import to avoid circular dependency
 
   // Local persistence properties
   #localPersistence?: IndexeddbPersistence;
@@ -171,12 +171,7 @@ export class Provider<
     }
     client.on("connected", this.init);
 
-    this.awareness.on("change", () => {
-      teleportalEventClient.emit("awareness-state", {
-        peers: this.awareness.getStates(),
-        timestamp: Date.now(),
-      });
-    });
+    // Awareness changes are tracked by devtool if enabled
   }
 
   private initOfflinePersistence() {
@@ -224,40 +219,20 @@ export class Provider<
         "disconnected",
         () => {
           this.doc.emit("sync", [false, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: false,
-            timestamp: Date.now(),
-          });
         },
       );
       this.#connectedUnsubscribe = this.#underlyingConnection.on(
         "connected",
         () => {
           this.doc.emit("sync", [true, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: this.#synced !== null,
-            timestamp: Date.now(),
-          });
         },
       );
       this.transport.synced
         .then(() => {
           this.doc.emit("sync", [true, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: true,
-            timestamp: Date.now(),
-          });
         })
         .catch(() => {
           this.doc.emit("sync", [false, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: false,
-            timestamp: Date.now(),
-          });
         });
     } catch (error) {
       console.error("Failed to send sync-step-1", error);
@@ -892,5 +867,26 @@ export class Provider<
       enableOfflinePersistence,
       indexedDBPrefix,
     });
+  }
+
+  /**
+   * Enable the devtool for this provider
+   * @param options Optional devtool configuration
+   * @returns The devtool instance
+   */
+  enableDevtool(options?: any): any {
+    if (!this.#devtool) {
+      // Dynamic import to avoid circular dependency
+      const { Devtool } = require("./devtool/devtool.js");
+      this.#devtool = new Devtool(this, this.#underlyingConnection, options);
+    }
+    return this.#devtool;
+  }
+
+  /**
+   * Get the devtool instance if enabled
+   */
+  get devtool(): any {
+    return this.#devtool;
   }
 }

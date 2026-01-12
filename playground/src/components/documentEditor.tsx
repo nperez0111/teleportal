@@ -4,6 +4,8 @@ import { Document, fileService } from "../services/fileService";
 import { useProvider } from "../utils/providers";
 import { MilestonePanel } from "./milestonePanel";
 import { Milestone } from "teleportal";
+import { TanStackDevtools } from "@tanstack/react-devtools";
+import { TeleportalDevtoolsPanelReact } from "./teleportal-devtools-panel";
 
 interface DocumentEditorProps {
   documentId: string | null;
@@ -68,6 +70,17 @@ export function DocumentEditor({
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
+      {provider && (
+        <TanStackDevtools
+          plugins={[
+            {
+              name: "TelePortal",
+              render: <TeleportalDevtoolsPanelReact provider={provider} />,
+              // defaultOpen: true,
+            },
+          ]}
+        />
+      )}
       {/* Document Header */}
       <div className="border-b h-auto min-h-[60px] md:h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 md:px-6 py-3 md:py-4 shrink-0">
         <div className="flex items-start md:items-center justify-between flex-col md:flex-row gap-2 md:gap-0">
