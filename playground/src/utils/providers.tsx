@@ -7,11 +7,7 @@ import {
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 
 import { getEncryptedTransport } from "./encrypted";
-import {
-  FileTransportMethods,
-  withLogger,
-  withSendFile,
-} from "teleportal/transports";
+import { FileTransportMethods, withSendFile } from "teleportal/transports";
 import { ClientContext, Transport } from "teleportal";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
 
