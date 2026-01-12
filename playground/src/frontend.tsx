@@ -2,15 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Shell } from "./components/shell";
 import { TanStackDevtools } from "@tanstack/react-devtools";
-import {
-  teleportalEventClient,
-  TeleportalDevtoolsPanel,
-} from "teleportal/devtools";
-import { TeleportalDevtoolsPanelReact } from "./teleportal-devtools-panel";
-
-const panel = new TeleportalDevtoolsPanel({
-  eventClient: teleportalEventClient,
-});
+import { TeleportalDevtoolsPanelReact } from "./devtools";
 
 const elem = document.getElementById("root")!;
 const app = (
@@ -22,7 +14,7 @@ const app = (
       plugins={[
         {
           name: "TelePortal",
-          render: <TeleportalDevtoolsPanelReact panel={panel} />,
+          render: <TeleportalDevtoolsPanelReact />,
         },
       ]}
     />

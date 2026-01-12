@@ -1,6 +1,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
+import { EventClient } from "@tanstack/devtools-event-client";
 
 import {
   DocMessage,
@@ -82,6 +83,49 @@ export type ProviderOptions<
     getDefaultTransport(): Transport<ClientContext, DefaultTransportProperties>;
   }) => T;
 };
+
+export const teleportalEventClient = new EventClient<
+  {
+    "teleportal-provider:load-subdoc": {
+      subdoc: Y.Doc;
+      provider: Provider;
+      document: string;
+      parentDoc: Y.Doc;
+    };
+    "teleportal-provider:unload-subdoc": {
+      subdoc: Y.Doc;
+      provider: Provider;
+      document: string;
+      parentDoc: Y.Doc;
+    };
+    "teleportal-provider:received-message": {
+      message: RawReceivedMessage;
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:sent-message": {
+      message: Message;
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:connected": {
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:disconnected": {
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:update": {
+      state: ConnectionState<ConnectionContext>;
+      provider: Provider;
+      connection: Connection<any>;
+    };
+  },
+  "teleportal-provider"
+>({
+  pluginId: "teleportal-provider",
+});
 
 export class Provider<
   T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
@@ -178,27 +222,56 @@ export class Provider<
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("connected", () => this.call("connected")),
+      client.on("connected", () => {
+        this.call("connected");
+        teleportalEventClient.emit("connected", {
+          provider: this,
+          connection: client,
+        });
+      }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("disconnected", () => this.call("disconnected")),
+      client.on("disconnected", () => {
+        this.call("disconnected");
+        teleportalEventClient.emit("disconnected", {
+          provider: this,
+          connection: client,
+        });
+      }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("received-message", (message) =>
-        this.call("received-message", message),
-      ),
+      client.on("received-message", (message) => {
+        this.call("received-message", message);
+        teleportalEventClient.emit("received-message", {
+          message,
+          provider: this,
+          connection: client,
+        });
+      }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("sent-message", (message) =>
-        this.call("sent-message", message),
-      ),
+      client.on("sent-message", (message) => {
+        this.call("sent-message", message);
+        teleportalEventClient.emit("sent-message", {
+          message,
+          provider: this,
+          connection: client,
+        });
+      }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("update", (state) => this.call("update", state)),
+      client.on("update", (state) => {
+        this.call("update", state);
+        teleportalEventClient.emit("update", {
+          state,
+          provider: this,
+          connection: client,
+        });
+      }),
     );
   }
 
