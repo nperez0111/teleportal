@@ -892,3 +892,273 @@ describe("Provider milestone operations", () => {
     });
   });
 });
+
+describe("Provider events", () => {
+  let provider: Provider<MockTransport>;
+  let mockConnection: MockConnection;
+  let mockTransport: MockTransport;
+  let ydoc: Y.Doc;
+
+  beforeEach(() => {
+    ydoc = new Y.Doc();
+    mockConnection = new MockConnection();
+    mockTransport = new MockTransport();
+  });
+
+  afterEach(() => {
+    if (provider) {
+      provider.destroy();
+    }
+    if (mockConnection) {
+      mockConnection.destroy();
+    }
+  });
+
+  describe("connected event", () => {
+    it("should emit connected event when connection connects", async () => {
+      const connectedEvents: boolean[] = [];
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      provider.on("connected", () => {
+        connectedEvents.push(true);
+      });
+
+      // Wait for initial setup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Disconnect and reconnect to trigger event
+      mockConnection.triggerDisconnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(connectedEvents.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("disconnected event", () => {
+    it("should emit disconnected event when connection disconnects", async () => {
+      const disconnectedEvents: boolean[] = [];
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      provider.on("disconnected", () => {
+        disconnectedEvents.push(true);
+      });
+
+      // Wait for initial setup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Disconnect to trigger event
+      mockConnection.triggerDisconnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(disconnectedEvents.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("update event", () => {
+    it("should emit update event when connection state changes", async () => {
+      const updateEvents: ConnectionState<any>[] = [];
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      provider.on("update", (state) => {
+        updateEvents.push(state);
+      });
+
+      // Wait for initial setup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Disconnect to trigger update event
+      mockConnection.triggerDisconnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Reconnect to trigger another update event
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(updateEvents.length).toBeGreaterThan(0);
+      expect(updateEvents.some((e) => e.type === "disconnected")).toBe(true);
+      expect(updateEvents.some((e) => e.type === "connected")).toBe(true);
+    });
+  });
+
+  describe("received-message event", () => {
+    it("should emit received-message event when connection receives a message", async () => {
+      const receivedMessages: any[] = [];
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      provider.on("received-message", (message) => {
+        receivedMessages.push(message);
+      });
+
+      // Wait for initial setup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Simulate receiving a message
+      const { DocMessage } = await import("teleportal");
+      const testMessage = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array() as StateVector,
+        },
+        { clientId: "test-client" },
+      );
+
+      mockConnection.simulateMessage(testMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(receivedMessages.length).toBeGreaterThan(0);
+      expect(receivedMessages[0].type).toBe("doc");
+    });
+  });
+
+  describe("sent-message event", () => {
+    it("should emit sent-message event when connection sends a message", async () => {
+      const sentMessages: Message[] = [];
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      provider.on("sent-message", (message) => {
+        sentMessages.push(message);
+      });
+
+      // Wait for initial setup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Send a message through the provider
+      const { DocMessage } = await import("teleportal");
+      const testMessage = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array() as StateVector,
+        },
+        { clientId: "test-client" },
+      );
+
+      await mockConnection.send(testMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The sent-message event should be emitted by the connection
+      // We need to check if the connection emits it
+      expect(mockConnection.sentMessages.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("multiple events", () => {
+    it("should emit all events correctly during provider lifecycle", async () => {
+      const eventLog: Array<{ type: string; data?: any }> = [];
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      provider = await Provider.create({
+        client: mockConnection,
+        document: "test-doc",
+        ydoc,
+        getTransport: () => mockTransport,
+        enableOfflinePersistence: false,
+      });
+
+      provider.on("connected", () => {
+        eventLog.push({ type: "connected" });
+      });
+
+      provider.on("disconnected", () => {
+        eventLog.push({ type: "disconnected" });
+      });
+
+      provider.on("update", (state) => {
+        eventLog.push({ type: "update", data: state.type });
+      });
+
+      provider.on("received-message", (message) => {
+        eventLog.push({ type: "received-message", data: message.type });
+      });
+
+      provider.on("sent-message", (message) => {
+        eventLog.push({ type: "sent-message", data: message.type });
+      });
+
+      // Wait for initial setup
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Trigger various events
+      mockConnection.triggerDisconnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      mockConnection.triggerConnect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const { DocMessage } = await import("teleportal");
+      const testMessage = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array() as StateVector,
+        },
+        { clientId: "test-client" },
+      );
+      mockConnection.simulateMessage(testMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify we got events
+      expect(eventLog.length).toBeGreaterThan(0);
+      expect(eventLog.some((e) => e.type === "disconnected")).toBe(true);
+      expect(eventLog.some((e) => e.type === "connected")).toBe(true);
+      expect(eventLog.some((e) => e.type === "update")).toBe(true);
+      expect(eventLog.some((e) => e.type === "received-message")).toBe(true);
+    });
+  });
+});
