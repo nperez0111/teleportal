@@ -1,7 +1,6 @@
 import { Message, Observable, RawReceivedMessage } from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
-import { teleportalEventClient } from "../devtools/event-client.js";
 
 /**
  * The context of a {@link Connection}.
@@ -120,11 +119,12 @@ export abstract class Connection<
   Context extends ConnectionContext,
 > extends Observable<{
   update: (state: ConnectionState<Context>) => void;
-  message: (message: Message) => void;
   connected: () => void;
   disconnected: () => void;
   ping: () => void;
   "messages-in-flight": (hasInFlight: boolean) => void;
+  "sent-message": (message: Message) => void;
+  "received-message": (message: Message) => void;
 }> {
   static location: { hostname: string } | undefined = globalThis.location;
 
@@ -242,7 +242,7 @@ export abstract class Connection<
     });
 
     // Listen for ack messages to remove them from in-flight tracking
-    this.on("message", (message) => {
+    this.on("received-message", (message) => {
       if (message.type === "ack") {
         const messageId = message.payload.messageId;
         if (this.#inFlightMessages.has(messageId)) {
@@ -251,14 +251,6 @@ export abstract class Connection<
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
       }
-    });
-
-    this.on("message", (message) => {
-      teleportalEventClient.emit("message-log", {
-        direction: "received",
-        message,
-        timestamp: Date.now(),
-      });
     });
   }
 
@@ -319,47 +311,6 @@ export abstract class Connection<
           this.scheduleReconnect();
         }
         break;
-    }
-
-    this.emitDevtoolsConnectionState(state);
-  }
-
-  private emitDevtoolsConnectionState(state: ConnectionState<Context>): void {
-    const timestamp = Date.now();
-    let transport: "websocket" | "http" | null = null;
-
-    if ("context" in state && state.context) {
-      const context = state.context as { connectionType?: string };
-      if ("connectionType" in context) {
-        transport = context.connectionType as "websocket" | "http";
-      }
-    }
-
-    if (state.type === "connected") {
-      teleportalEventClient.emit("connection-state", {
-        type: "connected",
-        transport: transport as "websocket" | "http",
-        timestamp,
-      });
-    } else if (state.type === "connecting") {
-      teleportalEventClient.emit("connection-state", {
-        type: "connecting",
-        transport: transport as "websocket" | "http" | null,
-        timestamp,
-      });
-    } else if (state.type === "disconnected") {
-      teleportalEventClient.emit("connection-state", {
-        type: "disconnected",
-        transport: null,
-        timestamp,
-      });
-    } else {
-      teleportalEventClient.emit("connection-state", {
-        type: "errored",
-        error: state.error?.message ?? "Unknown error",
-        transport: null,
-        timestamp,
-      });
     }
   }
 
@@ -551,12 +502,6 @@ export abstract class Connection<
           this.call("messages-in-flight", true);
         }
       }
-
-      teleportalEventClient.emit("message-log", {
-        message,
-        direction: "sent",
-        timestamp: Date.now(),
-      });
 
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails

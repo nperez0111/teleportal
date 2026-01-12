@@ -317,10 +317,10 @@ export class FallbackConnection extends Connection<FallbackContext> {
           },
         } as ConnectionState<FallbackContext>);
       },
-      message: (message) => {
+      "received-message": (message: Message) => {
         // Only handle messages if this is still the current attempt
         if (attemptId === this.#connectionAttemptId) {
-          this.call("message", message);
+          this.call("received-message", message);
         }
       },
       connected: () => {

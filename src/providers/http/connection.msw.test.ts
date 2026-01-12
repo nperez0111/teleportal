@@ -431,7 +431,7 @@ describe("HttpConnection with MSW", () => {
 
       client = createHttpConnectionWithMockES({ testClientId, eventSourceRef });
 
-      client.on("message", (message) => {
+      client.on("received-message", (message: Message) => {
         receivedMessages.push(message);
       });
 
@@ -512,7 +512,7 @@ describe("HttpConnection with MSW", () => {
 
       client = createHttpConnectionWithMockES({ testClientId, eventSourceRef });
 
-      client.on("message", (message) => {
+      client.on("received-message", (message: Message) => {
         receivedMessages.push(message);
       });
 
@@ -1031,7 +1031,7 @@ describe("HttpConnection with MSW", () => {
 
       client = createHttpConnectionWithMockES({ testClientId, eventSourceRef });
 
-      client.on("message", (message) => {
+      client.on("received-message", (message: Message) => {
         receivedMessages.push(message);
       });
 

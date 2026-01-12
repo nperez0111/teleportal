@@ -58,6 +58,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
    */
   public writable: WritableStream<Message> = new WritableStream({
     write: (message) => {
+      this.call("sent-message", message);
       this.send(message);
     },
   });
@@ -142,7 +143,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
             const decodedMessage = decodeMessage(message);
             await this.writer.write(decodedMessage);
-            this.call("message", decodedMessage);
+            this.call("received-message", decodedMessage);
           } catch (err) {
             this.handleConnectionError(
               new Error("Failed to process message", {

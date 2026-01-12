@@ -92,7 +92,7 @@ class MockConnection extends Connection<{
       if (response) {
         // Emit the response asynchronously to simulate network delay
         setTimeout(() => {
-          this.call("message", response);
+          this.call("received-message", response);
         }, 0);
       }
     }
@@ -121,7 +121,7 @@ class MockConnection extends Connection<{
 
   // Helper method to simulate receiving a message
   public simulateMessage(message: Message) {
-    this.call("message", message);
+    this.call("received-message", message);
   }
 
   // Helper method to simulate ping
@@ -624,7 +624,7 @@ describe("Connection", () => {
   describe("Event Emission", () => {
     it("should emit message events", async () => {
       const messages: Message[] = [];
-      connection.on("message", (message) => {
+      connection.on("received-message", (message: Message) => {
         messages.push(message);
       });
 

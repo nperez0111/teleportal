@@ -26,7 +26,6 @@ import {
 } from "teleportal/transports";
 import { Connection } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
-import { teleportalEventClient } from "../devtools/event-client.js";
 
 /**
  * Error thrown when a milestone operation is denied
@@ -170,13 +169,6 @@ export class Provider<
       this.init();
     }
     client.on("connected", this.init);
-
-    this.awareness.on("change", () => {
-      teleportalEventClient.emit("awareness-state", {
-        peers: this.awareness.getStates(),
-        timestamp: Date.now(),
-      });
-    });
   }
 
   private initOfflinePersistence() {
@@ -224,40 +216,20 @@ export class Provider<
         "disconnected",
         () => {
           this.doc.emit("sync", [false, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: false,
-            timestamp: Date.now(),
-          });
         },
       );
       this.#connectedUnsubscribe = this.#underlyingConnection.on(
         "connected",
         () => {
           this.doc.emit("sync", [true, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: this.#synced !== null,
-            timestamp: Date.now(),
-          });
         },
       );
       this.transport.synced
         .then(() => {
           this.doc.emit("sync", [true, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: true,
-            timestamp: Date.now(),
-          });
         })
         .catch(() => {
           this.doc.emit("sync", [false, this.doc]);
-          teleportalEventClient.emit("sync-state", {
-            documentId: this.document,
-            synced: false,
-            timestamp: Date.now(),
-          });
         });
     } catch (error) {
       console.error("Failed to send sync-step-1", error);
@@ -681,7 +653,10 @@ export class Provider<
       }, timeout);
 
       // Listen for messages from the connection
-      unsubscribe = this.#underlyingConnection.on("message", handleMessage);
+      unsubscribe = this.#underlyingConnection.on(
+        "received-message",
+        handleMessage,
+      );
 
       // Listen for disconnection to ensure cleanup
       disconnectUnsubscribe = this.#underlyingConnection.on(
