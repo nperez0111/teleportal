@@ -89,6 +89,10 @@
     "./merkle-tree": {
       "types": "./dist/lib/merkle-tree/index.d.mts",
       "default": "./dist/lib/merkle-tree/index.mjs"
+    },
+    "./devtools": {
+      "types": "./dist/devtools/index.d.mts",
+      "default": "./dist/devtools/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",

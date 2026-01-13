@@ -1,5 +1,4 @@
-import { useSyncExternalStore } from "react";
-import type { DevtoolsSettings, FilterState } from "../types";
+import type { DevtoolsSettings, FilterState } from "./types";
 
 const STORAGE_KEY = "teleportal-devtools-settings";
 // Back-compat: previous versions stored only the limit as a string.
@@ -63,53 +62,52 @@ function saveSettings(settings: DevtoolsSettings) {
   }
 }
 
-let currentSettings: DevtoolsSettings = loadSettings();
-const listeners = new Set<() => void>();
+export class SettingsManager {
+  private settings: DevtoolsSettings;
+  private listeners = new Set<() => void>();
 
-function emitChange() {
-  listeners.forEach((l) => l());
-}
+  constructor() {
+    this.settings = loadSettings();
+  }
 
-function setCurrentSettings(updater: (prev: DevtoolsSettings) => DevtoolsSettings) {
-  const next = updater(currentSettings);
-  currentSettings = next;
-  saveSettings(next);
-  emitChange();
-}
+  getSettings(): DevtoolsSettings {
+    return this.settings;
+  }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
 
-function getSnapshot() {
-  return currentSettings;
-}
+  private emitChange() {
+    this.listeners.forEach((l) => l());
+  }
 
-export function useDevtoolsSettings() {
-  const settings = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-
-  const updateMessageLimit = (limit: number) => {
+  updateMessageLimit(limit: number) {
     if (limit > 0) {
-      setCurrentSettings((prev) => ({ ...prev, messageLimit: limit }));
+      this.settings = { ...this.settings, messageLimit: limit };
+      saveSettings(this.settings);
+      this.emitChange();
     }
-  };
+  }
 
-  const updateFilters = (updates: Partial<FilterState>) => {
-    setCurrentSettings((prev) => ({
-      ...prev,
-      filters: { ...prev.filters, ...updates },
-    }));
-  };
+  updateFilters(updates: Partial<FilterState>) {
+    this.settings = {
+      ...this.settings,
+      filters: { ...this.settings.filters, ...updates },
+    };
+    saveSettings(this.settings);
+    this.emitChange();
+  }
 
-  const clearFilters = () => {
-    setCurrentSettings((prev) => ({ ...prev, filters: DEFAULT_FILTERS }));
-  };
-
-  return {
-    settings,
-    updateMessageLimit,
-    updateFilters,
-    clearFilters,
-  };
+  clearFilters() {
+    this.settings = {
+      ...this.settings,
+      filters: DEFAULT_FILTERS,
+    };
+    saveSettings(this.settings);
+    this.emitChange();
+  }
 }

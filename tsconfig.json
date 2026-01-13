@@ -29,6 +29,7 @@
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
       "teleportal/merkle-tree": ["./src/lib/merkle-tree/index.ts"],
+      "teleportal/devtools": ["./src/devtools/index.ts"],
       "teleportal": ["./src/lib/index.ts"]
     },
     "jsx": "react-jsx"

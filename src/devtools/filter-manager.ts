@@ -1,17 +1,33 @@
-import { useMemo, useCallback } from "react";
-import type { DevtoolsMessage } from "../types";
-import { getMessageTypeLabel } from "../utils/message-utils";
-import { useDevtoolsSettings } from "./useDevtoolsSettings";
+import type { DevtoolsMessage } from "./types";
+import { getMessageTypeLabel } from "./utils/message-utils";
+import type { SettingsManager } from "./settings-manager";
 
-export function useMessageFilters(messages: DevtoolsMessage[]) {
-  const {
-    settings,
-    updateFilters: updatePersistedFilters,
-    clearFilters,
-  } = useDevtoolsSettings();
-  const filters = settings.filters;
+export class FilterManager {
+  private settingsManager: SettingsManager;
+  private listeners = new Set<() => void>();
 
-  const filteredMessages = useMemo(() => {
+  constructor(settingsManager: SettingsManager) {
+    this.settingsManager = settingsManager;
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private emitChange() {
+    this.listeners.forEach((l) => l());
+  }
+
+  getFilters() {
+    return this.settingsManager.getSettings().filters;
+  }
+
+  getFilteredMessages(messages: DevtoolsMessage[]): DevtoolsMessage[] {
+    const filters = this.getFilters();
+
     return messages.filter((msg) => {
       // Filter out ACK messages - they shouldn't appear in the list
       if (msg.message.type === "ack") {
@@ -51,17 +67,9 @@ export function useMessageFilters(messages: DevtoolsMessage[]) {
 
       return true;
     });
-  }, [messages, filters]);
+  }
 
-  const updateFilters = useCallback(
-    (updates: Partial<typeof filters>) => {
-      updatePersistedFilters(updates);
-    },
-    [updatePersistedFilters],
-  );
-
-  // Get unique document IDs from messages
-  const availableDocuments = useMemo(() => {
+  getAvailableDocuments(messages: DevtoolsMessage[]): string[] {
     const docs = new Set<string>();
     messages.forEach((msg) => {
       if (msg.document) {
@@ -69,10 +77,9 @@ export function useMessageFilters(messages: DevtoolsMessage[]) {
       }
     });
     return Array.from(docs).sort();
-  }, [messages]);
+  }
 
-  // Get unique message types from messages (excluding ACKs)
-  const availableMessageTypes = useMemo(() => {
+  getAvailableMessageTypes(messages: DevtoolsMessage[]): string[] {
     const types = new Set<string>();
     messages.forEach((msg) => {
       if (msg.message.type !== "ack") {
@@ -80,14 +87,15 @@ export function useMessageFilters(messages: DevtoolsMessage[]) {
       }
     });
     return Array.from(types).sort();
-  }, [messages]);
+  }
 
-  return {
-    filters,
-    filteredMessages,
-    updateFilters,
-    clearFilters,
-    availableDocuments,
-    availableMessageTypes,
-  };
+  updateFilters(updates: Partial<typeof this.getFilters>) {
+    this.settingsManager.updateFilters(updates);
+    this.emitChange();
+  }
+
+  clearFilters() {
+    this.settingsManager.clearFilters();
+    this.emitChange();
+  }
 }

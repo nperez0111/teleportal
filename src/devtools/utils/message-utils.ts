@@ -26,27 +26,27 @@ export function getMessageTypeColor(message: MessageType): string {
   const type = getMessageTypeLabel(message);
 
   // Document message types
-  if (type === "sync-step-1") return "bg-blue-500";
-  if (type === "sync-step-2") return "bg-blue-600";
-  if (type === "update") return "bg-green-500";
-  if (type === "sync-done") return "bg-green-600";
-  if (type === "auth-message") return "bg-red-500";
-  if (type.startsWith("milestone-")) return "bg-purple-500";
+  if (type === "sync-step-1") return "devtools-bg-blue-500";
+  if (type === "sync-step-2") return "devtools-bg-blue-600";
+  if (type === "update") return "devtools-bg-green-500";
+  if (type === "sync-done") return "devtools-bg-green-600";
+  if (type === "auth-message") return "devtools-bg-red-500";
+  if (type.startsWith("milestone-")) return "devtools-bg-purple-500";
 
   // Awareness
-  if (type === "awareness-update") return "bg-yellow-500";
-  if (type === "awareness-request") return "bg-yellow-600";
+  if (type === "awareness-update") return "devtools-bg-yellow-500";
+  if (type === "awareness-request") return "devtools-bg-yellow-600";
 
   // File
-  if (type === "file-upload") return "bg-indigo-500";
-  if (type === "file-download") return "bg-indigo-600";
-  if (type === "file-part") return "bg-indigo-400";
-  if (type === "file-auth-message") return "bg-red-600";
+  if (type === "file-upload") return "devtools-bg-indigo-500";
+  if (type === "file-download") return "devtools-bg-indigo-600";
+  if (type === "file-part") return "devtools-bg-indigo-400";
+  if (type === "file-auth-message") return "devtools-bg-red-600";
 
   // ACK
-  if (type === "ack") return "bg-gray-500";
+  if (type === "ack") return "devtools-bg-gray-500";
 
-  return "bg-gray-400";
+  return "devtools-bg-gray-400";
 }
 
 export function formatMessagePayload(message: MessageType): string | null {
