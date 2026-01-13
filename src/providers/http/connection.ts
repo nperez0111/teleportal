@@ -152,7 +152,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
                 }
 
                 await this.writer.write(chunk);
-                this.call("message", chunk);
+                this.call("received-message", chunk);
               },
             }),
             { signal },
@@ -237,6 +237,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     if (this.state.type === "connected" && this.#httpWriter) {
       try {
         await this.#httpWriter.write(message);
+        this.call("sent-message", message);
       } catch (error) {
         // If it's a serious error, handle it
         if (error instanceof Error && error.name !== "AbortError") {

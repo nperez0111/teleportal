@@ -89,6 +89,10 @@
     "./merkle-tree": {
       "types": "./dist/lib/merkle-tree/index.d.mts",
       "default": "./dist/lib/merkle-tree/index.mjs"
+    },
+    "./devtools": {
+      "types": "./dist/devtools/index.d.mts",
+      "default": "./dist/devtools/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",
@@ -114,7 +118,7 @@
   "dependencies": {
     "@logtape/logtape": "^1.2.0",
     "@nats-io/transport-node": "^3.2.0",
-    "@tanstack/pacer": "0.17.1",
+    "@tanstack/devtools-event-client": "0.4.0",
     "crossws": "^0.4.1",
     "hookable": "^5.5.3",
     "ioredis": "^5.8.2",

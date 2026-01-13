@@ -1,6 +1,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
+import { EventClient } from "@tanstack/devtools-event-client";
 
 import {
   DocMessage,
@@ -24,7 +25,7 @@ import {
   getYTransportFromYDoc,
   type FanOutReader,
 } from "teleportal/transports";
-import { Connection } from "./connection";
+import { Connection, ConnectionContext, ConnectionState } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 
 /**
@@ -83,6 +84,49 @@ export type ProviderOptions<
   }) => T;
 };
 
+export const teleportalEventClient = new EventClient<
+  {
+    "teleportal-provider:load-subdoc": {
+      subdoc: Y.Doc;
+      provider: Provider;
+      document: string;
+      parentDoc: Y.Doc;
+    };
+    "teleportal-provider:unload-subdoc": {
+      subdoc: Y.Doc;
+      provider: Provider;
+      document: string;
+      parentDoc: Y.Doc;
+    };
+    "teleportal-provider:received-message": {
+      message: RawReceivedMessage;
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:sent-message": {
+      message: Message;
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:connected": {
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:disconnected": {
+      provider: Provider;
+      connection: Connection<any>;
+    };
+    "teleportal-provider:update": {
+      state: ConnectionState<ConnectionContext>;
+      provider: Provider;
+      connection: Connection<any>;
+    };
+  },
+  "teleportal-provider"
+>({
+  pluginId: "teleportal-provider",
+});
+
 export class Provider<
   T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
     ClientContext,
@@ -101,6 +145,11 @@ export class Provider<
     document: string;
     parentDoc: Y.Doc;
   }) => void;
+  "received-message": (message: RawReceivedMessage) => void;
+  "sent-message": (message: Message) => void;
+  connected: () => void;
+  disconnected: () => void;
+  update: (state: ConnectionState<ConnectionContext>) => void;
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
@@ -117,9 +166,7 @@ export class Provider<
   #indexedDBPrefix: string;
   #localLoaded: boolean = false;
 
-  // Event listener cleanup for init method
-  #disconnectedUnsubscribe: (() => void) | null = null;
-  #connectedUnsubscribe: (() => void) | null = null;
+  abortController = new AbortController();
   #initInProgress = false;
 
   private constructor({
@@ -168,7 +215,64 @@ export class Provider<
     if (client.state.type === "connected") {
       this.init();
     }
-    client.on("connected", this.init);
+
+    this.abortController.signal.addEventListener(
+      "abort",
+      client.on("connected", this.init),
+    );
+    this.abortController.signal.addEventListener(
+      "abort",
+      client.on("connected", () => {
+        this.call("connected");
+        teleportalEventClient.emit("connected", {
+          provider: this,
+          connection: client,
+        });
+      }),
+    );
+    this.abortController.signal.addEventListener(
+      "abort",
+      client.on("disconnected", () => {
+        this.call("disconnected");
+        teleportalEventClient.emit("disconnected", {
+          provider: this,
+          connection: client,
+        });
+      }),
+    );
+    this.abortController.signal.addEventListener(
+      "abort",
+      client.on("received-message", (message) => {
+        this.call("received-message", message);
+        teleportalEventClient.emit("received-message", {
+          message,
+          provider: this,
+          connection: client,
+        });
+      }),
+    );
+    this.abortController.signal.addEventListener(
+      "abort",
+      client.on("sent-message", (message) => {
+        this.call("sent-message", message);
+        teleportalEventClient.emit("sent-message", {
+          message,
+          provider: this,
+          connection: client,
+        });
+      }),
+    );
+    this.abortController.signal.addEventListener(
+      "abort",
+      client.on("update", (state) => {
+        this.call("update", state);
+        teleportalEventClient.emit("update", {
+          state,
+          provider: this,
+          connection: client,
+        });
+      }),
+    );
   }
 
   private initOfflinePersistence() {
@@ -201,28 +305,19 @@ export class Provider<
 
     this.#initInProgress = true;
     try {
-      // Clean up previous listeners if they exist
-      if (this.#disconnectedUnsubscribe) {
-        this.#disconnectedUnsubscribe();
-        this.#disconnectedUnsubscribe = null;
-      }
-      if (this.#connectedUnsubscribe) {
-        this.#connectedUnsubscribe();
-        this.#connectedUnsubscribe = null;
-      }
-
       this.#underlyingConnection.send(await this.transport.handler.start());
-      this.#disconnectedUnsubscribe = this.#underlyingConnection.on(
-        "disconnected",
-        () => {
+
+      this.abortController.signal.addEventListener(
+        "abort",
+        this.#underlyingConnection.on("disconnected", () => {
           this.doc.emit("sync", [false, this.doc]);
-        },
+        }),
       );
-      this.#connectedUnsubscribe = this.#underlyingConnection.on(
-        "connected",
-        () => {
+      this.abortController.signal.addEventListener(
+        "abort",
+        this.#underlyingConnection.on("connected", () => {
           this.doc.emit("sync", [true, this.doc]);
-        },
+        }),
       );
       this.transport.synced
         .then(() => {
@@ -466,14 +561,9 @@ export class Provider<
       this.#localPersistence = undefined;
     }
 
-    // Clean up event listeners from init
-    if (this.#disconnectedUnsubscribe) {
-      this.#disconnectedUnsubscribe();
-      this.#disconnectedUnsubscribe = null;
-    }
-    if (this.#connectedUnsubscribe) {
-      this.#connectedUnsubscribe();
-      this.#connectedUnsubscribe = null;
+    // Clean up previous listeners if they exist
+    if (!this.abortController.signal.aborted) {
+      this.abortController.abort();
     }
 
     // Clean up synced promise
@@ -653,7 +743,10 @@ export class Provider<
       }, timeout);
 
       // Listen for messages from the connection
-      unsubscribe = this.#underlyingConnection.on("message", handleMessage);
+      unsubscribe = this.#underlyingConnection.on(
+        "received-message",
+        handleMessage,
+      );
 
       // Listen for disconnection to ensure cleanup
       disconnectUnsubscribe = this.#underlyingConnection.on(

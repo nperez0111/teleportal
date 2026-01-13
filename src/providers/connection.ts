@@ -1,4 +1,9 @@
-import { Message, Observable, RawReceivedMessage } from "teleportal";
+import {
+  AckMessage,
+  Message,
+  Observable,
+  RawReceivedMessage,
+} from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
@@ -119,11 +124,12 @@ export abstract class Connection<
   Context extends ConnectionContext,
 > extends Observable<{
   update: (state: ConnectionState<Context>) => void;
-  message: (message: Message) => void;
   connected: () => void;
   disconnected: () => void;
   ping: () => void;
   "messages-in-flight": (hasInFlight: boolean) => void;
+  "sent-message": (message: Message) => void;
+  "received-message": (message: Message) => void;
 }> {
   static location: { hostname: string } | undefined = globalThis.location;
 
@@ -241,7 +247,7 @@ export abstract class Connection<
     });
 
     // Listen for ack messages to remove them from in-flight tracking
-    this.on("message", (message) => {
+    this.on("received-message", (message) => {
       if (message.type === "ack") {
         const messageId = message.payload.messageId;
         if (this.#inFlightMessages.has(messageId)) {
@@ -249,8 +255,32 @@ export abstract class Connection<
           // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
+      } else {
+        // Send ACK for all non-ACK messages received from the server
+        // (The server will drop these, but it's useful to have them anyway)
+        const ackMessage = new AckMessage(
+          {
+            type: "ack",
+            messageId: message.id,
+          },
+          undefined,
+        );
+        // Send ACK asynchronously without blocking
+        queueMicrotask(() => {
+          // Skip if connection was destroyed before microtask ran
+          if (this.destroyed) return;
+          this.send(ackMessage).catch(() => {
+            // Ignore errors when sending ACK (connection might be closed)
+          });
+        });
       }
     });
+  }
+
+  private getPayloadType(message: Message): string | undefined {
+    if (message.type !== "doc") return undefined;
+    const payload = message.payload as { type?: string } | undefined;
+    return payload?.type;
   }
 
   protected setState(state: ConnectionState<Context>) {
@@ -495,6 +525,7 @@ export abstract class Connection<
           this.call("messages-in-flight", true);
         }
       }
+
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails
         if (message.type !== "ack" && message.type !== "awareness") {
@@ -502,6 +533,13 @@ export abstract class Connection<
           // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
+
+        // Don't trigger reconnection for ACK messages - they're fire-and-forget
+        // and shouldn't cause connection state changes
+        if (message.type === "ack") {
+          return;
+        }
+
         // Workaround for Bun promise rejection handling bug
         // See: https://github.com/oven-sh/bun/issues/XXX
         await new Promise<void>((resolve) => {

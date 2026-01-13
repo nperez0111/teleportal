@@ -550,7 +550,7 @@ describe("WebSocketConnection", () => {
       connect: false,
     });
 
-    client.on("message", () => {
+    client.on("received-message", () => {
       messageHandlerCallCount++;
     });
 

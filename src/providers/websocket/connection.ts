@@ -142,7 +142,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
             const decodedMessage = decodeMessage(message);
             await this.writer.write(decodedMessage);
-            this.call("message", decodedMessage);
+            this.call("received-message", decodedMessage);
           } catch (err) {
             this.handleConnectionError(
               new Error("Failed to process message", {
@@ -304,6 +304,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     ) {
       try {
         ws.send(message.encoded);
+        this.call("sent-message", message);
       } catch (error) {
         // Re-throw to let base class handle buffering
         throw error;
