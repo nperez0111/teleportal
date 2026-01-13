@@ -12,6 +12,8 @@ export const MessageInspector = memo(function MessageInspector({
   const [copied, setCopied] = useState(false);
   const [showAckDetails, setShowAckDetails] = useState(false);
 
+  const payload = message ? formatMessagePayload(message.message) : null;
+
   if (!message) {
     return (
       <div className="h-full bg-white dark:bg-gray-950 flex items-center justify-center">
@@ -24,16 +26,13 @@ export const MessageInspector = memo(function MessageInspector({
 
   const handleCopy = async () => {
     try {
-      const payload = formatMessagePayload(message.message);
-      await navigator.clipboard.writeText(payload);
+      await navigator.clipboard.writeText(payload ?? "");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       console.error("Failed to copy:", error);
     }
   };
-
-  const payload = formatMessagePayload(message.message);
 
   return (
     <div className="h-full flex flex-col bg-white dark:bg-gray-950">
@@ -42,12 +41,14 @@ export const MessageInspector = memo(function MessageInspector({
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Inspector
           </h2>
-          <button
-            onClick={handleCopy}
-            className="px-2 py-0.5 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
+          {Boolean(payload) && (
+            <button
+              onClick={handleCopy}
+              className="px-2 py-0.5 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -56,35 +57,43 @@ export const MessageInspector = memo(function MessageInspector({
           <h3 className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
             Metadata
           </h3>
-          <div className="bg-gray-50 dark:bg-gray-900 p-1.5 rounded space-y-1 text-xs">
-            <div className="flex justify-between">
+          <div className="bg-gray-50 dark:bg-gray-900 p-1.5 rounded space-y-1.5 text-xs">
+            <div>
               <span className="text-gray-600 dark:text-gray-400">ID:</span>
-              <span className="font-mono text-gray-900 dark:text-gray-100 text-xs">
-                {message.id.slice(0, 16)}...
-              </span>
+              <div className="font-mono text-gray-900 dark:text-gray-100 break-all mt-0.5">
+                {message.id}
+              </div>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Direction:</span>
+              <span className="text-gray-600 dark:text-gray-400">
+                Direction:
+              </span>
               <span className="text-gray-900 dark:text-gray-100">
                 {message.direction}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Document:</span>
-              <span className="font-mono text-gray-900 dark:text-gray-100 truncate max-w-[200px]">
-                {message.document || "N/A"}
+            <div>
+              <span className="text-gray-600 dark:text-gray-400">
+                Document:
               </span>
+              <div className="font-mono text-gray-900 dark:text-gray-100 break-all mt-0.5">
+                {message.document || "N/A"}
+              </div>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Time:</span>
+              <span className="text-gray-600 dark:text-gray-400">
+                Timestamp:
+              </span>
               <span className="text-gray-900 dark:text-gray-100">
                 {formatTimestamp(message.timestamp)}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Encrypted:</span>
+              <span className="text-gray-600 dark:text-gray-400">
+                Encrypted:
+              </span>
               <span className="text-gray-900 dark:text-gray-100">
-                {message.message.encrypted ? "Yes" : "No"}
+                {message.message.encrypted ? "✅" : "❌"}
               </span>
             </div>
             <div className="flex justify-between">
@@ -94,11 +103,10 @@ export const MessageInspector = memo(function MessageInspector({
               </span>
             </div>
             {message.ackedBy && (
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600 dark:text-gray-400">ACK'd by:</span>
-                <div className="flex items-center gap-1">
-                  <span className="font-mono text-green-600 dark:text-green-400 text-xs">
-                    {message.ackedBy.ackMessageId.slice(0, 12)}...
+              <div>
+                <div className="flex items-center gap-1 mb-0.5">
+                  <span className="text-gray-600 dark:text-gray-400">
+                    ACK'd by:
                   </span>
                   <button
                     onClick={() => setShowAckDetails(!showAckDetails)}
@@ -106,6 +114,9 @@ export const MessageInspector = memo(function MessageInspector({
                   >
                     {showAckDetails ? "▼" : "▶"}
                   </button>
+                </div>
+                <div className="font-mono text-green-600 dark:text-green-400 break-all">
+                  {message.ackedBy.ackMessageId}
                 </div>
               </div>
             )}
@@ -118,19 +129,21 @@ export const MessageInspector = memo(function MessageInspector({
               ACK Message
             </h3>
             <pre className="bg-gray-50 dark:bg-gray-900 p-1.5 rounded overflow-x-auto text-xs font-mono text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-800 max-h-32 overflow-y-auto">
-              {formatMessagePayload(message.ackedBy.ackMessage)}
+              {JSON.stringify(message.ackedBy.ackMessage.toJSON(), null, 2)}
             </pre>
           </div>
         )}
 
-        <div>
-          <h3 className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-            Payload
-          </h3>
-          <pre className="bg-gray-50 dark:bg-gray-900 p-1.5 rounded overflow-x-auto text-xs font-mono text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-800 max-h-[60vh] overflow-y-auto">
-            {payload}
-          </pre>
-        </div>
+        {Boolean(payload) && (
+          <div>
+            <h3 className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Payload
+            </h3>
+            <pre className="bg-gray-50 dark:bg-gray-900 p-1.5 rounded overflow-x-auto text-xs font-mono text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-800 max-h-[60vh] overflow-y-auto">
+              {payload}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );

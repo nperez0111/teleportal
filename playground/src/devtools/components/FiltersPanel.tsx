@@ -1,5 +1,5 @@
 import { memo, useState, useEffect } from "react";
-import type { FilterState } from "../types";
+import type { FilterState, ConnectionStateInfo, Statistics } from "../types";
 import { useDevtoolsSettings } from "../hooks/useDevtoolsSettings";
 
 interface FiltersPanelProps {
@@ -8,6 +8,8 @@ interface FiltersPanelProps {
   availableMessageTypes: string[];
   onFiltersChange: (filters: Partial<FilterState>) => void;
   onClearFilters: () => void;
+  connectionState: ConnectionStateInfo | null;
+  statistics: Statistics;
 }
 
 export const FiltersPanel = memo(function FiltersPanel({
@@ -16,13 +18,15 @@ export const FiltersPanel = memo(function FiltersPanel({
   availableMessageTypes,
   onFiltersChange,
   onClearFilters,
+  connectionState,
+  statistics,
 }: FiltersPanelProps) {
   const { settings, updateMessageLimit } = useDevtoolsSettings();
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchText, setSearchText] = useState(filters.searchText);
-  const [searchDebounceTimer, setSearchDebounceTimer] = useState<
-    ReturnType<typeof setTimeout> | null
-  >(null);
+  const [searchDebounceTimer, setSearchDebounceTimer] = useState<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
   useEffect(() => {
     // Debounce search text
@@ -47,17 +51,41 @@ export const FiltersPanel = memo(function FiltersPanel({
   };
 
   const handleMessageTypeToggle = (type: string) => {
-    const newTypes = filters.messageTypes.includes(type)
-      ? filters.messageTypes.filter((t) => t !== type)
-      : [...filters.messageTypes, type];
-    onFiltersChange({ messageTypes: newTypes });
+    const newHiddenTypes = filters.hiddenMessageTypes.includes(type)
+      ? filters.hiddenMessageTypes.filter((t) => t !== type)
+      : [...filters.hiddenMessageTypes, type];
+    onFiltersChange({ hiddenMessageTypes: newHiddenTypes });
   };
 
   const hasActiveFilters =
     filters.documentIds.length > 0 ||
-    filters.messageTypes.length > 0 ||
+    filters.hiddenMessageTypes.length > 0 ||
     filters.direction !== "all" ||
     filters.searchText.length > 0;
+
+  const getConnectionStatusColor = () => {
+    if (!connectionState) return "bg-gray-400";
+    switch (connectionState.type) {
+      case "connected":
+        return "bg-green-500";
+      case "connecting":
+        return "bg-yellow-500";
+      case "disconnected":
+        return "bg-gray-400";
+      case "errored":
+        return "bg-red-500";
+      default:
+        return "bg-gray-400";
+    }
+  };
+
+  const getConnectionStatusText = () => {
+    if (!connectionState) return "Disconnected";
+    return (
+      connectionState.type.charAt(0).toUpperCase() +
+      connectionState.type.slice(1)
+    );
+  };
 
   return (
     <div className="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
@@ -67,11 +95,18 @@ export const FiltersPanel = memo(function FiltersPanel({
           onClick={() => setIsExpanded(!isExpanded)}
           className="text-xs font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-800"
         >
-          {isExpanded ? "▼" : "▶"} Filters
+          <span className="inline-flex items-center gap-1.5">
+            <span>{isExpanded ? "▼" : "▶"} Filters</span>
+            {hasActiveFilters && (
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-green-500"
+                title="Filters active"
+              />
+            )}
+          </span>
         </button>
         {hasActiveFilters && (
           <>
-            <span className="text-xs text-gray-500 dark:text-gray-400">•</span>
             <button
               onClick={onClearFilters}
               className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
@@ -81,6 +116,47 @@ export const FiltersPanel = memo(function FiltersPanel({
           </>
         )}
         <div className="flex-1" />
+
+        {/* Status indicators */}
+        <div className="flex items-center gap-3 text-xs">
+          {/* Connection status */}
+          <div className="flex items-center gap-1.5">
+            <div
+              className={`w-2 h-2 rounded-full ${getConnectionStatusColor()}`}
+            />
+            <span className="text-gray-700 dark:text-gray-300 font-medium">
+              {getConnectionStatusText()}
+            </span>
+            {connectionState?.transport && (
+              <span className="text-gray-500 dark:text-gray-400">
+                ({connectionState.transport})
+              </span>
+            )}
+            {connectionState?.error && (
+              <span
+                className="text-red-600 dark:text-red-400"
+                title={connectionState.error}
+              >
+                ⚠{" "}
+                {connectionState.error.length > 30
+                  ? connectionState.error.slice(0, 30) + "..."
+                  : connectionState.error}
+              </span>
+            )}
+          </div>
+
+          {/* Document count */}
+          {statistics.documentCount > 0 && (
+            <>
+              <span className="text-gray-400 dark:text-gray-500">•</span>
+              <span className="text-gray-600 dark:text-gray-400">
+                {statistics.documentCount} doc
+                {statistics.documentCount !== 1 ? "s" : ""}
+              </span>
+            </>
+          )}
+        </div>
+
         <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
           <span>Limit:</span>
           <input
@@ -101,7 +177,6 @@ export const FiltersPanel = memo(function FiltersPanel({
       {/* Expandable filter content */}
       {isExpanded && (
         <div className="p-2 space-y-2">
-
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
               Search:
@@ -163,7 +238,7 @@ export const FiltersPanel = memo(function FiltersPanel({
           {availableMessageTypes.length > 0 && (
             <div>
               <label className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 block">
-                Types ({filters.messageTypes.length} selected)
+                Types ({filters.hiddenMessageTypes.length} hidden)
               </label>
               <div className="max-h-24 overflow-y-auto border border-gray-300 dark:border-gray-700 rounded bg-white dark:bg-gray-800 p-1 space-y-0.5">
                 {availableMessageTypes.map((type) => (
@@ -173,7 +248,7 @@ export const FiltersPanel = memo(function FiltersPanel({
                   >
                     <input
                       type="checkbox"
-                      checked={filters.messageTypes.includes(type)}
+                      checked={!filters.hiddenMessageTypes.includes(type)}
                       onChange={() => handleMessageTypeToggle(type)}
                       className="rounded border-gray-300 dark:border-gray-600"
                     />

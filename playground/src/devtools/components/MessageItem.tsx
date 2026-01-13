@@ -4,6 +4,7 @@ import {
   getMessageTypeLabel,
   getMessageTypeColor,
   formatRelativeTime,
+  formatTimestamp,
 } from "../utils/message-utils";
 
 interface MessageItemProps {
@@ -57,7 +58,7 @@ export const MessageItem = memo(function MessageItem({
 
         {/* Type badge - fixed width */}
         <div
-          className={`${typeColor} text-white px-1.5 py-0.5 rounded text-xs font-semibold flex-shrink-0 w-20 text-center truncate`}
+          className={`${typeColor} text-white px-1.5 py-0.5 rounded text-xs font-semibold flex-shrink-0 w-32 text-center truncate`}
           title={typeLabel}
         >
           {typeLabel}
@@ -65,15 +66,25 @@ export const MessageItem = memo(function MessageItem({
 
         {/* ACK indicator - fixed width */}
         <div className="w-4 flex-shrink-0 text-center">
-          {message.ackedBy && (
-            <span className="text-green-600 dark:text-green-400" title="Acknowledged">
+          {message.ackedBy ? (
+            <span
+              className="text-green-600 dark:text-green-400"
+              title="Acknowledged"
+            >
               ✓
+            </span>
+          ) : (
+            <span
+              className="text-gray-500 dark:text-gray-500"
+              title="Not acknowledged"
+            >
+              ✗
             </span>
           )}
         </div>
 
-        {/* Document - flexible but with min width */}
-        <div className="min-w-[100px] max-w-[200px] flex-shrink-0">
+        {/* Description - flexible */}
+        <div className="min-w-[60px] flex-1 text-gray-700 dark:text-gray-300 truncate">
           {message.document && (
             <span className="font-mono text-gray-600 dark:text-gray-400 truncate block">
               {message.document}
@@ -81,15 +92,10 @@ export const MessageItem = memo(function MessageItem({
           )}
         </div>
 
-        {/* Description - flexible */}
-        <div className="min-w-[60px] flex-1 text-gray-700 dark:text-gray-300 truncate">
-          {getDescription()}
-        </div>
-
         {/* Timestamp - fixed width */}
         <div className="w-16 flex-shrink-0 text-right">
           <span className="text-gray-500 dark:text-gray-500 text-[10px]">
-            {formatRelativeTime(message.timestamp)}
+            {formatTimestamp(message.timestamp)}
           </span>
         </div>
       </div>

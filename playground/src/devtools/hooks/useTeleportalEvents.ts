@@ -2,20 +2,22 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { teleportalEventClient } from "teleportal/providers";
 import type {
   DevtoolsMessage,
-  DocumentState,
   ConnectionStateInfo,
   Statistics,
 } from "../types";
+import type { Message, RawReceivedMessage } from "teleportal";
 import { DocumentTracker } from "../utils/document-tracker";
 import { useDevtoolsSettings } from "./useDevtoolsSettings";
-import { Message, RawReceivedMessage } from "teleportal";
 
 export function useTeleportalEvents() {
   const { settings } = useDevtoolsSettings();
   const [messages, setMessages] = useState<DevtoolsMessage[]>([]);
   const [connectionState, setConnectionState] =
-    useState<ConnectionStateInfo | null>(null);
-  const [documents, setDocuments] = useState<DocumentState[]>([]);
+    useState<ConnectionStateInfo | null>({
+      type: "disconnected",
+      transport: null,
+      timestamp: Date.now(),
+    });
   const [statistics, setStatistics] = useState<Statistics>({
     totalMessages: 0,
     messagesByType: {},
@@ -28,7 +30,11 @@ export function useTeleportalEvents() {
 
   const trackerRef = useRef(new DocumentTracker());
   const messageRateRef = useRef<number[]>([]);
-  const lastUpdateRef = useRef(Date.now());
+  const connectionStateRef = useRef<ConnectionStateInfo | null>({
+    type: "disconnected",
+    transport: null,
+    timestamp: Date.now(),
+  });
   const ackMessagesRef = useRef<
     Map<
       string,
@@ -71,13 +77,11 @@ export function useTeleportalEvents() {
       messagesByType,
       sentCount,
       receivedCount,
-      connectionState,
+      connectionState: connectionStateRef.current,
       documentCount: allDocs.length,
       messageRate: rate,
     });
-
-    setDocuments(allDocs);
-  }, [messages, connectionState]);
+  }, [messages]);
 
   useEffect(() => {
     updateStatistics();
@@ -95,11 +99,38 @@ export function useTeleportalEvents() {
       (event) => {
         const { message, provider, connection } = event.payload;
 
+        // Check connection state from the connection object if available
+        // This is a fallback in case connection events don't fire or fire before listeners are set up
+        if (
+          connection &&
+          typeof connection.state === "object" &&
+          connection.state
+        ) {
+          const connState = connection.state;
+          if (
+            connState.type &&
+            connState.type !== connectionStateRef.current?.type
+          ) {
+            const newState: ConnectionStateInfo = {
+              type: connState.type,
+              transport: connState.type === "connected" ? "websocket" : null,
+              error:
+                connState.type === "errored"
+                  ? connState.error?.message || String(connState.error)
+                  : undefined,
+              timestamp: Date.now(),
+            };
+            connectionStateRef.current = newState;
+            setConnectionState(newState);
+          }
+        }
+
         // Handle ACK messages separately - don't add to list, but track them
         if (message.type === "ack" && message.payload?.type === "ack") {
           const ackedMessageId = message.payload.messageId;
           if (ackedMessageId) {
-            const ackMessageId = `${Date.now()}-${Math.random()}`;
+            // Use the ACK message's actual ID (deterministic getter)
+            const ackMessageId = message.id;
 
             // Store ACK info
             ackMessagesRef.current.set(ackedMessageId, {
@@ -175,11 +206,38 @@ export function useTeleportalEvents() {
     const unsubSent = teleportalEventClient.on("sent-message", (event) => {
       const { message, provider, connection } = event.payload;
 
+      // Check connection state from the connection object if available
+      // This is a fallback in case connection events don't fire or fire before listeners are set up
+      if (
+        connection &&
+        typeof connection.state === "object" &&
+        connection.state
+      ) {
+        const connState = connection.state;
+        if (
+          connState.type &&
+          connState.type !== connectionStateRef.current?.type
+        ) {
+          const newState: ConnectionStateInfo = {
+            type: connState.type,
+            transport: connState.type === "connected" ? "websocket" : null,
+            error:
+              connState.type === "errored"
+                ? connState.error?.message || String(connState.error)
+                : undefined,
+            timestamp: Date.now(),
+          };
+          connectionStateRef.current = newState;
+          setConnectionState(newState);
+        }
+      }
+
       // Handle ACK messages separately - don't add to list, but track them
       if (message.type === "ack" && message.payload?.type === "ack") {
         const ackedMessageId = message.payload.messageId;
         if (ackedMessageId) {
-          const ackMessageId = `${Date.now()}-${Math.random()}`;
+          // Use the ACK message's actual ID (deterministic getter)
+          const ackMessageId = message.id;
 
           // Store ACK info
           ackMessagesRef.current.set(ackedMessageId, {
@@ -267,40 +325,44 @@ export function useTeleportalEvents() {
     unsubscribers.push(unsubUnloadSubdoc);
 
     // Listen to connection events
-    const unsubConnected = teleportalEventClient.on("connected", () => {
-      setConnectionState({
-        type: "connected",
-        transport: "websocket", // Could be determined from connection if available
+    const unsubConnected = teleportalEventClient.on("connected", (event) => {
+      const newState = {
+        type: "connected" as const,
+        transport: "websocket" as const,
         timestamp: Date.now(),
-      });
+      };
+      connectionStateRef.current = newState;
+      setConnectionState(newState);
     });
     unsubscribers.push(unsubConnected);
 
-    const unsubDisconnected = teleportalEventClient.on("disconnected", () => {
-      setConnectionState({
-        type: "disconnected",
-        transport: null,
-        timestamp: Date.now(),
-      });
-    });
+    const unsubDisconnected = teleportalEventClient.on(
+      "disconnected",
+      (event) => {
+        const newState = {
+          type: "disconnected" as const,
+          transport: null,
+          timestamp: Date.now(),
+        };
+        connectionStateRef.current = newState;
+        setConnectionState(newState);
+      },
+    );
     unsubscribers.push(unsubDisconnected);
 
     const unsubUpdate = teleportalEventClient.on("update", (event) => {
       const { state } = event.payload;
-      setConnectionState({
+      const newState: ConnectionStateInfo = {
         type: state.type,
-        transport:
-          state.type === "connected"
-            ? "websocket"
-            : state.type === "connecting"
-              ? null
-              : null,
+        transport: state.type === "connected" ? "websocket" : null,
         error:
           state.type === "errored"
             ? state.error?.message || String(state.error)
             : undefined,
         timestamp: Date.now(),
-      });
+      };
+      connectionStateRef.current = newState;
+      setConnectionState(newState);
     });
     unsubscribers.push(unsubUpdate);
 
@@ -309,16 +371,9 @@ export function useTeleportalEvents() {
     };
   }, [settings.messageLimit]);
 
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-    messageRateRef.current = [];
-  }, []);
-
   return {
     messages,
     connectionState,
-    documents,
     statistics,
-    clearMessages,
   };
 }

@@ -44,11 +44,16 @@ export type Statistics = {
 
 export type FilterState = {
   documentIds: string[];
-  messageTypes: string[];
+  /**
+   * Message types that should be hidden from the list.
+   * Empty means "show all types".
+   */
+  hiddenMessageTypes: string[];
   direction: "all" | "sent" | "received";
   searchText: string;
 };
 
 export type DevtoolsSettings = {
   messageLimit: number;
+  filters: FilterState;
 };

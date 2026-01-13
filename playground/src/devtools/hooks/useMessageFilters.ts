@@ -1,14 +1,15 @@
-import { useState, useMemo } from "react";
-import type { DevtoolsMessage, FilterState } from "../types";
+import { useMemo, useCallback } from "react";
+import type { DevtoolsMessage } from "../types";
 import { getMessageTypeLabel } from "../utils/message-utils";
+import { useDevtoolsSettings } from "./useDevtoolsSettings";
 
 export function useMessageFilters(messages: DevtoolsMessage[]) {
-  const [filters, setFilters] = useState<FilterState>({
-    documentIds: [],
-    messageTypes: [],
-    direction: "all",
-    searchText: "",
-  });
+  const {
+    settings,
+    updateFilters: updatePersistedFilters,
+    clearFilters,
+  } = useDevtoolsSettings();
+  const filters = settings.filters;
 
   const filteredMessages = useMemo(() => {
     return messages.filter((msg) => {
@@ -27,12 +28,8 @@ export function useMessageFilters(messages: DevtoolsMessage[]) {
       }
 
       // Message type filter
-      if (filters.messageTypes.length > 0) {
-        const type = getMessageTypeLabel(msg.message);
-        if (!filters.messageTypes.includes(type)) {
-          return false;
-        }
-      }
+      const type = getMessageTypeLabel(msg.message);
+      if (filters.hiddenMessageTypes.includes(type)) return false;
 
       // Direction filter
       if (filters.direction !== "all" && msg.direction !== filters.direction) {
@@ -44,7 +41,10 @@ export function useMessageFilters(messages: DevtoolsMessage[]) {
         const searchLower = filters.searchText.toLowerCase();
         const payloadStr = JSON.stringify(msg.message).toLowerCase();
         const docStr = (msg.document || "").toLowerCase();
-        if (!payloadStr.includes(searchLower) && !docStr.includes(searchLower)) {
+        if (
+          !payloadStr.includes(searchLower) &&
+          !docStr.includes(searchLower)
+        ) {
           return false;
         }
       }
@@ -53,18 +53,12 @@ export function useMessageFilters(messages: DevtoolsMessage[]) {
     });
   }, [messages, filters]);
 
-  const updateFilters = (updates: Partial<FilterState>) => {
-    setFilters((prev) => ({ ...prev, ...updates }));
-  };
-
-  const clearFilters = () => {
-    setFilters({
-      documentIds: [],
-      messageTypes: [],
-      direction: "all",
-      searchText: "",
-    });
-  };
+  const updateFilters = useCallback(
+    (updates: Partial<typeof filters>) => {
+      updatePersistedFilters(updates);
+    },
+    [updatePersistedFilters],
+  );
 
   // Get unique document IDs from messages
   const availableDocuments = useMemo(() => {

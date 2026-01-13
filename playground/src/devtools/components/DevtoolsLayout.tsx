@@ -1,21 +1,24 @@
 import { useState } from "react";
-import { StatisticsPanel } from "./StatisticsPanel";
 import { MessageList } from "./MessageList";
 import { MessageInspector } from "./MessageInspector";
 import { FiltersPanel } from "./FiltersPanel";
-import type { DevtoolsMessage, Statistics, FilterState } from "../types";
+import type {
+  DevtoolsMessage,
+  Statistics,
+  ConnectionStateInfo,
+} from "../types";
 import { useMessageFilters } from "../hooks/useMessageFilters";
 
 interface DevtoolsLayoutProps {
   messages: DevtoolsMessage[];
   statistics: Statistics;
-  onClearMessages: () => void;
+  connectionState: ConnectionStateInfo | null;
 }
 
 export function DevtoolsLayout({
   messages,
   statistics,
-  onClearMessages,
+  connectionState,
 }: DevtoolsLayoutProps) {
   const [selectedMessage, setSelectedMessage] =
     useState<DevtoolsMessage | null>(null);
@@ -30,15 +33,17 @@ export function DevtoolsLayout({
   } = useMessageFilters(messages);
 
   return (
-    <div className="h-full flex flex-col bg-gray-100 dark:bg-gray-950">
+    <div className="h-full w-full flex flex-col bg-gray-100 dark:bg-gray-950">
       {/* Compact top bar with filters (collapsible) */}
-      <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-800">
+      <div className="shrink-0 border-b border-gray-200 dark:border-gray-800">
         <FiltersPanel
           filters={filters}
           availableDocuments={availableDocuments}
           availableMessageTypes={availableMessageTypes}
           onFiltersChange={updateFilters}
           onClearFilters={clearFilters}
+          connectionState={connectionState}
+          statistics={statistics}
         />
       </div>
 
@@ -54,7 +59,7 @@ export function DevtoolsLayout({
         </div>
 
         {/* Right: Message Inspector */}
-        <div className="w-96 flex-shrink-0">
+        <div className="w-96 shrink-0">
           <MessageInspector message={selectedMessage} />
         </div>
       </div>
