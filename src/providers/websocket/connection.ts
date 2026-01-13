@@ -58,7 +58,6 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
    */
   public writable: WritableStream<Message> = new WritableStream({
     write: (message) => {
-      this.call("sent-message", message);
       this.send(message);
     },
   });
@@ -305,6 +304,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     ) {
       try {
         ws.send(message.encoded);
+        this.call("sent-message", message);
       } catch (error) {
         // Re-throw to let base class handle buffering
         throw error;

@@ -1,4 +1,9 @@
-import { Message, Observable, RawReceivedMessage } from "teleportal";
+import {
+  AckMessage,
+  Message,
+  Observable,
+  RawReceivedMessage,
+} from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
@@ -250,6 +255,22 @@ export abstract class Connection<
           // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
+      } else {
+        // Send ACK for all non-ACK messages received from the server
+        // (The server will drop these, but it's useful to have them anyway)
+        const ackMessage = new AckMessage(
+          {
+            type: "ack",
+            messageId: message.id,
+          },
+          undefined,
+        );
+        // Send ACK asynchronously without blocking
+        queueMicrotask(() => {
+          this.send(ackMessage).catch(() => {
+            // Ignore errors when sending ACK (connection might be closed)
+          });
+        });
       }
     });
   }

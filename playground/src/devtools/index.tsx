@@ -1,19 +1,15 @@
-import { useEffect } from "react";
-import { useRef } from "react";
-import { teleportalEventClient } from "teleportal/providers";
+import { DevtoolsLayout } from "./components/DevtoolsLayout";
+import { useTeleportalEvents } from "./hooks/useTeleportalEvents";
 
 export function TeleportalDevtoolsPanelReact() {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    teleportalEventClient.onAllPluginEvents((event) => {
-      console.log(event);
-    });
-  }, []);
+  const { messages, connectionState, documents, statistics, clearMessages } =
+    useTeleportalEvents();
 
   return (
-    <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
-      Hello world
-    </div>
+    <DevtoolsLayout
+      messages={messages}
+      statistics={statistics}
+      onClearMessages={clearMessages}
+    />
   );
 }
