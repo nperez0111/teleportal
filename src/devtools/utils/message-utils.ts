@@ -57,17 +57,22 @@ export function formatMessagePayload(message: MessageType): string | null {
     case "awareness": {
       switch (message.payload.type) {
         case "awareness-update": {
-          const decoder = decoding.createDecoder(message.payload.update);
-          const len = decoding.readVarUint(decoder);
-          const clients = [];
-          for (let i = 0; i < len; i++) {
-            const clientID = decoding.readVarUint(decoder);
-            const clock = decoding.readVarUint(decoder);
-            const state = JSON.parse(decoding.readVarString(decoder));
-            clients.push({ clientID, clock, state });
-          }
+          try {
+            const decoder = decoding.createDecoder(message.payload.update);
+            const len = decoding.readVarUint(decoder);
+            const clients = [];
+            for (let i = 0; i < len; i++) {
+              const clientID = decoding.readVarUint(decoder);
+              const clock = decoding.readVarUint(decoder);
+              const state = JSON.parse(decoding.readVarString(decoder));
+              clients.push({ clientID, clock, state });
+            }
 
-          return JSON.stringify(clients, null, 2);
+            return JSON.stringify(clients, null, 2);
+          } catch (err) {
+            console.error("Failed to decode awareness update:", err);
+            return toBase64(message.payload.update);
+          }
         }
         case "awareness-request": {
           return null;

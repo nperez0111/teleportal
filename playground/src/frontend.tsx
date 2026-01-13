@@ -11,10 +11,20 @@ const app = (
     <Shell />
 
     <TanStackDevtools
+      config={{
+        customTrigger: (
+          <img
+            src="https://github.com/nperez0111/teleportal/blob/main/assets/pepper.svg?raw=true"
+            width={60}
+            height={60}
+          />
+        ),
+      }}
       plugins={[
         {
           name: "TelePortal",
           render: <TeleportalDevtoolsPanelReact />,
+          defaultOpen: true,
         },
       ]}
     />
