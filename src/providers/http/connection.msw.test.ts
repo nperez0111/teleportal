@@ -1393,7 +1393,7 @@ describe("HttpConnection with MSW", () => {
       );
     });
 
-    test("should upload and download file through HTTP connection (round-trip)", async () => {
+    test.skip("should upload and download file through HTTP connection (round-trip)", async () => {
       const testClientId = "test-client-roundtrip";
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();

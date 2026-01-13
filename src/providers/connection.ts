@@ -267,6 +267,8 @@ export abstract class Connection<
         );
         // Send ACK asynchronously without blocking
         queueMicrotask(() => {
+          // Skip if connection was destroyed before microtask ran
+          if (this.destroyed) return;
           this.send(ackMessage).catch(() => {
             // Ignore errors when sending ACK (connection might be closed)
           });
@@ -531,6 +533,13 @@ export abstract class Connection<
           // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
+
+        // Don't trigger reconnection for ACK messages - they're fire-and-forget
+        // and shouldn't cause connection state changes
+        if (message.type === "ack") {
+          return;
+        }
+
         // Workaround for Bun promise rejection handling bug
         // See: https://github.com/oven-sh/bun/issues/XXX
         await new Promise<void>((resolve) => {
