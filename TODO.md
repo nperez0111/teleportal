@@ -1,9 +1,5 @@
 
 - Could the client do the compaction? Is there a way to guarantee that the client's compaction did not add any additional state?
-- Sub document support: <https://github.com/toeverything/AFFiNE/blob/v0.9.0-canary.13/packages/y-provider/src/lazy-provider.ts>
-- good example of how to split up a router for yjs docs: <https://github.com/jamsocket/y-sweet/blob/main/crates/y-sweet/src/server.rs#L338C46-L338C56>
-- a message type for saving a snapshot of a doc
-- open telemetry tracing for the server
 - For an encrypted document, the client should probably compact the document updates on connection (sync-step-2). This would cause latency on the first sync, but it would be better than picking arbitrary points to compact at. Better to have a "loading" state which is a bit slower, but more predictable.
   - The server would probably still store the full document update, but only ever send the "milestone" updates to a client for efficiency.
 - implement sync-step-1 for encrypted documents
