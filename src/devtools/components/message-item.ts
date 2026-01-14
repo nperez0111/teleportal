@@ -12,9 +12,7 @@ export function createMessageItem(
 ): HTMLElement {
   const item = document.createElement("div");
   item.className = `devtools-px-2 devtools-py-1.5 devtools-border-b devtools-border-gray-200 devtools-cursor-pointer devtools-hover:bg-gray-50 devtools-transition-colors devtools-text-xs ${
-    isSelected
-      ? "devtools-bg-blue-50 devtools-border-l-2 devtools-border-l-blue-500"
-      : ""
+    isSelected ? "devtools-bg-blue-50" : ""
   }`;
   item.addEventListener("click", onClick);
 

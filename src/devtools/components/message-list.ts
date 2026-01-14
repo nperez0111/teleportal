@@ -14,12 +14,11 @@ export class MessageList {
     this.element.className =
       "devtools-flex devtools-flex-col devtools-h-full devtools-bg-white";
 
-    // Header
+    // Header - matches inspector header styling
     const header = document.createElement("div");
-    header.className =
-      "devtools-px-2 devtools-py-1 devtools-border-b devtools-border-gray-200 devtools-bg-gray-50";
+    header.className = "devtools-list-header";
     const title = document.createElement("h2");
-    title.className = "devtools-text-sm devtools-font-semibold devtools-text-gray-900";
+    title.className = "devtools-list-header-title";
     header.appendChild(title);
     this.element.appendChild(header);
 
