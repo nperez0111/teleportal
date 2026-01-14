@@ -9,3 +9,5 @@ dist
 .wrangler
 *.sqlite
 *.sqlite-journal
+docs/.vitepress/dist
+docs/.vitepress/cache
