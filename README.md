@@ -16,7 +16,7 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 * **🏃 Runtime:** built on web primitives, everything should work on any JavaScript runtime, with minimal dependencies
 
-<video src="./assets/teleportal.mp4" controls width="100%"></video>
+![TelePortal Demo](./assets/teleportal.gif)
 
 <!-- automd:badges color=yellow -->
 
