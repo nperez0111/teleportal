@@ -12,7 +12,7 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 * **🔄 Transport:** everything is defined using Web standard streams and encodes to a `Uint8Array`
 
-  * Use Websockets, WebRTC, HTTP + SSE, anything you like that can fulfill a bidirectional communication
+  * Use Websockets, HTTP, HTTP + SSE, anything you like that can fulfill a bidirectional communication
 
 * **🏃 Runtime:** built on web primitives, everything should work on any JavaScript runtime, with minimal dependencies
 
@@ -24,7 +24,7 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 * **🏎️ Performance:** This is all built on top of web-native Streams APIs, supporting control-flow, backpressure. All without actually storing the documents in-memory
 
-![teleportal architecture](./architecture.excalidraw.png)
+![teleportal demo video](./assets/teleportal.mp4)
 
 <!-- automd:badges color=yellow -->
 
