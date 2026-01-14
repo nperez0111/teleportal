@@ -105,10 +105,12 @@ const server = new Server({
 
 **Key Features:**
 
-- Configurable key prefixes for file and document storage
+- Configurable key prefixes for file, document, and milestone storage
 - Supports both encrypted and unencrypted documents
-- Transaction support with TTL-based locking
+- Transaction support with TTL-based locking (default: 5000ms)
 - Can scan keys (useful for relational databases) or use indexed keys
+- Automatically creates and links `fileStorage`, `milestoneStorage`, and `temporaryUploadStorage`
+- All storage instances are pre-wired and ready to use
 
 ### In-Memory Implementation
 
@@ -292,7 +294,7 @@ const { documentStorage, fileStorage } = createUnstorage(redisStorage, {
 **Key Features:**
 
 - **Write Buffering**: Buffers document updates and metadata in memory
-- **Batched Persistence**: Uses TanStack Pacer to batch writes (configurable max size and time)
+- **Batched Persistence**: Batches writes using a custom batching mechanism (configurable max size and time)
 - **Read Consistency**: Flushes pending writes on reads to ensure data consistency
 - **Framework-Agnostic**: Works with any `DocumentStorage` implementation
 
@@ -334,32 +336,81 @@ This wrapper is especially useful for collaborative apps where many small update
 
 ## Factory Functions
 
-Factory functions simplify creating storage pairs that work together:
+Factory functions simplify creating storage instances that work together. They automatically:
+
+- Create all necessary storage instances (`documentStorage`, `fileStorage`, `milestoneStorage`, `temporaryUploadStorage`)
+- Wire up dependencies between storage instances
+- Configure key prefixes and options consistently
+- Return ready-to-use storage instances
+
+**No manual wiring required** - just use the returned storage instances directly.
 
 ### `createUnstorage(storage, options?)`
 
-Creates document and file storage based on the same unstorage instance with different key prefixes.
+Creates document, file, and milestone storage based on the same unstorage instance with different key prefixes. All storage instances are automatically created, linked, and ready to use.
+
+**What's automatically created:**
+
+- `documentStorage` - Main document storage (encrypted or unencrypted based on options)
+- `fileStorage` - File storage with automatic `temporaryUploadStorage` integration
+- `milestoneStorage` - Milestone storage (automatically linked to `documentStorage`)
+- `temporaryUploadStorage` - Temporary upload storage (automatically linked to `fileStorage`)
+
+**Automatic wiring:**
+
+- `documentStorage.fileStorage` is set to the created `fileStorage`
+- `documentStorage.milestoneStorage` is set to the created `milestoneStorage`
+- `fileStorage.temporaryUploadStorage` is set to the created `temporaryUploadStorage`
+- `fileStorage` is linked to `documentStorage` for metadata updates
+
+**Accessing milestone storage:**
+The `milestoneStorage` is automatically created and linked. Access it via `documentStorage.milestoneStorage`:
 
 ```typescript
 const { documentStorage, fileStorage } = createUnstorage(storage, {
   fileKeyPrefix: "file", // Default: "file"
-  documentKeyPrefix: "doc", // Default: ""
+  documentKeyPrefix: "document", // Default: "document"
+  milestoneKeyPrefix: "document-milestone", // Default: "{documentKeyPrefix}-milestone"
   encrypted: false, // Default: false
-  scanKeys: false, // Default: false
-  ttl: 5000, // Default: 5000ms
+  scanKeys: false, // Default: false (set to true for relational DBs like PostgreSQL)
+  ttl: 5000, // Default: 5000ms (transaction lock timeout)
 });
 ```
 
+**Options explained:**
+
+- `scanKeys`: When `true`, uses key scanning to find updates (better for relational databases). When `false`, uses indexed keys (better for key-value stores like Redis).
+- `ttl`: Transaction lock timeout in milliseconds. Prevents deadlocks by automatically releasing locks after this duration.
+
 ### `createInMemory(options?)`
 
-Creates in-memory document and file storage.
+Creates in-memory document, file, and milestone storage. All storage instances are automatically created, linked, and ready to use.
+
+**What's automatically created:**
+
+- `documentStorage` - Main document storage (encrypted or YDoc-based)
+- `fileStorage` - File storage with automatic `temporaryUploadStorage` integration
+- `milestoneStorage` - Milestone storage (automatically linked to `documentStorage`)
+- `temporaryUploadStorage` - Temporary upload storage (automatically linked to `fileStorage`)
+
+**Automatic wiring:**
+
+- `documentStorage.fileStorage` is set to the created `fileStorage`
+- `documentStorage.milestoneStorage` is set to the created `milestoneStorage`
+- `fileStorage.temporaryUploadStorage` is set to the created `temporaryUploadStorage`
+- `fileStorage` is linked to `documentStorage` for metadata updates
+
+**Accessing milestone storage:**
+The `milestoneStorage` is automatically created and linked. Access it via `documentStorage.milestoneStorage`:
 
 ```typescript
 const { documentStorage, fileStorage } = createInMemory({
   encrypted: false, // Default: false
-  useYDoc: false, // Default: false
+  useYDoc: false, // Default: false (note: currently both branches use YDocStorage)
 });
 ```
+
+**Note:** The `useYDoc` option currently has no effect - both encrypted and non-encrypted paths use YDoc-based storage. This option may be used for future storage implementations.
 
 ## Architecture Notes
 
@@ -383,7 +434,8 @@ When using the same storage backend for multiple storage types, use key prefixes
 ```typescript
 createUnstorage(storage, {
   fileKeyPrefix: "file", // Files stored as "file:file:..."
-  documentKeyPrefix: "doc", // Documents stored as "doc:..."
+  documentKeyPrefix: "document", // Documents stored as "document:..."
+  milestoneKeyPrefix: "document-milestone", // Milestones stored as "document-milestone:..."
 });
 ```
 
@@ -398,11 +450,19 @@ This prevents key collisions and allows you to:
 DocumentStorage supports transactions for atomic operations. Implementations can:
 
 - Use database transactions (PostgreSQL, MySQL)
-- Use distributed locks (Redis, etcd)
+- Use distributed locks (Redis, etcd) with TTL-based timeout
 - Use optimistic locking
 - Or simply execute sequentially (in-memory)
 
 The interface is flexible enough to support any transaction model.
+
+**Transaction TTL:**
+The unstorage implementation uses TTL-based locking (default: 5000ms). This prevents deadlocks by automatically releasing locks after the timeout period. Adjust the `ttl` option based on your expected transaction duration and network latency.
+
+**Key Scanning vs Indexed Keys:**
+
+- **`scanKeys: false`** (default): Uses indexed keys stored in a document metadata object. Better for key-value stores like Redis, Memcached, etc. Faster for reads but requires maintaining the index.
+- **`scanKeys: true`**: Scans for keys matching a pattern. Better for relational databases like PostgreSQL where scanning is efficient. No index maintenance required but may be slower for large document sets.
 
 ## Examples
 
@@ -422,6 +482,7 @@ const server = new Server({
   getStorage: async (ctx) => {
     const { documentStorage } = createUnstorage(docStorage, {
       documentKeyPrefix: "doc",
+      scanKeys: true, // Recommended for relational databases
     });
 
     // Use custom S3 storage for files
@@ -466,19 +527,45 @@ import { createInMemory } from "teleportal/storage";
 const server = new Server({
   getStorage: async () => {
     const { documentStorage } = createInMemory();
+    // All storage is automatically linked:
+    // - documentStorage.fileStorage (for file operations)
+    // - documentStorage.milestoneStorage (for milestone operations)
     return documentStorage;
   },
 });
 ```
 
+### Accessing Milestone Storage
+
+```typescript
+const { documentStorage } = createUnstorage(storage);
+
+// Milestone storage is automatically created and linked
+const milestoneStorage = documentStorage.milestoneStorage;
+
+// Create a milestone
+const milestoneId = await milestoneStorage.createMilestone({
+  name: "Version 1.0",
+  documentId: "doc-123",
+  createdAt: Date.now(),
+  snapshot: { /* milestone snapshot */ },
+});
+
+// Get all milestones for a document
+const milestones = await milestoneStorage.getMilestones("doc-123");
+```
+
 ## Best Practices
 
-1. **Use factory functions** when possible - They handle initialization correctly
-2. **Separate concerns** - Use different backends for documents vs files when it makes sense
-3. **Use key prefixes** - Namespace your data to avoid collisions
-4. **Implement transactions** - If your backend supports them, use them for consistency
-5. **Handle errors gracefully** - Storage operations can fail, handle errors appropriately
-6. **Test with in-memory** - Use in-memory storage for fast, isolated tests
+1. **Use factory functions** when possible - They handle initialization, wiring, and configuration automatically
+2. **Leverage automatic wiring** - Factory functions automatically link `fileStorage`, `milestoneStorage`, and `temporaryUploadStorage` - no manual setup needed
+3. **Choose the right `scanKeys` option** - Use `scanKeys: true` for relational databases (PostgreSQL, MySQL), `scanKeys: false` for key-value stores (Redis, Memcached)
+4. **Set appropriate TTL** - Adjust transaction TTL based on your expected operation duration and network latency (default: 5000ms)
+5. **Separate concerns** - Use different backends for documents vs files when it makes sense (e.g., PostgreSQL for documents, S3 for files)
+6. **Use key prefixes** - Namespace your data to avoid collisions and enable easy querying/deletion by prefix
+7. **Access milestone storage via documentStorage** - Use `documentStorage.milestoneStorage` to access milestone operations
+8. **Handle errors gracefully** - Storage operations can fail, handle errors appropriately
+9. **Test with in-memory** - Use in-memory storage for fast, isolated tests
 
 ## Interface Reference
 

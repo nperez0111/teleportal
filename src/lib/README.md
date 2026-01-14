@@ -25,6 +25,8 @@ All Teleportal messages follow this base structure:
 └─────────────┴─────────────┴─────────────┴─────────────┴─────────────────────────┘
 ```
 
+**Note**: For file messages, the document name may be an empty string. ACK messages do not have a document name (it is `undefined`).
+
 ### Message Type Identification
 
 After the header, a single byte indicates the message category:
@@ -68,7 +70,7 @@ Document messages handle Y.js document synchronization and updates. They include
 │ 0x04 = Auth │ Permission (1 byte) + Reason (varint string)                    │
 │ Message     │ 0x00=denied, 0x01=allowed                                       │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
-│ 0x05 = Mile │ (no payload)                                                    │
+│ 0x05 = Mile │ SnapshotIds count (varint) + SnapshotIds array (varint strings) │
 │ List Req    │                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x06 = Mile │ Count (varint) + [Id + Name + DocId + CreatedAt] * N            │
@@ -80,8 +82,8 @@ Document messages handle Y.js document synchronization and updates. They include
 │ 0x08 = Mile │ MilestoneId (varint string) + Snapshot (varint array)           │
 │ Snapshot Res│                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
-│ 0x09 = Mile │ HasName (1 byte) + Name (varint string, optional)               │
-│ Create Req  │                                                                 │
+│ 0x09 = Mile │ HasName (1 byte) + Name (varint string, optional) +             │
+│ Create Req  │ Snapshot (varint array)                                          │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x0A = Mile │ Id + Name + DocId + CreatedAt (all varint strings/float64)       │
 │ Create Resp │                                                                 │
@@ -156,8 +158,8 @@ Document messages handle Y.js document synchronization and updates. They include
 #### 10. Milestone Create Request (0x09)
 
 **Purpose**: Requests creation of a new milestone from current document state
-**Payload**: HasName (1 byte) + Name (varint string, optional)
-**Usage**: Client requests milestone creation; server auto-generates name if not provided
+**Payload**: HasName (1 byte) + Name (varint string, optional) + Snapshot (varint array)
+**Usage**: Client requests milestone creation with the document snapshot; server auto-generates name if not provided
 
 #### 11. Milestone Create Response (0x0A)
 
@@ -182,6 +184,35 @@ Document messages handle Y.js document synchronization and updates. They include
 **Purpose**: Error response for milestone operations
 **Payload**: Permission flag (1 byte) + reason string (variable length)
 **Usage**: Server sends when milestone operation fails (not found, permission denied, etc.)
+
+## ACK Messages (Type 0x02)
+
+ACK messages provide message delivery confirmation, allowing senders to know when their messages have been successfully received and processed.
+
+### ACK Message Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            ACK Message Format                                   │
+├─────────────┬───────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                        │
+│ (1 byte)    │                  (variable)                                       │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x02 = ACK  │ MessageId (varint array) - Base64-decoded message ID              │
+└─────────────┴───────────────────────────────────────────────────────────────────┘
+```
+
+### ACK Message Details
+
+**Purpose**: Acknowledges receipt of a specific message
+**Payload**: MessageId (varint array) - The base64-decoded message ID of the message being acknowledged
+**Usage**:
+
+- Used to confirm delivery of file chunks during uploads
+- Allows senders to track which messages have been successfully received
+- The messageId is the SHA-256 hash (base64-encoded) of the original message's encoded bytes
+
+**Note**: ACK messages do not have a document name and are not tied to a specific document context.
 
 ## Awareness Messages (Type 0x01)
 
@@ -225,27 +256,26 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 ### File Message Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            File Message Format                                  │
-├─────────────┬───────────────────────────────────────────────────────────────────┤
-│ Msg Type    │                    Payload                                        │
-│ (1 byte)    │                  (variable)                                       │
-├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x00 = File │ FileId (varint string)                                            │
-│ Download    │                                                                   │
-├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x01 = File │ Encrypted (1 byte) + UploadId (varint string) + Filename (string) │
-│ Upload      │ + Size (varint) + MimeType (string) + LastModified (varint)       │
-├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x02 = File │ FileId (string) + ChunkIndex (varint) + ChunkData (varint array)  │
-│ Part        │ + MerkleProofLength (varint) + MerkleProof (array) +              │
-│             │ TotalChunks (varint) + BytesUploaded (varint) +                   │
-│             │ Encrypted (1 byte)                                                │
-├─────────────┼───────────────────────────────────────────────────────────────────┤
-│ 0x03 = File │ Permission (1 byte) + FileId (string) + StatusCode (varint) +     │
-│ Auth        │ HasReason (1 byte) + Reason (string, optional)                    │
-│ Message     │                                                                   │
-└─────────────┴───────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                            File Message Format                                    │
+├─────────────┬─────────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                          │
+│ (1 byte)    │                  (variable)                                         │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x00 = File │ FileId (varint string)                                              │
+│ Download    │                                                                     │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x01 = File │ Encrypted (1 byte) + FileId (varint string) + Filename (string)     │
+│ Upload      │ + Size (varint) + MimeType (string) + LastModified (varint)         │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x02 = File │ FileId (varint string) + ChunkIndex (varint) + ChunkData            │
+│ Part        │ (varint array) + MerkleProofLength (varint) + MerkleProof (array) + │
+│             │ TotalChunks (varint) + BytesUploaded (varint) + Encrypted (1 byte)  │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x03 = File │ Permission (1 byte) + FileId (varint string) + StatusCode           │
+│ Auth        │ (varint) + HasReason (1 byte) + Reason (varint string, optional)    │
+│ Message     │                                                                     │
+└─────────────┴─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### File Message Types
@@ -267,13 +297,19 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 **Payload Structure**:
 
 - Encrypted (1 byte): `0x00` = false, `0x01` = true
-- UploadId (varint string): Client-generated UUID for this transfer session
+- FileId (varint string): Client-generated UUID for this transfer session
 - Filename (varint string): Original filename
-- Size (varint): File size in bytes
+- Size (varint): File size in bytes (includes encryption overhead if encrypted)
 - MimeType (varint string): MIME type of the file
 - LastModified (varint): Last modified timestamp of the file
 
-**Usage**: Client sends file metadata with a client-generated UUID as uploadId to initiate upload session. After upload completes, the client receives the merkle root hash (base64 string) which should be used as the fileId for future downloads.
+**Usage**:
+
+- Client sends file metadata with a client-generated UUID as `fileId` to initiate upload session
+- During upload, chunks are sent with this same `fileId` (UUID) to identify the transfer session
+- After all chunks are uploaded and verified, the server computes the Merkle root hash
+- The client receives this Merkle root hash (base64-encoded) as the final `fileId`, which should be used for future downloads
+- **Note**: The `fileId` changes from the temporary UUID to the permanent Merkle root hash after upload completion
 
 #### 3. File Part (0x02)
 
@@ -281,19 +317,28 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 
 **Payload Structure**:
 
-- FileId (varint string): Client-generated UUID matching the file upload, or merkle root hash for downloads
+- FileId (varint string):
+  - **Upload**: Client-generated UUID matching the file upload session
+  - **Download**: Merkle root hash (base64 string) identifying the file
 - ChunkIndex (varint): Zero-based index of this chunk
-- ChunkData (varint array): Chunk data (typically 64KB)
-- MerkleProofLength (varint): Number of proof hashes
-- MerkleProof (array of varint arrays): Merkle proof path hashes
+- ChunkData (varint array): Chunk data (typically 64KB, or smaller for encrypted chunks)
+- MerkleProofLength (varint): Number of proof hashes in the Merkle proof path
+- MerkleProof (array of varint arrays): Merkle proof path hashes (sibling hashes from leaf to root)
 - TotalChunks (varint): Total number of chunks in the file
 - BytesUploaded (varint): Cumulative bytes uploaded/downloaded so far
 - Encrypted (1 byte): `0x00` = false, `0x01` = true
 
 **Usage**:
 
-- **Upload**: Client sends chunks sequentially with Merkle proofs for server verification
-- **Download**: Server sends chunks sequentially with Merkle proofs for client verification
+- **Upload**: Client sends chunks sequentially with Merkle proofs for server verification. Each chunk is acknowledged with an ACK message containing the chunk's message ID.
+- **Download**: Server sends chunks sequentially with Merkle proofs for client verification. The client verifies each chunk before assembling the complete file.
+
+**Chunk Verification**: The receiver verifies each chunk by:
+
+1. Computing the SHA-256 hash of the chunk data
+2. Reconstructing the Merkle tree path using the provided proof hashes
+3. Comparing the computed root hash with the expected fileId
+4. Rejecting the chunk if verification fails
 
 #### 4. File Auth Message (0x03)
 
@@ -303,7 +348,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 
 - Permission (1 byte): `0x00` = denied, `0x01` = allowed (currently only denied is supported)
 - FileId (varint string): The fileId of the file that was denied authorization
-- StatusCode (varint): HTTP status code (404, 403, or 500)
+- StatusCode (varint): HTTP status code (404, 403, 401, 500, or 501)
 - HasReason (1 byte): `0x00` = no reason, `0x01` = reason follows
 - Reason (varint string, optional): Explanation for denial (only present if HasReason is 1)
 
@@ -379,22 +424,32 @@ Keep-alive messages for connection health monitoring:
 
 ### Message Arrays
 
-Multiple messages can be batched into a single transmission:
+Multiple messages can be batched into a single transmission for efficiency. Messages are concatenated sequentially without an explicit count field:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │                        Message Array Format                                   │
-├─────────────┬─────────────────────────────────────────────────────────────────┤
-│ Count       │                Messages                                         │
-│ (varint)    │              (variable)                                         │
-├─────────────┼─────────────────────────────────────────────────────────────────┤
-│ Number of   │ Message 1 Length (varint) + Message 1 Data +                    │
-│ messages    │ Message 2 Length (varint) + Message 2 Data +                    │
-│             │ ... (repeated for all messages)                                 │
-└─────────────┴─────────────────────────────────────────────────────────────────┘
+├───────────────────────────────────────────────────────────────────────────────┤
+│ Message 1 Length (varint) + Message 1 Data (BinaryMessage) +                  │
+│ Message 2 Length (varint) + Message 2 Data (BinaryMessage) +                  │
+│ ... (repeated for all messages until end of buffer)                           │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
+**Encoding**: Each message in the array is encoded as a varint-prefixed byte array. The decoder reads messages sequentially until the buffer is exhausted.
+
+**Usage**: Useful for reducing network overhead when sending multiple related messages (e.g., multiple document updates or file chunks).
+
 ## Encoding Details
+
+### Message IDs
+
+Every message has a unique identifier computed from its encoded bytes:
+
+- **Computation**: SHA-256 hash of the message's encoded binary representation
+- **Encoding**: Base64-encoded for use in ACK messages and other contexts
+- **Purpose**: Enables message deduplication, acknowledgment tracking, and idempotency
+- **Lazy Computation**: Message IDs are computed on-demand and cached for performance
 
 ### Variable-Length Integers (varint)
 
@@ -514,11 +569,12 @@ Client                           Server
   │                                │
   │◀────── Snapshot Response ──────│  (returns snapshot data)
   │                                │
-  │─────── Create Request ────────▶│  (create milestone, optional name)
+  │─────── Create Request ────────▶│  (create milestone with snapshot,
+  │                                │   optional name)
   │                                │
-  │                                │  (captures current document state)
+  │                                │  (validates snapshot, stores milestone)
   │                                │
-  │◀────── Create Response ───────│  (returns created milestone)
+  │◀────── Create Response ───────│  (returns created milestone metadata)
   │                                │
   │─────── Update Name Request ──▶│  (update milestone name)
   │                                │
@@ -529,10 +585,13 @@ Client                           Server
 
 The protocol includes robust error handling:
 
-- **Magic Number Validation**: Ensures message is valid Teleportal format
-- **Version Checking**: Verifies protocol version compatibility
+- **Magic Number Validation**: Ensures message is valid Teleportal format (must start with `0x59 0x4A 0x53` / "YJS")
+- **Version Checking**: Verifies protocol version compatibility (currently only version `0x01` is supported)
 - **Type Validation**: Validates message and payload types
-- **Length Validation**: Ensures proper message boundaries
+- **Length Validation**: Ensures proper message boundaries using varint encoding
+- **Decoding Errors**: Invalid messages throw descriptive errors with context about the failure
+- **File Transfer Errors**: File operations can fail with auth messages containing status codes (401, 403, 404, 500, 501) and optional reason strings
+- **Milestone Errors**: Milestone operations can fail with milestone auth messages containing denial reasons
 
 ## Security Considerations
 
@@ -558,6 +617,18 @@ if (decoded.type === "doc") {
   console.log(`Update type: ${decoded.payload.type}`);
 }
 
+// Creating an ACK message
+const ackMessage = new AckMessage({
+  type: "ack",
+  messageId: "base64-encoded-message-id"
+});
+
+// Batching multiple messages
+import { encodeMessageArray, decodeMessageArray } from "./multi-message";
+const messages = [docMessage, awarenessMessage];
+const batched = encodeMessageArray(messages);
+const decodedMessages = decodeMessageArray(batched);
+
 // Creating awareness update
 const awarenessMessage = new AwarenessMessage("my-document", {
   type: "awareness-update",
@@ -567,7 +638,7 @@ const awarenessMessage = new AwarenessMessage("my-document", {
 // Initiating file upload
 const fileUpload = new FileMessage("my-document", {
   type: "file-upload",
-  uploadId: "unique-upload-id",
+  fileId: "unique-upload-id",
   filename: "document.pdf",
   size: 1024000,
   mimeType: "application/pdf",
@@ -578,7 +649,7 @@ const fileUpload = new FileMessage("my-document", {
 // Sending file chunk with Merkle proof
 const filePart = new FileMessage("my-document", {
   type: "file-part",
-  fileId: "unique-upload-id", // Matches uploadId from file-upload
+  fileId: "unique-upload-id", // Matches fileId from file-upload
   chunkIndex: 0,
   chunkData: chunkBytes,
   merkleProof: [hash1, hash2, hash3], // Path to root
@@ -608,7 +679,8 @@ const milestoneSnapshotRequest = new DocMessage("my-document", {
 // Creating a milestone
 const milestoneCreateRequest = new DocMessage("my-document", {
   type: "milestone-create-request",
-  name: "v1.0.0" // Optional - server auto-generates if not provided
+  name: "v1.0.0", // Optional - server auto-generates if not provided
+  snapshot: documentSnapshot // Required: Y.js document snapshot
 });
 
 // Updating milestone name
@@ -631,18 +703,36 @@ Files are split into **64KB (65,536 bytes) chunks** for efficient transfer. This
 
 ### Maximum File Size
 
-The protocol supports files up to **1GB (1,073,741,824 bytes)**. Files exceeding this limit are rejected with a file auth message.
+The protocol supports files up to **2^53 - 1 bytes** (approximately 9 petabytes) as defined by JavaScript's safe integer limit. Application-specific size limits may be enforced by the server, which will reject files exceeding those limits with a file auth message.
 
 ### Content-Addressable Storage
 
 Files are stored using their **Merkle root hash (contentId)** as the identifier. This provides:
 
-- **Deduplication**: Identical files share the same contentId
-- **Integrity**: ContentId changes if any chunk is modified
-- **Verification**: Clients can verify file integrity using Merkle proofs
+- **Deduplication**: Identical files share the same contentId, enabling efficient storage
+- **Integrity**: ContentId changes if any chunk is modified, ensuring tamper detection
+- **Verification**: Clients can verify file integrity using Merkle proofs without downloading the entire file
+- **Persistence**: The contentId serves as a permanent identifier for the file, independent of upload sessions
+
+**File ID Lifecycle**:
+
+1. **Upload Initiation**: Client generates a temporary UUID as `fileId` for the upload session
+2. **Chunk Transfer**: All chunks reference this temporary UUID
+3. **Upload Completion**: Server computes Merkle root hash from all chunks
+4. **Final ID**: Client receives the Merkle root hash (base64-encoded) as the permanent `fileId`
+5. **Future Downloads**: The permanent `fileId` (Merkle root hash) is used to request the file
 
 ### Encryption Support
 
-Files can be encrypted before chunking. The encrypted flag in file progress messages indicates whether the chunk data is encrypted. Encryption is handled at the application layer before protocol encoding.
+Files can be encrypted before chunking. The encrypted flag in file messages indicates whether the chunk data is encrypted. Encryption is handled at the application layer before protocol encoding.
+
+**Encryption Details**:
+
+- When encryption is enabled, chunks are encrypted before being sent
+- Encrypted chunks are smaller than unencrypted chunks (see `ENCRYPTED_CHUNK_SIZE` constant)
+- The file size reported in the upload message includes encryption overhead
+- Encryption overhead = `numberOfChunks × (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE)`
+- The same encryption key must be provided for both upload and download operations
+- Chunks are decrypted after Merkle verification during download
 
 This protocol ensures efficient, type-safe communication for collaborative editing applications while maintaining compatibility with the Y.js ecosystem and providing robust file transfer capabilities with integrity verification.
