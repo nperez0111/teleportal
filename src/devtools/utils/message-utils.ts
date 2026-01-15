@@ -1,6 +1,7 @@
 import { decoding } from "lib0";
 import { toBase64 } from "lib0/buffer.js";
 import type { Message, RawReceivedMessage } from "teleportal";
+import * as Y from "yjs";
 
 export type MessageType = Message | RawReceivedMessage;
 
@@ -49,7 +50,43 @@ export function getMessageTypeColor(message: MessageType): string {
   return "devtools-bg-gray-400";
 }
 
-export function formatMessagePayload(message: MessageType): string | null {
+function mapToJSON(map: Map<any, any>): Record<any, any> {
+  return Array.from(map.entries()).reduce(
+    (acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    },
+    {} as Record<any, any>,
+  );
+}
+
+function itemToJSON(item: Y.Item): Record<any, any> {
+  return {
+    id: item.id,
+    content: item.content.getContent(),
+    length: item.content.getLength(),
+    countable: item.countable,
+    deleted: item.deleted,
+    right: item.right ? itemToJSON(item.right) : null,
+    left: item.left ? itemToJSON(item.left) : null,
+    parent: item.parent
+      ? item.parent instanceof Y.Item
+        ? itemToJSON(item.parent)
+        : item.parent
+      : null,
+    parentSub: item.parentSub,
+    origin: item.origin,
+    rightOrigin: item.rightOrigin,
+    redone: item.redone,
+    keep: item.keep,
+    lastId: item.lastId,
+  };
+}
+
+export function formatMessagePayload(
+  message: MessageType,
+  _doc: Y.Doc,
+): string | null {
   switch (message.type) {
     case "ack": {
       return `ACK(id: ${message.id}, acknowledged: ${message.payload.messageId})`;
@@ -57,22 +94,22 @@ export function formatMessagePayload(message: MessageType): string | null {
     case "awareness": {
       switch (message.payload.type) {
         case "awareness-update": {
-          try {
-            const decoder = decoding.createDecoder(message.payload.update);
-            const len = decoding.readVarUint(decoder);
-            const clients = [];
-            for (let i = 0; i < len; i++) {
-              const clientID = decoding.readVarUint(decoder);
-              const clock = decoding.readVarUint(decoder);
-              const state = JSON.parse(decoding.readVarString(decoder));
-              clients.push({ clientID, clock, state });
-            }
-
-            return JSON.stringify(clients, null, 2);
-          } catch (err) {
-            console.error("Failed to decode awareness update:", err);
+          if (message.encrypted) {
+            // bail, content is encrypted
             return toBase64(message.payload.update);
           }
+
+          const decoder = decoding.createDecoder(message.payload.update);
+          const len = decoding.readVarUint(decoder);
+          const clients = [];
+          for (let i = 0; i < len; i++) {
+            const clientID = decoding.readVarUint(decoder);
+            const clock = decoding.readVarUint(decoder);
+            const state = JSON.parse(decoding.readVarString(decoder));
+            clients.push({ clientID, clock, state });
+          }
+
+          return JSON.stringify(clients, null, 2);
         }
         case "awareness-request": {
           return null;
@@ -105,13 +142,99 @@ export function formatMessagePayload(message: MessageType): string | null {
     case "doc": {
       switch (message.payload.type) {
         case "sync-step-1": {
-          return toBase64(message.payload.sv);
+          if (message.encrypted) {
+            // bail, content is encrypted
+            return toBase64(message.payload.sv);
+          }
+          const stateVector = message.payload.sv;
+          return JSON.stringify(Y.decodeStateVector(stateVector), null, 2);
         }
+        case "update":
         case "sync-step-2": {
-          return toBase64(message.payload.update);
-        }
-        case "update": {
-          return toBase64(message.payload.update);
+          if (message.encrypted) {
+            // bail, content is encrypted
+            return toBase64(message.payload.update);
+          }
+          const update = message.payload.update;
+
+          const meta = Y.parseUpdateMetaV2(update);
+          const decodedUpdate = Y.decodeUpdateV2(update);
+
+          // TODO ask Kevin later about how to do this
+          // we known the state vector, before and after the update
+          // can we derive the before and after docs?
+          // const beforeStateVector = Y.decodeStateVector(
+          //   Y.encodeStateVector(doc),
+          // );
+          // const afterStateVector = Y.decodeStateVector(
+          //   Y.encodeStateVector(doc),
+          // );
+          // console.log("beforeStateVector", mapToJSON(beforeStateVector));
+          // console.log("afterStateVector", mapToJSON(afterStateVector));
+
+          // meta.from.forEach((value, key) => {
+          //   console.log("setting", key, value);
+          //   beforeStateVector.set(key, value);
+          // });
+          // meta.to.forEach((value, key) => {
+          //   console.log("setting", key, value);
+          //   afterStateVector.set(key, value);
+          // });
+          // console.log("beforeStateVector, after", mapToJSON(beforeStateVector));
+          // console.log("afterStateVector, after", mapToJSON(afterStateVector));
+
+          // const beforeDoc = Y.createDocFromSnapshot(
+          //   doc,
+          //   new Y.Snapshot(decodedUpdate.ds, beforeStateVector),
+          // );
+          // const afterDoc = Y.createDocFromSnapshot(
+          //   doc,
+          //   new Y.Snapshot(decodedUpdate.ds, afterStateVector),
+          // );
+
+          return JSON.stringify(
+            {
+              update: {
+                structs: decodedUpdate.structs.map((struct) => {
+                  switch (true) {
+                    case struct instanceof Y.GC: {
+                      return {
+                        type: "gc",
+                        id: struct.id,
+                        deleted: struct.deleted,
+                      };
+                    }
+                    case struct instanceof Y.Item: {
+                      return itemToJSON(struct);
+                    }
+                    case struct instanceof Y.Skip: {
+                      return {
+                        type: "skip",
+                        id: struct.id,
+                        deleted: struct.deleted,
+                        length: struct.length,
+                      };
+                    }
+                    default: {
+                      return "unknown struct";
+                    }
+                  }
+                }),
+                ds: {
+                  clients: mapToJSON(decodedUpdate.ds.clients),
+                },
+              },
+              stateVector: mapToJSON(
+                Y.decodeStateVector(Y.encodeStateVectorFromUpdateV2(update)),
+              ),
+              meta: {
+                from: mapToJSON(meta.from),
+                to: mapToJSON(meta.to),
+              },
+            },
+            null,
+            2,
+          );
         }
         case "sync-done": {
           return null;

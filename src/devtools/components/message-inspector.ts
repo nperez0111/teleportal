@@ -72,7 +72,11 @@ export class MessageInspector {
   }
 
   private renderHeader() {
-    const payload = formatMessagePayload(this.message!.message);
+    if (!this.message) return;
+    const payload = formatMessagePayload(
+      this.message.message,
+      this.message.provider.doc,
+    );
     const header = document.createElement("div");
     header.className = "devtools-inspector-header";
 
@@ -101,6 +105,7 @@ export class MessageInspector {
   }
 
   private renderContent() {
+    if (!this.message) return;
     const content = document.createElement("div");
     content.className = "devtools-inspector-content";
 
@@ -108,12 +113,15 @@ export class MessageInspector {
     content.appendChild(this.renderMetadataSection());
 
     // ACK section (if applicable)
-    if (this.message!.ackedBy) {
+    if (this.message.ackedBy) {
       content.appendChild(this.renderAckSection());
     }
 
     // Payload section
-    const payload = formatMessagePayload(this.message!.message);
+    const payload = formatMessagePayload(
+      this.message.message,
+      this.message.provider.doc,
+    );
     if (payload) {
       content.appendChild(this.renderPayloadSection(payload));
     }
