@@ -18,10 +18,15 @@ import {
   getMetricsHandler,
   getStatusHandler,
 } from "teleportal/monitoring";
+import { createEncryptedDriver } from "teleportal/storage";
+import { importEncryptionKey } from "teleportal/encryption-key";
 
 import homepage from "../src/index.html";
 // import { RedisPubSub } from "teleportal/transports/redis";
 
+const key = await importEncryptionKey(
+  "s1RZEGnuBelCbov-WC6dvddacpT1pzGmhmeVHKr-1Zg",
+);
 const db = createDatabase(
   bunSqlite({
     name: "yjs.db",
@@ -29,10 +34,13 @@ const db = createDatabase(
 );
 
 const storage = createStorage({
-  driver: dbDriver({
-    database: db,
-    tableName: "yjs",
-  }),
+  driver: createEncryptedDriver(
+    dbDriver({
+      database: db,
+      tableName: "yjs",
+    }),
+    () => key,
+  ),
 });
 
 const memoryStorage = createStorage();
