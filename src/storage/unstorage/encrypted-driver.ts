@@ -2,7 +2,7 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
-import { Driver } from "unstorage";
+import type { Driver } from "unstorage";
 import TransformDriver from "./transform-driver";
 
 export function createEncryptedDriver(
@@ -11,10 +11,7 @@ export function createEncryptedDriver(
 ) {
   return TransformDriver({
     driver,
-    onWrite: async (key, value, type) => {
-      if (type === "meta") {
-        return value as string;
-      }
+    onWrite: async (key, value) => {
       return toBase64(
         await encryptUpdate(
           getKey(key),
@@ -24,14 +21,11 @@ export function createEncryptedDriver(
         ),
       );
     },
-    onRead: async (key, value, type) => {
-      if (type === "meta") {
-        return value;
-      }
+    onRead: async (key, value) => {
       if (typeof value !== "string") {
-        console.error("Invalid value", value, "key", key, "type", type);
-        throw new Error("Invalid value");
+        throw new Error("Value not encrypted", { cause: { key, value } });
       }
+
       const decoder = decoding.createDecoder(
         await decryptUpdate(getKey(key), fromBase64(value)),
       );
