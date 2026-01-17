@@ -18,6 +18,10 @@ import {
   type DecodedMilestoneSnapshotRequest,
   type DecodedMilestoneSnapshotResponse,
   type DecodedMilestoneUpdateNameRequest,
+  type DecodedMilestoneDeleteRequest,
+  type DecodedMilestoneDeleteResponse,
+  type DecodedMilestoneRestoreRequest,
+  type DecodedMilestoneRestoreResponse,
   type MilestoneSnapshot,
   type Transport,
 } from "teleportal";
@@ -276,7 +280,7 @@ export class Provider<
   }
 
   private initOfflinePersistence() {
-    if (!this.#enableOfflinePersistence || typeof window === "undefined") {
+    if (!this.#enableOfflinePersistence || globalThis.window === undefined) {
       return;
     }
 
@@ -292,7 +296,7 @@ export class Provider<
       this.#localPersistence.on("synced", () => {
         this.#localLoaded = true;
       });
-    } catch (error) {
+    } catch {
       this.#enableOfflinePersistence = false;
     }
   }
@@ -340,9 +344,9 @@ export class Provider<
     loaded: Set<Y.Doc>;
     removed: Set<Y.Doc>;
   }) {
-    loaded.forEach((doc) => {
+    for (const doc of loaded) {
       if (this.subdocs.has(doc.guid)) {
-        return;
+        continue;
       }
       const provider = this.openDocument({
         document: this.document + "/" + doc.guid,
@@ -359,12 +363,12 @@ export class Provider<
         document: this.document,
         parentDoc: this.doc,
       });
-    });
+    }
 
-    removed.forEach((doc) => {
+    for (const doc of removed) {
       const provider = this.subdocs.get(doc.guid);
       if (!provider) {
-        return;
+        continue;
       }
       provider.destroy({ destroyConnection: false });
       this.subdocs.delete(doc.guid);
@@ -374,7 +378,7 @@ export class Provider<
         document: this.document,
         parentDoc: this.doc,
       });
-    });
+    }
   }
 
   /**
@@ -575,7 +579,7 @@ export class Provider<
       this.transport.readable.cancel().catch(() => {});
       // Close the transport writable stream
       this.transport.writable.close().catch(() => {});
-    } catch (error) {
+    } catch {
       // Ignore stream cleanup errors
     }
 
@@ -666,12 +670,14 @@ export class Provider<
     name: string;
     documentId: string;
     createdAt: number;
+    createdBy: { type: "user" | "system"; id: string };
   }): Milestone {
     return new Milestone({
       id: meta.id,
       name: meta.name,
       documentId: meta.documentId,
       createdAt: meta.createdAt,
+      createdBy: meta.createdBy,
       getSnapshot: (documentId: string, id: string) =>
         this.getMilestoneSnapshot(id),
     });
@@ -767,16 +773,28 @@ export class Provider<
 
   /**
    * Request a list of all milestones for the current document.
-   * @param snapshotIds - Optional array of snapshot IDs to exclude from the response (for incremental updates)
+   * @param optionsOrSnapshotIds - Optional options object or array of snapshot IDs to exclude from the response
    * @returns Promise that resolves with an array of Milestone instances
    * @throws Error if the operation is denied or if the connection fails
    */
-  async listMilestones(snapshotIds?: string[]): Promise<Milestone[]> {
+  async listMilestones(
+    optionsOrSnapshotIds?:
+      | string[]
+      | { includeDeleted?: boolean; snapshotIds?: string[] },
+  ): Promise<Milestone[]> {
+    const snapshotIds = Array.isArray(optionsOrSnapshotIds)
+      ? optionsOrSnapshotIds
+      : (optionsOrSnapshotIds?.snapshotIds ?? []);
+    const includeDeleted = !Array.isArray(optionsOrSnapshotIds)
+      ? optionsOrSnapshotIds?.includeDeleted
+      : false;
+
     const request = new DocMessage(
       this.document,
       {
         type: "milestone-list-request",
-        snapshotIds: snapshotIds ?? [],
+        snapshotIds,
+        includeDeleted,
       } as DecodedMilestoneListRequest,
       undefined,
       false, // TODO: Determine encryption from document/transport
@@ -887,6 +905,59 @@ export class Provider<
 
     const payload = response.payload as DecodedMilestoneResponse;
     return this.#createMilestoneFromMeta(payload.milestone);
+  }
+
+  /**
+   * Soft delete a milestone.
+   * @param milestoneId - The ID of the milestone to soft delete
+   * @returns Promise that resolves with the soft deleted Milestone instance
+   * @throws Error if the operation is denied or if the connection fails
+   */
+  async deleteMilestone(milestoneId: string): Promise<void> {
+    const request = new DocMessage(
+      this.document,
+      {
+        type: "milestone-delete-request",
+        milestoneId,
+      } as DecodedMilestoneDeleteRequest,
+      undefined,
+      false, // TODO: Determine encryption from document/transport
+    );
+
+    await this.#sendMilestoneRequest<DocMessage<ClientContext>>(
+      request,
+      "milestone-delete-response",
+      "delete milestone",
+      (payload) =>
+        (payload as DecodedMilestoneDeleteResponse).milestoneId === milestoneId,
+    );
+  }
+
+  /**
+   * Restore a soft deleted milestone.
+   * @param milestoneId - The ID of the milestone to restore
+   * @returns Promise that resolves with the restored Milestone instance
+   * @throws Error if the operation is denied or if the connection fails
+   */
+  async restoreMilestone(milestoneId: string): Promise<void> {
+    const request = new DocMessage(
+      this.document,
+      {
+        type: "milestone-restore-request",
+        milestoneId,
+      } as DecodedMilestoneRestoreRequest,
+      undefined,
+      false, // TODO: Determine encryption from document/transport
+    );
+
+    await this.#sendMilestoneRequest<DocMessage<ClientContext>>(
+      request,
+      "milestone-restore-response",
+      "restore milestone",
+      (payload) =>
+        (payload as DecodedMilestoneRestoreResponse).milestoneId ===
+        milestoneId,
+    );
   }
 
   /**

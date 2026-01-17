@@ -12,6 +12,8 @@ import {
 } from "teleportal";
 import { getPubSubTransport } from "../pubSub";
 
+export { RedisRateLimitStorage } from "./rate-limit-storage";
+
 /**
  * Redis implementation of the {@link PubSub} interface
  */
@@ -145,12 +147,12 @@ export function getRedisTransport<Context extends ServerContext>({
     close: async () => {
       try {
         await transport.readable.cancel();
-      } catch (error) {
+      } catch {
         // Stream might already be locked or closed
       }
       try {
         await transport.writable.close();
-      } catch (error) {
+      } catch {
         // Stream might already be locked or closed
       }
       await pubSub[Symbol.asyncDispose]?.();

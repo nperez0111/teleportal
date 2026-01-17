@@ -210,12 +210,12 @@ export class HttpConnection extends Connection<HttpConnectContext> {
         if (!this.#httpWriter.closed) {
           await this.#httpWriter.close();
         }
-      } catch (error) {
+      } catch {
         // Ignore errors when closing writer, it might already be closed
       } finally {
         try {
           this.#httpWriter.releaseLock();
-        } catch (error) {
+        } catch {
           // Ignore errors when releasing lock
         }
         this.#httpWriter = undefined;
@@ -226,7 +226,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     if (this.#source) {
       try {
         this.#source.eventSource.close();
-      } catch (error) {
+      } catch {
         // Ignore errors when closing EventSource
       }
       this.#source = undefined;

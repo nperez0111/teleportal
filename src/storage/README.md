@@ -49,7 +49,15 @@ Stores document milestones (snapshots at specific points in time).
 
 - Create and retrieve milestones
 - Store milestone snapshots
-- Manage milestone metadata (names, timestamps)
+- Manage milestone metadata (names, timestamps, createdBy)
+- Handle soft delete and restore operations
+
+**Milestone Creation:**
+
+All milestones must include a `createdBy` field that indicates who or what created the milestone:
+
+- `{ type: "user", id: userId }` - Created by a user via `milestone-create-request`
+- `{ type: "system", id: nodeId }` - Created automatically by the system (triggers, API)
 
 **Interface:** [`MilestoneStorage`](./types.ts#L257)
 
@@ -65,6 +73,27 @@ Handles temporary storage during file uploads before files are committed to File
 - Clean up expired uploads
 
 **Interface:** [`TemporaryUploadStorage`](./types.ts#L63)
+
+### 5. Document Size Tracking
+
+Document storage implementations automatically track the size of documents in bytes. This metadata is stored in `sizeBytes` field of `DocumentMetadata`.
+
+**Metadata Fields:**
+
+- `sizeBytes`: Current size of the document in bytes
+- `sizeWarningThreshold`: Optional threshold in bytes to trigger a warning event
+
+### 7. RateLimitStorage
+
+Stores rate limit state (token buckets) with TTL support.
+
+**Key Responsibilities:**
+
+- Store rate limit tokens and last refill time
+- Support TTL (Time To Live) for automatic expiration
+- Transaction support for atomic updates
+
+**Interface:** [`RateLimitStorage`](./types.ts#L591)
 
 ## Provided Implementations
 
@@ -100,6 +129,13 @@ const server = new Server({
     });
     return documentStorage;
   },
+});
+
+// Create Rate Limit Storage
+import { UnstorageRateLimitStorage } from "teleportal/storage";
+
+const rateLimitStorage = new UnstorageRateLimitStorage(storage, {
+  keyPrefix: "rate-limit",
 });
 ```
 
@@ -548,7 +584,10 @@ const milestoneId = await milestoneStorage.createMilestone({
   name: "Version 1.0",
   documentId: "doc-123",
   createdAt: Date.now(),
-  snapshot: { /* milestone snapshot */ },
+  snapshot: {
+    /* milestone snapshot */
+  },
+  createdBy: { type: "system", id: "node-1" },
 });
 
 // Get all milestones for a document
@@ -564,8 +603,9 @@ const milestones = await milestoneStorage.getMilestones("doc-123");
 5. **Separate concerns** - Use different backends for documents vs files when it makes sense (e.g., PostgreSQL for documents, S3 for files)
 6. **Use key prefixes** - Namespace your data to avoid collisions and enable easy querying/deletion by prefix
 7. **Access milestone storage via documentStorage** - Use `documentStorage.milestoneStorage` to access milestone operations
-8. **Handle errors gracefully** - Storage operations can fail, handle errors appropriately
-9. **Test with in-memory** - Use in-memory storage for fast, isolated tests
+8. **Always provide `createdBy`** - The `createdBy` field is required when creating milestones to distinguish user vs system milestones
+9. **Handle errors gracefully** - Storage operations can fail, handle errors appropriately
+10. **Test with in-memory** - Use in-memory storage for fast, isolated tests
 
 ## Interface Reference
 

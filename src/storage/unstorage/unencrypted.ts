@@ -3,6 +3,7 @@ import type { Storage } from "unstorage";
 import * as Y from "yjs";
 
 import { type StateVector, type Update } from "teleportal";
+import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
 import type {
   Document,
@@ -91,14 +92,23 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     await this.transaction(key, async () => {
       const doc = await this.storage.getItem<{ keys: string[] }>(prefixedKey);
       if (doc && Array.isArray(doc.keys) && !overwriteKeys) {
-        doc.keys = Array.from(new Set(doc.keys.concat(updateKey)));
+        doc.keys = [...new Set([...doc.keys, updateKey])];
         await this.storage.setItem(prefixedKey, doc);
       } else {
         await this.storage.setItem(prefixedKey, { keys: [updateKey] });
       }
 
       const meta = await this.getDocumentMetadata(key);
-      await this.writeDocumentMetadata(key, { ...meta, updatedAt: Date.now() });
+      const updateSize = calculateDocumentSize(update);
+      const sizeBytes = overwriteKeys
+        ? updateSize
+        : (meta.sizeBytes ?? 0) + updateSize;
+
+      await this.writeDocumentMetadata(key, {
+        ...meta,
+        updatedAt: Date.now(),
+        sizeBytes,
+      });
     });
   }
 
@@ -139,23 +149,19 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       return null;
     }
     if (keys.size === 1) {
-      return await this.storage.getItemRaw(Array.from(keys)[0]);
+      return await this.storage.getItemRaw([...keys][0]);
     }
 
     const update = Y.mergeUpdatesV2(
       // TODO little naive, but it's ok for now
       (
-        await Promise.all(
-          Array.from(keys).map((key) => this.storage.getItemRaw(key)),
-        )
+        await Promise.all([...keys].map((key) => this.storage.getItemRaw(key)))
       ).filter(Boolean),
     ) as Update;
 
     // asynchronously store the update and delete the keys
     const promise = this.handleUpdate(key, update, true).then(() => {
-      return Promise.all(
-        Array.from(keys).map((key) => this.storage.removeItem(key)),
-      );
+      return Promise.all([...keys].map((key) => this.storage.removeItem(key)));
     });
 
     if (asyncDeleteKeys) {
@@ -218,9 +224,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
           ?.keys ?? new Set());
 
     if (keys.size > 0) {
-      await Promise.all(
-        Array.from(keys).map((k) => this.storage.removeItem(k)),
-      );
+      await Promise.all([...keys].map((k) => this.storage.removeItem(k)));
     }
 
     await this.storage.removeItem(prefixedKey);

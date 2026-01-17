@@ -117,8 +117,8 @@ export type ConnectionOptions = {
 
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
 const DEFAULT_INITIAL_RECONNECT_DELAY = 100;
-const DEFAULT_MAX_BACKOFF_TIME = 30000;
-const DEFAULT_MESSAGE_RECONNECT_TIMEOUT = 30000;
+const DEFAULT_MAX_BACKOFF_TIME = 30_000;
+const DEFAULT_MESSAGE_RECONNECT_TIMEOUT = 30_000;
 
 export abstract class Connection<
   Context extends ConnectionContext,
@@ -206,15 +206,15 @@ export abstract class Connection<
     this.#messageReconnectTimeoutMs = messageReconnectTimeout;
 
     // Set up event target and online state
-    if (typeof window !== "undefined") {
-      this.#eventTarget = eventTarget ?? window;
+    if (globalThis.window === undefined) {
+      this.#eventTarget = eventTarget ?? new EventTarget();
+      this.#isOnline = isOnline ?? true;
+    } else {
+      this.#eventTarget = eventTarget ?? globalThis;
       this.#isOnline =
         (isOnline ?? Connection.location?.hostname !== "localhost")
           ? (navigator.onLine ?? true)
           : true;
-    } else {
-      this.#eventTarget = eventTarget ?? new EventTarget();
-      this.#isOnline = isOnline ?? true;
     }
 
     // Set up online/offline event listeners
@@ -296,22 +296,18 @@ export abstract class Connection<
       (previousState.type === "connected" ||
         previousState.type === "errored" ||
         state.type === "connected" ||
-        state.type === "errored")
-    ) {
-      // Only clear if we're already connected/errored (to allow fresh promises)
+        state.type === "errored") && // Only clear if we're already connected/errored (to allow fresh promises)
       // or if we're transitioning away from connected/errored
-      if (
-        previousState.type === "connected" ||
+      (previousState.type === "connected" ||
         previousState.type === "errored" ||
         (state.type === "connected" && previousState.type !== "connecting") ||
-        (state.type === "errored" && previousState.type !== "connecting")
-      ) {
-        this.#clearConnectedPromise();
-      }
+        (state.type === "errored" && previousState.type !== "connecting"))
+    ) {
+      this.#clearConnectedPromise();
     }
 
     switch (state.type) {
-      case "connected":
+      case "connected": {
         if (previousState.type !== "connected") {
           this.call("connected");
         }
@@ -319,7 +315,8 @@ export abstract class Connection<
           this.sendBufferedMessages();
         }
         break;
-      case "disconnected":
+      }
+      case "disconnected": {
         if (previousState.type !== "disconnected") {
           this.call("disconnected");
         }
@@ -334,6 +331,7 @@ export abstract class Connection<
           this.scheduleReconnect();
         }
         break;
+      }
     }
   }
 

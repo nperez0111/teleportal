@@ -192,7 +192,10 @@ export interface DocumentMetadataUpdater {
    * @param documentId - The document ID
    * @param fileId - The file ID to remove
    */
-  removeFileFromDocument(documentId: Document["id"], fileId: string): Promise<void>;
+  removeFileFromDocument(
+    documentId: Document["id"],
+    fileId: string,
+  ): Promise<void>;
 }
 
 export interface FileStorage {
@@ -269,6 +272,7 @@ export interface MilestoneStorage {
     documentId: Document["id"];
     createdAt: number;
     snapshot: MilestoneSnapshot;
+    createdBy: { type: "user" | "system"; id: string };
   }): Promise<string>;
 
   /**
@@ -281,24 +285,52 @@ export interface MilestoneStorage {
 
   /**
    * Return the available milestones for a documentId (likely unloaded and metadata-only)
+   * @param documentId - The document ID
+   * @param options - Optional filtering options
    */
-  getMilestones(documentId: Document["id"]): Promise<Milestone[]>;
+  getMilestones(
+    documentId: Document["id"],
+    options?: {
+      includeDeleted?: boolean;
+      lifecycleState?: Milestone["lifecycleState"];
+    },
+  ): Promise<Milestone[]>;
 
   /**
-   * Delete the specified milestones
+   * Soft delete a milestone.
+   * Marks the milestone as deleted without permanently removing it.
+   *
+   * @param documentId - The document ID
+   * @param id - The ID(s) of the milestone(s) to soft delete
+   * @param deletedBy - Optional user ID who performed the deletion
    */
   deleteMilestone(
+    documentId: Document["id"],
+    id: Milestone["id"] | Milestone["id"][],
+    deletedBy?: string,
+  ): Promise<void>;
+
+  /**
+   * Restore a soft-deleted milestone.
+   * Removes the deleted marker and restores the milestone to active state.
+   *
+   * @param documentId - The document ID
+   * @param id - The ID(s) of the milestone(s) to restore
+   */
+  restoreMilestone(
     documentId: Document["id"],
     id: Milestone["id"] | Milestone["id"][],
   ): Promise<void>;
 
   /**
    * Update the name of a milestone
+   * @param createdBy - Optional: if provided, updates the createdBy field (e.g., when user renames a system milestone)
    */
   updateMilestoneName(
     documentId: Document["id"],
     id: Milestone["id"],
     name: string,
+    createdBy?: { type: "user" | "system"; id: string },
   ): Promise<void>;
 }
 
@@ -332,10 +364,53 @@ export interface DocumentMetadata {
   encrypted: boolean;
 
   /**
+   * The total size of the document updates in bytes
+   */
+  sizeBytes?: number;
+
+  /**
+   * The threshold in bytes at which a warning should be emitted
+   */
+  sizeWarningThreshold?: number;
+
+  /**
+   * The hard limit in bytes for the document size
+   */
+  sizeLimit?: number;
+
+  /**
+   * Automatic milestone triggers for the document
+   */
+  milestoneTriggers?: MilestoneTrigger[];
+
+  /**
    * Any additional metadata
    */
   [key: string]: unknown;
 }
+
+/**
+ * Trigger configuration for automatic milestone creation.
+ */
+export type MilestoneTrigger = {
+  id: string;
+  documentId?: string; // If undefined, applies to all documents
+  enabled: boolean;
+  autoName?: string | ((milestone: Milestone) => string); // Auto-generate name
+} & (
+  | {
+      type: "time-based";
+      config: { interval: number }; // Time-based: create milestone every N ms
+    }
+  | {
+      type: "update-count";
+      config: { updateCount: number };
+    }
+  | {
+      type: "event-based";
+      config: { event: string; condition?: (data: any) => boolean };
+    }
+);
 
 /**
  * A document is a container for a document's metadata, content, and state.
@@ -443,4 +518,47 @@ export interface DocumentStorage extends DocumentMetadataUpdater {
    * @returns The result of the transaction
    */
   transaction<T>(documentId: Document["id"], cb: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * State of a rate limit for a specific key
+ */
+export interface RateLimitState {
+  tokens: number;
+  lastRefill: number;
+  windowMs: number;
+  maxMessages: number;
+}
+
+/**
+ * Storage interface for rate limit state
+ */
+export interface RateLimitStorage {
+  /**
+   * Get rate limit state for a key (userId or userId:documentId)
+   */
+  getState(key: string): Promise<RateLimitState | null>;
+
+  /**
+   * Set rate limit state with TTL
+   */
+  setState(key: string, state: RateLimitState, ttl: number): Promise<void>;
+
+  /**
+   * Delete rate limit state
+   */
+  deleteState(key: string): Promise<void>;
+
+  /**
+   * Check if state exists and is valid
+   */
+  hasState(key: string): Promise<boolean>;
+
+  /**
+   * Performs a transaction on the rate limit state. Allowing multiple operations to be performed atomically.
+   * @param key - The key (userId or userId:documentId)
+   * @param cb - The callback to execute
+   * @returns The result of the transaction
+   */
+  transaction<T>(key: string, cb: () => Promise<T>): Promise<T>;
 }

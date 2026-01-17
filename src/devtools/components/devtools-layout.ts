@@ -49,8 +49,8 @@ export class DevtoolsLayout {
     // Top: Filters panel
     const filtersContainer = document.createElement("div");
     filtersContainer.className = "devtools-shrink-0 devtools-border-b devtools-border-gray-200";
-    filtersContainer.appendChild(this.filtersPanel.getElement());
-    this.element.appendChild(filtersContainer);
+    filtersContainer.append(this.filtersPanel.getElement());
+    this.element.append(filtersContainer);
 
     // Main content area
     const mainContent = document.createElement("div");
@@ -61,16 +61,16 @@ export class DevtoolsLayout {
     const messageListContainer = document.createElement("div");
     messageListContainer.className =
       "devtools-flex-1 devtools-min-w-0 devtools-border-r devtools-border-gray-200";
-    messageListContainer.appendChild(this.messageList.getElement());
-    mainContent.appendChild(messageListContainer);
+    messageListContainer.append(this.messageList.getElement());
+    mainContent.append(messageListContainer);
 
     // Right: Message Inspector
     const inspectorContainer = document.createElement("div");
     inspectorContainer.className = "devtools-w-96 devtools-shrink-0";
-    inspectorContainer.appendChild(this.messageInspector.getElement());
-    mainContent.appendChild(inspectorContainer);
+    inspectorContainer.append(this.messageInspector.getElement());
+    mainContent.append(inspectorContainer);
 
-    this.element.appendChild(mainContent);
+    this.element.append(mainContent);
   }
 
   update(
@@ -87,12 +87,12 @@ export class DevtoolsLayout {
       const stillExists = filteredMessages.some(
         (m) => m.id === this.selectedMessage!.id,
       );
-      if (!stillExists) {
+      if (stillExists) {
+        this.messageList.setSelectedMessageId(this.selectedMessage.id);
+      } else {
         this.selectedMessage = null;
         this.messageInspector.setMessage(null);
         this.messageList.setSelectedMessageId(null);
-      } else {
-        this.messageList.setSelectedMessageId(this.selectedMessage.id);
       }
     }
 

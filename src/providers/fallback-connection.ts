@@ -130,7 +130,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
             this.#websocketConnectionStatus = "success";
             return;
           }
-        } catch (error) {
+        } catch {
           // Only handle the error if this is still the current attempt
           if (currentAttemptId === this.#connectionAttemptId) {
             this.#websocketConnectionStatus = "failed";
@@ -207,10 +207,10 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
     try {
       // Try to connect with timeout
-      const connectPromise = wsConnection.connect().catch((e) => {
+      const connectPromise = wsConnection.connect().catch((err) => {
         // ignore websocket errors if we haven't failed it yet or if timed out
         if (!isTimedOut && attemptId === this.#connectionAttemptId) {
-          throw e;
+          throw err;
         }
         return new Promise(() => {
           // Purposefully never resolve so that we wait for the timeout

@@ -156,7 +156,11 @@ Implements rate limiting using a token bucket algorithm.
 - Configurable message rate (messages per time window)
 - Maximum message size enforcement
 - Token bucket algorithm for smooth rate limiting
+- Per-user, per-document, or per-connection tracking
+- Persistent rate limit storage (Redis, memory, etc.)
+- Permission system integration
 - Callbacks for rate limit exceeded events
+- Metrics and events
 
 #### Message Validator (`message-validator/`)
 
@@ -348,14 +352,14 @@ const fileId = await fileTransport.upload(
   file,
   "my-document",
   undefined, // auto-generate fileId
-  encryptionKey // optional
+  encryptionKey, // optional
 );
 
 // Download a file
 const downloadedFile = await fileTransport.download(
   fileId,
   "my-document",
-  encryptionKey // optional
+  encryptionKey, // optional
 );
 ```
 

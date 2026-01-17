@@ -43,7 +43,7 @@ export function createFanOutWriter<T>() {
       cancel() {
         if (controller) {
           const index = controllers.indexOf(controller);
-          if (index > -1) {
+          if (index !== -1) {
             controllers.splice(index, 1);
           }
         }
@@ -54,7 +54,7 @@ export function createFanOutWriter<T>() {
       unsubscribe: () => {
         if (controller) {
           const index = controllers.indexOf(controller);
-          if (index > -1) {
+          if (index !== -1) {
             controllers.splice(index, 1);
           }
           try {
@@ -71,13 +71,13 @@ export function createFanOutWriter<T>() {
   const writable = new WritableStream<T>({
     write: async (message) => {
       // Send message to all active controllers
-      controllers.forEach((controller) => {
+      for (const controller of controllers) {
         try {
           controller.enqueue(message);
         } catch {
           // Ignore if controller is closed
         }
-      });
+      }
     },
     close: () => {
       controllers = []; // free the memory
@@ -142,7 +142,7 @@ export function createFanInReader<T>() {
         if (mainController && !isClosed) {
           try {
             mainController.enqueue(chunk);
-          } catch (error) {
+          } catch {
             // Controller might be closed, ignore the error
           }
         }
@@ -160,7 +160,7 @@ export function createFanInReader<T>() {
     return {
       unsubscribe: () => {
         const index = writers.indexOf(writable);
-        if (index > -1) {
+        if (index !== -1) {
           writers.splice(index, 1);
         }
         try {
@@ -384,7 +384,7 @@ export function getBatchingTransform({
     messageQueue = [];
     try {
       controller.enqueue(batch);
-    } catch (error) {
+    } catch {
       // Ignore errors if controller is closed or stream is errored
     }
   };

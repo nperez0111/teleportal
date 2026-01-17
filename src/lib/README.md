@@ -73,8 +73,8 @@ Document messages handle Y.js document synchronization and updates. They include
 │ 0x05 = Mile │ SnapshotIds count (varint) + SnapshotIds array (varint strings) │
 │ List Req    │                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
-│ 0x06 = Mile │ Count (varint) + [Id + Name + DocId + CreatedAt] * N            │
-│ List Resp   │                                                                 │
+│ 0x06 = Mile │ Count (varint) + [Id + Name + DocId + CreatedAt + DeletedAt? + │
+│ List Resp   │ LifecycleState? + ExpiresAt? + CreatedBy] * N                   │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x07 = Mile │ MilestoneId (varint string)                                     │
 │ Snapshot Req│                                                                 │
@@ -83,19 +83,31 @@ Document messages handle Y.js document synchronization and updates. They include
 │ Snapshot Res│                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x09 = Mile │ HasName (1 byte) + Name (varint string, optional) +             │
-│ Create Req  │ Snapshot (varint array)                                          │
+│ Create Req  │ Snapshot (varint array)                                         │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
-│ 0x0A = Mile │ Id + Name + DocId + CreatedAt (all varint strings/float64)       │
+│ 0x0A = Mile │ Id + Name + DocId + CreatedAt + CreatedBy (Type + Id)          │
 │ Create Resp │                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x0B = Mile │ MilestoneId (varint string) + Name (varint string)              │
 │ Update Name │                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
-│ 0x0C = Mile │ Id + Name + DocId + CreatedAt (all varint strings/float64)       │
+│ 0x0C = Mile │ Id + Name + DocId + CreatedAt + CreatedBy (Type + Id)           │
 │ Update Resp │                                                                 │
 ├─────────────┼─────────────────────────────────────────────────────────────────┤
 │ 0x0D = Mile │ Permission (1 byte) + Reason (varint string)                    │
 │ Auth Msg    │ 0x00=denied, 0x01=allowed                                       │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0E = Mile │ MilestoneId (varint string)                                     │
+│ SoftDel Req │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0F = Mile │ MilestoneId (varint string)                                     │
+│ SoftDel Resp│                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x10 = Mile │ MilestoneId (varint string)                                     │
+│ Restore Req │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x11 = Mile │ MilestoneId (varint string)                                     │
+│ Restore Resp│                                                                 │
 └─────────────┴─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -140,8 +152,12 @@ Document messages handle Y.js document synchronization and updates. They include
 #### 7. Milestone List Response (0x06)
 
 **Purpose**: Returns list of milestone metadata
-**Payload**: Count (varint) + array of milestone metadata (id, name, documentId, createdAt)
-**Usage**: Server responds with milestone list
+**Payload**: Count (varint) + array of milestone metadata (id, name, documentId, createdAt, deletedAt (optional), lifecycleState (optional), expiresAt (optional), createdBy (required))
+**Usage**: Server responds with milestone list. Each milestone includes:
+
+- Required fields: id, name, documentId, createdAt, createdBy
+- Optional fields: deletedAt, lifecycleState, expiresAt
+- `createdBy`: Indicates who/what created the milestone (`{ type: "user" | "system", id: string }`)
 
 #### 8. Milestone Snapshot Request (0x07)
 
@@ -164,8 +180,11 @@ Document messages handle Y.js document synchronization and updates. They include
 #### 11. Milestone Create Response (0x0A)
 
 **Purpose**: Confirms milestone creation and returns metadata
-**Payload**: Milestone metadata (id, name, documentId, createdAt)
-**Usage**: Server responds with created milestone information
+**Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)
+**Usage**: Server responds with created milestone information. The `createdBy` field indicates who created the milestone:
+
+- `{ type: "user", id: userId }` for user-created milestones
+- `{ type: "system", id: nodeId }` for system-created milestones
 
 #### 12. Milestone Update Name Request (0x0B)
 
@@ -176,14 +195,38 @@ Document messages handle Y.js document synchronization and updates. They include
 #### 13. Milestone Update Name Response (0x0C)
 
 **Purpose**: Confirms milestone name update
-**Payload**: Milestone metadata (id, name, documentId, createdAt)
-**Usage**: Server responds with updated milestone information
+**Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)
+**Usage**: Server responds with updated milestone information. When a user renames a milestone, the `createdBy` field is updated to mark it as user-created (`{ type: "user", id: userId }`).
 
 #### 14. Milestone Auth Message (0x0D)
 
 **Purpose**: Error response for milestone operations
 **Payload**: Permission flag (1 byte) + reason string (variable length)
 **Usage**: Server sends when milestone operation fails (not found, permission denied, etc.)
+
+#### 15. Milestone Soft Delete Request (0x0E)
+
+**Purpose**: Requests soft deletion of a milestone
+**Payload**: MilestoneId (varint string)
+**Usage**: Client requests soft deletion of a milestone
+
+#### 16. Milestone Soft Delete Response (0x0F)
+
+**Purpose**: Confirms soft deletion of a milestone
+**Payload**: MilestoneId (varint string)
+**Usage**: Server responds with ID of the soft deleted milestone
+
+#### 17. Milestone Restore Request (0x10)
+
+**Purpose**: Requests restoration of a soft-deleted milestone
+**Payload**: MilestoneId (varint string)
+**Usage**: Client requests restoration of a deleted milestone
+
+#### 18. Milestone Restore Response (0x11)
+
+**Purpose**: Confirms restoration of a milestone
+**Payload**: MilestoneId (varint string)
+**Usage**: Server responds with ID of the restored milestone
 
 ## ACK Messages (Type 0x02)
 
@@ -605,7 +648,7 @@ The protocol includes robust error handling:
 // Encoding a document update
 const docMessage = new DocMessage("my-document", {
   type: "update",
-  update: yDocUpdate
+  update: yDocUpdate,
 });
 const encoded = docMessage.encoded;
 
@@ -620,7 +663,7 @@ if (decoded.type === "doc") {
 // Creating an ACK message
 const ackMessage = new AckMessage({
   type: "ack",
-  messageId: "base64-encoded-message-id"
+  messageId: "base64-encoded-message-id",
 });
 
 // Batching multiple messages
@@ -632,7 +675,7 @@ const decodedMessages = decodeMessageArray(batched);
 // Creating awareness update
 const awarenessMessage = new AwarenessMessage("my-document", {
   type: "awareness-update",
-  update: awarenessUpdate
+  update: awarenessUpdate,
 });
 
 // Initiating file upload
@@ -643,7 +686,7 @@ const fileUpload = new FileMessage("my-document", {
   size: 1024000,
   mimeType: "application/pdf",
   lastModified: Date.now(),
-  encrypted: false
+  encrypted: false,
 });
 
 // Sending file chunk with Merkle proof
@@ -655,39 +698,39 @@ const filePart = new FileMessage("my-document", {
   merkleProof: [hash1, hash2, hash3], // Path to root
   totalChunks: 16,
   bytesUploaded: 65536,
-  encrypted: false
+  encrypted: false,
 });
 
 // Requesting file download
 const fileDownload = new FileMessage("my-document", {
   type: "file-download",
-  fileId: merkleRootHash // Merkle root hash (base64) identifying the file
+  fileId: merkleRootHash, // Merkle root hash (base64) identifying the file
 });
 
 // Requesting milestone list
 const milestoneListRequest = new DocMessage("my-document", {
   type: "milestone-list-request",
-  snapshotIds: ["known-id-1", "known-id-2"] // Optional: list of snapshot IDs already known to the client
+  snapshotIds: ["known-id-1", "known-id-2"], // Optional: list of snapshot IDs already known to the client
 });
 
 // Requesting milestone snapshot
 const milestoneSnapshotRequest = new DocMessage("my-document", {
   type: "milestone-snapshot-request",
-  milestoneId: "milestone-id-123"
+  milestoneId: "milestone-id-123",
 });
 
 // Creating a milestone
 const milestoneCreateRequest = new DocMessage("my-document", {
   type: "milestone-create-request",
   name: "v1.0.0", // Optional - server auto-generates if not provided
-  snapshot: documentSnapshot // Required: Y.js document snapshot
+  snapshot: documentSnapshot, // Required: Y.js document snapshot
 });
 
 // Updating milestone name
 const milestoneUpdateNameRequest = new DocMessage("my-document", {
   type: "milestone-update-name-request",
   milestoneId: "milestone-id-123",
-  name: "v1.0.1"
+  name: "v1.0.1",
 });
 ```
 

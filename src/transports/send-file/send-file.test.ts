@@ -210,9 +210,10 @@ describe("withSendFile", () => {
     // Prepare file data and calculate contentId (merkle root) first
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
     const merkleTree = buildMerkleTree([fileData]);
-    const contentId = toBase64(
-      merkleTree.nodes[merkleTree.nodes.length - 1].hash!,
-    );
+    const root = merkleTree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    const contentId = toBase64(root!.hash!);
 
     // Start the download with the contentId
     const downloadPromise = wrappedTransport.download(contentId, "test-doc");

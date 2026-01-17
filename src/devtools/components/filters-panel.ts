@@ -62,16 +62,21 @@ export class FiltersPanel {
   private getConnectionStatusColor(): string {
     if (!this.connectionState) return "devtools-bg-gray-400";
     switch (this.connectionState.type) {
-      case "connected":
+      case "connected": {
         return "devtools-bg-green-500";
-      case "connecting":
+      }
+      case "connecting": {
         return "devtools-bg-yellow-500";
-      case "disconnected":
+      }
+      case "disconnected": {
         return "devtools-bg-gray-400";
-      case "errored":
+      }
+      case "errored": {
         return "devtools-bg-red-500";
-      default:
+      }
+      default: {
         return "devtools-bg-gray-400";
+      }
     }
   }
 
@@ -122,24 +127,24 @@ export class FiltersPanel {
     const arrow = document.createElement("span");
     arrow.className = "devtools-filters-arrow";
     arrow.textContent = this.isExpanded ? "▼" : "▶";
-    filtersButton.appendChild(arrow);
+    filtersButton.append(arrow);
 
     const label = document.createElement("span");
     label.textContent = "Filters";
-    filtersButton.appendChild(label);
+    filtersButton.append(label);
 
     if (this.hasActiveFilters()) {
       const indicator = document.createElement("span");
       indicator.className = "devtools-filters-active-indicator";
       indicator.title = "Filters active";
-      filtersButton.appendChild(indicator);
+      filtersButton.append(indicator);
     }
 
     filtersButton.addEventListener("click", () => {
       this.isExpanded = !this.isExpanded;
       this.render();
     });
-    header.appendChild(filtersButton);
+    header.append(filtersButton);
 
     // Clear filters button
     if (this.hasActiveFilters()) {
@@ -148,13 +153,13 @@ export class FiltersPanel {
         "devtools-text-xs devtools-text-blue-600 devtools-hover:underline";
       clearButton.textContent = "Clear";
       clearButton.addEventListener("click", this.onClearFilters);
-      header.appendChild(clearButton);
+      header.append(clearButton);
     }
 
     // Spacer
     const spacer = document.createElement("div");
     spacer.className = "devtools-flex-1";
-    header.appendChild(spacer);
+    header.append(spacer);
 
     // Status indicators
     const statusContainer = document.createElement("div");
@@ -174,16 +179,16 @@ export class FiltersPanel {
 
     const statusDot = document.createElement("div");
     statusDot.className = `devtools-w-2 devtools-h-2 devtools-rounded-full ${this.getConnectionStatusColor()}`;
-    connectionStatus.appendChild(statusDot);
+    connectionStatus.append(statusDot);
     const statusText = document.createElement("span");
     statusText.className = "devtools-text-gray-700 devtools-font-medium";
     statusText.textContent = this.getConnectionStatusText();
-    connectionStatus.appendChild(statusText);
+    connectionStatus.append(statusText);
     if (this.connectionState?.transport) {
       const transportText = document.createElement("span");
       transportText.className = "devtools-text-gray-500 devtools-ml-1";
       transportText.textContent = `(${this.connectionState.transport})`;
-      connectionStatus.appendChild(transportText);
+      connectionStatus.append(transportText);
     }
     if (this.connectionState?.error) {
       const errorText = document.createElement("span");
@@ -194,7 +199,7 @@ export class FiltersPanel {
           : this.connectionState.error;
       errorText.textContent = `⚠ ${errorMsg}`;
       errorText.title = this.connectionState.error;
-      connectionStatus.appendChild(errorText);
+      connectionStatus.append(errorText);
     }
     if (this.connectionState?.timestamp) {
       const timestampText = document.createElement("span");
@@ -203,7 +208,7 @@ export class FiltersPanel {
       timestampText.textContent = formatRelativeTime(
         this.connectionState.timestamp,
       );
-      connectionStatus.appendChild(timestampText);
+      connectionStatus.append(timestampText);
       this.timestampElement = timestampText;
 
       // Update timestamp every second
@@ -217,23 +222,23 @@ export class FiltersPanel {
     } else {
       this.timestampElement = null;
     }
-    statusContainer.appendChild(connectionStatus);
+    statusContainer.append(connectionStatus);
 
     // Document count
     if (this.statistics && this.statistics.documentCount > 0) {
       const separator = document.createElement("span");
       separator.className = "devtools-text-gray-400";
       separator.textContent = "•";
-      statusContainer.appendChild(separator);
+      statusContainer.append(separator);
       const docCount = document.createElement("span");
       docCount.className = "devtools-text-gray-600";
       docCount.textContent = `${this.statistics.documentCount} doc${
-        this.statistics.documentCount !== 1 ? "s" : ""
+        this.statistics.documentCount === 1 ? "" : "s"
       }`;
-      statusContainer.appendChild(docCount);
+      statusContainer.append(docCount);
     }
 
-    header.appendChild(statusContainer);
+    header.append(statusContainer);
 
     // Message limit input
     const limitContainer = document.createElement("div");
@@ -241,7 +246,7 @@ export class FiltersPanel {
       "devtools-flex devtools-items-center devtools-gap-2 devtools-text-xs devtools-text-gray-600";
     const limitLabel = document.createElement("span");
     limitLabel.textContent = "Limit:";
-    limitContainer.appendChild(limitLabel);
+    limitContainer.append(limitLabel);
     const limitInput = document.createElement("input");
     limitInput.type = "number";
     limitInput.min = "1";
@@ -249,15 +254,15 @@ export class FiltersPanel {
     limitInput.className = "devtools-input";
     limitInput.style.width = "4rem";
     limitInput.addEventListener("change", (e) => {
-      const limit = parseInt((e.target as HTMLInputElement).value, 10);
+      const limit = Number.parseInt((e.target as HTMLInputElement).value, 10);
       if (!isNaN(limit) && limit > 0) {
         this.settingsManager.updateMessageLimit(limit);
       }
     });
-    limitContainer.appendChild(limitInput);
-    header.appendChild(limitContainer);
+    limitContainer.append(limitInput);
+    header.append(limitContainer);
 
-    this.element.appendChild(header);
+    this.element.append(header);
 
     // Expandable filter content
     if (this.isExpanded) {
@@ -272,7 +277,7 @@ export class FiltersPanel {
       searchLabel.className =
         "devtools-text-xs devtools-font-medium devtools-text-gray-700 devtools-whitespace-nowrap";
       searchLabel.textContent = "Search:";
-      searchContainer.appendChild(searchLabel);
+      searchContainer.append(searchLabel);
       const searchInput = document.createElement("input");
       searchInput.type = "text";
       searchInput.value = this.searchText;
@@ -281,8 +286,8 @@ export class FiltersPanel {
       searchInput.addEventListener("input", (e) => {
         this.handleSearchChange((e.target as HTMLInputElement).value);
       });
-      searchContainer.appendChild(searchInput);
-      filterContent.appendChild(searchContainer);
+      searchContainer.append(searchInput);
+      filterContent.append(searchContainer);
 
       // Direction select
       const directionContainer = document.createElement("div");
@@ -292,7 +297,7 @@ export class FiltersPanel {
       directionLabel.className =
         "devtools-text-xs devtools-font-medium devtools-text-gray-700 devtools-whitespace-nowrap";
       directionLabel.textContent = "Direction:";
-      directionContainer.appendChild(directionLabel);
+      directionContainer.append(directionLabel);
       const directionSelect = document.createElement("select");
       directionSelect.className = "devtools-select devtools-flex-1";
       directionSelect.value = this.filters.direction;
@@ -309,8 +314,8 @@ export class FiltersPanel {
             | "received",
         });
       });
-      directionContainer.appendChild(directionSelect);
-      filterContent.appendChild(directionContainer);
+      directionContainer.append(directionSelect);
+      filterContent.append(directionContainer);
 
       // Documents checkboxes
       if (this.availableDocuments.length > 0) {
@@ -319,11 +324,11 @@ export class FiltersPanel {
         docsLabel.className =
           "devtools-text-xs devtools-font-medium devtools-text-gray-700 devtools-mb-1 devtools-block";
         docsLabel.textContent = `Documents (${this.filters.documentIds.length} selected)`;
-        docsContainer.appendChild(docsLabel);
+        docsContainer.append(docsLabel);
         const docsList = document.createElement("div");
         docsList.className =
           "devtools-max-h-24 devtools-overflow-y-auto devtools-border devtools-border-gray-300 devtools-rounded devtools-bg-white devtools-p-1 devtools-space-y-0.5";
-        this.availableDocuments.forEach((docId) => {
+        for (const docId of this.availableDocuments) {
           const docItem = document.createElement("label");
           docItem.className =
             "devtools-flex devtools-items-center devtools-gap-1.5 devtools-text-xs devtools-cursor-pointer devtools-hover:bg-gray-50 devtools-px-1 devtools-py-0.5 devtools-rounded";
@@ -334,16 +339,16 @@ export class FiltersPanel {
           checkbox.addEventListener("change", () => {
             this.handleDocumentToggle(docId);
           });
-          docItem.appendChild(checkbox);
+          docItem.append(checkbox);
           const docText = document.createElement("span");
           docText.className =
             "devtools-font-mono devtools-text-gray-900 devtools-truncate";
           docText.textContent = docId;
-          docItem.appendChild(docText);
-          docsList.appendChild(docItem);
-        });
-        docsContainer.appendChild(docsList);
-        filterContent.appendChild(docsContainer);
+          docItem.append(docText);
+          docsList.append(docItem);
+        }
+        docsContainer.append(docsList);
+        filterContent.append(docsContainer);
       }
 
       // Message types checkboxes
@@ -353,11 +358,11 @@ export class FiltersPanel {
         typesLabel.className =
           "devtools-text-xs devtools-font-medium devtools-text-gray-700 devtools-mb-1 devtools-block";
         typesLabel.textContent = `Types (${this.filters.hiddenMessageTypes.length} hidden)`;
-        typesContainer.appendChild(typesLabel);
+        typesContainer.append(typesLabel);
         const typesList = document.createElement("div");
         typesList.className =
           "devtools-max-h-24 devtools-overflow-y-auto devtools-border devtools-border-gray-300 devtools-rounded devtools-bg-white devtools-p-1 devtools-space-y-0.5";
-        this.availableMessageTypes.forEach((type) => {
+        for (const type of this.availableMessageTypes) {
           const typeItem = document.createElement("label");
           typeItem.className =
             "devtools-flex devtools-items-center devtools-gap-1.5 devtools-text-xs devtools-cursor-pointer devtools-hover:bg-gray-50 devtools-px-1 devtools-py-0.5 devtools-rounded";
@@ -368,18 +373,18 @@ export class FiltersPanel {
           checkbox.addEventListener("change", () => {
             this.handleMessageTypeToggle(type);
           });
-          typeItem.appendChild(checkbox);
+          typeItem.append(checkbox);
           const typeText = document.createElement("span");
           typeText.className = "devtools-font-mono devtools-text-gray-900";
           typeText.textContent = type;
-          typeItem.appendChild(typeText);
-          typesList.appendChild(typeItem);
-        });
-        typesContainer.appendChild(typesList);
-        filterContent.appendChild(typesContainer);
+          typeItem.append(typeText);
+          typesList.append(typeItem);
+        }
+        typesContainer.append(typesList);
+        filterContent.append(typesContainer);
       }
 
-      this.element.appendChild(filterContent);
+      this.element.append(filterContent);
     }
   }
 

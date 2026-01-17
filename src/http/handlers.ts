@@ -128,7 +128,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
         transport: sseTransport,
         client,
       }) ?? [];
-    if (initialDocuments.length) {
+    if (initialDocuments.length > 0) {
       await Promise.all(
         initialDocuments.map(({ document, encrypted = false }) =>
           server

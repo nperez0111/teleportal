@@ -26,6 +26,18 @@ export class Milestone {
    */
   public createdAt: number;
 
+  public deletedAt?: number;
+  public deletedBy?: string;
+  public lifecycleState?: "active" | "archived" | "deleted" | "expired";
+  public retentionPolicyId?: string;
+  public expiresAt?: number;
+  /**
+   * Information about who/what created this milestone.
+   * - `type: "user"` → userId from message context
+   * - `type: "system"` → nodeId (server instance that created it)
+   */
+  public createdBy: { type: "user" | "system"; id: string };
+
   private getSnapshot?: (
     documentId: string,
     id: string,
@@ -37,6 +49,12 @@ export class Milestone {
     name,
     documentId,
     createdAt,
+    deletedAt,
+    deletedBy,
+    lifecycleState,
+    retentionPolicyId,
+    expiresAt,
+    createdBy,
     snapshot,
     getSnapshot,
   }: {
@@ -44,6 +62,12 @@ export class Milestone {
     name: string;
     documentId: string;
     createdAt: number;
+    deletedAt?: number;
+    deletedBy?: string;
+    lifecycleState?: "active" | "archived" | "deleted" | "expired";
+    retentionPolicyId?: string;
+    expiresAt?: number;
+    createdBy: { type: "user" | "system"; id: string };
   } & (
     | {
         snapshot: MilestoneSnapshot;
@@ -61,6 +85,12 @@ export class Milestone {
     this.name = name;
     this.createdAt = createdAt;
     this.documentId = documentId;
+    this.deletedAt = deletedAt;
+    this.deletedBy = deletedBy;
+    this.lifecycleState = lifecycleState;
+    this.retentionPolicyId = retentionPolicyId;
+    this.expiresAt = expiresAt;
+    this.createdBy = createdBy;
     this.snapshot = snapshot;
     this.getSnapshot = getSnapshot;
   }
@@ -145,6 +175,30 @@ export class Milestone {
       // createdAt
       encoding.writeFloat64(encoder, milestone.createdAt);
 
+      // Flags for optional fields
+      let flags = 0;
+      if (milestone.deletedAt !== undefined) flags |= Math.trunc(1);
+      if (milestone.deletedBy !== undefined) flags |= 1 << 1;
+      if (milestone.lifecycleState !== undefined) flags |= 1 << 2;
+      if (milestone.retentionPolicyId !== undefined) flags |= 1 << 3;
+      if (milestone.expiresAt !== undefined) flags |= 1 << 4;
+
+      encoding.writeUint8(encoder, flags);
+
+      if (milestone.deletedAt !== undefined)
+        encoding.writeFloat64(encoder, milestone.deletedAt);
+      if (milestone.deletedBy !== undefined)
+        encoding.writeVarString(encoder, milestone.deletedBy);
+      if (milestone.lifecycleState !== undefined)
+        encoding.writeVarString(encoder, milestone.lifecycleState);
+      if (milestone.retentionPolicyId !== undefined)
+        encoding.writeVarString(encoder, milestone.retentionPolicyId);
+      if (milestone.expiresAt !== undefined)
+        encoding.writeFloat64(encoder, milestone.expiresAt);
+
+      encoding.writeUint8(encoder, milestone.createdBy.type === "user" ? 1 : 0);
+      encoding.writeVarString(encoder, milestone.createdBy.id);
+
       return existingEncoder
         ? encoding.toUint8Array(encoder)
         : (undefined as any);
@@ -175,18 +229,50 @@ export class Milestone {
     const name = decoding.readVarString(decoder);
     const createdAt = decoding.readFloat64(decoder);
 
+    let deletedAt: number | undefined;
+    let deletedBy: string | undefined;
+    let lifecycleState:
+      | "active"
+      | "archived"
+      | "deleted"
+      | "expired"
+      | undefined;
+    let retentionPolicyId: string | undefined;
+    let expiresAt: number | undefined;
+
+    const flags = decoding.readUint8(decoder);
+    if (flags & Math.trunc(1)) deletedAt = decoding.readFloat64(decoder);
+    if (flags & (1 << 1)) deletedBy = decoding.readVarString(decoder);
+    if (flags & (1 << 2))
+      lifecycleState = decoding.readVarString(decoder) as any;
+    if (flags & (1 << 3)) retentionPolicyId = decoding.readVarString(decoder);
+    if (flags & (1 << 4)) expiresAt = decoding.readFloat64(decoder);
+
+    const createdByType = decoding.readUint8(decoder) === 1 ? "user" : "system";
+    const createdById = decoding.readVarString(decoder);
+    const createdBy: { type: "user" | "system"; id: string } = {
+      type: createdByType,
+      id: createdById,
+    };
+
     return {
       id,
       name,
       documentId,
       createdAt,
+      deletedAt,
+      deletedBy,
+      lifecycleState,
+      retentionPolicyId,
+      expiresAt,
+      createdBy,
     };
   }
 
   public static encodeMetaDoc(milestones: Milestone[]): Uint8Array {
     return encoding.encode((encoder) => {
-      for (let i = 0; i < milestones.length; i++) {
-        Milestone.encodeMeta(milestones[i], encoder);
+      for (const milestone of milestones) {
+        Milestone.encodeMeta(milestone, encoder);
       }
     });
   }
@@ -214,10 +300,18 @@ export class Milestone {
   public static decode(source: Uint8Array): Milestone {
     const decoder = decoding.createDecoder(source);
     // Read the meta header
-    const { id, name, documentId, createdAt } = Milestone.decodeMeta(
-      source,
-      decoder,
-    );
+    const {
+      id,
+      name,
+      documentId,
+      createdAt,
+      deletedAt,
+      deletedBy,
+      lifecycleState,
+      retentionPolicyId,
+      expiresAt,
+      createdBy,
+    } = Milestone.decodeMeta(source, decoder);
     const snapshot = decoding.readTailAsUint8Array(
       decoder,
     ) as MilestoneSnapshot;
@@ -227,6 +321,12 @@ export class Milestone {
       name,
       documentId,
       createdAt,
+      deletedAt,
+      deletedBy,
+      lifecycleState,
+      retentionPolicyId,
+      expiresAt,
+      createdBy,
       snapshot,
     });
   }
@@ -236,16 +336,28 @@ export class Milestone {
     name: string;
     documentId: string;
     createdAt: number;
+    deletedAt?: number;
+    deletedBy?: string;
+    lifecycleState?: "active" | "archived" | "deleted" | "expired";
+    retentionPolicyId?: string;
+    expiresAt?: number;
+    createdBy: { type: "user" | "system"; id: string };
   } {
     return {
       id: this.id,
       name: this.name,
       documentId: this.documentId,
       createdAt: this.createdAt,
+      deletedAt: this.deletedAt,
+      deletedBy: this.deletedBy,
+      lifecycleState: this.lifecycleState,
+      retentionPolicyId: this.retentionPolicyId,
+      expiresAt: this.expiresAt,
+      createdBy: this.createdBy,
     };
   }
 
   public toString(): string {
-    return `Milestone(id: ${this.id}, name: ${this.name}, documentId: ${this.documentId}, createdAt: ${this.createdAt}, snapshot: ${this.snapshot ? "loaded" : "lazy"})`;
+    return `Milestone(id: ${this.id}, name: ${this.name}, documentId: ${this.documentId}, createdAt: ${this.createdAt}, lifecycle: ${this.lifecycleState || "active"}, snapshot: ${this.snapshot ? "loaded" : "lazy"})`;
   }
 }

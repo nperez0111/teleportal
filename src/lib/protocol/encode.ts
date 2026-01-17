@@ -105,6 +105,8 @@ export function encodeMessage(update: Message): BinaryMessage {
           case "milestone-list-request": {
             // message type
             encoding.writeUint8(encoder, 5);
+            // includeDeleted (1 byte)
+            encoding.writeUint8(encoder, update.payload.includeDeleted ? 1 : 0);
             // snapshotIds array length
             encoding.writeVarUint(encoder, update.payload.snapshotIds.length);
             // snapshotIds array
@@ -123,6 +125,26 @@ export function encodeMessage(update: Message): BinaryMessage {
               encoding.writeVarString(encoder, milestone.name);
               encoding.writeVarString(encoder, milestone.documentId);
               encoding.writeFloat64(encoder, milestone.createdAt);
+              // deletedAt (opt)
+              encoding.writeUint8(encoder, milestone.deletedAt ? 1 : 0);
+              if (milestone.deletedAt) {
+                encoding.writeFloat64(encoder, milestone.deletedAt);
+              }
+              // lifecycleState (opt)
+              encoding.writeUint8(encoder, milestone.lifecycleState ? 1 : 0);
+              if (milestone.lifecycleState) {
+                encoding.writeVarString(encoder, milestone.lifecycleState);
+              }
+              // expiresAt (opt)
+              encoding.writeUint8(encoder, milestone.expiresAt ? 1 : 0);
+              if (milestone.expiresAt) {
+                encoding.writeFloat64(encoder, milestone.expiresAt);
+              }
+              encoding.writeUint8(
+                encoder,
+                milestone.createdBy.type === "user" ? 1 : 0,
+              );
+              encoding.writeVarString(encoder, milestone.createdBy.id);
             }
             break;
           }
@@ -168,6 +190,15 @@ export function encodeMessage(update: Message): BinaryMessage {
             );
             // milestone.createdAt
             encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
+            // milestone.createdBy (always present)
+            encoding.writeUint8(
+              encoder,
+              update.payload.milestone.createdBy.type === "user" ? 1 : 0,
+            );
+            encoding.writeVarString(
+              encoder,
+              update.payload.milestone.createdBy.id,
+            );
             break;
           }
           case "milestone-update-name-request": {
@@ -193,6 +224,15 @@ export function encodeMessage(update: Message): BinaryMessage {
             );
             // milestone.createdAt
             encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
+            // milestone.createdBy (always present)
+            encoding.writeUint8(
+              encoder,
+              update.payload.milestone.createdBy.type === "user" ? 1 : 0,
+            );
+            encoding.writeVarString(
+              encoder,
+              update.payload.milestone.createdBy.id,
+            );
             break;
           }
           case "milestone-auth-message": {
@@ -205,6 +245,34 @@ export function encodeMessage(update: Message): BinaryMessage {
             );
             // reason
             encoding.writeVarString(encoder, update.payload.reason);
+            break;
+          }
+          case "milestone-delete-request": {
+            // message type
+            encoding.writeUint8(encoder, 14);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
+            break;
+          }
+          case "milestone-delete-response": {
+            // message type
+            encoding.writeUint8(encoder, 15);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
+            break;
+          }
+          case "milestone-restore-request": {
+            // message type
+            encoding.writeUint8(encoder, 16);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
+            break;
+          }
+          case "milestone-restore-response": {
+            // message type
+            encoding.writeUint8(encoder, 17);
+            // milestoneId
+            encoding.writeVarString(encoder, update.payload.milestoneId);
             break;
           }
           default: {
@@ -363,25 +431,31 @@ export function encodeDocStep<
       case 0x00:
       case 0x01:
       case 0x02:
-      case 0x03:
+      case 0x03: {
         messageTypeNumber = messageType;
         break;
-      case "sync-step-1":
+      }
+      case "sync-step-1": {
         messageTypeNumber = 0x00;
         break;
-      case "sync-step-2":
+      }
+      case "sync-step-2": {
         messageTypeNumber = 0x01;
         break;
-      case "update":
+      }
+      case "update": {
         messageTypeNumber = 0x02;
         break;
-      case "sync-done":
+      }
+      case "sync-done": {
         messageTypeNumber = 0x03;
         break;
-      default:
+      }
+      default: {
         throw new Error("Invalid message type", {
           cause: { messageType },
         });
+      }
     }
     encoding.writeUint8(encoder, messageTypeNumber);
     if (payload !== undefined) {

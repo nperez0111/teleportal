@@ -61,7 +61,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
 
     session.chunks.set(chunkIndex, chunkData);
     session.lastActivity = Date.now();
-    session.bytesUploaded = Array.from(session.chunks.values()).reduce(
+    session.bytesUploaded = [...session.chunks.values()].reduce(
       (sum, chunk) => sum + chunk.length,
       0,
     );
@@ -120,7 +120,11 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     }
 
     const merkleTree = buildMerkleTree(chunksInOrder);
-    const rootHash = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const root = merkleTree.nodes.at(-1);
+    if (!root?.hash) {
+      throw new Error(`Failed to compute root hash for upload ${uploadId}`);
+    }
+    const rootHash = root.hash;
 
     const computedFileId = toBase64(rootHash);
     // If fileId is provided, validate it matches the computed one

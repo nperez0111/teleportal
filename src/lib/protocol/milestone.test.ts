@@ -12,6 +12,12 @@ describe("Milestone", () => {
     documentId?: string;
     createdAt?: number;
     snapshot?: MilestoneSnapshot;
+    deletedAt?: number;
+    deletedBy?: string;
+    lifecycleState?: "active" | "archived" | "deleted" | "expired";
+    retentionPolicyId?: string;
+    expiresAt?: number;
+    createdBy?: { type: "user" | "system"; id: string };
   }): Milestone => {
     return new Milestone({
       id: overrides?.id ?? "test-id-123",
@@ -19,6 +25,12 @@ describe("Milestone", () => {
       documentId: overrides?.documentId ?? "doc-123",
       createdAt: overrides?.createdAt ?? 1234567890,
       snapshot: overrides?.snapshot ?? createTestSnapshot(),
+      deletedAt: overrides?.deletedAt,
+      deletedBy: overrides?.deletedBy,
+      lifecycleState: overrides?.lifecycleState,
+      retentionPolicyId: overrides?.retentionPolicyId,
+      expiresAt: overrides?.expiresAt,
+      createdBy: overrides?.createdBy ?? { type: "system", id: "test-node" },
     });
   };
 
@@ -70,6 +82,43 @@ describe("Milestone", () => {
       expect(decodedSnapshot).toEqual(snapshot);
     });
 
+    it("can encode and decode with lifecycle fields", async () => {
+      const original = createTestMilestone({
+        deletedAt: 1_700_000_000_000,
+        deletedBy: "user-123",
+        lifecycleState: "deleted",
+        retentionPolicyId: "policy-abc",
+        expiresAt: 1_800_000_000_000,
+      });
+
+      const encoded = original.encode();
+      const decoded = Milestone.decode(encoded);
+
+      expect(decoded.id).toBe(original.id);
+      expect(decoded.deletedAt).toBe(1_700_000_000_000);
+      expect(decoded.deletedBy).toBe("user-123");
+      expect(decoded.lifecycleState).toBe("deleted");
+      expect(decoded.retentionPolicyId).toBe("policy-abc");
+      expect(decoded.expiresAt).toBe(1_800_000_000_000);
+    });
+
+    it("can encode and decode with partial lifecycle fields", async () => {
+      const original = createTestMilestone({
+        lifecycleState: "archived",
+        expiresAt: 1_800_000_000_000,
+      });
+
+      const encoded = original.encode();
+      const decoded = Milestone.decode(encoded);
+
+      expect(decoded.id).toBe(original.id);
+      expect(decoded.lifecycleState).toBe("archived");
+      expect(decoded.expiresAt).toBe(1_800_000_000_000);
+      expect(decoded.deletedAt).toBeUndefined();
+      expect(decoded.deletedBy).toBeUndefined();
+      expect(decoded.retentionPolicyId).toBeUndefined();
+    });
+
     it("throws error when encoding milestone without snapshot", () => {
       const getSnapshot = async () => createTestSnapshot();
       const milestone = new Milestone({
@@ -77,6 +126,7 @@ describe("Milestone", () => {
         name: "v1.0.0",
         documentId: "doc-123",
         createdAt: 1234567890,
+        createdBy: { type: "system", id: "test-node" },
         getSnapshot,
       });
 
@@ -98,20 +148,16 @@ describe("Milestone", () => {
       expect(decoded.createdAt).toBe(original.createdAt);
     });
 
-    it("can encode and decode meta with different values", () => {
+    it("can encode and decode with lifecycle fields in meta", () => {
       const original = createTestMilestone({
-        id: "meta-id-999",
-        name: "release-2.5.0",
-        documentId: "document-xyz",
-        createdAt: 1700000000000,
+        deletedAt: 123,
+        lifecycleState: "deleted",
       });
       const encoded = Milestone.encodeMeta(original);
       const decoded = Milestone.decodeMeta(encoded);
 
-      expect(decoded.id).toBe("meta-id-999");
-      expect(decoded.name).toBe("release-2.5.0");
-      expect(decoded.documentId).toBe("document-xyz");
-      expect(decoded.createdAt).toBe(1700000000000);
+      expect(decoded.deletedAt).toBe(123);
+      expect(decoded.lifecycleState).toBe("deleted");
     });
 
     it("can encode meta into existing encoder", () => {
@@ -148,11 +194,44 @@ describe("Milestone", () => {
       const original = createTestMilestone();
       const encoded = Milestone.encodeMeta(original);
       // Modify version byte (byte 3, after YJS prefix)
-      encoded[3] = 0x02; // Change version from 0x01 to 0x02
+      encoded[3] = 0x99; // Change version from 0x02 to 0x99
 
       expect(() => Milestone.decodeMeta(encoded)).toThrow(
         "Version not supported",
       );
+    });
+
+    it("encodes and decodes createdBy field", () => {
+      // Test that createdBy is always present
+      const encoding = require("lib0/encoding");
+      const encoder = encoding.createEncoder();
+
+      encoding.writeUint8(encoder, 0x59); // Y
+      encoding.writeUint8(encoder, 0x4a); // J
+      encoding.writeUint8(encoder, 0x53); // S
+      encoding.writeUint8(encoder, 0x01); // Version 1
+      encoding.writeVarString(encoder, "doc-123");
+      encoding.writeVarString(encoder, "id-123");
+      encoding.writeVarString(encoder, "name-123");
+      encoding.writeFloat64(encoder, 1_234_567_890);
+      // Flags (no optional fields)
+      encoding.writeUint8(encoder, 0);
+      // createdBy is always present
+      encoding.writeUint8(encoder, 1); // type: user
+      encoding.writeVarString(encoder, "user-123");
+
+      const encoded = encoding.toUint8Array(encoder);
+      const decoded = Milestone.decodeMeta(encoded);
+
+      expect(decoded.id).toBe("id-123");
+      expect(decoded.name).toBe("name-123");
+      expect(decoded.documentId).toBe("doc-123");
+      expect(decoded.createdAt).toBe(1_234_567_890);
+      expect(decoded.createdBy).toEqual({ type: "user", id: "user-123" });
+
+      // Optional fields should be undefined
+      expect(decoded.deletedAt).toBeUndefined();
+      expect(decoded.lifecycleState).toBeUndefined();
     });
   });
 
@@ -260,6 +339,7 @@ describe("Milestone", () => {
         name: "v1.0.0",
         documentId: "doc-123",
         createdAt: 1234567890,
+        createdBy: { type: "system", id: "test-node" },
         getSnapshot,
       });
 
@@ -282,6 +362,7 @@ describe("Milestone", () => {
         name: "v1.0.0",
         documentId: "doc-123",
         createdAt: 1234567890,
+        createdBy: { type: "system", id: "test-node" },
         getSnapshot,
       });
 
@@ -307,6 +388,7 @@ describe("Milestone", () => {
         name: "v1.0.0",
         documentId: "doc-123",
         createdAt: 1234567890,
+        createdBy: { type: "system", id: "test-node" },
         getSnapshot,
       });
 
@@ -332,6 +414,7 @@ describe("Milestone", () => {
         name: "v1.0.0",
         documentId: "doc-123",
         createdAt: 1234567890,
+        createdBy: { type: "system", id: "test-node" },
         snapshot: createTestSnapshot(),
       });
 
@@ -358,6 +441,7 @@ describe("Milestone", () => {
         name: "v1.0.0",
         documentId: "doc-123",
         createdAt: 1234567890,
+        createdBy: { type: "system", id: "test-node" },
         getSnapshot,
       });
 

@@ -18,7 +18,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // Mock the global EventTarget if it's not available in the test environment
-if (typeof global.EventTarget === "undefined") {
+if (globalThis.EventTarget === undefined) {
   class EventTarget {
     listeners: Record<string, ((event: any) => void)[]> = {};
 
@@ -39,12 +39,12 @@ if (typeof global.EventTarget === "undefined") {
 
     dispatchEvent(event: { type: string }) {
       if (this.listeners[event.type]) {
-        this.listeners[event.type].forEach((listener) => listener(event));
+        for (const listener of this.listeners[event.type]) listener(event);
       }
       return true;
     }
   }
-  global.EventTarget = EventTarget as any;
+  globalThis.EventTarget = EventTarget as any;
 }
 
 // Mock EventSource implementation
@@ -100,7 +100,7 @@ class MockEventSource {
 
   protected dispatchEvent(event: Event) {
     if (this.listeners[event.type]) {
-      this.listeners[event.type].forEach((listener) => listener(event));
+      for (const listener of this.listeners[event.type]) listener(event);
     }
   }
 
@@ -454,7 +454,7 @@ describe("HttpConnection", () => {
     // Test that the connection can be destroyed even when there are errors
     try {
       await client.connected;
-    } catch (error) {
+    } catch {
       // Expected to fail due to mock error
     }
 
@@ -476,7 +476,7 @@ describe("HttpConnection", () => {
     // Test that the connection can be destroyed even when there are fetch errors
     try {
       await client.connected;
-    } catch (error) {
+    } catch {
       // Expected to fail due to fetch error
     }
 

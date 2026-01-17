@@ -19,10 +19,10 @@ The `Server` class is the main entry point for the Teleportal server-side implem
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                         Server                               │
+│                         Server                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │   Sessions   │  │   Clients    │  │   PubSub     │       │
-│  │   (Map)     │  │   (per doc)  │  │   (optional) │       │
+│  │   (Map)      │  │   (per doc)  │  │   (optional) │       │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
 │         │                 │                 │               │
 │         └─────────────────┴─────────────────┘               │
@@ -129,6 +129,42 @@ type ServerOptions<Context extends ServerContext> = {
    * Defaults to a random UUID.
    */
   nodeId?: string;
+
+  /**
+   * Configuration for automatic milestone triggers.
+   */
+  milestoneTriggerConfig?: {
+    defaultTriggers?: MilestoneTrigger[];
+  };
+
+  /**
+   * Configuration for rate limiting on client transports.
+   * If provided, all transports will be rate-limited before processing messages.
+   */
+  rateLimitConfig?: {
+    maxMessages?: number | ((message: Message<Context>) => number | Promise<number>); // default: 100
+    windowMs?: number | ((message: Message<Context>) => number | Promise<number>); // default: 1000ms
+    maxMessageSize?: number; // default: 10MB
+    rateLimitStorage?: RateLimitStorage; // Optional persistent storage (Redis, etc.)
+    trackBy?: "user" | "document" | "user-document" | "transport"; // default: "user"
+    shouldSkipRateLimit?: (message: Message<Context>) => Promise<boolean> | boolean;
+    onRateLimitExceeded?: (details: {
+      ruleId: string;
+      userId?: string;
+      documentId?: string;
+      trackBy: string;
+      currentCount: number;
+      maxMessages: number;
+      windowMs: number;
+      resetAt: number;
+      message: Message<Context>;
+    }) => void;
+    onMessageSizeExceeded?: (details: {
+      size: number;
+      maxSize: number;
+      message: Message<Context>;
+    }) => void;
+  };
 };
 ```
 
@@ -160,7 +196,7 @@ const server = new Server({
   checkPermission: async ({ context, documentId, fileId, message, type }) => {
     // Check if user has permission
     const userId = context.userId;
-    
+
     if (documentId) {
       // Check document permissions
       return await hasDocumentAccess(userId, documentId, type);
@@ -168,7 +204,7 @@ const server = new Server({
       // Check file permissions
       return await hasFileAccess(userId, fileId, type);
     }
-    
+
     return false;
   },
 });
@@ -283,7 +319,7 @@ The server handles all Teleportal protocol message types:
 - **update**: Real-time document updates from clients
 - **sync-done**: Synchronization completion signal
 - **auth-message**: Permission denied/granted responses
-- **milestone-***: Milestone operations (list, create, update, retrieve)
+- **milestone-\***: Milestone operations (list, create, update, retrieve)
 
 ### Awareness Messages
 
@@ -300,6 +336,76 @@ The server handles all Teleportal protocol message types:
 ### ACK Messages
 
 - **ack**: Message delivery confirmation
+
+## Rate Limiting
+
+The server supports automatic rate limiting on all client transports when `rateLimitConfig` is provided. Rate limiting uses a token bucket algorithm to throttle messages based on configurable limits.
+
+### Rate Limit Configuration
+
+```typescript
+import { Server } from "teleportal/server";
+import { RedisRateLimitStorage } from "teleportal/transports/redis";
+import { UnstorageRateLimitStorage } from "teleportal/storage";
+import { createStorage } from "unstorage";
+import redisDriver from "unstorage/drivers/redis";
+
+// Option 1: Use Redis for shared rate limiting across server instances
+const redisStorage = new RedisRateLimitStorage(redisClient);
+
+// Option 2: Use Unstorage (works with Redis, PostgreSQL, etc.)
+const storage = createStorage({
+  driver: redisDriver({ base: "teleportal:" }),
+});
+const unstorageRateLimit = new UnstorageRateLimitStorage(storage);
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // ... create storage
+  },
+  rateLimitConfig: {
+    maxMessages: 100, // 100 messages per window
+    windowMs: 1000, // 1 second window
+    trackBy: "user", // Track per user ID
+    rateLimitStorage: redisStorage, // Shared across server instances
+    // Optional: Dynamic limits based on message
+    // maxMessages: (msg) => msg.context.userId === "admin" ? 1000 : 100,
+    // windowMs: (msg) => msg.document?.startsWith("public/") ? 500 : 1000,
+    // Optional: Skip rate limiting for certain messages
+    shouldSkipRateLimit: async (msg) => {
+      return msg.context.userId === "admin";
+    },
+    // Optional: Callbacks for rate limit events
+    onRateLimitExceeded: (details) => {
+      console.log("Rate limit exceeded", details);
+    },
+  },
+});
+```
+
+### Rate Limit Tracking Modes
+
+- **`"user"`** (default): Track rate limits per user ID. All connections from the same user share the same limit.
+- **`"document"`**: Track rate limits per document ID. All users editing the same document share the same limit.
+- **`"user-document"`**: Track rate limits per user-document pair. Each user has separate limits for each document.
+- **`"transport"`**: Track rate limits per transport instance (in-memory only, not shared).
+
+### Rate Limit Storage
+
+- **In-memory** (default): Rate limits are per-transport instance. Not shared across server instances.
+- **Persistent storage** (Redis/Unstorage): Rate limits are shared across all server instances. Recommended for multi-node deployments.
+
+### Integration with Permissions
+
+Rate limiting is applied **before** permission checking. Messages that exceed rate limits are rejected immediately, without checking permissions. ACK messages and file-auth-message responses are automatically excluded from rate limiting.
+
+### Metrics
+
+Rate limit metrics are automatically recorded via the server's `MetricsCollector`:
+
+- Rate limit exceeded events
+- Rate limit state operations (get/set)
+- Breakdown by tracking mode
 
 ## Permission Checking
 
@@ -324,17 +430,14 @@ const server = new Server({
   },
   checkPermission: async ({ context, documentId, fileId, message, type }) => {
     const userId = context.userId;
-    
+
     // Document permissions
     if (documentId) {
       if (type === "read") {
         return await canReadDocument(userId, documentId);
       } else if (type === "write") {
         // Special handling for sync-step-2 without write permission
-        if (
-          message.type === "doc" &&
-          message.payload.type === "sync-step-2"
-        ) {
+        if (message.type === "doc" && message.payload.type === "sync-step-2") {
           // Client tried to send updates but doesn't have write permission
           // Server will drop the message and send sync-done instead
           return false;
@@ -342,7 +445,7 @@ const server = new Server({
         return await canWriteDocument(userId, documentId);
       }
     }
-    
+
     // File permissions
     if (fileId) {
       if (type === "read") {
@@ -351,7 +454,7 @@ const server = new Server({
         return await canWriteFile(userId, fileId);
       }
     }
-    
+
     return false;
   },
 });
@@ -377,9 +480,40 @@ server.on("document-unload", (data) => {
   console.log("Reason:", data.reason); // "cleanup" | "delete" | "dispose"
 });
 
+// Emitted when a milestone is created
+server.on("milestone-created", (data) => {
+  console.log("Milestone created:", data.milestoneId);
+  console.log("Trigger:", data.triggerType); // "manual" | "time-based" | "update-count" | "event-based"
+});
+
+// Emitted when a milestone is soft deleted
+server.on("milestone-deleted", (data) => {
+  console.log("Milestone soft deleted:", data.milestoneId);
+  console.log("Deleted by:", data.deletedBy);
+});
+
+// Emitted when a milestone is restored
+server.on("milestone-restored", (data) => {
+  console.log("Milestone restored:", data.milestoneId);
+});
+
 // Emitted when a document is deleted
 server.on("document-delete", (data) => {
   console.log("Document deleted:", data.documentId);
+});
+
+// Emitted when document size exceeds warning threshold
+server.on("document-size-warning", (data) => {
+  console.log("Size warning:", data.documentId);
+  console.log("Size:", data.sizeBytes);
+  console.log("Threshold:", data.warningThreshold);
+});
+
+// Emitted when document size exceeds limit
+server.on("document-size-limit-exceeded", (data) => {
+  console.log("Size limit exceeded:", data.documentId);
+  console.log("Size:", data.sizeBytes);
+  console.log("Limit:", data.sizeLimit);
 });
 ```
 
@@ -561,7 +695,9 @@ import { Server } from "teleportal/server";
 import { WebSocketTransport } from "teleportal/transports/websocket";
 
 const app = express();
-const server = new Server({ /* ... */ });
+const server = new Server({
+  /* ... */
+});
 
 // WebSocket endpoint
 app.get("/ws", (req, res) => {
@@ -571,7 +707,7 @@ app.get("/ws", (req, res) => {
     context: { userId: req.user.id },
     encrypted: false,
   });
-  
+
   server.createClient({ transport });
 });
 
@@ -596,7 +732,9 @@ import { Server } from "bun";
 import { Server as TeleportalServer } from "teleportal/server";
 import { HttpTransport } from "teleportal/transports/http";
 
-const teleportalServer = new TeleportalServer({ /* ... */ });
+const teleportalServer = new TeleportalServer({
+  /* ... */
+});
 
 Bun.serve({
   port: 3000,
@@ -605,25 +743,29 @@ Bun.serve({
       // Handle WebSocket messages
     },
     open: (ws) => {
-      const transport = new WebSocketTransport(ws, { /* ... */ });
+      const transport = new WebSocketTransport(ws, {
+        /* ... */
+      });
       teleportalServer.createClient({ transport });
     },
   },
   fetch: async (req) => {
     // Handle HTTP/SSE connections
     if (req.url.endsWith("/sse")) {
-      const transport = new HttpTransport(req, { /* ... */ });
+      const transport = new HttpTransport(req, {
+        /* ... */
+      });
       teleportalServer.createClient({ transport });
       return new Response();
     }
-    
+
     // Metrics endpoint
     if (req.url.endsWith("/metrics")) {
       return new Response(await teleportalServer.getMetrics(), {
         headers: { "Content-Type": "text/plain" },
       });
     }
-    
+
     return new Response("Not Found", { status: 404 });
   },
 });

@@ -19,7 +19,7 @@ function injectStyles() {
     styleElement = document.createElement("style");
     styleElement.id = STYLE_ID;
     styleElement.textContent = devtoolsStyles;
-    document.head.appendChild(styleElement);
+    document.head.append(styleElement);
   }
 }
 export type DevtoolsState = ReturnType<typeof getDevtoolsState>;

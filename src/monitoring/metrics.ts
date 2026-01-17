@@ -54,8 +54,7 @@ export class Counter {
 }
 
 export class Gauge {
-  private value = 0;
-  private labels: Record<string, string> = {};
+  private values = new Map<string, number>();
 
   constructor(
     private name: string,
@@ -63,30 +62,65 @@ export class Gauge {
     private labelNames: string[] = [],
   ) {}
 
-  inc(): void {
-    this.value++;
+  inc(labels?: Record<string, string>): void {
+    const key = labels ? JSON.stringify(labels) : "";
+    const current = this.values.get(key) || 0;
+    this.values.set(key, current + 1);
   }
 
-  dec(): void {
-    this.value--;
+  dec(labels?: Record<string, string>): void {
+    const key = labels ? JSON.stringify(labels) : "";
+    const current = this.values.get(key) || 0;
+    this.values.set(key, current - 1);
   }
 
-  set(value: number): void {
-    this.value = value;
+  set(value: number, labels?: Record<string, string>): void {
+    const key = labels ? JSON.stringify(labels) : "";
+    this.values.set(key, value);
   }
 
-  getValue(): number {
-    return this.value;
+  getValue(labels?: Record<string, string>): number {
+    if (!labels) {
+      // Return sum if no labels provided? Or just the value for empty labels?
+      // For Gauge, usually getting a value without labels when it has labels is ambiguous.
+      // But adhering to Counter implementation style:
+      const key = "";
+      return this.values.get(key) || 0;
+    }
+    const key = JSON.stringify(labels);
+    return this.values.get(key) || 0;
+  }
+
+  getValues(): { labels: Record<string, string>; value: number }[] {
+    const result: { labels: Record<string, string>; value: number }[] = [];
+    for (const [key, value] of this.values) {
+      result.push({
+        labels: key ? JSON.parse(key) : {},
+        value,
+      });
+    }
+    return result;
   }
 
   toString(): string {
-    const labelsStr =
-      Object.keys(this.labels).length > 0
-        ? `{${Object.entries(this.labels)
-            .map(([k, v]) => `${k}="${v}"`)
-            .join(",")}}`
-        : "";
-    return `# HELP ${this.name} ${this.help}\n# TYPE ${this.name} gauge\n${this.name}${labelsStr} ${this.value}`;
+    let output = `# HELP ${this.name} ${this.help}\n# TYPE ${this.name} gauge\n`;
+
+    if (this.values.size === 0) {
+      output += `${this.name} 0\n`;
+    } else {
+      for (const [key, value] of this.values) {
+        const labels = key ? JSON.parse(key) : {};
+        const labelsStr =
+          Object.keys(labels).length > 0
+            ? `{${Object.entries(labels)
+                .map(([k, v]) => `${k}="${v}"`)
+                .join(",")}}`
+            : "";
+        output += `${this.name}${labelsStr} ${value}\n`;
+      }
+    }
+
+    return output;
   }
 }
 
@@ -129,7 +163,9 @@ export class Histogram {
 
     if (!series) {
       series = {
-        buckets: new Array(this.bucketValues.length + 1).fill(0),
+        buckets: Array.from({ length: this.bucketValues.length + 1 }).fill(
+          0,
+        ) as number[],
         sum: 0,
         count: 0,
       };

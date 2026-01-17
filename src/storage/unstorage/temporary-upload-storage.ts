@@ -135,7 +135,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     );
     const chunks = new Map<number, boolean>();
     for (const k of chunkKeys) {
-      const chunkIndex = parseInt(k.split(":chunk:")[1] ?? "-1", 10);
+      const chunkIndex = Number.parseInt(k.split(":chunk:")[1] ?? "-1", 10);
       if (chunkIndex >= 0) {
         chunks.set(chunkIndex, true);
       }
@@ -189,7 +189,11 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     }
 
     const merkleTree = buildMerkleTree(chunksInOrder);
-    const rootHash = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const root = merkleTree.nodes.at(-1);
+    if (!root?.hash) {
+      throw new Error(`Failed to compute root hash for upload ${uploadId}`);
+    }
+    const rootHash = root.hash;
     const computedFileId = toBase64(rootHash);
     // If fileId is provided, validate it matches the computed one
     if (fileId !== undefined && computedFileId !== fileId) {

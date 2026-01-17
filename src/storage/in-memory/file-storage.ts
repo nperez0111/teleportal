@@ -106,7 +106,7 @@ export class InMemoryFileStorage implements FileStorage {
       const fileIds = metadata.files ?? [];
 
       // Delete file data without nested transactions to avoid deadlock
-      fileIds.forEach((id) => this.#deleteFileData(id));
+      for (const id of fileIds) this.#deleteFileData(id);
 
       await this.#documentStorage!.writeDocumentMetadata(documentId, {
         ...metadata,

@@ -47,6 +47,14 @@ import type {
   MilestoneUpdateNameRequest,
   MilestoneUpdateNameResponse,
   MilestoneSnapshot,
+  MilestoneDeleteRequest,
+  DecodedMilestoneDeleteRequest,
+  MilestoneDeleteResponse,
+  DecodedMilestoneDeleteResponse,
+  MilestoneRestoreRequest,
+  DecodedMilestoneRestoreRequest,
+  MilestoneRestoreResponse,
+  DecodedMilestoneRestoreResponse,
   SyncDone,
   SyncStep1,
   SyncStep2,
@@ -111,10 +119,11 @@ export function decodeMessage(update: BinaryMessage): RawReceivedMessage {
           update as EncodedFileStep<FileStep>,
         );
       }
-      default:
+      default: {
         throw new Error("Invalid target type", {
           cause: { targetType },
         });
+      }
     }
   } catch (err) {
     throw new Error("Failed to decode update message", {
@@ -153,7 +162,15 @@ function decodeDocStepWithDecoder<
                             ? DecodedMilestoneResponse
                             : D extends MilestoneAuthMessage
                               ? DecodedMilestoneAuthMessage
-                              : never,
+                              : D extends MilestoneDeleteRequest
+                                ? DecodedMilestoneDeleteRequest
+                                : D extends MilestoneDeleteResponse
+                                  ? DecodedMilestoneDeleteResponse
+                                  : D extends MilestoneRestoreRequest
+                                    ? DecodedMilestoneRestoreRequest
+                                    : D extends MilestoneRestoreResponse
+                                      ? DecodedMilestoneRestoreResponse
+                                      : never,
 >(decoder: decoding.Decoder): E {
   try {
     const messageType = decoding.readUint8(decoder);
@@ -190,6 +207,7 @@ function decodeDocStepWithDecoder<
       }
       case 0x05: {
         // milestone-list-request
+        const includeDeleted = decoding.readUint8(decoder) === 1;
         const snapshotIdsLength = decoding.readVarUint(decoder);
         const snapshotIds: string[] = [];
         for (let i = 0; i < snapshotIdsLength; i++) {
@@ -198,6 +216,7 @@ function decodeDocStepWithDecoder<
         return {
           type: "milestone-list-request",
           snapshotIds,
+          includeDeleted,
         } as E;
       }
       case 0x06: {
@@ -205,11 +224,47 @@ function decodeDocStepWithDecoder<
         const milestonesLength = decoding.readVarUint(decoder);
         const milestones = [];
         for (let i = 0; i < milestonesLength; i++) {
+          const id = decoding.readVarString(decoder);
+          const name = decoding.readVarString(decoder);
+          const documentId = decoding.readVarString(decoder);
+          const createdAt = decoding.readFloat64(decoder);
+
+          const hasDeletedAt = decoding.readUint8(decoder) === 1;
+          const deletedAt = hasDeletedAt
+            ? decoding.readFloat64(decoder)
+            : undefined;
+
+          const hasLifecycleState = decoding.readUint8(decoder) === 1;
+          const lifecycleState = hasLifecycleState
+            ? (decoding.readVarString(decoder) as
+                | "active"
+                | "deleted"
+                | "archived"
+                | "expired")
+            : undefined;
+
+          const hasExpiresAt = decoding.readUint8(decoder) === 1;
+          const expiresAt = hasExpiresAt
+            ? decoding.readFloat64(decoder)
+            : undefined;
+
+          const createdByType =
+            decoding.readUint8(decoder) === 1 ? "user" : "system";
+          const createdById = decoding.readVarString(decoder);
+          const createdBy: { type: "user" | "system"; id: string } = {
+            type: createdByType,
+            id: createdById,
+          };
+
           milestones.push({
-            id: decoding.readVarString(decoder),
-            name: decoding.readVarString(decoder),
-            documentId: decoding.readVarString(decoder),
-            createdAt: decoding.readFloat64(decoder),
+            id,
+            name,
+            documentId,
+            createdAt,
+            deletedAt,
+            lifecycleState,
+            expiresAt,
+            createdBy,
           });
         }
         return {
@@ -237,7 +292,9 @@ function decodeDocStepWithDecoder<
         const hasName = decoding.readUint8(decoder) === 1;
         const name = hasName ? decoding.readVarString(decoder) : undefined;
         // snapshot (required)
-        const snapshot = decoding.readVarUint8Array(decoder) as MilestoneSnapshot;
+        const snapshot = decoding.readVarUint8Array(
+          decoder,
+        ) as MilestoneSnapshot;
         return {
           type: "milestone-create-request",
           name,
@@ -246,13 +303,26 @@ function decodeDocStepWithDecoder<
       }
       case 0x0a: {
         // milestone-create-response
+        const id = decoding.readVarString(decoder);
+        const name = decoding.readVarString(decoder);
+        const documentId = decoding.readVarString(decoder);
+        const createdAt = decoding.readFloat64(decoder);
+        // createdBy is always present
+        const createdByType =
+          decoding.readUint8(decoder) === 1 ? "user" : "system";
+        const createdById = decoding.readVarString(decoder);
+        const createdBy: { type: "user" | "system"; id: string } = {
+          type: createdByType,
+          id: createdById,
+        };
         return {
           type: "milestone-create-response",
           milestone: {
-            id: decoding.readVarString(decoder),
-            name: decoding.readVarString(decoder),
-            documentId: decoding.readVarString(decoder),
-            createdAt: decoding.readFloat64(decoder),
+            id,
+            name,
+            documentId,
+            createdAt,
+            createdBy,
           },
         } as E;
       }
@@ -266,13 +336,26 @@ function decodeDocStepWithDecoder<
       }
       case 0x0c: {
         // milestone-update-name-response
+        const id = decoding.readVarString(decoder);
+        const name = decoding.readVarString(decoder);
+        const documentId = decoding.readVarString(decoder);
+        const createdAt = decoding.readFloat64(decoder);
+
+        const createdByType =
+          decoding.readUint8(decoder) === 1 ? "user" : "system";
+        const createdById = decoding.readVarString(decoder);
+        const createdBy: { type: "user" | "system"; id: string } = {
+          type: createdByType,
+          id: createdById,
+        };
         return {
           type: "milestone-update-name-response",
           milestone: {
-            id: decoding.readVarString(decoder),
-            name: decoding.readVarString(decoder),
-            documentId: decoding.readVarString(decoder),
-            createdAt: decoding.readFloat64(decoder),
+            id,
+            name,
+            documentId,
+            createdAt,
+            createdBy,
           },
         } as E;
       }
@@ -282,6 +365,34 @@ function decodeDocStepWithDecoder<
           type: "milestone-auth-message",
           permission: decoding.readUint8(decoder) === 0 ? "denied" : "allowed",
           reason: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x0e: {
+        // milestone-delete-request
+        return {
+          type: "milestone-delete-request",
+          milestoneId: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x0f: {
+        // milestone-delete-response
+        return {
+          type: "milestone-delete-response",
+          milestoneId: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x10: {
+        // milestone-restore-request
+        return {
+          type: "milestone-restore-request",
+          milestoneId: decoding.readVarString(decoder),
+        } as E;
+      }
+      case 0x11: {
+        // milestone-restore-response
+        return {
+          type: "milestone-restore-response",
+          milestoneId: decoding.readVarString(decoder),
         } as E;
       }
       default: {

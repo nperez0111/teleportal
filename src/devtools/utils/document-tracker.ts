@@ -41,11 +41,11 @@ export class DocumentTracker {
   }
 
   getAllDocuments(): DocumentState[] {
-    return Array.from(this.documents.values());
+    return [...this.documents.values()];
   }
 
   getDocumentsForProvider(provider: Provider): DocumentState[] {
-    return Array.from(this.documents.values()).filter(
+    return [...this.documents.values()].filter(
       (doc) => doc.provider === provider,
     );
   }

@@ -16,7 +16,10 @@ describe("InMemoryFileStorage", () => {
     // For a small file (6 bytes), it should be a single chunk
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
     const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const root = merkleTree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    const contentId = root!.hash!;
     const fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
@@ -28,8 +31,8 @@ describe("InMemoryFileStorage", () => {
       documentId: "test-doc",
     });
 
-    for (let i = 0; i < chunks.length; i++) {
-      await temp.storeChunk(uploadId, i, chunks[i], []);
+    for (const [i, chunk] of chunks.entries()) {
+      await temp.storeChunk(uploadId, i, chunk, []);
     }
 
     const result = await temp.completeUpload(uploadId, fileId);
@@ -111,7 +114,10 @@ describe("InMemoryFileStorage", () => {
     // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
     const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
     const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const root = merkleTree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    const contentId = root!.hash!;
     const fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
@@ -123,8 +129,8 @@ describe("InMemoryFileStorage", () => {
       documentId: "test-doc",
     });
 
-    for (let i = 0; i < chunks.length; i++) {
-      await temp.storeChunk(uploadId, i, chunks[i], []);
+    for (const [i, chunk] of chunks.entries()) {
+      await temp.storeChunk(uploadId, i, chunk, []);
     }
 
     const result = await temp.completeUpload(uploadId, fileId);
@@ -157,7 +163,10 @@ describe("InMemoryFileStorage", () => {
     const uploadId = "test-upload-id";
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
     const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const root = merkleTree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    const contentId = root!.hash!;
     const fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
@@ -197,7 +206,10 @@ describe("InMemoryFileStorage", () => {
     // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
     const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
     const merkleTree = buildMerkleTree(chunks);
-    const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+    const root = merkleTree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    const contentId = root!.hash!;
     const fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
@@ -209,8 +221,8 @@ describe("InMemoryFileStorage", () => {
       documentId: "test-doc",
     });
 
-    for (let i = 0; i < chunks.length; i++) {
-      await temp.storeChunk(uploadId, i, chunks[i], []);
+    for (const [i, chunk] of chunks.entries()) {
+      await temp.storeChunk(uploadId, i, chunk, []);
     }
 
     const result = await temp.completeUpload(uploadId, fileId);
@@ -302,7 +314,7 @@ describe("InMemoryFileStorage", () => {
         async addFileToDocument(documentId: string, fileId: string): Promise<void> {
           await this.transaction(documentId, async () => {
             const metadata = await this.getDocumentMetadata(documentId);
-            const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+            const files = [...new Set([...(metadata.files ?? []), fileId])];
             await this.writeDocumentMetadata(documentId, {
               ...metadata,
               files,
@@ -332,7 +344,10 @@ describe("InMemoryFileStorage", () => {
       const documentId = "test-doc";
       const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
       const merkleTree = buildMerkleTree(chunks);
-      const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+      const root = merkleTree.nodes.at(-1);
+      expect(root).toBeDefined();
+      expect(root?.hash).toBeDefined();
+      const contentId = root!.hash!;
       const fileId = toBase64(contentId);
 
       const uploadId = "test-upload-id";
@@ -445,7 +460,7 @@ describe("InMemoryFileStorage", () => {
         async addFileToDocument(documentId: string, fileId: string): Promise<void> {
           await this.transaction(documentId, async () => {
             const metadata = await this.getDocumentMetadata(documentId);
-            const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+            const files = [...new Set([...(metadata.files ?? []), fileId])];
             await this.writeDocumentMetadata(documentId, {
               ...metadata,
               files,
@@ -479,7 +494,10 @@ describe("InMemoryFileStorage", () => {
       for (let i = 0; i < 3; i++) {
         const chunks = [new Uint8Array([i, i + 1, i + 2, i + 3])];
         const merkleTree = buildMerkleTree(chunks);
-        const contentId = merkleTree.nodes[merkleTree.nodes.length - 1].hash!;
+        const root = merkleTree.nodes.at(-1);
+        expect(root).toBeDefined();
+        expect(root?.hash).toBeDefined();
+        const contentId = root!.hash!;
         const fileId = toBase64(contentId);
         fileIds.push(fileId);
 
@@ -597,7 +615,7 @@ describe("InMemoryFileStorage", () => {
         async addFileToDocument(documentId: string, fileId: string): Promise<void> {
           await this.transaction(documentId, async () => {
             const metadata = await this.getDocumentMetadata(documentId);
-            const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+            const files = [...new Set([...(metadata.files ?? []), fileId])];
             await this.writeDocumentMetadata(documentId, {
               ...metadata,
               files,

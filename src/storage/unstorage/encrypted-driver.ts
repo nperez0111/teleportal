@@ -23,7 +23,7 @@ export function createEncryptedDriver(
     },
     onRead: async (key, value) => {
       if (typeof value !== "string") {
-        throw new Error("Value not encrypted", { cause: { key, value } });
+        throw new TypeError("Value not encrypted", { cause: { key, value } });
       }
 
       const decoder = decoding.createDecoder(

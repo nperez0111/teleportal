@@ -155,8 +155,8 @@ export function getWebsocketHandlers<
           });
           await peer.context.writer.ready;
           await peer.context.writer.write(message);
-        } catch (e) {
-          new Error("Failed to write message", { cause: { err: e } });
+        } catch (err) {
+          new Error("Failed to write message", { cause: { err: err } });
         }
       },
       async close(peer) {
@@ -169,14 +169,14 @@ export function getWebsocketHandlers<
         });
         try {
           await peer.context.writer.close();
-        } catch (e) {
+        } catch {
           // no-op
         }
         try {
           if (!peer.context.transport.writable.locked) {
             await peer.context.transport.writable.close();
           }
-        } catch (e) {
+        } catch {
           // no-op
         }
       },

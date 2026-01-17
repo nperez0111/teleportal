@@ -49,19 +49,44 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
   }
 
   /**
+   * Helper to get milestones without locking (assumes lock is held or not needed)
+   */
+  async #getMilestonesInternal(key: string): Promise<Milestone[]> {
+    const milestoneMetaDoc = await this.storage.getItemRaw(key);
+    if (!milestoneMetaDoc) {
+      return [];
+    }
+
+    return Milestone.decodeMetaDoc(
+      milestoneMetaDoc,
+      this.getMilestoneSnapshot.bind(this),
+    );
+  }
+
+  /**
    * Fetch all milestones for a document (without snapshot content loaded)
    */
-  async getMilestones(documentId: Document["id"]): Promise<Milestone[]> {
+  async getMilestones(
+    documentId: Document["id"],
+    options?: {
+      includeDeleted?: boolean;
+      lifecycleState?: Milestone["lifecycleState"];
+    },
+  ): Promise<Milestone[]> {
     return this.transaction(this.#getMetadataKey(documentId), async (key) => {
-      const milestoneMetaDoc = await this.storage.getItemRaw(key);
-      if (!milestoneMetaDoc) {
-        return [];
+      let milestones = await this.#getMilestonesInternal(key);
+
+      if (!options?.includeDeleted) {
+        milestones = milestones.filter((m) => m.lifecycleState !== "deleted");
       }
 
-      return Milestone.decodeMetaDoc(
-        milestoneMetaDoc,
-        this.getMilestoneSnapshot.bind(this),
-      );
+      if (options?.lifecycleState) {
+        milestones = milestones.filter(
+          (m) => m.lifecycleState === options.lifecycleState,
+        );
+      }
+
+      return milestones;
     });
   }
 
@@ -96,38 +121,27 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
     documentId: Document["id"];
     createdAt: number;
     snapshot: MilestoneSnapshot;
+    createdBy: { type: "user" | "system"; id: string };
   }): Promise<string> {
     const id = uuidv4();
     await this.transaction(
       this.#getMetadataKey(ctx.documentId),
       async (key) => {
-        const milestoneMetaDoc =
-          ((await this.storage.getItemRaw(key)) as Uint8Array | null) ??
-          new Uint8Array();
+        const milestones = await this.#getMilestonesInternal(key);
 
-        // Decode existing milestones to check for duplicates
-        const existingMilestones =
-          milestoneMetaDoc.length > 0
-            ? Milestone.decodeMetaDoc(
-                milestoneMetaDoc,
-                this.getMilestoneSnapshot.bind(this),
-              )
-            : [];
-
-        // Ensure uniqueness of generated id (extremely unlikely to collide)
-        const existingIndex = existingMilestones.findIndex((m) => m.id === id);
+        const existingIndex = milestones.findIndex((m) => m.id === id);
 
         const milestone = new Milestone({ ...ctx, id });
 
         // If milestone exists, replace it; otherwise, append it
-        if (existingIndex >= 0) {
-          existingMilestones[existingIndex] = milestone;
+        if (existingIndex === -1) {
+          milestones.push(milestone);
         } else {
-          existingMilestones.push(milestone);
+          milestones[existingIndex] = milestone;
         }
 
         // Re-encode the metadata document with updated milestones
-        const newMilestoneMetaDoc = Milestone.encodeMetaDoc(existingMilestones);
+        const newMilestoneMetaDoc = Milestone.encodeMetaDoc(milestones);
 
         await Promise.all([
           this.storage.setItemRaw(
@@ -153,35 +167,74 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
   }
 
   /**
-   * Delete the specified milestone(s) from storage
+   * Soft delete a milestone.
    */
-  deleteMilestone(
+  async deleteMilestone(
+    documentId: Document["id"],
+    id: Milestone["id"] | Milestone["id"][],
+    deletedBy?: string,
+  ): Promise<void> {
+    const ids = ([] as string[]).concat(id as any);
+    return this.transaction(this.#getMetadataKey(documentId), async (key) => {
+      const milestones = await this.#getMilestonesInternal(key);
+      let changed = false;
+      const contentKeysToDelete: string[] = [];
+
+      for (const targetId of ids) {
+        const milestoneIndex = milestones.findIndex((m) => m.id === targetId);
+        if (milestoneIndex === -1) continue;
+
+        const milestone = milestones[milestoneIndex];
+        if (milestone.lifecycleState !== "deleted") {
+          // Soft delete
+          milestone.lifecycleState = "deleted";
+          milestone.deletedAt = Date.now();
+          milestone.deletedBy = deletedBy;
+          changed = true;
+        } else {
+          // Hard delete - remove from array and delete content
+          milestones.splice(milestoneIndex, 1);
+          contentKeysToDelete.push(this.#getContentKey(documentId, targetId));
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await Promise.all([
+          this.storage.setItemRaw(key, Milestone.encodeMetaDoc(milestones)),
+          ...contentKeysToDelete.map((contentKey) =>
+            this.storage.removeItem(contentKey),
+          ),
+        ]);
+      }
+    });
+  }
+
+  /**
+   * Restore a soft-deleted milestone.
+   */
+  async restoreMilestone(
     documentId: Document["id"],
     id: Milestone["id"] | Milestone["id"][],
   ): Promise<void> {
     const ids = ([] as string[]).concat(id as any);
     return this.transaction(this.#getMetadataKey(documentId), async (key) => {
-      const milestones = await this.getMilestones(documentId);
-      if (!milestones.some((milestone) => ids.includes(milestone.id))) {
-        // bailing out early if the milestone ids are not found
-        return;
+      const milestones = await this.#getMilestonesInternal(key);
+      let changed = false;
+
+      for (const targetId of ids) {
+        const milestone = milestones.find((m) => m.id === targetId);
+        if (milestone && milestone.lifecycleState === "deleted") {
+          milestone.lifecycleState = "active";
+          milestone.deletedAt = undefined;
+          milestone.deletedBy = undefined;
+          changed = true;
+        }
       }
-      await Promise.all(
-        ids
-          .map((id) =>
-            // delete the content snapshots
-            this.storage.removeItem(this.#getContentKey(documentId, id)),
-          )
-          .concat(
-            // update the metadata
-            this.storage.setItemRaw(
-              key,
-              Milestone.encodeMetaDoc(
-                milestones.filter((milestone) => !ids.includes(milestone.id)),
-              ),
-            ),
-          ),
-      );
+
+      if (changed) {
+        await this.storage.setItemRaw(key, Milestone.encodeMetaDoc(milestones));
+      }
     });
   }
 
@@ -192,9 +245,10 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
     documentId: Document["id"],
     id: Milestone["id"],
     name: string,
+    createdBy?: { type: "user" | "system"; id: string },
   ): Promise<void> {
     return this.transaction(this.#getMetadataKey(documentId), async (key) => {
-      const milestones = await this.getMilestones(documentId);
+      const milestones = await this.#getMilestonesInternal(key);
       const milestoneIndex = milestones.findIndex((m) => m.id === id);
       if (milestoneIndex === -1) {
         throw new Error("Milestone not found", { cause: { documentId, id } });
@@ -205,18 +259,16 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
       if (milestone.loaded) {
         const snapshot = await milestone.fetchSnapshot();
         updatedMilestone = new Milestone({
-          id: milestone.id,
+          ...milestone,
           name,
-          documentId: milestone.documentId,
-          createdAt: milestone.createdAt,
+          createdBy: createdBy ?? milestone.createdBy,
           snapshot,
         });
       } else {
         updatedMilestone = new Milestone({
-          id: milestone.id,
+          ...milestone,
           name,
-          documentId: milestone.documentId,
-          createdAt: milestone.createdAt,
+          createdBy: createdBy ?? milestone.createdBy,
           getSnapshot: milestone["getSnapshot"]!,
         });
       }

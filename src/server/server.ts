@@ -8,8 +8,13 @@ import {
   type PubSub,
   type ServerContext,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage, MilestoneTrigger } from "teleportal/storage";
+import type { RateLimitStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
+import {
+  type RateLimitRule,
+  withRateLimit,
+} from "teleportal/transports/rate-limiter";
 import { toErrorDetails } from "../logging";
 import { getLogger } from "@logtape/logtape";
 import { register } from "../monitoring/metrics";
@@ -56,7 +61,94 @@ export type ServerOptions<Context extends ServerContext> = {
    * Defaults to a random UUID.
    */
   nodeId?: string;
+
+  /**
+   * Configuration for document size limits and warnings.
+   */
+  documentSizeConfig?: {
+    warningThreshold?: number;
+    limit?: number;
+  };
+
+  /**
+   * Configuration for automatic milestone triggers.
+   */
+  milestoneTriggerConfig?: {
+    defaultTriggers?: MilestoneTrigger[];
+  };
+
+  /**
+   * Configuration for rate limiting on client transports.
+   * If provided, all transports will be rate-limited before processing messages.
+   */
+  rateLimitConfig?: {
+    /**
+     * Array of rate limit rules to enforce.
+     * All rules must pass for a message to be allowed.
+     */
+    rules: RateLimitRule<Context>[];
+
+    /**
+     * Maximum message size in bytes
+     * @default 10MB
+     */
+    maxMessageSize?: number;
+
+    /**
+     * Default storage backend for rate limit state.
+     * Individual rules can override this with their own rateLimitStorage.
+     * If not provided, rate limits will be in-memory per transport instance.
+     */
+    rateLimitStorage?: RateLimitStorage;
+
+    /**
+     * Default function to extract user ID from message.
+     * Individual rules can override this with their own getUserId.
+     */
+    getUserId?: (message: Message<Context>) => string | undefined;
+
+    /**
+     * Default function to extract document ID from message.
+     * Individual rules can override this with their own getDocumentId.
+     */
+    getDocumentId?: (message: Message<Context>) => string | undefined;
+
+    /**
+     * Function to check if rate limiting should be skipped for this message.
+     * If returns true, all rate limit rules are skipped (message allowed) and no tokens are consumed.
+     * Useful for admin users or allow-listed sources.
+     */
+    shouldSkipRateLimit?: (
+      message: Message<Context>,
+    ) => Promise<boolean> | boolean;
+
+    /**
+     * Called when rate limit is exceeded
+     */
+    onRateLimitExceeded?: (details: {
+      ruleId: string;
+      userId?: string;
+      documentId?: string;
+      trackBy: string;
+      currentCount: number;
+      maxMessages: number;
+      windowMs: number;
+      resetAt: number;
+      message: Message<Context>;
+    }) => void;
+
+    /**
+     * Called when message size limit is exceeded
+     */
+    onMessageSizeExceeded?: (details: {
+      size: number;
+      maxSize: number;
+      message: Message<Context>;
+    }) => void;
+  };
 };
+
+type Timer = ReturnType<typeof setTimeout>;
 
 export class Server<Context extends ServerContext> extends Observable<
   ServerEvents<Context>
@@ -244,6 +336,8 @@ export class Server<Context extends ServerContext> extends Observable<
           pubSub: this.pubSub,
           nodeId: this.#nodeId,
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
+          metricsCollector: this.#metrics,
+          documentSizeConfig: this.#options.documentSizeConfig,
         });
 
         await session.load();
@@ -252,6 +346,22 @@ export class Server<Context extends ServerContext> extends Observable<
         // Record session creation metrics
         this.#metrics.sessionsActive.inc();
         this.#metrics.documentsOpenedTotal.inc();
+
+        // Record initial document size metric
+        try {
+          const meta = await storage.getDocumentMetadata(compositeDocumentId);
+          if (meta.sizeBytes !== undefined) {
+            this.#metrics.recordDocumentSize(
+              compositeDocumentId,
+              meta.sizeBytes,
+              encrypted,
+            );
+          }
+        } catch (error) {
+          sessionLogger.warn("Failed to record initial document size metric", {
+            error: toErrorDetails(error as Error),
+          });
+        }
 
         sessionLogger
           .with({
@@ -365,7 +475,7 @@ export class Server<Context extends ServerContext> extends Observable<
         });
 
         await pendingSession[Symbol.asyncDispose]();
-      } catch (e) {
+      } catch {
         // Ignore errors from pending session
       }
       this.#pendingSessions.delete(compositeDocumentId);
@@ -409,12 +519,64 @@ export class Server<Context extends ServerContext> extends Observable<
 
     logger.info("Creating new client");
 
+    // Apply rate limiting if configured
+    let rateLimitedTransport = transport;
+    if (this.#options.rateLimitConfig) {
+      const config = this.#options.rateLimitConfig;
+
+      // Build rules with default getUserId/getDocumentId if not provided
+      const rules = config.rules.map((rule) => ({
+        ...rule,
+        getUserId:
+          rule.getUserId ?? config.getUserId ?? ((msg) => msg.context?.userId),
+        getDocumentId:
+          rule.getDocumentId ?? config.getDocumentId ?? ((msg) => msg.document),
+      }));
+
+      rateLimitedTransport = withRateLimit(transport, {
+        rules,
+        maxMessageSize: config.maxMessageSize,
+        rateLimitStorage: config.rateLimitStorage,
+        getUserId: config.getUserId ?? ((msg) => msg.context.userId),
+        getDocumentId: config.getDocumentId ?? ((msg) => msg.document),
+        // Skip rate limiting for ACK messages and file-auth-message (they're responses, not requests)
+        shouldSkipRateLimit: async (message) => {
+          // Use custom skip function if provided
+          if (config.shouldSkipRateLimit) {
+            const shouldSkip = await config.shouldSkipRateLimit(message);
+            if (shouldSkip) return true;
+          }
+          // Skip rate limiting for ACK messages
+          if (message.type === "ack") {
+            return true;
+          }
+          // Skip rate limiting for file-auth-message (they're responses)
+          if (
+            message.type === "file" &&
+            message.payload.type === "file-auth-message"
+          ) {
+            return true;
+          }
+          return false;
+        },
+        onRateLimitExceeded: config.onRateLimitExceeded,
+        onMessageSizeExceeded: config.onMessageSizeExceeded,
+        metricsCollector: this.#metrics,
+        eventEmitter: this as any, // Server is an Observable, can emit events
+      });
+
+      logger.debug("Rate limiting applied to transport", {
+        ruleCount: rules.length,
+        hasStorage: !!config.rateLimitStorage,
+      });
+    }
+
     const client = new Client<Context>({
       id,
-      writable: transport.writable,
+      writable: rateLimitedTransport.writable,
     });
 
-    withMessageValidator(transport, {
+    withMessageValidator(rateLimitedTransport, {
       isAuthorized: async (message, type) => {
         if (!this.#options.checkPermission) {
           logger
@@ -744,9 +906,9 @@ export class Server<Context extends ServerContext> extends Observable<
           },
         }),
       )
-      .catch((e) => {
+      .catch((err) => {
         logger
-          .with({ error: toErrorDetails(e), clientId: id })
+          .with({ error: toErrorDetails(err), clientId: id })
           .error("Client stream errored");
       })
       .finally(() => {
@@ -883,10 +1045,10 @@ export class Server<Context extends ServerContext> extends Observable<
         .debug("Waiting for pending session creations to complete");
 
       await Promise.allSettled(
-        Array.from(this.#pendingSessions.values()).map(async (promise) => {
+        [...this.#pendingSessions.values()].map(async (promise) => {
           try {
             await promise;
-          } catch (error) {
+          } catch {
             // Ignore errors from pending session creation - they're expected if creation fails
           }
         }),
@@ -944,11 +1106,19 @@ export class Server<Context extends ServerContext> extends Observable<
   }
 
   /**
+   * Get the metrics collector instance.
+   * Useful for testing and advanced configuration.
+   */
+  getMetricsCollector(): MetricsCollector {
+    return this.#metrics;
+  }
+
+  /**
    * Perform health checks and return status.
    */
   async getHealth(): Promise<HealthStatus> {
     const checks: Record<string, "healthy" | "unhealthy" | "unknown"> = {};
-    let overallStatus: "healthy" | "unhealthy" = "healthy";
+    const overallStatus: "healthy" | "unhealthy" = "healthy";
 
     return {
       status: overallStatus,
@@ -963,14 +1133,33 @@ export class Server<Context extends ServerContext> extends Observable<
    */
   async getStatus(): Promise<StatusData> {
     // Count total clients across all sessions
-    const activeClients = Array.from(this.#sessions.values()).reduce(
-      (total, session) => total + Array.from(session.clients).length,
+    const activeClients = [...this.#sessions.values()].reduce(
+      (total, session) => total + [...session.clients].length,
       0,
     );
 
     // Get total messages processed from metrics
     const totalMessagesProcessed =
       this.#metrics.totalMessagesProcessed.getValue();
+
+    // Calculate size statistics
+    let totalDocumentSizeBytes = 0;
+    let documentsOverWarningThreshold = 0;
+    let documentsOverLimit = 0;
+
+    const documentSizes = this.#metrics.documentSizeBytes.getValues();
+    const warningThreshold = this.#options.documentSizeConfig?.warningThreshold;
+    const limit = this.#options.documentSizeConfig?.limit;
+
+    for (const { value } of documentSizes) {
+      totalDocumentSizeBytes += value;
+      if (warningThreshold && value >= warningThreshold) {
+        documentsOverWarningThreshold++;
+      }
+      if (limit && value > limit) {
+        documentsOverLimit++;
+      }
+    }
 
     return {
       nodeId: this.#nodeId,
@@ -980,8 +1169,15 @@ export class Server<Context extends ServerContext> extends Observable<
       totalMessagesProcessed,
       totalDocumentsOpened: this.#metrics.documentsOpenedTotal.getValue(),
       messageTypeBreakdown: this.#metrics.getMessageCountsByType(),
+      rateLimitExceededTotal: this.#metrics.rateLimitExceededTotal.getValue(),
+      rateLimitBreakdown: this.#metrics.getRateLimitCountsByTrackBy(),
+      rateLimitTopOffenders: this.#metrics.getRateLimitTopOffenders(),
+      rateLimitRecentEvents: this.#metrics.getRateLimitRecentEvents(),
       uptime: Math.floor((Date.now() - this.#startTime) / 1000),
       timestamp: new Date().toISOString(),
+      totalDocumentSizeBytes,
+      documentsOverWarningThreshold,
+      documentsOverLimit,
     };
   }
 

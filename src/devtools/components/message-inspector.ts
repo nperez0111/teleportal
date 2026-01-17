@@ -61,14 +61,14 @@ export class MessageInspector {
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-empty-icon";
     icon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
-    emptyState.appendChild(icon);
+    emptyState.append(icon);
 
     const text = document.createElement("div");
     text.className = "devtools-inspector-empty-text";
     text.textContent = "Select a message to inspect";
-    emptyState.appendChild(text);
+    emptyState.append(text);
 
-    this.element.appendChild(emptyState);
+    this.element.append(emptyState);
   }
 
   private renderHeader() {
@@ -83,7 +83,7 @@ export class MessageInspector {
     const title = document.createElement("div");
     title.className = "devtools-inspector-title";
     title.textContent = "Message Inspector";
-    header.appendChild(title);
+    header.append(title);
 
     if (payload) {
       const copyBtn = document.createElement("button");
@@ -98,10 +98,10 @@ export class MessageInspector {
           copyBtn.classList.remove("copied");
         }, 1500);
       });
-      header.appendChild(copyBtn);
+      header.append(copyBtn);
     }
 
-    this.element.appendChild(header);
+    this.element.append(header);
   }
 
   private renderContent() {
@@ -110,11 +110,11 @@ export class MessageInspector {
     content.className = "devtools-inspector-content";
 
     // Metadata section
-    content.appendChild(this.renderMetadataSection());
+    content.append(this.renderMetadataSection());
 
     // ACK section (if applicable)
     if (this.message.ackedBy) {
-      content.appendChild(this.renderAckSection());
+      content.append(this.renderAckSection());
     }
 
     // Payload section
@@ -123,10 +123,10 @@ export class MessageInspector {
       this.message.provider.doc,
     );
     if (payload) {
-      content.appendChild(this.renderPayloadSection(payload));
+      content.append(this.renderPayloadSection(payload));
     }
 
-    this.element.appendChild(content);
+    this.element.append(content);
   }
 
   private renderMetadataSection(): HTMLElement {
@@ -139,30 +139,30 @@ export class MessageInspector {
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-section-icon";
     icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
-    titleContainer.appendChild(icon);
+    titleContainer.append(icon);
 
     const title = document.createElement("span");
     title.textContent = "Details";
-    titleContainer.appendChild(title);
+    titleContainer.append(title);
 
-    section.appendChild(titleContainer);
+    section.append(titleContainer);
 
     const card = document.createElement("div");
     card.className = "devtools-inspector-card";
 
     // Message ID
-    card.appendChild(
+    card.append(
       this.createCopyableRow("Message ID", this.message!.id, true),
     );
 
     // Direction
-    card.appendChild(this.createDirectionRow());
+    card.append(this.createDirectionRow());
 
     // Type
-    card.appendChild(this.createTypeRow());
+    card.append(this.createTypeRow());
 
     // Document
-    card.appendChild(
+    card.append(
       this.createCopyableRow(
         "Document",
         this.message!.document || "N/A",
@@ -171,7 +171,7 @@ export class MessageInspector {
     );
 
     // Timestamp
-    card.appendChild(
+    card.append(
       this.createCopyableRow(
         "Timestamp",
         new Date(this.message!.timestamp).toISOString(),
@@ -180,9 +180,9 @@ export class MessageInspector {
     );
 
     // Encrypted
-    card.appendChild(this.createEncryptedRow());
+    card.append(this.createEncryptedRow());
 
-    section.appendChild(card);
+    section.append(card);
     return section;
   }
 
@@ -193,12 +193,12 @@ export class MessageInspector {
     const labelEl = document.createElement("div");
     labelEl.className = "devtools-inspector-label";
     labelEl.textContent = label;
-    row.appendChild(labelEl);
+    row.append(labelEl);
 
     const valueEl = document.createElement("div");
     valueEl.className = "devtools-inspector-value";
     valueEl.textContent = value;
-    row.appendChild(valueEl);
+    row.append(valueEl);
 
     return row;
   }
@@ -214,7 +214,7 @@ export class MessageInspector {
     const labelEl = document.createElement("div");
     labelEl.className = "devtools-inspector-label";
     labelEl.textContent = label;
-    row.appendChild(labelEl);
+    row.append(labelEl);
 
     const valueContainer = document.createElement("div");
     valueContainer.className =
@@ -224,7 +224,7 @@ export class MessageInspector {
     valueText.className =
       "devtools-inspector-value-text devtools-inspector-value-mono";
     valueText.textContent = value;
-    valueContainer.appendChild(valueText);
+    valueContainer.append(valueText);
 
     if (copyable && value !== "N/A") {
       const copyIcon = document.createElement("button");
@@ -235,10 +235,10 @@ export class MessageInspector {
         e.stopPropagation();
         this.copyToClipboard(value, copyIcon);
       });
-      valueContainer.appendChild(copyIcon);
+      valueContainer.append(copyIcon);
     }
 
-    row.appendChild(valueContainer);
+    row.append(valueContainer);
     return row;
   }
 
@@ -249,7 +249,7 @@ export class MessageInspector {
     const labelEl = document.createElement("div");
     labelEl.className = "devtools-inspector-label";
     labelEl.textContent = "Direction";
-    row.appendChild(labelEl);
+    row.append(labelEl);
 
     const valueEl = document.createElement("div");
     valueEl.className = "devtools-inspector-value";
@@ -267,14 +267,14 @@ export class MessageInspector {
       this.message!.direction === "sent"
         ? `<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.5 9.5L9.5 2.5M9.5 2.5H4.5M9.5 2.5V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
         : `<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M9.5 2.5L2.5 9.5M2.5 9.5H7.5M2.5 9.5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    badge.appendChild(icon);
+    badge.append(icon);
 
     const text = document.createElement("span");
     text.textContent = this.message!.direction === "sent" ? "Sent" : "Received";
-    badge.appendChild(text);
+    badge.append(text);
 
-    valueEl.appendChild(badge);
-    row.appendChild(valueEl);
+    valueEl.append(badge);
+    row.append(valueEl);
 
     return row;
   }
@@ -286,7 +286,7 @@ export class MessageInspector {
     const labelEl = document.createElement("div");
     labelEl.className = "devtools-inspector-label";
     labelEl.textContent = "Type";
-    row.appendChild(labelEl);
+    row.append(labelEl);
 
     const valueEl = document.createElement("div");
     valueEl.className = "devtools-inspector-value";
@@ -294,9 +294,9 @@ export class MessageInspector {
     const badge = document.createElement("span");
     badge.className = `devtools-inspector-type ${getMessageTypeColor(this.message!.message)}`;
     badge.textContent = getMessageTypeLabel(this.message!.message);
-    valueEl.appendChild(badge);
+    valueEl.append(badge);
 
-    row.appendChild(valueEl);
+    row.append(valueEl);
     return row;
   }
 
@@ -307,7 +307,7 @@ export class MessageInspector {
     const labelEl = document.createElement("div");
     labelEl.className = "devtools-inspector-label";
     labelEl.textContent = "Encrypted";
-    row.appendChild(labelEl);
+    row.append(labelEl);
 
     const valueEl = document.createElement("div");
     valueEl.className = "devtools-inspector-value";
@@ -324,16 +324,16 @@ export class MessageInspector {
       indicator.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
       const text = document.createElement("span");
       text.textContent = "Yes";
-      indicator.appendChild(text);
+      indicator.append(text);
     } else {
       indicator.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
       const text = document.createElement("span");
       text.textContent = "No";
-      indicator.appendChild(text);
+      indicator.append(text);
     }
 
-    valueEl.appendChild(indicator);
-    row.appendChild(valueEl);
+    valueEl.append(indicator);
+    row.append(valueEl);
     return row;
   }
 
@@ -355,7 +355,7 @@ export class MessageInspector {
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-ack-icon";
     icon.textContent = "✓";
-    ackButton.appendChild(icon);
+    ackButton.append(icon);
 
     const label = document.createElement("span");
     label.className = "devtools-inspector-ack-label";
@@ -363,16 +363,16 @@ export class MessageInspector {
       this.message!.direction === "sent"
         ? "Acknowledged by server"
         : "Acknowledged by client";
-    ackButton.appendChild(label);
+    ackButton.append(label);
 
     const chevron = document.createElement("span");
     chevron.className = "devtools-inspector-ack-chevron";
     chevron.innerHTML = this.showAckDetails
       ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`
       : `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-    ackButton.appendChild(chevron);
+    ackButton.append(chevron);
 
-    ackContainer.appendChild(ackButton);
+    ackContainer.append(ackButton);
 
     // Expandable details
     if (this.showAckDetails) {
@@ -381,7 +381,7 @@ export class MessageInspector {
 
       // ACK Message ID (the ID of the ACK message itself)
       const ackMessageId = this.message!.ackedBy!.ackMessageId;
-      details.appendChild(
+      details.append(
         this.createAckDetailRow("ACK Message ID", ackMessageId),
       );
 
@@ -389,14 +389,14 @@ export class MessageInspector {
       const ackPayload = this.message!.ackedBy!.ackMessage.payload as {
         messageId: string;
       };
-      details.appendChild(
+      details.append(
         this.createAckDetailRow("Acknowledged ID", ackPayload.messageId),
       );
 
-      ackContainer.appendChild(details);
+      ackContainer.append(details);
     }
 
-    section.appendChild(ackContainer);
+    section.append(ackContainer);
     return section;
   }
 
@@ -407,7 +407,7 @@ export class MessageInspector {
     const labelEl = document.createElement("span");
     labelEl.className = "devtools-inspector-ack-detail-label";
     labelEl.textContent = label;
-    row.appendChild(labelEl);
+    row.append(labelEl);
 
     const valueContainer = document.createElement("div");
     valueContainer.className = "devtools-inspector-ack-detail-value-container";
@@ -415,7 +415,7 @@ export class MessageInspector {
     const valueEl = document.createElement("span");
     valueEl.className = "devtools-inspector-ack-detail-value";
     valueEl.textContent = value;
-    valueContainer.appendChild(valueEl);
+    valueContainer.append(valueEl);
 
     const copyIcon = document.createElement("button");
     copyIcon.className = "devtools-inspector-ack-copy-icon";
@@ -425,9 +425,9 @@ export class MessageInspector {
       e.stopPropagation();
       this.copyToClipboard(value, copyIcon);
     });
-    valueContainer.appendChild(copyIcon);
+    valueContainer.append(copyIcon);
 
-    row.appendChild(valueContainer);
+    row.append(valueContainer);
     return row;
   }
 
@@ -441,13 +441,13 @@ export class MessageInspector {
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-section-icon";
     icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
-    titleContainer.appendChild(icon);
+    titleContainer.append(icon);
 
     const title = document.createElement("span");
     title.textContent = "Payload";
-    titleContainer.appendChild(title);
+    titleContainer.append(title);
 
-    section.appendChild(titleContainer);
+    section.append(titleContainer);
 
     const payloadBox = document.createElement("div");
     payloadBox.className = "devtools-inspector-payload";
@@ -456,8 +456,8 @@ export class MessageInspector {
     payloadContent.className = "devtools-inspector-payload-content";
     payloadContent.textContent = payload;
 
-    payloadBox.appendChild(payloadContent);
-    section.appendChild(payloadBox);
+    payloadBox.append(payloadContent);
+    section.append(payloadBox);
 
     return section;
   }

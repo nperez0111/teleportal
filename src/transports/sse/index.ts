@@ -44,7 +44,7 @@ export function getSSESink<Context extends ClientContext>({
           controller.enqueue(
             `event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`,
           );
-        } catch (error) {
+        } catch {
           clearInterval(interval);
         }
       }, 5000);
@@ -140,7 +140,7 @@ export function getSSESource<Context extends ClientContext>({
             clearInterval(interval);
             try {
               controller.close();
-            } catch (e) {
+            } catch {
               // ignore if we can't close, it may have already been cancelled
             }
           }

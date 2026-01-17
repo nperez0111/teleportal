@@ -62,6 +62,10 @@
       "types": "./dist/transports/send-file/index.d.mts",
       "default": "./dist/transports/send-file/index.mjs"
     },
+    "./transports/rate-limiter": {
+      "types": "./dist/transports/rate-limiter/index.d.mts",
+      "default": "./dist/transports/rate-limiter/index.mjs"
+    },
     "./transports": {
       "types": "./dist/transports/index.d.mts",
       "default": "./dist/transports/index.mjs"
@@ -112,7 +116,7 @@
     "dev": "PORT=1235 bun run --watch ./playground/bun/server.ts",
     "dev:encrypted": "PORT=1234 bun run --watch ./playground/bun/encrypted-server.ts",
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
-    "test": "bun run test:types && bun test",
+    "test": "bun run test:types && bun test --dots",
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {

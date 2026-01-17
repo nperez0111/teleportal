@@ -5,3 +5,4 @@ export * from "./milestone-storage";
 export * from "./temporary-upload-storage";
 export * from "./factory";
 export * from "./encrypted-driver";
+export * from "./rate-limit-storage";

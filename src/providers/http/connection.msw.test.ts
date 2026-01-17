@@ -106,35 +106,35 @@ class MockEventSourceForMSW {
     const listeners = this.listeners.get(event.type);
     if (listeners && listeners.size > 0) {
       // Create a copy of the listeners set to avoid issues if listeners are modified during iteration
-      const listenersArray = Array.from(listeners);
-      listenersArray.forEach((listener) => {
+      const listenersArray = [...listeners];
+      for (const listener of listenersArray) {
         try {
           // Ensure the event has the correct structure
           // For MessageEvent, ensure data property is accessible
-          if (event instanceof MessageEvent) {
-            // Verify event.data exists and is a string
-            if (typeof event.data !== "string") {
-              console.error(
-                "MessageEvent.data is not a string:",
-                typeof event.data,
-                event.data,
-              );
-              return;
-            }
+          if (
+            event instanceof MessageEvent && // Verify event.data exists and is a string
+            typeof event.data !== "string"
+          ) {
+            console.error(
+              "MessageEvent.data is not a string:",
+              typeof event.data,
+              event.data,
+            );
+            continue;
           }
           // Call the listener - this is the handler from getSSESource
           // It will decode the message and enqueue it to the ReadableStream controller
           listener(event);
-        } catch (e) {
+        } catch (err) {
           // Log errors for debugging - this is critical for debugging
-          console.error("Error in EventSource listener:", e);
-          if (e instanceof Error) {
-            console.error("Error stack:", e.stack);
+          console.error("Error in EventSource listener:", err);
+          if (err instanceof Error) {
+            console.error("Error stack:", err.stack);
           }
           // Don't re-throw - let the test continue to see if messages arrive
           // The error might be expected (e.g., if the stream is closed)
         }
-      });
+      }
     }
   }
 
@@ -170,7 +170,7 @@ class MockEventSourceForMSW {
 
       // Verify the data is a valid base64 string
       if (typeof data !== "string") {
-        throw new Error(`Data is not a string: ${typeof data}`);
+        throw new TypeError(`Data is not a string: ${typeof data}`);
       }
 
       // Create and dispatch the event
@@ -201,7 +201,7 @@ class MockEventSourceForMSW {
 }
 
 // Make EventSource available globally
-if (typeof globalThis.EventSource === "undefined") {
+if (globalThis.EventSource === undefined) {
   globalThis.EventSource = MockEventSourceForMSW as any;
 }
 
@@ -213,7 +213,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // Mock the global EventTarget if it's not available in the test environment
-if (typeof global.EventTarget === "undefined") {
+if (globalThis.EventTarget === undefined) {
   class EventTarget {
     listeners: Record<string, ((event: any) => void)[]> = {};
 
@@ -234,12 +234,12 @@ if (typeof global.EventTarget === "undefined") {
 
     dispatchEvent(event: { type: string }) {
       if (this.listeners[event.type]) {
-        this.listeners[event.type].forEach((listener) => listener(event));
+        for (const listener of this.listeners[event.type]) listener(event);
       }
       return true;
     }
   }
-  global.EventTarget = EventTarget as any;
+  globalThis.EventTarget = EventTarget as any;
 }
 
 // Helper function to create a test message
@@ -975,7 +975,6 @@ describe("HttpConnection with MSW", () => {
   describe("Cleanup", () => {
     test("should properly cleanup on destroy", async () => {
       const testClientId = "test-client-cleanup";
-      let clientClosed = false;
 
       server.use(
         http.post(`${baseUrl}/sse`, () => {
@@ -1156,7 +1155,7 @@ describe("HttpConnection with MSW", () => {
             }
 
             return HttpResponse.json({ success: true });
-          } catch (error) {
+          } catch {
             // Return error response
             return HttpResponse.json(
               { error: "Failed to process message" },
@@ -1303,7 +1302,7 @@ describe("HttpConnection with MSW", () => {
             }
 
             return HttpResponse.json({ success: true });
-          } catch (error) {
+          } catch {
             return HttpResponse.json(
               { error: "Failed to process message" },
               { status: 500 },
@@ -1454,7 +1453,7 @@ describe("HttpConnection with MSW", () => {
             }
 
             return HttpResponse.json({ success: true });
-          } catch (error) {
+          } catch {
             // Return error response
             return HttpResponse.json(
               { error: "Failed to process message" },

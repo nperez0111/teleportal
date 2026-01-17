@@ -643,6 +643,7 @@ describe("can encode and decode", () => {
         "document": "test-doc",
         "encrypted": false,
         "payload": {
+          "includeDeleted": false,
           "snapshotIds": [
             "known-1",
             "known-2",
@@ -661,12 +662,14 @@ describe("can encode and decode", () => {
         name: "v1.0.0",
         documentId: "test-doc",
         createdAt: 1234567890,
+        createdBy: { type: "system" as const, id: "test-node" },
       },
       {
         id: "milestone-2",
         name: "v1.0.1",
         documentId: "test-doc",
         createdAt: 1234567891,
+        createdBy: { type: "system" as const, id: "test-node" },
       },
     ];
 
@@ -734,7 +737,9 @@ describe("can encode and decode", () => {
   });
 
   it("can encode and decode a milestone-create-request with name", () => {
-    const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as import(".").MilestoneSnapshot;
+    const snapshot = new Uint8Array([
+      1, 2, 3, 4, 5,
+    ]) as import(".").MilestoneSnapshot;
     const decoded = decodeMessage(
       new DocMessage("test-doc", {
         type: "milestone-create-request",
@@ -755,7 +760,9 @@ describe("can encode and decode", () => {
   });
 
   it("can encode and decode a milestone-create-request without name", () => {
-    const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as import(".").MilestoneSnapshot;
+    const snapshot = new Uint8Array([
+      6, 7, 8, 9, 10,
+    ]) as import(".").MilestoneSnapshot;
     const decoded = decodeMessage(
       new DocMessage("test-doc", {
         type: "milestone-create-request",
@@ -775,7 +782,9 @@ describe("can encode and decode", () => {
   });
 
   it("can encode and decode a milestone-create-request with snapshot", () => {
-    const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as import(".").MilestoneSnapshot;
+    const snapshot = new Uint8Array([
+      1, 2, 3, 4, 5,
+    ]) as import(".").MilestoneSnapshot;
     const decoded = decodeMessage(
       new DocMessage("test-doc", {
         type: "milestone-create-request",
@@ -796,7 +805,9 @@ describe("can encode and decode", () => {
   });
 
   it("can encode and decode a milestone-create-request with snapshot but no name", () => {
-    const snapshot = new Uint8Array([6, 7, 8, 9, 10]) as import(".").MilestoneSnapshot;
+    const snapshot = new Uint8Array([
+      6, 7, 8, 9, 10,
+    ]) as import(".").MilestoneSnapshot;
     const decoded = decodeMessage(
       new DocMessage("test-doc", {
         type: "milestone-create-request",
@@ -821,6 +832,7 @@ describe("can encode and decode", () => {
       name: "v1.0.0",
       documentId: "test-doc",
       createdAt: 1234567890,
+      createdBy: { type: "system" as const, id: "test-node" },
     };
 
     const decoded = decodeMessage(
@@ -866,6 +878,7 @@ describe("can encode and decode", () => {
       name: "v1.0.1",
       documentId: "test-doc",
       createdAt: 1234567890,
+      createdBy: { type: "system" as const, id: "test-node" },
     };
 
     const decoded = decodeMessage(

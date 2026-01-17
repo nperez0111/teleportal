@@ -123,17 +123,17 @@ class MockWebSocket {
       // Use setTimeout to ensure errors are handled asynchronously
       if (event.type === "error") {
         setTimeout(() => {
-          listeners.forEach((listener) => {
+          for (const listener of listeners) {
             try {
               listener(event);
             } catch (error) {
               // Silently handle errors to prevent them from being thrown
               console.warn("MockWebSocket error handler error:", error);
             }
-          });
+          }
         }, 0);
       } else {
-        listeners.forEach((listener) => listener(event));
+        for (const listener of listeners) listener(event);
       }
     }
     return true;
@@ -215,7 +215,7 @@ class MockEventSource {
   dispatchEvent(event: Event) {
     const listeners = this.listeners[event.type];
     if (listeners) {
-      listeners.forEach((listener) => listener(event));
+      for (const listener of listeners) listener(event);
     }
     return true;
   }

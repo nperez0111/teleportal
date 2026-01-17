@@ -85,25 +85,20 @@ export function createUnstorage(
     keyPrefix: milestoneKeyPrefix,
   });
 
-  let documentStorage:
-    | UnstorageDocumentStorage
-    | UnstorageEncryptedDocumentStorage;
-  if (options?.encrypted) {
-    documentStorage = new UnstorageEncryptedDocumentStorage(storage, {
-      ttl: options?.ttl,
-      keyPrefix: documentKeyPrefix,
-      fileStorage,
-      milestoneStorage,
-    });
-  } else {
-    documentStorage = new UnstorageDocumentStorage(storage, {
-      scanKeys: options?.scanKeys ?? false,
-      ttl: options?.ttl,
-      keyPrefix: documentKeyPrefix,
-      fileStorage,
-      milestoneStorage,
-    });
-  }
+  const documentStorage = options?.encrypted
+    ? new UnstorageEncryptedDocumentStorage(storage, {
+        ttl: options?.ttl,
+        keyPrefix: documentKeyPrefix,
+        fileStorage,
+        milestoneStorage,
+      })
+    : new UnstorageDocumentStorage(storage, {
+        scanKeys: options?.scanKeys ?? false,
+        ttl: options?.ttl,
+        keyPrefix: documentKeyPrefix,
+        fileStorage,
+        milestoneStorage,
+      });
 
   fileStorage.setDocumentStorage(documentStorage);
 

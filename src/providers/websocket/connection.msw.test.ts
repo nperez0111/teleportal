@@ -120,7 +120,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
             } catch (error) {
               // Only ignore decode errors for non-file messages
               // File handler errors should propagate
-              const message = receivedMessages[receivedMessages.length - 1];
+              const message = receivedMessages.at(-1);
               if (message?.type === "file") {
                 throw error;
               }
@@ -203,7 +203,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
                   wsClient.send(response.encoded);
                 });
               }
-            } catch (error) {
+            } catch {
               // Ignore decode errors for non-file messages
             }
           });
@@ -300,7 +300,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
             } catch (error) {
               // Only ignore decode errors for non-file messages
               // File handler errors should propagate
-              const message = receivedMessages[receivedMessages.length - 1];
+              const message = receivedMessages.at(-1);
               if (message?.type === "file") {
                 throw error;
               }

@@ -20,6 +20,8 @@ import {
 } from "teleportal/monitoring";
 import { createEncryptedDriver } from "teleportal/storage";
 import { importEncryptionKey } from "teleportal/encryption-key";
+import { UnstorageRateLimitStorage } from "teleportal/storage";
+import type { RateLimitRule } from "teleportal/transports/rate-limiter";
 
 import homepage from "../src/index.html";
 // import { RedisPubSub } from "teleportal/transports/redis";
@@ -45,11 +47,32 @@ const storage = createStorage({
 
 const memoryStorage = createStorage();
 
+// Create rate limit storage using the same backing storage
+const rateLimitStorage = new UnstorageRateLimitStorage(
+  Bun.env.NODE_ENV === "production" ? memoryStorage : storage,
+);
+
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
   expiresIn: 3600, // 1 hour
   issuer: "my-collaborative-app",
 });
+
+// Configure rate limit rules
+const rateLimitRules: RateLimitRule<TokenPayload & { clientId: string }>[] = [
+  {
+    id: "per-user",
+    maxMessages: 100, // 100 messages per window
+    windowMs: 1000, // 1 second window
+    trackBy: "user",
+  },
+  {
+    id: "per-document",
+    maxMessages: 500, // 500 messages per window per document
+    windowMs: 10000, // 10 second window
+    trackBy: "document",
+  },
+];
 
 const server = new Server<TokenPayload & { clientId: string }>({
   getStorage: async (ctx) => {
@@ -69,6 +92,19 @@ const server = new Server<TokenPayload & { clientId: string }>({
   // pubSub: new RedisPubSub({
   //   path: "redis://127.0.0.1:6379",
   // }),
+  rateLimitConfig: {
+    rules: rateLimitRules,
+    rateLimitStorage,
+    maxMessageSize: 10 * 1024 * 1024, // 10MB
+    getUserId: (message) => message.context?.userId,
+    getDocumentId: (message) => message.document,
+    onRateLimitExceeded: (details) => {
+      console.warn("Rate limit exceeded", details);
+    },
+    onMessageSizeExceeded: (details) => {
+      console.warn("Message size exceeded", details);
+    },
+  },
 });
 
 const ws = crossws(

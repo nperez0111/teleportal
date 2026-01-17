@@ -121,13 +121,13 @@ export function getYDocSource<Context extends ClientContext>({
           }
           try {
             controller.enqueue(await handler.onUpdate(update as Update));
-          } catch (e: any) {
+          } catch (err: any) {
             // Stream may be closed, ignore the error
             if (
-              e?.code !== "ERR_INVALID_STATE" &&
-              e?.message !== "Invalid state: Controller is already closed"
+              err?.code !== "ERR_INVALID_STATE" &&
+              err?.message !== "Invalid state: Controller is already closed"
             ) {
-              throw e;
+              throw err;
             }
           }
         });
@@ -337,7 +337,11 @@ export function getYDocSink<Context extends ClientContext>({
                 case "milestone-create-response":
                 case "milestone-update-name-request":
                 case "milestone-update-name-response":
-                case "milestone-auth-message": {
+                case "milestone-auth-message":
+                case "milestone-delete-request":
+                case "milestone-delete-response":
+                case "milestone-restore-request":
+                case "milestone-restore-response": {
                   // Milestone messages are handled by the server, not the client transport
                   // They can be passed through but are not processed here
                   break;
@@ -360,10 +364,10 @@ export function getYDocSink<Context extends ClientContext>({
               break;
             }
           }
-        } catch (e) {
+        } catch (err) {
           onSynced(false);
           onSynced = () => {};
-          controller.error(e);
+          controller.error(err);
         }
       },
       close() {

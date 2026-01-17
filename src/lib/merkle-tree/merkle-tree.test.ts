@@ -19,7 +19,9 @@ describe("Merkle Tree", () => {
 
     expect(tree.leafCount).toBe(3);
     expect(tree.nodes.length).toBeGreaterThan(3); // Should have internal nodes
-    expect(tree.nodes[tree.nodes.length - 1].hash).toBeDefined(); // Root hash
+    const root = tree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined(); // Root hash
   });
 
   it("should build a merkle tree from a single chunk", () => {
@@ -45,8 +47,10 @@ describe("Merkle Tree", () => {
     // Verify we can generate and verify a proof for the empty chunk
     const proof = generateMerkleProof(tree, 0);
     expect(proof.length).toBe(0); // Single chunk has no proof path
-    const root = tree.nodes[tree.nodes.length - 1].hash!;
-    const isValid = verifyMerkleProof(chunks[0], proof, root, 0);
+    const root = tree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    const isValid = verifyMerkleProof(chunks[0], proof, root!.hash!, 0);
     expect(isValid).toBe(true);
   });
 
@@ -72,10 +76,12 @@ describe("Merkle Tree", () => {
     ];
 
     const tree = buildMerkleTree(chunks);
-    const root = tree.nodes[tree.nodes.length - 1].hash!;
+    const root = tree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
     const proof = generateMerkleProof(tree, 0);
 
-    const isValid = verifyMerkleProof(chunks[0], proof, root, 0);
+    const isValid = verifyMerkleProof(chunks[0], proof, root!.hash!, 0);
     expect(isValid).toBe(true);
   });
 
@@ -83,12 +89,14 @@ describe("Merkle Tree", () => {
     const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
 
     const tree = buildMerkleTree(chunks);
-    const root = tree.nodes[tree.nodes.length - 1].hash!;
+    const root = tree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
     const proof = generateMerkleProof(tree, 0);
 
     // Modify the chunk
     const modifiedChunk = new Uint8Array([9, 9, 9]);
-    const isValid = verifyMerkleProof(modifiedChunk, proof, root, 0);
+    const isValid = verifyMerkleProof(modifiedChunk, proof, root!.hash!, 0);
     expect(isValid).toBe(false);
   });
 
@@ -107,10 +115,13 @@ describe("Merkle Tree", () => {
     expect(deserialized.nodes.length).toBe(tree.nodes.length);
 
     // Verify root hash matches
-    const originalRoot = tree.nodes[tree.nodes.length - 1].hash!;
-    const deserializedRoot =
-      deserialized.nodes[deserialized.nodes.length - 1].hash!;
-    expect(deserializedRoot).toEqual(originalRoot);
+    const originalRoot = tree.nodes.at(-1);
+    expect(originalRoot).toBeDefined();
+    expect(originalRoot?.hash).toBeDefined();
+    const deserializedRoot = deserialized.nodes.at(-1);
+    expect(deserializedRoot).toBeDefined();
+    expect(deserializedRoot?.hash).toBeDefined();
+    expect(deserializedRoot!.hash!).toEqual(originalRoot!.hash!);
   });
 
   it("should handle large number of chunks", () => {
@@ -123,10 +134,12 @@ describe("Merkle Tree", () => {
     expect(tree.leafCount).toBe(100);
 
     // Verify all chunks can generate proofs
-    for (let i = 0; i < chunks.length; i++) {
+    const root = tree.nodes.at(-1);
+    expect(root).toBeDefined();
+    expect(root?.hash).toBeDefined();
+    for (const [i, chunk] of chunks.entries()) {
       const proof = generateMerkleProof(tree, i);
-      const root = tree.nodes[tree.nodes.length - 1].hash!;
-      const isValid = verifyMerkleProof(chunks[i], proof, root, i);
+      const isValid = verifyMerkleProof(chunk, proof, root!.hash!, i);
       expect(isValid).toBe(true);
     }
   });

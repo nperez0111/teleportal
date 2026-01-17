@@ -44,12 +44,15 @@ describe("UnstorageEncryptedDocumentStorage", () => {
     });
 
     it("should accept custom TTL option", async () => {
-      const customStorage = new UnstorageEncryptedDocumentStorage(createStorage(), {
-        ttl: 10000,
-      });
+      const customStorage = new UnstorageEncryptedDocumentStorage(
+        createStorage(),
+        {
+          ttl: 10_000,
+        },
+      );
 
       const key = "test-doc-2";
-      let executionOrder: string[] = [];
+      const executionOrder: string[] = [];
 
       const promise1 = customStorage.transaction(key, async () => {
         executionOrder.push("start-1");
@@ -180,7 +183,9 @@ describe("UnstorageEncryptedDocumentStorage", () => {
         seenMessages: { 1: { 5: messageId } },
       });
 
-      expect(await storage.fetchEncryptedMessage(key, messageId)).not.toBeNull();
+      expect(
+        await storage.fetchEncryptedMessage(key, messageId),
+      ).not.toBeNull();
 
       await storage.deleteDocument(key);
 
@@ -451,7 +456,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
 
     it("should handle concurrent transactions with locking", async () => {
       const key = "test-doc-22";
-      let executionOrder: string[] = [];
+      const executionOrder: string[] = [];
 
       const promise1 = storage.transaction(key, async () => {
         executionOrder.push("start-1");
@@ -481,7 +486,9 @@ describe("UnstorageEncryptedDocumentStorage", () => {
 
   describe("milestoneStorage", () => {
     it("should be undefined when not provided", () => {
-      const testStorage = new UnstorageEncryptedDocumentStorage(createStorage());
+      const testStorage = new UnstorageEncryptedDocumentStorage(
+        createStorage(),
+      );
       expect(testStorage.milestoneStorage).toBeUndefined();
     });
 
@@ -492,20 +499,27 @@ describe("UnstorageEncryptedDocumentStorage", () => {
         getMilestone: async () => null,
         getMilestones: async () => [],
         deleteMilestone: async () => {},
+        restoreMilestone: async () => {},
         updateMilestoneName: async () => {},
       };
 
-      const testStorage = new UnstorageEncryptedDocumentStorage(createStorage(), {
-        milestoneStorage: customMilestoneStorage,
-      });
+      const testStorage = new UnstorageEncryptedDocumentStorage(
+        createStorage(),
+        {
+          milestoneStorage: customMilestoneStorage,
+        },
+      );
 
       expect(testStorage.milestoneStorage).toBe(customMilestoneStorage);
     });
 
     it("should allow creating milestones when milestoneStorage is provided", async () => {
-      const testStorage = new UnstorageEncryptedDocumentStorage(createStorage(), {
-        milestoneStorage: new UnstorageMilestoneStorage(createStorage()),
-      });
+      const testStorage = new UnstorageEncryptedDocumentStorage(
+        createStorage(),
+        {
+          milestoneStorage: new UnstorageMilestoneStorage(createStorage()),
+        },
+      );
       const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
 
       const milestoneId = await testStorage.milestoneStorage!.createMilestone({
@@ -513,6 +527,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
         documentId: "test-doc",
         createdAt: Date.now(),
         snapshot,
+        createdBy: { type: "system", id: "test-node" },
       });
 
       expect(typeof milestoneId).toBe("string");
@@ -541,19 +556,24 @@ describe("UnstorageEncryptedDocumentStorage", () => {
         getMilestone: async () => null,
         getMilestones: async () => [],
         deleteMilestone: async () => {},
+        restoreMilestone: async () => {},
         updateMilestoneName: async () => {},
       };
 
-      const testStorage = new UnstorageEncryptedDocumentStorage(createStorage(), {
-        milestoneStorage: customMilestoneStorage,
-      });
+      const testStorage = new UnstorageEncryptedDocumentStorage(
+        createStorage(),
+        {
+          milestoneStorage: customMilestoneStorage,
+        },
+      );
 
       const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
       const milestoneId = await testStorage.milestoneStorage!.createMilestone({
         name: "custom-milestone",
         documentId: "test-doc",
-        createdAt: 1234567890,
+        createdAt: 1_234_567_890,
         snapshot,
+        createdBy: { type: "system", id: "test-node" },
       });
 
       expect(createMilestoneCalled).toBe(true);
@@ -563,4 +583,3 @@ describe("UnstorageEncryptedDocumentStorage", () => {
     });
   });
 });
-

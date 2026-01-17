@@ -41,13 +41,9 @@ export async function compactToSingleUpdate(
       write(chunk) {
         const decoder = decoding.createDecoder(chunk);
         const update = decoding.readVarUint8Array(decoder);
-        if (mergedUpdates) {
-          mergedUpdates = Y.mergeUpdatesV2([mergedUpdates, update]);
-        } else {
-          mergedUpdates = update;
-        }
+        mergedUpdates = mergedUpdates ? Y.mergeUpdatesV2([mergedUpdates, update]) : update;
         const tail = decoding.readTailAsUint8Array(decoder);
-        if (tail.length) {
+        if (tail.length > 0) {
           throw new Error(
             "Unexpected bytes at the end of the update, expected proper alignment of updates",
             {

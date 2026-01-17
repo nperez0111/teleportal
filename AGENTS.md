@@ -11,6 +11,8 @@ This document serves as an index for all specifications in this project.
 
 This project is a Y.js Sync Server. It is designed to be a flexible, extensible, and easy-to-use library for building a "sync server" for Y.js. A "sync server" is a server that can sync Y.js documents between clients. Teleportal aims to be a general purpose framework for building sync servers for Y.js. It is designed to be storage, transport, and JS runtime agnostic. We always use JS native APIs and Bun as the JS runtime, package manager, and build tool.
 
+The project is experimental, and the API is subject to change. WE DO NOT NEED BACKWARD COMPATIBILITY.
+
 ## Sub-packages
 
 There are several sub-packages built with documentation:
@@ -29,7 +31,7 @@ There are several sub-packages built with documentation:
 ## Code Context
 
 - Running the project: `bun run dev` (bun dev server)
-- Running the tests: `bun run test` (type check & bun test runner)
+- Running all the tests: `bun run test` (type check & bun test runner)
 - Checking the lint & formatting: `bun run lint` (report)
 - Fixing the lint & formatting: `bun run lint:fix` (fix)
 - Type checking: `bun run test:types` (tsc)

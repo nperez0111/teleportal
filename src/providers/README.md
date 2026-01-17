@@ -93,15 +93,15 @@ The `Connection` class extends `Observable` and emits the following events:
 
 ```typescript
 type ConnectionOptions = {
-  connect?: boolean;                    // Auto-connect on creation (default: true)
-  maxReconnectAttempts?: number;        // Max reconnection attempts (default: 10)
-  initialReconnectDelay?: number;       // Initial backoff delay in ms (default: 100)
-  maxBackoffTime?: number;              // Max backoff time in ms (default: 30000)
-  eventTarget?: EventTarget;            // For online/offline events
-  isOnline?: boolean;                   // Initial online state (default: true)
-  heartbeatInterval?: number;           // Heartbeat interval in ms (default: 0 = disabled)
-  messageReconnectTimeout?: number;     // Timeout if no messages received (default: 30000)
-  timer?: Timer;                        // Timer implementation for testing
+  connect?: boolean; // Auto-connect on creation (default: true)
+  maxReconnectAttempts?: number; // Max reconnection attempts (default: 10)
+  initialReconnectDelay?: number; // Initial backoff delay in ms (default: 100)
+  maxBackoffTime?: number; // Max backoff time in ms (default: 30000)
+  eventTarget?: EventTarget; // For online/offline events
+  isOnline?: boolean; // Initial online state (default: true)
+  heartbeatInterval?: number; // Heartbeat interval in ms (default: 0 = disabled)
+  messageReconnectTimeout?: number; // Timeout if no messages received (default: 30000)
+  timer?: Timer; // Timer implementation for testing
 };
 ```
 
@@ -234,13 +234,13 @@ The `Provider` class extends `Observable` and emits the following events:
 
 ```typescript
 type ProviderOptions<T> = {
-  client: Connection<any>;              // Connection instance (required)
-  document: string;                      // Document ID (required)
-  ydoc?: Y.Doc;                         // Existing Y.Doc (default: new Y.Doc())
-  awareness?: Awareness;                // Existing Awareness (default: new Awareness(ydoc))
-  enableOfflinePersistence?: boolean;    // Enable IndexedDB persistence (default: true)
-  indexedDBPrefix?: string;              // IndexedDB prefix (default: 'teleportal-')
-  getTransport?: (ctx) => T;            // Custom transport factory
+  client: Connection<any>; // Connection instance (required)
+  document: string; // Document ID (required)
+  ydoc?: Y.Doc; // Existing Y.Doc (default: new Y.Doc())
+  awareness?: Awareness; // Existing Awareness (default: new Awareness(ydoc))
+  enableOfflinePersistence?: boolean; // Enable IndexedDB persistence (default: true)
+  indexedDBPrefix?: string; // IndexedDB prefix (default: 'teleportal-')
+  getTransport?: (ctx) => T; // Custom transport factory
 };
 ```
 
@@ -376,8 +376,8 @@ await newProvider.synced;
 ### Milestone Operations
 
 ```typescript
-// List milestones
-const milestones = await provider.listMilestones();
+// List milestones (optionally include deleted ones)
+const milestones = await provider.listMilestones({ includeDeleted: true });
 
 // Create a milestone
 const milestone = await provider.createMilestone("Checkpoint 1");
@@ -387,6 +387,12 @@ const snapshot = await milestone.fetchSnapshot();
 
 // Update milestone name
 await provider.updateMilestoneName(milestone.id, "Updated Name");
+
+// Soft delete milestone
+await provider.deleteMilestone(milestone.id);
+
+// Restore milestone
+await provider.restoreMilestone(milestone.id);
 ```
 
 ### Subdocuments
@@ -413,7 +419,7 @@ const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
   enableOfflinePersistence: true, // default
-  indexedDBPrefix: "my-app-",     // custom prefix
+  indexedDBPrefix: "my-app-", // custom prefix
 });
 
 // Document will be loaded from IndexedDB if available

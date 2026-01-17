@@ -252,7 +252,7 @@ describe("withTransaction", () => {
       const maxRetries = 3;
 
       // Set a lock that won't expire
-      await storage.setMeta(key, { ttl: Date.now() + 10000 });
+      await storage.setMeta(key, { ttl: Date.now() + 10_000 });
 
       await expect(
         withTransaction(
@@ -337,6 +337,105 @@ describe("withTransaction", () => {
     });
   });
 
+  describe("lock safety", () => {
+    it("should not release lock if TTL expired and another transaction acquired it", async () => {
+      const key = "test-key-lock-safety";
+      const shortTTL = 50; // Very short TTL
+      const executionTime = 150; // Longer than TTL
+
+      let transactionALockId: string | undefined;
+      let transactionBLockId: string | undefined;
+      let transactionAFinished = false;
+      let transactionBStarted = false;
+
+      // Start transaction A with short TTL that will expire during execution
+      const transactionA = withTransaction(
+        storage,
+        key,
+        async () => {
+          // Capture the lockId that transaction A acquired
+          const meta = await storage.getMeta(key);
+          transactionALockId = meta?.lockId as string | undefined;
+          expect(transactionALockId).toBeDefined();
+
+          // Take longer than the TTL to execute
+          await new Promise((resolve) => setTimeout(resolve, executionTime));
+          transactionAFinished = true;
+          return "transaction-a";
+        },
+        { ttl: shortTTL, baseDelay: 10 },
+      );
+
+      // Wait a bit to ensure transaction A has acquired the lock
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify transaction A has the lock
+      const metaBeforeTTL = await storage.getMeta(key);
+      expect(metaBeforeTTL?.lockId).toBe(transactionALockId);
+      expect(metaBeforeTTL?.ttl).toBeGreaterThan(Date.now());
+
+      // Wait for transaction A's TTL to expire
+      await new Promise((resolve) => setTimeout(resolve, shortTTL + 20));
+
+      // Verify transaction A's lock has expired
+      const metaAfterTTL = await storage.getMeta(key);
+      expect(metaAfterTTL?.ttl).toBeLessThanOrEqual(Date.now());
+
+      // Start transaction B - it should acquire the lock since A's TTL expired
+      const transactionB = withTransaction(
+        storage,
+        key,
+        async () => {
+          transactionBStarted = true;
+          // Capture the lockId that transaction B acquired
+          const meta = await storage.getMeta(key);
+          transactionBLockId = meta?.lockId as string | undefined;
+          expect(transactionBLockId).toBeDefined();
+          // Verify we have a different lockId than transaction A
+          expect(transactionBLockId).not.toBe(transactionALockId);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return "transaction-b";
+        },
+        { ttl: 1000, baseDelay: 10 },
+      );
+
+      // Wait for transaction B to start and acquire the lock
+      // It may need to retry a few times due to exponential backoff
+      let attempts = 0;
+      while (!transactionBStarted && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        attempts++;
+      }
+      expect(transactionBStarted).toBe(true);
+      expect(transactionBLockId).toBeDefined();
+      expect(transactionBLockId).not.toBe(transactionALockId);
+
+      // Small delay to ensure lock is properly set
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Wait for transaction A to finish (it should check lockId and not release B's lock)
+      await transactionA;
+      expect(transactionAFinished).toBe(true);
+
+      // Verify transaction B still has the lock (transaction A should not have released it)
+      // This is the key test: transaction A should have checked lockId and seen it doesn't match,
+      // so it shouldn't have released transaction B's lock
+      const metaAfterAFinishes = await storage.getMeta(key);
+      // The critical assertion: lockId should still match transaction B's lockId
+      // This proves transaction A checked the lockId, saw it didn't match its own,
+      // and therefore did NOT release transaction B's lock
+      expect(metaAfterAFinishes?.lockId).toBe(transactionBLockId);
+
+      // Wait for transaction B to finish
+      const resultB = await transactionB;
+      expect(resultB).toBe("transaction-b");
+
+      // Verify transaction B released its own lock
+      const finalMeta = await storage.getMeta(key);
+      expect(finalMeta?.ttl).toBeLessThanOrEqual(Date.now());
+    });
+  });
+
   describe("thundering herd prevention", () => {
     it("should prevent thundering herd with multiple concurrent requests", async () => {
       const key = "test-key-13";
@@ -355,6 +454,9 @@ describe("withTransaction", () => {
         },
         { ttl: 1000, baseDelay: 10 },
       );
+
+      // Wait a bit to ensure the first transaction acquires the lock
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Start multiple concurrent requests that will need to wait
       const concurrentPromises = Array.from(
@@ -379,8 +481,8 @@ describe("withTransaction", () => {
       expect(firstResult).toBe("first");
       expect(otherResults.length).toBe(concurrentRequests);
       // All should complete
-      for (let i = 0; i < otherResults.length; i++) {
-        expect(otherResults[i]).toBe(`result-${i + 1}`);
+      for (const [i, otherResult] of otherResults.entries()) {
+        expect(otherResult).toBe(`result-${i + 1}`);
       }
 
       // Verify sequential execution (first completes, then others execute one by one)
@@ -419,7 +521,7 @@ describe("withTransaction", () => {
       const customMaxRetries = 5;
 
       // Set a lock that won't expire
-      await storage.setMeta(key, { ttl: Date.now() + 10000 });
+      await storage.setMeta(key, { ttl: Date.now() + 10_000 });
 
       await expect(
         withTransaction(

@@ -53,6 +53,62 @@ export type SessionEvents<Context extends ServerContext = ServerContext> = {
     sourceNodeId?: string;
     deduped?: boolean;
   }) => void;
+
+  /**
+   * Emitted when a document's size exceeds the warning threshold.
+   */
+  "document-size-warning": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sizeBytes: number;
+    warningThreshold: number;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a document's size exceeds the limit.
+   */
+  "document-size-limit-exceeded": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sizeBytes: number;
+    sizeLimit: number;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a milestone is created.
+   */
+  "milestone-created": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    milestoneId: string;
+    milestoneName: string;
+    triggerType?: "manual" | "time-based" | "update-count" | "event-based";
+    triggerId?: string;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a milestone is deleted.
+   */
+  "milestone-deleted": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    milestoneId: string;
+    deletedBy?: string;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a milestone is restored from soft-deletion.
+   */
+  "milestone-restored": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    milestoneId: string;
+    context: Context;
+  }) => void;
 };
 
 export type ServerEvents<Context extends ServerContext = ServerContext> = {
@@ -89,6 +145,28 @@ export type ServerEvents<Context extends ServerContext = ServerContext> = {
     documentId: string;
     namespacedDocumentId: string;
     encrypted: boolean;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a document's size exceeds the warning threshold.
+   */
+  "document-size-warning": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sizeBytes: number;
+    warningThreshold: number;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a document's size exceeds the limit.
+   */
+  "document-size-limit-exceeded": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sizeBytes: number;
+    sizeLimit: number;
     context: Context;
   }) => void;
 
@@ -141,4 +219,60 @@ export type ServerEvents<Context extends ServerContext = ServerContext> = {
    * Emitted when the server has completed shutting down.
    */
   "after-server-shutdown": (data: { nodeId: string }) => void;
+
+  /**
+   * Emitted when a milestone is created.
+   */
+  "milestone-created": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    milestoneId: string;
+    milestoneName: string;
+    triggerType?: "manual" | "time-based" | "update-count" | "event-based";
+    triggerId?: string;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a milestone is deleted.
+   */
+  "milestone-deleted": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    milestoneId: string;
+    deletedBy?: string;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a milestone is restored from soft-deletion.
+   */
+  "milestone-restored": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    milestoneId: string;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when rate limit is exceeded
+   */
+  "rate-limit-exceeded": (data: {
+    userId: string;
+    documentId?: string;
+    trackBy: string;
+    currentCount: number;
+    maxMessages: number;
+    windowMs: number;
+    resetAt: number;
+  }) => void;
+
+  /**
+   * Emitted when rate limit state is updated
+   */
+  "rate-limit-state-updated": (data: {
+    key: string;
+    tokens: number;
+    trackBy: string;
+  }) => void;
 };

@@ -59,7 +59,7 @@ export abstract class EncryptedDocumentStorage
   ): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
-      const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+      const files = [...new Set([...(metadata.files ?? []), fileId])];
       await this.writeDocumentMetadata(documentId, {
         ...metadata,
         files,
@@ -153,14 +153,18 @@ export abstract class EncryptedDocumentStorage
     await this.transaction(key, async () => {
       const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
       const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
+      let sizeBytes = rest.sizeBytes ?? 0;
+
       for (const message of decodedSyncStep2.messages) {
         this.updateSeenMessages(seenMessages, message);
         await this.storeEncryptedMessage(key, message.id, message.payload);
+        sizeBytes += message.payload.length;
       }
       await this.writeDocumentMetadata(key, {
         ...rest,
         updatedAt: Date.now(),
         seenMessages,
+        sizeBytes,
       } as EncryptedDocumentMetadata);
     });
   }
@@ -171,6 +175,8 @@ export abstract class EncryptedDocumentStorage
   ): Promise<void> {
     await this.transaction(key, async () => {
       const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
+      let sizeBytes = rest.sizeBytes ?? 0;
+
       const encryptedUpdates = decodeEncryptedUpdate(update);
       for (const encryptedUpdate of encryptedUpdates) {
         this.updateSeenMessages(seenMessages, encryptedUpdate);
@@ -180,11 +186,13 @@ export abstract class EncryptedDocumentStorage
           encryptedUpdate.id,
           encryptedUpdate.payload,
         );
+        sizeBytes += encryptedUpdate.payload.length;
       }
       await this.writeDocumentMetadata(key, {
         ...rest,
         updatedAt: Date.now(),
         seenMessages,
+        sizeBytes,
       } as EncryptedDocumentMetadata);
     });
   }
@@ -195,14 +203,14 @@ export abstract class EncryptedDocumentStorage
     const { seenMessages } = metadata;
     const updates: DecodedEncryptedUpdatePayload[] = [];
     for (const clientId of Object.keys(seenMessages)) {
-      for (const counter of Object.keys(seenMessages[parseInt(clientId)])) {
-        const messageId = seenMessages[parseInt(clientId)][parseInt(counter)];
+      for (const counter of Object.keys(seenMessages[Number.parseInt(clientId)])) {
+        const messageId = seenMessages[Number.parseInt(clientId)][Number.parseInt(counter)];
         const message = await this.fetchEncryptedMessage(key, messageId);
         if (message) {
           updates.push({
             id: messageId,
             payload: message,
-            timestamp: [parseInt(clientId), parseInt(counter)],
+            timestamp: [Number.parseInt(clientId), Number.parseInt(counter)],
           });
         }
       }

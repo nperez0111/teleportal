@@ -86,7 +86,7 @@ class MockDocumentStorage implements DocumentStorage {
   async addFileToDocument(documentId: string, fileId: string): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
-      const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
+      const files = [...new Set([...(metadata.files ?? []), fileId])];
       await this.writeDocumentMetadata(documentId, {
         ...metadata,
         files,

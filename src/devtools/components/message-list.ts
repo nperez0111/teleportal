@@ -19,13 +19,13 @@ export class MessageList {
     header.className = "devtools-list-header";
     const title = document.createElement("h2");
     title.className = "devtools-list-header-title";
-    header.appendChild(title);
-    this.element.appendChild(header);
+    header.append(title);
+    this.element.append(header);
 
     // List container
     this.listContainer = document.createElement("div");
     this.listContainer.className = "devtools-flex-1 devtools-overflow-y-auto";
-    this.element.appendChild(this.listContainer);
+    this.element.append(this.listContainer);
 
     this.updateTitle();
     this.render();
@@ -60,19 +60,19 @@ export class MessageList {
       emptyState.className =
         "devtools-p-4 devtools-text-center devtools-text-xs devtools-text-gray-500";
       emptyState.textContent = "No messages to display";
-      this.listContainer.appendChild(emptyState);
+      this.listContainer.append(emptyState);
       return;
     }
 
     // Render messages in reverse order (newest first)
     const reversed = [...this.messages].reverse();
-    reversed.forEach((message) => {
+    for (const message of reversed) {
       const isSelected = this.selectedMessageId === message.id;
       const item = createMessageItem(message, isSelected, () => {
         this.onSelectMessage(message);
       });
-      this.listContainer.appendChild(item);
-    });
+      this.listContainer.append(item);
+    }
   }
 
   getElement(): HTMLElement {

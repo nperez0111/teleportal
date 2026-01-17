@@ -138,7 +138,11 @@ export type DocStep =
   | MilestoneCreateResponse
   | MilestoneUpdateNameRequest
   | MilestoneUpdateNameResponse
-  | MilestoneAuthMessage;
+  | MilestoneAuthMessage
+  | MilestoneDeleteRequest
+  | MilestoneDeleteResponse
+  | MilestoneRestoreRequest
+  | MilestoneRestoreResponse;
 
 /**
  * Any Y.js update which contains awareness updates.
@@ -305,6 +309,10 @@ export type DecodedMilestoneListRequest = {
    * The server should only send milestones that are not in this list.
    */
   snapshotIds: string[];
+  /**
+   * Whether to include soft-deleted milestones in the response.
+   */
+  includeDeleted?: boolean;
 };
 
 /**
@@ -322,6 +330,10 @@ export type DecodedMilestoneListResponse = {
     name: string;
     documentId: string;
     createdAt: number;
+    deletedAt?: number;
+    lifecycleState?: "active" | "deleted" | "archived" | "expired";
+    expiresAt?: number;
+    createdBy: { type: "user" | "system"; id: string };
   }>;
 };
 
@@ -393,6 +405,7 @@ export type DecodedMilestoneResponse = {
     name: string;
     documentId: string;
     createdAt: number;
+    createdBy: { type: "user" | "system"; id: string };
   };
 };
 
@@ -433,4 +446,68 @@ export type DecodedMilestoneAuthMessage = {
   type: "milestone-auth-message";
   permission: "denied";
   reason: string;
+};
+
+/**
+ * An encoded {@link MilestoneDeleteRequest} message.
+ */
+export type MilestoneDeleteRequest = Tag<
+  Uint8Array,
+  "milestone-delete-request"
+>;
+
+/**
+ * A decoded {@link MilestoneDeleteRequest} message.
+ */
+export type DecodedMilestoneDeleteRequest = {
+  type: "milestone-delete-request";
+  milestoneId: string;
+};
+
+/**
+ * An encoded {@link MilestoneDeleteResponse} message.
+ */
+export type MilestoneDeleteResponse = Tag<
+  Uint8Array,
+  "milestone-delete-response"
+>;
+
+/**
+ * A decoded {@link MilestoneDeleteResponse} message.
+ */
+export type DecodedMilestoneDeleteResponse = {
+  type: "milestone-delete-response";
+  milestoneId: string;
+};
+
+/**
+ * An encoded {@link MilestoneRestoreRequest} message.
+ */
+export type MilestoneRestoreRequest = Tag<
+  Uint8Array,
+  "milestone-restore-request"
+>;
+
+/**
+ * A decoded {@link MilestoneRestoreRequest} message.
+ */
+export type DecodedMilestoneRestoreRequest = {
+  type: "milestone-restore-request";
+  milestoneId: string;
+};
+
+/**
+ * An encoded {@link MilestoneRestoreResponse} message.
+ */
+export type MilestoneRestoreResponse = Tag<
+  Uint8Array,
+  "milestone-restore-response"
+>;
+
+/**
+ * A decoded {@link MilestoneRestoreResponse} message.
+ */
+export type DecodedMilestoneRestoreResponse = {
+  type: "milestone-restore-response";
+  milestoneId: string;
 };

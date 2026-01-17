@@ -361,7 +361,7 @@ describe("UnstorageDocumentStorage", () => {
 
     it("should handle concurrent transactions with locking", async () => {
       const key = "test-doc-18";
-      let executionOrder: string[] = [];
+      const executionOrder: string[] = [];
 
       // Start first transaction
       const promise1 = storage.transaction(key, async () => {
@@ -434,6 +434,7 @@ describe("UnstorageDocumentStorage", () => {
         getMilestone: async () => null,
         getMilestones: async () => [],
         deleteMilestone: async () => {},
+        restoreMilestone: async () => {},
         updateMilestoneName: async () => {},
       };
 
@@ -455,6 +456,7 @@ describe("UnstorageDocumentStorage", () => {
         documentId: "test-doc",
         createdAt: Date.now(),
         snapshot,
+        createdBy: { type: "system", id: "test-node" },
       });
 
       expect(typeof milestoneId).toBe("string");
@@ -483,6 +485,7 @@ describe("UnstorageDocumentStorage", () => {
         getMilestone: async () => null,
         getMilestones: async () => [],
         deleteMilestone: async () => {},
+        restoreMilestone: async () => {},
         updateMilestoneName: async () => {},
       };
 
@@ -494,8 +497,9 @@ describe("UnstorageDocumentStorage", () => {
       const milestoneId = await testStorage.milestoneStorage!.createMilestone({
         name: "custom-milestone",
         documentId: "test-doc",
-        createdAt: 1234567890,
+        createdAt: 1_234_567_890,
         snapshot,
+        createdBy: { type: "system", id: "test-node" },
       });
 
       expect(createMilestoneCalled).toBe(true);

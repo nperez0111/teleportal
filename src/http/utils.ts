@@ -49,7 +49,7 @@ export function getDocumentsFromQueryParams(
     }
   }
 
-  return Array.from(uniqueDocuments.values());
+  return [...uniqueDocuments.values()];
 }
 
 /**

@@ -269,7 +269,7 @@ export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
     offset += 32;
 
     // Write parent index (4 bytes, -1 if none)
-    const parentIndex = node.parent !== undefined ? node.parent : 0xffffffff;
+    const parentIndex = node.parent === undefined ? 0xff_ff_ff_ff : node.parent;
     view.setUint32(offset, parentIndex, true);
     offset += 4;
   }
@@ -317,7 +317,7 @@ export function deserializeMerkleTree(
       hash,
     };
 
-    if (parentIndex !== 0xffffffff) {
+    if (parentIndex !== 0xff_ff_ff_ff) {
       node.parent = parentIndex;
     }
 
@@ -498,8 +498,8 @@ class StableIncrementalMerkleTree {
       return null;
     }
 
-    const root = this.nodes[this.nodes.length - 1];
-    return root.hash ?? null;
+    const root = this.nodes.at(-1);
+    return root?.hash ?? null;
   }
 
   getTotalChunks(): number {
@@ -524,7 +524,7 @@ export function createMerkleTreeTransformStream(
   encryptChunk?: (chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array,
 ): TransformStream<Uint8Array, FilePart> {
   // 12 bytes for the encryption initialization vector
-  let chunkSize = encryptChunk ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
+  const chunkSize = encryptChunk ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
   const totalChunks = fileSize === 0 ? 1 : Math.ceil(fileSize / chunkSize);
   const tree = new StableIncrementalMerkleTree(totalChunks);
   let buffer = new Uint8Array(0);

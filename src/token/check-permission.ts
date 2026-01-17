@@ -34,29 +34,37 @@ export function checkPermissionWithTokenManager(
         case "milestone-list-response":
         case "milestone-update-name-response":
         case "milestone-create-response":
+        case "milestone-delete-response":
+        case "milestone-restore-response": {
           return tokenManager.hasDocumentPermission(
             tokenPayload,
             documentId,
             "read",
           );
+        }
         case "sync-step-2":
         case "update":
         case "milestone-create-request":
         case "milestone-update-name-request":
+        case "milestone-delete-request":
+        case "milestone-restore-request": {
           return tokenManager.hasDocumentPermission(
             tokenPayload,
             documentId,
             "write",
           );
+        }
         case "auth-message":
-        case "milestone-auth-message":
+        case "milestone-auth-message": {
           // Auth messages are responses from the server, not requests from clients
           // They should not be broadcasted, so deny them
           return false;
-        default:
+        }
+        default: {
           throw new Error(
             `Unknown doc message payload type: ${(message.payload as any).type}`,
           );
+        }
       }
     }
 

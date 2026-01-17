@@ -159,26 +159,30 @@ export namespace FileTransferProtocol {
       const fileMessage = message as FileMessage<Context>;
 
       switch (fileMessage.payload.type) {
-        case "file-upload":
+        case "file-upload": {
           this.handleUploadRequest(
             fileMessage.payload as DecodedFileUpload,
             fileMessage.context,
           );
           break;
-        case "file-download":
+        }
+        case "file-download": {
           await this.handleDownloadRequest(
             fileMessage.payload as DecodedFileDownload,
           );
           break;
-        case "file-auth-message":
+        }
+        case "file-auth-message": {
           this.handleAuthMessage(fileMessage.payload as DecodedFileAuthMessage);
           break;
-        case "file-part":
+        }
+        case "file-part": {
           await this.handleFilePart(
             fileMessage.payload as DecodedFilePart,
             fileMessage.context,
           );
           break;
+        }
       }
 
       return true;
@@ -186,7 +190,7 @@ export namespace FileTransferProtocol {
 
     protected handleAck(message: AckMessage<Context>) {
       let resolved = false;
-      this.activeUploads.forEach((handler) => {
+      for (const handler of this.activeUploads.values()) {
         if (handler.sentChunks.delete(message.payload.messageId)) {
           resolved = true;
           if (handler.sentChunks.size === 0) {
@@ -194,7 +198,7 @@ export namespace FileTransferProtocol {
             this.activeUploads.delete(handler.uploadId);
           }
         }
-      });
+      }
       return resolved;
     }
 
@@ -360,8 +364,8 @@ export namespace FileTransferProtocol {
           );
           await this.onDownloadComplete(handler, file);
           handler.resolve(file);
-        } catch (e) {
-          handler.reject(e as Error);
+        } catch (err) {
+          handler.reject(err as Error);
         } finally {
           this.activeDownloads.delete(handler.fileId);
         }
@@ -382,7 +386,7 @@ export namespace FileTransferProtocol {
       const document = fileMessage.document;
 
       switch (fileMessage.payload.type) {
-        case "file-download":
+        case "file-download": {
           await this.onDownloadRequest(
             fileMessage.payload as DecodedFileDownload,
             fileMessage.context,
@@ -391,7 +395,8 @@ export namespace FileTransferProtocol {
             sendMessage,
           );
           break;
-        case "file-upload":
+        }
+        case "file-upload": {
           await this.handleUploadRequest(
             fileMessage.payload as DecodedFileUpload,
             fileMessage.context,
@@ -400,7 +405,8 @@ export namespace FileTransferProtocol {
             sendMessage,
           );
           break;
-        case "file-part":
+        }
+        case "file-part": {
           await this.onChunkReceived(
             fileMessage.payload as DecodedFilePart,
             message.id,
@@ -409,9 +415,11 @@ export namespace FileTransferProtocol {
             sendMessage,
           );
           break;
-        default:
+        }
+        default: {
           // Ignore other types or handle error
           break;
+        }
       }
     }
 

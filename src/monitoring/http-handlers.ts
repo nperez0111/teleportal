@@ -26,7 +26,7 @@ export function getMetricsHandler(server: Server<any>) {
       return new Response(metrics, {
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
-    } catch (error) {
+    } catch {
       return new Response("Metrics collection failed", { status: 500 });
     }
   };

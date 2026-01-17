@@ -51,7 +51,7 @@ export function getMessageTypeColor(message: MessageType): string {
 }
 
 function mapToJSON(map: Map<any, any>): Record<any, any> {
-  return Array.from(map.entries()).reduce(
+  return [...map.entries()].reduce(
     (acc, [key, value]) => {
       acc[key] = value;
       return acc;
@@ -70,9 +70,9 @@ function itemToJSON(item: Y.Item): Record<any, any> {
     right: item.right ? itemToJSON(item.right) : null,
     left: item.left ? itemToJSON(item.left) : null,
     parent: item.parent
-      ? item.parent instanceof Y.Item
+      ? (item.parent instanceof Y.Item
         ? itemToJSON(item.parent)
-        : item.parent
+        : item.parent)
       : null,
     parentSub: item.parentSub,
     origin: item.origin,

@@ -9,13 +9,16 @@ import {
   type SyncStep2Update,
   type Update,
 } from "teleportal";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage, MilestoneTrigger } from "teleportal/storage";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 import { getLogger, Logger } from "@logtape/logtape";
 import { toErrorDetails } from "../logging";
 import { Observable } from "../lib/utils";
 import type { DocumentMessageSource, SessionEvents } from "./events";
+import type { MetricsCollector } from "teleportal/monitoring";
+
+type Timer = ReturnType<typeof setTimeout>;
 
 /**
  * A session is a collection of clients which are connected to a document.
@@ -45,7 +48,18 @@ export class Session<Context extends ServerContext> extends Observable<
   #nodeId: string;
   #logger: Logger;
   #dedupe: TtlDedupe;
+  #metrics: MetricsCollector | undefined;
+  #documentSizeConfig:
+    | { warningThreshold?: number; limit?: number }
+    | undefined;
+  #sizeWarningEmitted = false;
+  #sizeLimitEmitted = false;
   #loaded = false;
+
+  #updateCount: number = 0;
+  #lastMilestoneTime: number = Date.now();
+  #triggerTimers: Map<string, Timer> = new Map();
+
   #clients = new Map<string, Client<Context>>();
   #unsubscribe: Promise<() => Promise<void>> | null = null;
   #cleanupTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -62,6 +76,8 @@ export class Session<Context extends ServerContext> extends Observable<
     nodeId: string;
     dedupe?: TtlDedupe;
     onCleanupScheduled: (session: Session<Context>) => void;
+    metricsCollector?: MetricsCollector;
+    documentSizeConfig?: { warningThreshold?: number; limit?: number };
   }) {
     super();
     this.documentId = args.documentId;
@@ -71,6 +87,8 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#storage = args.storage;
     this.#pubSub = args.pubSub;
     this.#nodeId = args.nodeId;
+    this.#metrics = args.metricsCollector;
+    this.#documentSizeConfig = args.documentSizeConfig;
     this.#logger = getLogger(["teleportal", "server", "session"]).with({
       name: "session",
       documentId: this.documentId,
@@ -112,6 +130,43 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#loaded = true;
 
     try {
+      // Setup triggers
+      const meta = await this.#storage.getDocumentMetadata(
+        this.namespacedDocumentId,
+      );
+      if (meta.milestoneTriggers) {
+        for (const trigger of meta.milestoneTriggers) {
+          if (!trigger.enabled) continue;
+
+          if (trigger.type === "time-based") {
+            const timer = setInterval(async () => {
+              await this.#createAutomaticMilestone(trigger);
+            }, trigger.config.interval);
+            this.#triggerTimers.set(trigger.id, timer);
+          } else if (trigger.type === "event-based") {
+            this.on(trigger.config.event as any, async (data: any) => {
+              try {
+                if (
+                  trigger.config.condition &&
+                  !trigger.config.condition(data)
+                ) {
+                  return;
+                }
+                await this.#createAutomaticMilestone(trigger);
+              } catch (error) {
+                this.#logger
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    triggerId: trigger.id,
+                    event: trigger.config.event,
+                  })
+                  .error("Failed to process event-based trigger");
+              }
+            });
+          }
+        }
+      }
+
       this.#unsubscribe = this.#pubSub.subscribe(
         `document/${this.namespacedDocumentId}` as const,
         async (binary, sourceId) => {
@@ -193,10 +248,10 @@ export class Session<Context extends ServerContext> extends Observable<
                 sourceNodeId: sourceId,
               })
               .debug("Replicated message applied successfully");
-          } catch (e) {
+          } catch (err) {
             replicationLogger
               .with({
-                error: toErrorDetails(e as Error),
+                error: toErrorDetails(err as Error),
                 messageId: message.id,
                 documentId: message.document,
                 sourceNodeId: sourceId,
@@ -295,7 +350,7 @@ export class Session<Context extends ServerContext> extends Observable<
       messageId: message.id,
     });
 
-    const clientsToBroadcast = Array.from(this.#clients.entries()).filter(
+    const clientsToBroadcast = [...this.#clients.entries()].filter(
       ([id]) => id !== excludeClientId,
     );
 
@@ -343,7 +398,7 @@ export class Session<Context extends ServerContext> extends Observable<
   /**
    * Write an update to the storage.
    */
-  async write(update: Update) {
+  async write(update: Update, context?: Context) {
     const writeLogger = this.#logger.with({
       documentId: this.documentId,
       namespacedDocumentId: this.namespacedDocumentId,
@@ -354,6 +409,75 @@ export class Session<Context extends ServerContext> extends Observable<
     try {
       await this.#storage.handleUpdate(this.namespacedDocumentId, update);
 
+      this.#updateCount++;
+      const meta = await this.#storage.getDocumentMetadata(
+        this.namespacedDocumentId,
+      );
+
+      if (meta.milestoneTriggers) {
+        for (const trigger of meta.milestoneTriggers) {
+          if (!trigger.enabled) continue;
+
+          if (trigger.type === "time-based") {
+            const config = trigger.config as { interval: number };
+            // Check if interval has passed since last milestone
+            // This acts as a check in case timers are not reliable or for immediate feedback on update
+            if (Date.now() - this.#lastMilestoneTime >= config.interval) {
+              await this.#createAutomaticMilestone(trigger);
+            }
+          } else if (trigger.type === "update-count") {
+            const config = trigger.config as { updateCount: number };
+            if (this.#updateCount >= config.updateCount) {
+              await this.#createAutomaticMilestone(trigger);
+            }
+          }
+          // Event-based triggers will be handled via event listeners (Task 8)
+        }
+      }
+
+      const sizeBytes = meta.sizeBytes ?? 0;
+      const warningThreshold =
+        meta.sizeWarningThreshold ?? this.#documentSizeConfig?.warningThreshold;
+      const sizeLimit = meta.sizeLimit ?? this.#documentSizeConfig?.limit;
+
+      this.#metrics?.recordDocumentSize(
+        this.namespacedDocumentId,
+        sizeBytes,
+        this.encrypted,
+      );
+
+      if (warningThreshold !== undefined && sizeBytes >= warningThreshold) {
+        if (!this.#sizeWarningEmitted) {
+          this.call("document-size-warning", {
+            documentId: this.documentId,
+            namespacedDocumentId: this.namespacedDocumentId,
+            sizeBytes,
+            warningThreshold,
+            context: context ?? ({} as Context),
+          });
+          this.#metrics?.incrementSizeWarning(this.namespacedDocumentId);
+          this.#sizeWarningEmitted = true;
+        }
+      } else {
+        this.#sizeWarningEmitted = false;
+      }
+
+      if (sizeLimit !== undefined && sizeBytes > sizeLimit) {
+        if (!this.#sizeLimitEmitted) {
+          this.call("document-size-limit-exceeded", {
+            documentId: this.documentId,
+            namespacedDocumentId: this.namespacedDocumentId,
+            sizeBytes,
+            sizeLimit,
+            context: context ?? ({} as Context),
+          });
+          this.#metrics?.incrementSizeLimitExceeded(this.namespacedDocumentId);
+          this.#sizeLimitEmitted = true;
+        }
+      } else {
+        this.#sizeLimitEmitted = false;
+      }
+
       writeLogger.debug("Update written to storage successfully");
     } catch (error) {
       writeLogger
@@ -362,6 +486,69 @@ export class Session<Context extends ServerContext> extends Observable<
         })
         .error("Failed to write update to storage");
       throw error;
+    }
+  }
+
+  async #createAutomaticMilestone(trigger: MilestoneTrigger) {
+    if (!this.#storage.milestoneStorage) return;
+
+    try {
+      const doc = await this.#storage.getDocument(this.namespacedDocumentId);
+      if (!doc) return;
+
+      // MilestoneSnapshot is Uint8Array (Update)
+      // We use the full document update as the snapshot
+      const snapshot = doc.content.update as unknown as MilestoneSnapshot;
+
+      let name: string;
+      if (typeof trigger.autoName === "string") {
+        name = trigger.autoName;
+      } else {
+        const existingMilestones =
+          await this.#storage.milestoneStorage.getMilestones(
+            this.namespacedDocumentId,
+          );
+        name = `Milestone ${existingMilestones.length + 1}`;
+      }
+
+      const createdAt = Date.now();
+      const milestoneId = await this.#storage.milestoneStorage.createMilestone({
+        name,
+        documentId: this.namespacedDocumentId,
+        createdAt,
+        snapshot,
+        createdBy: { type: "system", id: this.#nodeId },
+      });
+
+      this.#lastMilestoneTime = createdAt;
+      this.#updateCount = 0;
+
+      this.call("milestone-created", {
+        documentId: this.documentId,
+        namespacedDocumentId: this.namespacedDocumentId,
+        milestoneId,
+        milestoneName: name,
+        triggerType: trigger.type,
+        triggerId: trigger.id,
+        context: {} as Context,
+      });
+
+      this.#logger
+        .with({
+          documentId: this.documentId,
+          milestoneId,
+          triggerId: trigger.id,
+          triggerType: trigger.type,
+        })
+        .info("Automatic milestone created");
+    } catch (error) {
+      this.#logger
+        .with({
+          error: toErrorDetails(error as Error),
+          documentId: this.documentId,
+          triggerId: trigger.id,
+        })
+        .error("Failed to create automatic milestone");
     }
   }
 
@@ -409,6 +596,7 @@ export class Session<Context extends ServerContext> extends Observable<
       .with({
         messageId: message.id,
         documentId: this.documentId,
+
         messageType: message.type,
         payloadType: (message as any).payload?.type,
         encrypted: message.encrypted,
@@ -503,7 +691,7 @@ export class Session<Context extends ServerContext> extends Observable<
                 .trace("Processing update message");
 
               // wait for confirmed write
-              await this.write(message.payload.update);
+              await this.write(message.payload.update, message.context);
 
               // broadcast and replicate
               await Promise.all([
@@ -649,6 +837,7 @@ export class Session<Context extends ServerContext> extends Observable<
                 const milestones =
                   await this.#storage.milestoneStorage.getMilestones(
                     this.namespacedDocumentId,
+                    { includeDeleted: payload.includeDeleted },
                   );
                 const snapshotIds = payload.snapshotIds ?? [];
                 // Filter out milestones that are already known
@@ -875,6 +1064,10 @@ export class Session<Context extends ServerContext> extends Observable<
                     documentId: this.namespacedDocumentId,
                     createdAt,
                     snapshot,
+                    createdBy: {
+                      type: "user",
+                      id: message.context.userId || "unknown",
+                    },
                   });
 
                 const milestone =
@@ -898,6 +1091,15 @@ export class Session<Context extends ServerContext> extends Observable<
                     this.encrypted,
                   ),
                 );
+
+                this.call("milestone-created", {
+                  documentId: this.documentId,
+                  namespacedDocumentId: this.namespacedDocumentId,
+                  milestoneId,
+                  milestoneName: name,
+                  triggerType: "manual",
+                  context: message.context,
+                });
 
                 log
                   .with({
@@ -967,10 +1169,12 @@ export class Session<Context extends ServerContext> extends Observable<
                 const milestoneId = (message.payload as any).milestoneId;
                 const name = (message.payload as any).name;
 
+                // When user renames a milestone, mark it as user-created
                 await this.#storage.milestoneStorage.updateMilestoneName(
                   this.namespacedDocumentId,
                   milestoneId,
                   name,
+                  { type: "user", id: message.context.userId || "unknown" },
                 );
 
                 const milestone =
@@ -1037,10 +1241,194 @@ export class Session<Context extends ServerContext> extends Observable<
               }
               return;
             }
+            case "milestone-delete-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                  milestoneId: (message.payload as any).milestoneId,
+                })
+                .trace("Processing milestone-delete-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "milestone-delete-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              if (!this.#storage.milestoneStorage) {
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: "Milestone storage is not available",
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+                return;
+              }
+
+              try {
+                const milestoneId = (message.payload as any).milestoneId;
+
+                await this.#storage.milestoneStorage.deleteMilestone(
+                  this.namespacedDocumentId,
+                  milestoneId,
+                  message.context.userId as string | undefined,
+                );
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-delete-response",
+                      milestoneId,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                this.call("milestone-deleted", {
+                  documentId: this.documentId,
+                  namespacedDocumentId: this.namespacedDocumentId,
+                  milestoneId,
+                  deletedBy: message.context.userId as string | undefined,
+                  context: message.context,
+                });
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    milestoneId,
+                  })
+                  .trace("Milestone deleted");
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .error("Failed to soft delete milestone");
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: `Failed to soft delete milestone: ${(error as Error).message}`,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              }
+              return;
+            }
+            case "milestone-restore-request": {
+              log
+                .with({
+                  messageId: message.id,
+                  documentId: this.documentId,
+                  milestoneId: (message.payload as any).milestoneId,
+                })
+                .trace("Processing milestone-restore-request");
+
+              if (!client) {
+                log
+                  .with({ messageId: message.id })
+                  .warn(
+                    "milestone-restore-request received without client, cannot respond",
+                  );
+                return;
+              }
+
+              if (!this.#storage.milestoneStorage) {
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: "Milestone storage is not available",
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+                return;
+              }
+
+              try {
+                const milestoneId = (message.payload as any).milestoneId;
+
+                await this.#storage.milestoneStorage.restoreMilestone(
+                  this.namespacedDocumentId,
+                  milestoneId,
+                );
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-restore-response",
+                      milestoneId,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                this.call("milestone-restored", {
+                  documentId: this.documentId,
+                  namespacedDocumentId: this.namespacedDocumentId,
+                  milestoneId,
+                  context: message.context,
+                });
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    milestoneId,
+                  })
+                  .trace("Milestone restored");
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: message.id,
+                  })
+                  .error("Failed to restore milestone");
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    {
+                      type: "milestone-auth-message",
+                      permission: "denied",
+                      reason: `Failed to restore milestone: ${(error as Error).message}`,
+                    },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+              }
+              return;
+            }
             case "milestone-list-response":
             case "milestone-snapshot-response":
             case "milestone-create-response":
             case "milestone-update-name-response":
+            case "milestone-delete-response":
+            case "milestone-restore-response":
             case "milestone-auth-message": {
               // These are response messages, just log them
               log
@@ -1130,6 +1518,12 @@ export class Session<Context extends ServerContext> extends Observable<
     // Cancel any pending cleanup
     this.#cancelCleanup();
 
+    // Clear trigger timers
+    for (const timer of this.#triggerTimers.values()) {
+      clearInterval(timer);
+    }
+    this.#triggerTimers.clear();
+
     try {
       if (this.#unsubscribe) {
         const unsubscribeFn = await this.#unsubscribe;
@@ -1147,6 +1541,9 @@ export class Session<Context extends ServerContext> extends Observable<
         })
         .error("Error unsubscribing from pubSub");
     }
+
+    // Clean up all event listeners
+    this.destroy();
 
     this.#logger
       .with({
@@ -1199,9 +1596,7 @@ export class Session<Context extends ServerContext> extends Observable<
       namespacedDocumentId: this.namespacedDocumentId,
       id: this.id,
       encrypted: this.encrypted,
-      clients: Array.from(this.#clients.values()).map((client) =>
-        client.toJSON(),
-      ),
+      clients: [...this.#clients.values()].map((client) => client.toJSON()),
     };
   }
 

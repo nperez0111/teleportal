@@ -60,16 +60,35 @@ export async function withTransaction<T>(
 
     // Try to acquire the lock
     const ttl = Date.now() + options.ttl;
-    await storage.setMeta(key, { ttl, ...meta });
+    const lockId = Math.random().toString(36).substring(2);
+    await storage.setMeta(key, { ttl, lockId, ...meta });
+
+    // Verify we acquired the lock (fix for race conditions)
+    const currentMeta = await storage.getMeta(key);
+    if (currentMeta?.lockId !== lockId) {
+      retries++;
+      // Calculate exponential backoff
+      const exponentialDelay = baseDelay * Math.pow(2, retries);
+      const jitter = Math.random() * baseDelay;
+      const waitTime = Math.min(exponentialDelay + jitter, maxDelay);
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      continue;
+    }
 
     try {
       const result = await cb(key);
-      // Release the lock
-      await storage.setMeta(key, { ttl: Date.now(), ...meta });
+      // Release the lock only if we still hold it (check lockId to prevent releasing another transaction's lock)
+      const currentMeta = await storage.getMeta(key);
+      if (currentMeta?.lockId === lockId) {
+        await storage.setMeta(key, { ttl: Date.now(), ...meta });
+      }
       return result;
     } catch (error) {
-      // Release the lock on error
-      await storage.setMeta(key, { ttl: Date.now(), ...meta });
+      // Release the lock on error, but only if we still hold it
+      const currentMeta = await storage.getMeta(key);
+      if (currentMeta?.lockId === lockId) {
+        await storage.setMeta(key, { ttl: Date.now(), ...meta });
+      }
       throw error;
     }
   }

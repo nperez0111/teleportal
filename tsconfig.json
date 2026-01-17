@@ -17,6 +17,9 @@
       "teleportal/transports/send-file": [
         "./src/transports/send-file/index.ts"
       ],
+      "teleportal/transports/rate-limiter": [
+        "./src/transports/rate-limiter/index.ts"
+      ],
       "teleportal/transports": ["./src/transports/index.ts"],
       "teleportal/http": ["./src/http/index.ts"],
       "teleportal/server": ["./src/server/index.ts"],

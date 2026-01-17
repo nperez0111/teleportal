@@ -43,7 +43,7 @@ async function collectMessages(
 
           messages.push(result.value);
         }
-      } catch (error) {
+      } catch {
         // Ignore errors during collection
       } finally {
         clearTimeout(timeoutId);
@@ -847,7 +847,7 @@ describe("Batching Transform", () => {
       try {
         await writer.write(createTestMessage([4, 5, 6]));
         // If no error is thrown, that's also acceptable
-      } catch (error) {
+      } catch {
         // It's acceptable for the write to fail after reader cancellation
         // No need to check the error since it might be undefined
       }
@@ -855,7 +855,7 @@ describe("Batching Transform", () => {
       // Close writer (may fail if already closed)
       try {
         await writer.close();
-      } catch (error) {
+      } catch {
         // It's acceptable for close to fail if writer is already closed
       }
     });

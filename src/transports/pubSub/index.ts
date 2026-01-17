@@ -112,7 +112,7 @@ export function getPubSubSource<Context extends ServerContext>({
     async unsubscribe(topic) {
       if (topic === undefined) {
         await Promise.all(
-          Array.from(subscribedTopics.values()).map((unsubscribe) =>
+          [...subscribedTopics.values()].map((unsubscribe) =>
             unsubscribe(),
           ),
         );
@@ -131,7 +131,7 @@ export function getPubSubSource<Context extends ServerContext>({
       },
       async cancel() {
         await Promise.all(
-          Array.from(subscribedTopics.values()).map((unsubscribe) =>
+          [...subscribedTopics.values()].map((unsubscribe) =>
             unsubscribe(),
           ),
         );
