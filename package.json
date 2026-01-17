@@ -38,6 +38,10 @@
       "types": "./dist/http/index.d.mts",
       "default": "./dist/http/index.mjs"
     },
+    "./durable-streams": {
+      "types": "./dist/durable-streams/index.d.mts",
+      "default": "./dist/durable-streams/index.mjs"
+    },
     "./protocol": {
       "types": "./dist/lib/protocol/index.d.mts",
       "default": "./dist/lib/protocol/index.mjs"

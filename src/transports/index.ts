@@ -6,6 +6,7 @@ export * from "./message-validator";
 export * from "./passthrough";
 export * from "./pubSub";
 export * from "./sse";
+export * from "./durable-streams";
 export * from "./ydoc";
 export * from "./utils";
 export * from "./send-file";
