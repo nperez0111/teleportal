@@ -1,6 +1,18 @@
 import { decoding } from "lib0";
 import { toBase64 } from "lib0/buffer.js";
-import type { Message, RawReceivedMessage } from "teleportal";
+import {
+  DocMessage,
+  SyncStep2Update,
+  type Message,
+  type RawReceivedMessage,
+} from "teleportal";
+import { decryptUpdate } from "teleportal/encryption-key";
+import {
+  decodeEncryptedUpdate,
+  decodeFromStateVector,
+  decodeFromSyncStep2,
+} from "teleportal/protocol/encryption";
+import { Provider } from "teleportal/providers";
 import * as Y from "yjs";
 
 export type MessageType = Message | RawReceivedMessage;
@@ -92,10 +104,10 @@ function itemToJSON(item: Y.Item): Record<any, any> {
   };
 }
 
-export function formatMessagePayload(
+export async function formatMessagePayload(
   message: MessageType,
-  _doc: Y.Doc,
-): string | null {
+  provider: Provider,
+): Promise<string | null> {
   switch (message.type) {
     case "ack": {
       return `ACK(id: ${message.id}, acknowledged: ${message.payload.messageId})`;
@@ -103,12 +115,19 @@ export function formatMessagePayload(
     case "awareness": {
       switch (message.payload.type) {
         case "awareness-update": {
+          let update = message.payload.update;
           if (message.encrypted) {
-            // bail, content is encrypted
-            return toBase64(message.payload.update);
+            if (!provider.encryptionKey) {
+              // bail, content is encrypted
+              return toBase64(message.payload.update);
+            }
+            update = (await decryptUpdate(
+              provider.encryptionKey,
+              update,
+            )) as any;
           }
 
-          const decoder = decoding.createDecoder(message.payload.update);
+          const decoder = decoding.createDecoder(update);
           const len = decoding.readVarUint(decoder);
           const clients = [];
           for (let i = 0; i < len; i++) {
@@ -128,20 +147,97 @@ export function formatMessagePayload(
     case "doc": {
       switch (message.payload.type) {
         case "sync-step-1": {
+          let stateVector = message.payload.sv;
           if (message.encrypted) {
-            // bail, content is encrypted
-            return toBase64(message.payload.sv);
+            const decodedStateVector = decodeFromStateVector(stateVector);
+            return JSON.stringify(
+              {
+                ...decodedStateVector,
+                clocks: mapToJSON(decodedStateVector.clocks),
+              },
+              null,
+              2,
+            );
           }
-          const stateVector = message.payload.sv;
           return JSON.stringify(Y.decodeStateVector(stateVector), null, 2);
+        }
+        case "sync-step-2": {
+          if (message.encrypted) {
+            const decoded = decodeFromSyncStep2(message.payload.update);
+            return Promise.all(
+              decoded.messages.map(async (val) => {
+                if (!provider.encryptionKey) {
+                  // bail, content is encrypted & we have no key
+                  return toBase64(val.payload);
+                }
+                val.payload = await decryptUpdate(
+                  provider.encryptionKey,
+                  val.payload,
+                );
+
+                return formatMessagePayload(
+                  new DocMessage(
+                    message.document,
+                    {
+                      type: "sync-step-2",
+                      update: val.payload as SyncStep2Update,
+                    },
+                    message.context,
+                    false,
+                  ),
+                  provider,
+                );
+              }),
+            ).then((res) => {
+              if (res.length === 0) {
+                return `[]`;
+              }
+              return res.join("\n");
+            });
+          }
+        }
+        case "update": {
+          if (message.encrypted && message.payload.type === "update") {
+            const decoded = decodeEncryptedUpdate(message.payload.update);
+            return Promise.all(
+              decoded.map(async (val) => {
+                if (!provider.encryptionKey) {
+                  // bail, content is encrypted & we have no key
+                  return toBase64(val.payload);
+                }
+                val.payload = await decryptUpdate(
+                  provider.encryptionKey,
+                  val.payload,
+                );
+
+                return formatMessagePayload(
+                  new DocMessage(
+                    message.document,
+                    {
+                      type: "sync-step-2",
+                      update: val.payload as SyncStep2Update,
+                    },
+                    message.context,
+                    false,
+                  ),
+                  provider,
+                );
+              }),
+            ).then((res) => {
+              if (res.length === 0) {
+                return `[]`;
+              }
+              return res.join("\n");
+            });
+          }
         }
         case "update":
         case "sync-step-2": {
+          let update = message.payload.update;
           if (message.encrypted) {
-            // bail, content is encrypted
-            return toBase64(message.payload.update);
+            // should be handled above
+            return toBase64(update);
           }
-          const update = message.payload.update;
 
           const meta = Y.parseUpdateMetaV2(update);
           const decodedUpdate = Y.decodeUpdateV2(update);

@@ -198,7 +198,7 @@ export class Provider<
   #rpcClient: RpcClient;
   #rpcHandlers: ClientRpcHandlerRegistry;
   #handlerCleanups: Array<() => void> = [];
-  #encryptionKey?: CryptoKey;
+  public encryptionKey?: CryptoKey;
 
   // Local persistence properties
   #localPersistence?: IndexeddbPersistence;
@@ -227,7 +227,7 @@ export class Provider<
     this.#getTransport = getTransport;
     this.#enableOfflinePersistence = enableOfflinePersistence;
     this.#indexedDBPrefix = indexedDBPrefix;
-    this.#encryptionKey = encryptionKey;
+    this.encryptionKey = encryptionKey;
     this.#rpcHandlers = rpcHandlers;
     this.transport = getTransport({
       ydoc,
@@ -467,7 +467,7 @@ export class Provider<
       enableOfflinePersistence:
         options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix ?? this.#indexedDBPrefix,
-      encryptionKey: options.encryptionKey ?? this.#encryptionKey,
+      encryptionKey: options.encryptionKey ?? this.encryptionKey,
       rpcHandlers: options.rpcHandlers ?? this.#rpcHandlers,
       document: options.document,
     });
@@ -952,10 +952,7 @@ export class Provider<
     // Check both fileUpload and fileDownload since they might be the same handler instance
     const fileHandler = (this.#rpcHandlers.fileUpload ||
       this.#rpcHandlers.fileDownload) as any;
-    if (
-      !fileHandler ||
-      typeof (fileHandler as any).uploadFile !== "function"
-    ) {
+    if (!fileHandler || typeof (fileHandler as any).uploadFile !== "function") {
       throw new FileOperationError(
         "upload file",
         new Error(
@@ -969,7 +966,7 @@ export class Provider<
         file,
         this.document,
         fileId,
-        encryptionKey ?? this.#encryptionKey,
+        encryptionKey ?? this.encryptionKey,
       );
     } catch (error) {
       if (error instanceof FileOperationDeniedError) {
@@ -1012,7 +1009,7 @@ export class Provider<
       return await fileHandler.downloadFile(
         fileId,
         this.document,
-        encryptionKey ?? this.#encryptionKey,
+        encryptionKey ?? this.encryptionKey,
         timeout,
       );
     } catch (error) {

@@ -75,7 +75,7 @@ export class MessageInspector {
     if (!this.message) return;
     const payload = formatMessagePayload(
       this.message.message,
-      this.message.provider.doc,
+      this.message.provider,
     );
     const header = document.createElement("div");
     header.className = "devtools-inspector-header";
@@ -85,12 +85,18 @@ export class MessageInspector {
     title.textContent = "Message Inspector";
     header.append(title);
 
-    if (payload) {
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "devtools-inspector-copy-btn";
-      copyBtn.innerHTML = `${this.getCopyIcon()} Copy`;
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "devtools-inspector-copy-btn";
+    copyBtn.innerHTML = `${this.getCopyIcon()} Copy`;
+
+    payload.then((res) => {
+      if (!res) {
+        return;
+      }
+
+      header.append(copyBtn);
       copyBtn.addEventListener("click", () => {
-        this.copyToClipboard(payload, copyBtn);
+        this.copyToClipboard(res, copyBtn);
         copyBtn.innerHTML = `${this.getCheckIcon()} Copied`;
         copyBtn.classList.add("copied");
         setTimeout(() => {
@@ -98,8 +104,7 @@ export class MessageInspector {
           copyBtn.classList.remove("copied");
         }, 1500);
       });
-      header.append(copyBtn);
-    }
+    });
 
     this.element.append(header);
   }
@@ -120,7 +125,7 @@ export class MessageInspector {
     // Payload section
     const payload = formatMessagePayload(
       this.message.message,
-      this.message.provider.doc,
+      this.message.provider,
     );
     if (payload) {
       content.append(this.renderPayloadSection(payload));
@@ -151,9 +156,7 @@ export class MessageInspector {
     card.className = "devtools-inspector-card";
 
     // Message ID
-    card.append(
-      this.createCopyableRow("Message ID", this.message!.id, true),
-    );
+    card.append(this.createCopyableRow("Message ID", this.message!.id, true));
 
     // Direction
     card.append(this.createDirectionRow());
@@ -381,9 +384,7 @@ export class MessageInspector {
 
       // ACK Message ID (the ID of the ACK message itself)
       const ackMessageId = this.message!.ackedBy!.ackMessageId;
-      details.append(
-        this.createAckDetailRow("ACK Message ID", ackMessageId),
-      );
+      details.append(this.createAckDetailRow("ACK Message ID", ackMessageId));
 
       // Acknowledged Message ID (the ID of the message that was acknowledged)
       const ackPayload = this.message!.ackedBy!.ackMessage.payload as {
@@ -431,7 +432,7 @@ export class MessageInspector {
     return row;
   }
 
-  private renderPayloadSection(payload: string): HTMLElement {
+  private renderPayloadSection(payload: Promise<string | null>): HTMLElement {
     const section = document.createElement("div");
     section.className = "devtools-inspector-section";
 
@@ -454,7 +455,9 @@ export class MessageInspector {
 
     const payloadContent = document.createElement("div");
     payloadContent.className = "devtools-inspector-payload-content";
-    payloadContent.textContent = payload;
+    payload.then((res) => {
+      payloadContent.textContent = res;
+    });
 
     payloadBox.append(payloadContent);
     section.append(payloadBox);

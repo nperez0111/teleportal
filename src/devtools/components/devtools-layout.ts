@@ -39,14 +39,11 @@ export class DevtoolsLayout {
     );
 
     // Create message list
-    this.messageList = new MessageList(
-      (message) => {
-        this.selectedMessage = message;
-        this.messageInspector.setMessage(message);
-        this.messageList.setSelectedMessageId(message.id);
-      },
-      this.onClearMessages || undefined,
-    );
+    this.messageList = new MessageList((message) => {
+      this.selectedMessage = message;
+      this.messageInspector.setMessage(message);
+      this.messageList.setSelectedMessageId(message.id);
+    }, this.onClearMessages || undefined);
 
     // Create message inspector
     this.messageInspector = new MessageInspector();
@@ -54,7 +51,8 @@ export class DevtoolsLayout {
     // Build layout
     // Top: Filters panel
     const filtersContainer = document.createElement("div");
-    filtersContainer.className = "devtools-shrink-0 devtools-border-b devtools-border-gray-200";
+    filtersContainer.className =
+      "devtools-shrink-0 devtools-border-b devtools-border-gray-200";
     filtersContainer.append(this.filtersPanel.getElement());
     this.element.append(filtersContainer);
 
