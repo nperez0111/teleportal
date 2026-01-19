@@ -190,46 +190,18 @@ describe("YDocStorage", () => {
       expect(YDocStorage.metadata.has(key)).toBe(false);
     });
 
-    it("should cascade delete files when fileStorage is provided", async () => {
-      const key = "test-doc-11";
-      let deleteFilesByDocumentCalled = false;
-      let deleteFilesByDocumentKey: string | undefined;
-
-      mockFileStorage = {
-        type: "file-storage" as const,
-        getFile: async () => null,
-        deleteFile: async () => {},
-        listFileMetadataByDocument: async () => [],
-        deleteFilesByDocument: async (documentId: string) => {
-          deleteFilesByDocumentCalled = true;
-          deleteFilesByDocumentKey = documentId;
-        },
-        storeFileFromUpload: async () => {},
-      };
-
-      storage = new YDocStorage(mockFileStorage);
-      const doc = new Y.Doc();
-      const update = Y.encodeStateAsUpdateV2(doc) as Update;
-
-      await storage.handleUpdate(key, update);
-      await storage.deleteDocument(key);
-
-      expect(deleteFilesByDocumentCalled).toBe(true);
-      expect(deleteFilesByDocumentKey).toBe(key);
-    });
-
     it("should not fail if fileStorage is not provided", async () => {
       const key = "test-doc-12";
       const doc = new Y.Doc();
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
       await storage.handleUpdate(key, update);
-      
+
       // Verify document exists before deletion
       expect(YDocStorage.docs.has(key)).toBe(true);
 
       await storage.deleteDocument(key);
-      
+
       // Verify document and metadata are deleted
       expect(YDocStorage.docs.has(key)).toBe(false);
       expect(YDocStorage.metadata.has(key)).toBe(false);
@@ -308,4 +280,3 @@ describe("YDocStorage", () => {
     });
   });
 });
-

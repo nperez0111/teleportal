@@ -3,15 +3,14 @@ import * as Y from "yjs";
 import type { StateVector, Update } from "teleportal";
 import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import type { Document, DocumentMetadata, FileStorage } from "../types";
+import type { Document, DocumentMetadata } from "../types";
 
 export class YDocStorage extends UnencryptedDocumentStorage {
   public static docs = new Map<string, Y.Doc>();
   public static metadata = new Map<string, DocumentMetadata>();
 
-  constructor(fileStorage: FileStorage | undefined = undefined) {
+  constructor() {
     super();
-    this.fileStorage = fileStorage;
   }
 
   /**
@@ -82,11 +81,6 @@ export class YDocStorage extends UnencryptedDocumentStorage {
   }
 
   async deleteDocument(key: string): Promise<void> {
-    // Cascade delete files
-    if (this.fileStorage) {
-      await this.fileStorage.deleteFilesByDocument(key);
-    }
-
     YDocStorage.docs.delete(key);
     YDocStorage.metadata.delete(key);
   }

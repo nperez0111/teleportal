@@ -2,18 +2,34 @@ import { describe, expect, it } from "bun:test";
 import { toBase64 } from "lib0/buffer";
 import {
   AckMessage,
-  FileMessage,
   type Message,
   type ServerContext,
+  type RpcServerContext,
 } from "teleportal";
 import {
   buildMerkleTree,
   CHUNK_SIZE,
   generateMerkleProof,
-} from "../lib/merkle-tree/merkle-tree";
-import { InMemoryFileStorage } from "../storage/in-memory/file-storage";
-import { InMemoryTemporaryUploadStorage } from "../storage/in-memory/temporary-upload-storage";
-import { FileHandler } from "./file-handler";
+} from "../../lib/merkle-tree/merkle-tree";
+import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
+import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
+import type { DocumentStorage, DocumentMetadata } from "../../storage/types";
+import { YDocStorage } from "../../storage/in-memory/ydoc";
+import { FileHandler } from "./server-handlers";
+import type { FilePartStream } from "./methods";
+
+function createMockContext(
+  documentId: string,
+  storage: DocumentStorage,
+): RpcServerContext {
+  return {
+    documentId,
+    session: {
+      storage,
+    } as any,
+    server: {} as any,
+  };
+}
 
 describe("FileHandler", () => {
   it("initiates upload via temporary upload storage", async () => {
@@ -26,27 +42,16 @@ describe("FileHandler", () => {
     const chunks = [new Uint8Array([1, 2, 3])];
     const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
 
-    const sent: Message<ServerContext>[] = [];
-    await fileHandler.handle(
-      new FileMessage<ServerContext>("test-doc", {
-        type: "file-upload",
-        fileId,
+    await fileHandler.initiateUpload(
+      fileId,
+      {
         filename: "test.txt",
         size: 3,
         mimeType: "text/plain",
-        lastModified: Date.now(),
         encrypted: false,
-      }),
-      async (m) => {
-        sent.push(m);
       },
+      "test-doc",
     );
-
-    // Protocol responds with a file-download message as an "authorization" step
-    expect(sent.length).toBe(1);
-    const auth = sent[0] as FileMessage<ServerContext>;
-    expect(auth.payload.type).toBe("file-download");
-    expect((auth.payload as any).fileId).toBe(fileId);
 
     const progress = await temp.getUploadProgress(fileId);
     expect(progress).not.toBeNull();
@@ -58,6 +63,10 @@ describe("FileHandler", () => {
     const fileStorage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage();
     fileStorage.temporaryUploadStorage = temp;
+
+    const documentStorage = new YDocStorage();
+    const documentId = "test-doc";
+    const context = createMockContext(documentId, documentStorage);
 
     const fileHandler = new FileHandler(fileStorage);
 
@@ -74,15 +83,13 @@ describe("FileHandler", () => {
       mimeType: "text/plain",
       encrypted: false,
       lastModified: Date.now(),
-      documentId: "test-doc",
+      documentId,
     });
 
     const sent: Message<ServerContext>[] = [];
 
-    // Send first chunk
     const proof0 = generateMerkleProof(buildMerkleTree(chunks), 0);
-    const part0 = new FileMessage<ServerContext>("test-doc", {
-      type: "file-part",
+    const part0: FilePartStream = {
       fileId,
       chunkIndex: 0,
       chunkData: chunk1,
@@ -90,11 +97,11 @@ describe("FileHandler", () => {
       totalChunks: 2,
       bytesUploaded: chunk1.length,
       encrypted: false,
-    });
+    };
 
-    await fileHandler.handle(part0, async (m) => {
+    await fileHandler.handleFilePart(part0, "message-id-0", async (m) => {
       sent.push(m);
-    });
+    }, context);
 
     expect(sent.length).toBe(1);
     expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
@@ -104,10 +111,8 @@ describe("FileHandler", () => {
     expect(p1).not.toBeNull();
     expect(p1!.chunks.get(0)).toBe(true);
 
-    // Send second (final) chunk
     const proof1 = generateMerkleProof(buildMerkleTree(chunks), 1);
-    const part1 = new FileMessage<ServerContext>("test-doc", {
-      type: "file-part",
+    const part1: FilePartStream = {
       fileId,
       chunkIndex: 1,
       chunkData: chunk2,
@@ -115,21 +120,24 @@ describe("FileHandler", () => {
       totalChunks: 2,
       bytesUploaded: chunk1.length + chunk2.length,
       encrypted: false,
-    });
+    };
 
-    await fileHandler.handle(part1, async (m) => {
+    await fileHandler.handleFilePart(part1, "message-id-1", async (m) => {
       sent.push(m);
-    });
+    }, context);
     expect(sent.length).toBe(1);
     expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
 
-    // File should now be stored and downloadable
     const file = await fileStorage.getFile(fileId);
     expect(file).not.toBeNull();
     expect(file!.chunks.length).toBe(2);
+
+    // Verify document metadata was updated with the file
+    const metadata = await documentStorage.getDocumentMetadata(documentId);
+    expect(metadata.files).toContain(fileId);
   });
 
-  it("serves downloads from file storage", async () => {
+  it("serves downloads from file storage via streamFileParts generator", async () => {
     const fileStorage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage();
     fileStorage.temporaryUploadStorage = temp;
@@ -151,24 +159,16 @@ describe("FileHandler", () => {
     const result = await temp.completeUpload(fileId, fileId);
     await fileStorage.storeFileFromUpload(result);
 
-    const sent: Message<ServerContext>[] = [];
-    await fileHandler.handle(
-      new FileMessage<ServerContext>("test-doc", {
-        type: "file-download",
-        fileId,
-      }),
-      async (m) => {
-        sent.push(m);
-      },
-    );
+    // streamFileParts is now an async generator
+    const parts: import("./methods").FilePartStream[] = [];
+    for await (const part of fileHandler.streamFileParts(fileId)) {
+      parts.push(part);
+    }
 
-    // First message: file-upload preamble, then one file-part
-    expect(sent.length).toBe(2);
-    expect((sent[0] as FileMessage<ServerContext>).payload.type).toBe(
-      "file-upload",
-    );
-    expect((sent[1] as FileMessage<ServerContext>).payload.type).toBe(
-      "file-part",
-    );
+    expect(parts.length).toBe(1);
+    expect(parts[0].fileId).toBe(fileId);
+    expect(parts[0].chunkIndex).toBe(0);
+    expect(parts[0].totalChunks).toBe(1);
+    expect(parts[0].chunkData).toEqual(chunks[0]);
   });
 });

@@ -2,10 +2,10 @@ import { uuidv4 } from "lib0/random";
 import {
   AckMessage,
   DocMessage,
-  FileMessage,
   InMemoryPubSub,
   type Message,
   type PubSub,
+  RpcMessage,
   type ServerContext,
 } from "teleportal";
 import type { DocumentStorage, MilestoneTrigger } from "teleportal/storage";
@@ -20,7 +20,6 @@ import { getLogger } from "@logtape/logtape";
 import { register } from "../monitoring/metrics";
 import { Session } from "./session";
 import { Client } from "./client";
-import { FileHandler } from "./file-handler";
 import {
   HealthStatus,
   StatusData,
@@ -28,6 +27,7 @@ import {
 } from "teleportal/monitoring";
 import { Observable } from "../lib/utils";
 import type { ServerEvents, ClientDisconnectReason } from "./events";
+import type { RpcHandlerRegistry } from "teleportal/protocol";
 
 export type ServerOptions<Context extends ServerContext> = {
   /**
@@ -76,6 +76,13 @@ export type ServerOptions<Context extends ServerContext> = {
   milestoneTriggerConfig?: {
     defaultTriggers?: MilestoneTrigger[];
   };
+
+  /**
+   * RPC handlers for the server.
+   * These handlers will be called when RPC messages are received.
+   * Built-in handlers (milestone, file) should be merged with any custom handlers.
+   */
+  rpcHandlers?: RpcHandlerRegistry;
 
   /**
    * Configuration for rate limiting on client transports.
@@ -182,6 +189,10 @@ export class Server<Context extends ServerContext> extends Observable<
    * Metrics collector for all monitoring data.
    */
   #metrics!: MetricsCollector;
+  /**
+   * Cleanup functions returned by handler init() methods.
+   */
+  #handlerCleanups: (() => void)[] = [];
 
   constructor(options: ServerOptions<Context>) {
     super();
@@ -191,6 +202,18 @@ export class Server<Context extends ServerContext> extends Observable<
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
     this.#metrics = new MetricsCollector(register);
+
+    // Initialize RPC handlers
+    if (options.rpcHandlers) {
+      for (const handler of Object.values(options.rpcHandlers)) {
+        if (handler.init) {
+          const cleanup = handler.init(this);
+          if (cleanup) {
+            this.#handlerCleanups.push(cleanup);
+          }
+        }
+      }
+    }
 
     logger.info("Server initialized", {
       nodeId: this.#nodeId,
@@ -338,6 +361,8 @@ export class Server<Context extends ServerContext> extends Observable<
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
           metricsCollector: this.#metrics,
           documentSizeConfig: this.#options.documentSizeConfig,
+          rpcHandlers: this.#options.rpcHandlers,
+          server: this,
         });
 
         await session.load();
@@ -372,10 +397,18 @@ export class Server<Context extends ServerContext> extends Observable<
           })
           .info("Session created and loaded");
 
-        this.call("document-load", {
+        await this.call("document-load", {
           documentId,
           namespacedDocumentId: compositeDocumentId,
           sessionId: id,
+          encrypted,
+          context,
+        });
+
+        await this.call("session-open", {
+          session,
+          documentId,
+          namespacedDocumentId: compositeDocumentId,
           encrypted,
           context,
         });
@@ -539,7 +572,6 @@ export class Server<Context extends ServerContext> extends Observable<
         rateLimitStorage: config.rateLimitStorage,
         getUserId: config.getUserId ?? ((msg) => msg.context.userId),
         getDocumentId: config.getDocumentId ?? ((msg) => msg.document),
-        // Skip rate limiting for ACK messages and file-auth-message (they're responses, not requests)
         shouldSkipRateLimit: async (message) => {
           // Use custom skip function if provided
           if (config.shouldSkipRateLimit) {
@@ -550,19 +582,12 @@ export class Server<Context extends ServerContext> extends Observable<
           if (message.type === "ack") {
             return true;
           }
-          // Skip rate limiting for file-auth-message (they're responses)
-          if (
-            message.type === "file" &&
-            message.payload.type === "file-auth-message"
-          ) {
-            return true;
-          }
           return false;
         },
         onRateLimitExceeded: config.onRateLimitExceeded,
         onMessageSizeExceeded: config.onMessageSizeExceeded,
         metricsCollector: this.#metrics,
-        eventEmitter: this as any, // Server is an Observable, can emit events
+        eventEmitter: this as any,
       });
 
       logger.debug("Rate limiting applied to transport", {
@@ -598,22 +623,12 @@ export class Server<Context extends ServerContext> extends Observable<
           return true;
         }
 
-        // Skip permission check for file-auth-message (they're responses, not requests)
-        if (
-          message.type === "file" &&
-          message.payload.type === "file-auth-message"
-        ) {
-          // Just ignore this message that's sent by the client
-          return false;
-        }
-
-        // Extract fileId from FileMessage payload if document is undefined
+        // Extract fileId from RPC stream message (file-part) if document is undefined
         const fileId =
-          message.type === "file" &&
-          (message.payload.type === "file-download" ||
-            message.payload.type === "file-upload" ||
-            message.payload.type === "file-part")
-            ? message.payload.fileId
+          message.type === "rpc" &&
+          (message as RpcMessage<Context>).requestType === "stream" &&
+          (message as RpcMessage<Context>).payload.type === "success"
+            ? ((message as RpcMessage<Context>).payload.payload as any)?.fileId
             : undefined;
 
         msgLogger
@@ -674,17 +689,18 @@ export class Server<Context extends ServerContext> extends Observable<
               return false;
             }
 
-            if (message.type === "file") {
+            if (message.type === "rpc") {
               await client.send(
-                new FileMessage(
+                new RpcMessage<Context>(
                   message.document,
                   {
-                    type: "file-auth-message",
-                    permission: "denied",
-                    reason: "Insufficient permissions to access file",
-                    statusCode: 401,
-                    fileId: fileId!,
+                    type: "error",
+                    statusCode: 403,
+                    details: "Permission denied for file upload",
                   },
+                  message.rpcMethod,
+                  "response",
+                  message.originalRequestId ?? message.id,
                   message.context,
                   message.encrypted,
                 ),
@@ -753,116 +769,31 @@ export class Server<Context extends ServerContext> extends Observable<
               .debug("Processing incoming message");
 
             try {
-              // File messages need a session to access storage
-              if (message.type === "file") {
-                const session = await this.getOrOpenSession(message.document, {
-                  encrypted: message.encrypted,
-                  client,
-                  context: message.context,
-                });
+              const session = await this.getOrOpenSession(message.document, {
+                encrypted: message.encrypted,
+                client,
+                context: message.context,
+              });
 
-                // Check if file storage is available for this document
-                const fileStorage = session.storage.fileStorage;
+              msgLogger.debug("Client added to session, applying message");
 
-                if (!fileStorage) {
-                  const error = new Error(
-                    "File storage not configured. File messages are not supported.",
-                  );
-                  msgLogger
-                    .with({ error: toErrorDetails(error) })
-                    .error("File storage not available");
+              const startTime = Date.now();
+              await session.apply(message, client);
+              const duration = (Date.now() - startTime) / 1000;
 
-                  // Send error response
-                  if (
-                    message.payload.type === "file-upload" ||
-                    message.payload.type === "file-download"
-                  ) {
-                    await client.send(
-                      new FileMessage(
-                        message.document,
-                        {
-                          type: "file-auth-message",
-                          permission: "denied",
-                          reason: "File storage not configured",
-                          statusCode: 501,
-                          fileId: message.payload.fileId,
-                        },
-                        message.context,
-                        message.encrypted,
-                      ),
-                    );
-                  }
+              // Record message metrics
+              this.#metrics.incrementMessage(message.type);
+              this.#metrics.messageDuration.observe(
+                { type: message.type },
+                duration,
+              );
 
-                  // Send ACK even for failed file messages (file messages are never ACK messages)
-                  const ackMessage = new AckMessage(
-                    {
-                      type: "ack",
-                      messageId: message.id,
-                    },
-                    message.context,
-                  );
-                  await client.send(ackMessage);
-                  msgLogger
-                    .with({
-                      messageId: message.id,
-                      ackMessageId: ackMessage.id,
-                    })
-                    .trace("Sent ACK for message (file storage unavailable)");
-
-                  return; // Don't throw, just return
-                }
-
-                msgLogger.debug("Processing file message");
-
-                // Create a temporary handler for this message using the session's file storage
-                const fileHandler = new FileHandler<Context>(fileStorage);
-
-                const startTime = Date.now();
-                await fileHandler.handle(message, async (response) => {
-                  await client.send(response);
-                });
-                const duration = (Date.now() - startTime) / 1000;
-
-                // Record message metrics
-                this.#metrics.incrementMessage(message.type);
-                this.#metrics.messageDuration.observe(
-                  { type: message.type },
-                  duration,
-                );
-
-                msgLogger
-                  .with({
-                    messageId: message.id,
-                  })
-                  .debug("File message processed successfully");
-              } else {
-                // Document messages go through sessions
-                const session = await this.getOrOpenSession(message.document, {
-                  encrypted: message.encrypted,
-                  client,
-                  context: message.context,
-                });
-
-                msgLogger.debug("Client added to session, applying message");
-
-                const startTime = Date.now();
-                await session.apply(message, client);
-                const duration = (Date.now() - startTime) / 1000;
-
-                // Record message metrics
-                this.#metrics.incrementMessage(message.type);
-                this.#metrics.messageDuration.observe(
-                  { type: message.type },
-                  duration,
-                );
-
-                msgLogger
-                  .with({
-                    messageId: message.id,
-                    documentId: message.document,
-                  })
-                  .debug("Message applied successfully");
-              }
+              msgLogger
+                .with({
+                  messageId: message.id,
+                  documentId: message.document,
+                })
+                .debug("Message applied successfully");
 
               // Emit client-message event for metrics/webhooks
               this.call("client-message", {
@@ -1034,6 +965,12 @@ export class Server<Context extends ServerContext> extends Observable<
       activeSessions: this.#sessions.size,
       pendingSessions: this.#pendingSessions.size,
     });
+
+    // Call handler cleanup functions
+    for (const cleanup of this.#handlerCleanups) {
+      cleanup();
+    }
+    this.#handlerCleanups = [];
 
     // Wait for any pending session creations to complete (or fail)
     // This prevents dangling promises and ensures we don't dispose while sessions are being created

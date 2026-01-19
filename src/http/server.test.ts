@@ -6,7 +6,11 @@ import {
   type StateVector,
   type Update,
 } from "teleportal";
-import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
+import type {
+  Document,
+  DocumentMetadata,
+  DocumentStorage,
+} from "teleportal/storage";
 import { Server } from "../server/server";
 import { getHTTPHandler } from "./server";
 
@@ -20,7 +24,10 @@ class MockDocumentStorage implements DocumentStorage {
   storedUpdate: Update | null = null;
   metadata: Map<string, DocumentMetadata> = new Map();
 
-  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
+  async handleSyncStep1(
+    documentId: string,
+    syncStep1: StateVector,
+  ): Promise<Document> {
     return {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
@@ -51,7 +58,10 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
+  async writeDocumentMetadata(
+    documentId: string,
+    metadata: DocumentMetadata,
+  ): Promise<void> {
     this.metadata.set(documentId, metadata);
   }
 
@@ -87,7 +97,10 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
+  async removeFileFromDocument(
+    documentId: string,
+    fileId: string,
+  ): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);

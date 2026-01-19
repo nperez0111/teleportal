@@ -59,13 +59,10 @@ describe("EncryptedMemoryStorage", () => {
         return customDocs.get(key);
       };
 
-      storage = new EncryptedMemoryStorage(
-        {
-          write: customWrite,
-          fetch: customFetch,
-        },
-        undefined,
-      );
+      storage = new EncryptedMemoryStorage({
+        write: customWrite,
+        fetch: customFetch,
+      });
 
       const key = "test-doc-2";
       const metadata = {
@@ -242,46 +239,18 @@ describe("EncryptedMemoryStorage", () => {
       expect(result).toBeNull();
     });
 
-    it("should cascade delete files when fileStorage is provided", async () => {
-      const key = "test-doc-13";
-      let deleteFilesByDocumentCalled = false;
-      let deleteFilesByDocumentKey: string | undefined;
-
-      mockFileStorage = {
-        type: "file-storage" as const,
-        getFile: async () => null,
-        deleteFile: async () => {},
-        listFileMetadataByDocument: async () => [],
-        deleteFilesByDocument: async (documentId: string) => {
-          deleteFilesByDocumentCalled = true;
-          deleteFilesByDocumentKey = documentId;
-        },
-        storeFileFromUpload: async () => {},
-      };
-
-      storage = new EncryptedMemoryStorage(undefined, mockFileStorage);
-      const messageId = "msg-1" as EncryptedMessageId;
-      const payload = new Uint8Array([1, 2, 3]) as EncryptedUpdatePayload;
-
-      await storage.storeEncryptedMessage(key, messageId, payload);
-      await storage.deleteDocument(key);
-
-      expect(deleteFilesByDocumentCalled).toBe(true);
-      expect(deleteFilesByDocumentKey).toBe(key);
-    });
-
     it("should not fail if fileStorage is not provided", async () => {
       const key = "test-doc-14";
       const messageId = "msg-1" as EncryptedMessageId;
       const payload = new Uint8Array([1, 2, 3]) as EncryptedUpdatePayload;
 
       await storage.storeEncryptedMessage(key, messageId, payload);
-      
+
       // Verify document exists before deletion
       expect(EncryptedMemoryStorage.docs.has(key)).toBe(true);
 
       await storage.deleteDocument(key);
-      
+
       // Verify document is deleted
       expect(EncryptedMemoryStorage.docs.has(key)).toBe(false);
       const result = await storage.fetchEncryptedMessage(key, messageId);

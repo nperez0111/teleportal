@@ -1,4 +1,4 @@
-import type { StateVector, SyncStep2Update, Update } from "./types";
+import type { StateVector, SyncStep2Update, Update } from "teleportal/protocol";
 
 /**
  * An empty Update for use as a placeholder.

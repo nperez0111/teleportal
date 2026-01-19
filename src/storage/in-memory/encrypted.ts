@@ -6,7 +6,6 @@ import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
-import type { FileStorage } from "../types";
 
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   constructor(
@@ -33,10 +32,8 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
         return EncryptedMemoryStorage.docs.get(key);
       },
     },
-    fileStorage: FileStorage | undefined = undefined,
   ) {
     super();
-    this.fileStorage = fileStorage;
   }
   public static docs = new Map<
     string,
@@ -115,9 +112,6 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   }
 
   async deleteDocument(key: string): Promise<void> {
-    if (this.fileStorage) {
-      await this.fileStorage.deleteFilesByDocument(key);
-    }
     EncryptedMemoryStorage.docs.delete(key);
   }
 }

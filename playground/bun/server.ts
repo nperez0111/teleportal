@@ -4,24 +4,34 @@ import bunSqlite from "db0/connectors/bun-sqlite";
 import { createStorage } from "unstorage";
 // @ts-ignore - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
-import "../src/backend/logger";
-import { Server } from "teleportal/server";
-import { createUnstorage } from "teleportal/storage";
-import {
-  checkPermissionWithTokenManager,
-  createTokenManager,
-  TokenPayload,
-} from "teleportal/token";
-import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
+
+import { importEncryptionKey } from "teleportal/encryption-key";
 import {
   getHealthHandler,
   getMetricsHandler,
   getStatusHandler,
 } from "teleportal/monitoring";
-import { createEncryptedDriver } from "teleportal/storage";
-import { importEncryptionKey } from "teleportal/encryption-key";
-import { UnstorageRateLimitStorage } from "teleportal/storage";
+import { getFileRpcHandlers } from "teleportal/protocols/file";
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+import { Server } from "teleportal/server";
+import {
+  createEncryptedDriver,
+  UnstorageDocumentStorage,
+  UnstorageEncryptedDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageMilestoneStorage,
+  UnstorageRateLimitStorage,
+  UnstorageTemporaryUploadStorage,
+} from "teleportal/storage";
+import {
+  checkPermissionWithTokenManager,
+  createTokenManager,
+  TokenPayload,
+} from "teleportal/token";
 import type { RateLimitRule } from "teleportal/transports/rate-limiter";
+import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
+
+import "../src/backend/logger";
 
 import homepage from "../src/index.html";
 // import { RedisPubSub } from "teleportal/transports/redis";
@@ -47,10 +57,28 @@ const storage = createStorage({
 
 const memoryStorage = createStorage();
 
-// Create rate limit storage using the same backing storage
-const rateLimitStorage = new UnstorageRateLimitStorage(
-  Bun.env.NODE_ENV === "production" ? memoryStorage : storage,
+const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
+  memoryStorage,
+  {
+    keyPrefix: "file",
+  },
 );
+
+const fileStorage = new UnstorageFileStorage(storage, {
+  keyPrefix: "file",
+  temporaryUploadStorage,
+});
+
+const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+  keyPrefix: "document-milestone",
+});
+
+// Create RPC handlers with storage instances
+const milestoneHandlers = getMilestoneRpcHandlers(milestoneStorage);
+const fileHandlers = getFileRpcHandlers(fileStorage);
+
+// Create rate limit storage using the same backing storage
+const rateLimitStorage = new UnstorageRateLimitStorage(memoryStorage);
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -81,12 +109,19 @@ const server = new Server<TokenPayload & { clientId: string }>({
     const backingStorage =
       Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
-    const { documentStorage } = createUnstorage(backingStorage, {
-      fileKeyPrefix: "file",
-      encrypted: ctx.documentId.includes("encrypted"),
+    if (ctx.encrypted) {
+      return new UnstorageEncryptedDocumentStorage(backingStorage, {
+        keyPrefix: "document",
+      });
+    }
+    return new UnstorageDocumentStorage(backingStorage, {
+      keyPrefix: "document",
       scanKeys: false,
     });
-    return documentStorage;
+  },
+  rpcHandlers: {
+    ...milestoneHandlers,
+    ...fileHandlers,
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
   // pubSub: new RedisPubSub({

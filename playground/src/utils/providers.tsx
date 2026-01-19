@@ -5,9 +5,9 @@ import {
   DefaultTransportProperties,
 } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
+import { getFileClientHandlers } from "teleportal/protocols/file";
 
 import { getEncryptedTransport } from "./encrypted";
-import { FileTransportMethods, withSendFile } from "teleportal/transports";
 import { ClientContext, Transport } from "teleportal";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
 
@@ -23,8 +23,7 @@ class ProviderManager {
   private provider: Provider<
     Transport<
       ClientContext,
-      DefaultTransportProperties &
-        FileTransportMethods & { handler?: EncryptionClient }
+      DefaultTransportProperties & { handler?: EncryptionClient }
     >
   > | null = null;
   private websocketConnection: Promise<websocket.WebSocketConnection> | null =
@@ -71,13 +70,15 @@ class ProviderManager {
       this.provider = (await Provider.create({
         client,
         document: documentId,
+        encryptionKey: key,
+        rpcHandlers: {
+          ...getFileClientHandlers({ encryptionKey: key }),
+        },
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
           const baseTransport = key
             ? getEncryptedTransport(key)({ document, ydoc, awareness })
             : getDefaultTransport();
-          return withSendFile({
-            transport: baseTransport,
-          });
+          return baseTransport as any;
         },
         enableOfflinePersistence: false,
       })) as any;
@@ -85,13 +86,15 @@ class ProviderManager {
       // Switch document on existing provider
       this.provider = this.provider.switchDocument({
         document: documentId,
+        encryptionKey: key,
+        rpcHandlers: {
+          ...getFileClientHandlers({ encryptionKey: key }),
+        },
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
           const baseTransport = key
             ? getEncryptedTransport(key)({ document, ydoc, awareness })
             : getDefaultTransport();
-          return withSendFile({
-            transport: baseTransport,
-          }) as any;
+          return baseTransport as any;
         },
       });
     }
@@ -128,8 +131,7 @@ export function useProvider(
   provider: Provider<
     Transport<
       ClientContext,
-      DefaultTransportProperties &
-        FileTransportMethods & { handler?: EncryptionClient }
+      DefaultTransportProperties & { handler?: EncryptionClient }
     >
   > | null;
 } {
@@ -157,8 +159,7 @@ export function useProvider(
     provider: provider as Provider<
       Transport<
         ClientContext,
-        DefaultTransportProperties &
-          FileTransportMethods & { handler?: EncryptionClient }
+        DefaultTransportProperties & { handler?: EncryptionClient }
       >
     > | null,
   };

@@ -678,34 +678,60 @@ const awarenessMessage = new AwarenessMessage("my-document", {
   update: awarenessUpdate,
 });
 
-// Initiating file upload
-const fileUpload = new FileMessage("my-document", {
-  type: "file-upload",
-  fileId: "unique-upload-id",
-  filename: "document.pdf",
-  size: 1024000,
-  mimeType: "application/pdf",
-  lastModified: Date.now(),
-  encrypted: false,
-});
+// File operations now use the RPC system
+// See teleportal/protocols/file for FileUploadRequest, FileDownloadRequest, and FilePartStream types
+import { RpcMessage } from "teleportal/protocol";
+import type { FilePartStream } from "teleportal/protocols/file";
 
-// Sending file chunk with Merkle proof
-const filePart = new FileMessage("my-document", {
-  type: "file-part",
-  fileId: "unique-upload-id", // Matches fileId from file-upload
+// Initiating file upload via RPC
+const fileUploadRequest = new RpcMessage(
+  "my-document",
+  {
+    method: "fileUpload",
+    fileId: "unique-upload-id",
+    filename: "document.pdf",
+    size: 1024000,
+    mimeType: "application/pdf",
+    lastModified: Date.now(),
+    encrypted: false,
+  },
+  "request",
+  undefined,
+  {},
+  false,
+);
+
+// Sending file chunk with Merkle proof as RPC stream
+const filePart: FilePartStream = {
+  fileId: "unique-upload-id",
   chunkIndex: 0,
   chunkData: chunkBytes,
-  merkleProof: [hash1, hash2, hash3], // Path to root
+  merkleProof: [hash1, hash2, hash3],
   totalChunks: 16,
   bytesUploaded: 65536,
   encrypted: false,
-});
+};
+const filePartMessage = new RpcMessage(
+  "my-document",
+  { type: "stream", payload: filePart },
+  "stream",
+  originalRequestId, // Links to the original fileUpload request
+  {},
+  false,
+);
 
-// Requesting file download
-const fileDownload = new FileMessage("my-document", {
-  type: "file-download",
-  fileId: merkleRootHash, // Merkle root hash (base64) identifying the file
-});
+// Requesting file download via RPC
+const fileDownloadRequest = new RpcMessage(
+  "my-document",
+  {
+    method: "fileDownload",
+    fileId: merkleRootHash, // Merkle root hash (base64) identifying the file
+  },
+  "request",
+  undefined,
+  {},
+  false,
+);
 
 // Requesting milestone list
 const milestoneListRequest = new DocMessage("my-document", {

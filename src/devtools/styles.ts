@@ -310,7 +310,7 @@ export const devtoolsStyles = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 130px;
+  width: 150px;
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 10px;

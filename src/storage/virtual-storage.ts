@@ -70,14 +70,6 @@ export class VirtualStorage implements DocumentStorage {
     );
   }
 
-  get fileStorage() {
-    return this.#storage.fileStorage;
-  }
-
-  get milestoneStorage() {
-    return this.#storage.milestoneStorage;
-  }
-
   /**
    * Buffer an update for later batch processing.
    */
@@ -165,20 +157,6 @@ export class VirtualStorage implements DocumentStorage {
    */
   async transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
     return this.#storage.transaction(documentId, cb);
-  }
-
-  /**
-   * Forward file operations.
-   */
-  async addFileToDocument(documentId: string, fileId: string): Promise<void> {
-    return this.#storage.addFileToDocument(documentId, fileId);
-  }
-
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
-    return this.#storage.removeFileFromDocument(documentId, fileId);
   }
 
   /**

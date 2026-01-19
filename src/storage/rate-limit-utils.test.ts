@@ -134,7 +134,9 @@ describe("rate-limit-utils", () => {
     });
 
     it("should return null for document tracking if documentId missing", () => {
-      expect(getRateLimitKey("rule1", undefined, undefined, "document")).toBe(null);
+      expect(getRateLimitKey("rule1", undefined, undefined, "document")).toBe(
+        null,
+      );
     });
 
     it("should return user-document key with rule ID", () => {
@@ -144,8 +146,12 @@ describe("rate-limit-utils", () => {
     });
 
     it("should return null for user-document tracking if either missing", () => {
-      expect(getRateLimitKey("rule1", "user1", undefined, "user-document")).toBe(null);
-      expect(getRateLimitKey("rule1", undefined, "doc1", "user-document")).toBe(null);
+      expect(
+        getRateLimitKey("rule1", "user1", undefined, "user-document"),
+      ).toBe(null);
+      expect(getRateLimitKey("rule1", undefined, "doc1", "user-document")).toBe(
+        null,
+      );
     });
   });
 });

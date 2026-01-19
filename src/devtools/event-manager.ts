@@ -144,108 +144,113 @@ export class EventManager {
         this.updateStatistics();
         this.emitChange();
       },
+      { withEventTarget: true },
     );
     this.unsubscribers.push(unsubReceived);
 
     // Listen to sent messages
-    const unsubSent = teleportalEventClient.on("sent-message", (event) => {
-      const { message, provider, connection } = event.payload;
+    const unsubSent = teleportalEventClient.on(
+      "sent-message",
+      (event) => {
+        const { message, provider, connection } = event.payload;
 
-      // Check connection state from the connection object if available
-      if (
-        connection &&
-        typeof connection.state === "object" &&
-        connection.state
-      ) {
-        const connState = connection.state;
-        if (connState.type && connState.type !== this.connectionState?.type) {
-          const newState: ConnectionStateInfo = {
-            type: connState.type,
-            transport: connState.type === "connected" ? "websocket" : null,
-            error:
-              connState.type === "errored"
-                ? connState.error?.message || String(connState.error)
-                : undefined,
-            timestamp: Date.now(),
-          };
-          this.connectionState = newState;
-          this.updateStatistics();
-          this.emitChange();
-        }
-      }
-
-      // Handle ACK messages separately - don't add to list, but track them
-      if (message.type === "ack" && message.payload?.type === "ack") {
-        const ackedMessageId = message.payload.messageId;
-        if (ackedMessageId) {
-          const ackMessageId = message.id;
-
-          // Store ACK info
-          this.ackMessages.set(ackedMessageId, {
-            ackMessageId,
-            ackMessage: message,
-            timestamp: Date.now(),
-          });
-
-          // Update the corresponding message to mark it as ACKed
-          const msgIndex = this.messages.findIndex((msg) => {
-            const msgId = msg.message.id || msg.id;
-            return msgId === ackedMessageId;
-          });
-          if (msgIndex !== -1) {
-            this.messages[msgIndex] = {
-              ...this.messages[msgIndex],
-              ackedBy: {
-                ackMessageId,
-                ackMessage: message,
-                timestamp: Date.now(),
-              },
+        // Check connection state from the connection object if available
+        if (
+          connection &&
+          typeof connection.state === "object" &&
+          connection.state
+        ) {
+          const connState = connection.state;
+          if (connState.type && connState.type !== this.connectionState?.type) {
+            const newState: ConnectionStateInfo = {
+              type: connState.type,
+              transport: connState.type === "connected" ? "websocket" : null,
+              error:
+                connState.type === "errored"
+                  ? connState.error?.message || String(connState.error)
+                  : undefined,
+              timestamp: Date.now(),
             };
+            this.connectionState = newState;
             this.updateStatistics();
             this.emitChange();
           }
         }
 
+        // Handle ACK messages separately - don't add to list, but track them
+        if (message.type === "ack" && message.payload?.type === "ack") {
+          const ackedMessageId = message.payload.messageId;
+          if (ackedMessageId) {
+            const ackMessageId = message.id;
+
+            // Store ACK info
+            this.ackMessages.set(ackedMessageId, {
+              ackMessageId,
+              ackMessage: message,
+              timestamp: Date.now(),
+            });
+
+            // Update the corresponding message to mark it as ACKed
+            const msgIndex = this.messages.findIndex((msg) => {
+              const msgId = msg.message.id || msg.id;
+              return msgId === ackedMessageId;
+            });
+            if (msgIndex !== -1) {
+              this.messages[msgIndex] = {
+                ...this.messages[msgIndex],
+                ackedBy: {
+                  ackMessageId,
+                  ackMessage: message,
+                  timestamp: Date.now(),
+                },
+              };
+              this.updateStatistics();
+              this.emitChange();
+            }
+          }
+
+          this.messageRateTimestamps.push(Date.now());
+          return;
+        }
+
+        const docId = message.document || "unknown";
+        this.tracker.addDocument(docId, provider, docId);
+        this.tracker.updateDocumentActivity(docId);
+
+        const messageId = message.id;
+
+        // Check for duplicates by message ID before adding
+        const existing = this.messages.find((msg) => {
+          const msgId = msg.message.id || msg.id;
+          return msgId === messageId;
+        });
+        if (existing) {
+          this.messageRateTimestamps.push(Date.now());
+          return;
+        }
+
+        const devtoolsMessage: DevtoolsMessage = {
+          id: messageId,
+          message,
+          direction: "sent",
+          timestamp: Date.now(),
+          document: docId,
+          provider,
+          connection,
+        };
+
+        this.messages.push(devtoolsMessage);
+        const limit = this.settingsManager.getSettings().messageLimit;
+        if (this.messages.length > limit) {
+          this.messages = this.messages.slice(-limit);
+        }
+
         this.messageRateTimestamps.push(Date.now());
-        return;
-      }
-
-      const docId = message.document || "unknown";
-      this.tracker.addDocument(docId, provider, docId);
-      this.tracker.updateDocumentActivity(docId);
-
-      const messageId = message.id;
-
-      // Check for duplicates by message ID before adding
-      const existing = this.messages.find((msg) => {
-        const msgId = msg.message.id || msg.id;
-        return msgId === messageId;
-      });
-      if (existing) {
-        this.messageRateTimestamps.push(Date.now());
-        return;
-      }
-
-      const devtoolsMessage: DevtoolsMessage = {
-        id: messageId,
-        message,
-        direction: "sent",
-        timestamp: Date.now(),
-        document: docId,
-        provider,
-        connection,
-      };
-
-      this.messages.push(devtoolsMessage);
-      const limit = this.settingsManager.getSettings().messageLimit;
-      if (this.messages.length > limit) {
-        this.messages = this.messages.slice(-limit);
-      }
-
-      this.messageRateTimestamps.push(Date.now());
-      this.updateStatistics();
-      this.emitChange();
-    });
+        this.updateStatistics();
+        this.emitChange();
+      },
+      { withEventTarget: true },
+    );
     this.unsubscribers.push(unsubSent);
 
     // Listen to subdoc load (may not be emitted to teleportalEventClient, but try anyway)
@@ -258,6 +263,7 @@ export class EventManager {
           this.updateStatistics();
           this.emitChange();
         },
+        { withEventTarget: true },
       );
       this.unsubscribers.push(unsubLoadSubdoc);
     } catch (e) {
@@ -274,6 +280,7 @@ export class EventManager {
           this.updateStatistics();
           this.emitChange();
         },
+        { withEventTarget: true },
       );
       this.unsubscribers.push(unsubUnloadSubdoc);
     } catch (e) {
@@ -281,16 +288,20 @@ export class EventManager {
     }
 
     // Listen to connection events
-    const unsubConnected = teleportalEventClient.on("connected", (event) => {
-      const newState = {
-        type: "connected" as const,
-        transport: "websocket" as const,
-        timestamp: Date.now(),
-      };
-      this.connectionState = newState;
-      this.updateStatistics();
-      this.emitChange();
-    });
+    const unsubConnected = teleportalEventClient.on(
+      "connected",
+      (event) => {
+        const newState = {
+          type: "connected" as const,
+          transport: "websocket" as const,
+          timestamp: Date.now(),
+        };
+        this.connectionState = newState;
+        this.updateStatistics();
+        this.emitChange();
+      },
+      { withEventTarget: true },
+    );
     this.unsubscribers.push(unsubConnected);
 
     const unsubDisconnected = teleportalEventClient.on(
@@ -305,24 +316,29 @@ export class EventManager {
         this.updateStatistics();
         this.emitChange();
       },
+      { withEventTarget: true },
     );
     this.unsubscribers.push(unsubDisconnected);
 
-    const unsubUpdate = teleportalEventClient.on("update", (event) => {
-      const { state } = event.payload;
-      const newState: ConnectionStateInfo = {
-        type: state.type,
-        transport: state.type === "connected" ? "websocket" : null,
-        error:
-          state.type === "errored"
-            ? state.error?.message || String(state.error)
-            : undefined,
-        timestamp: Date.now(),
-      };
-      this.connectionState = newState;
-      this.updateStatistics();
-      this.emitChange();
-    });
+    const unsubUpdate = teleportalEventClient.on(
+      "update",
+      (event) => {
+        const { state } = event.payload;
+        const newState: ConnectionStateInfo = {
+          type: state.type,
+          transport: state.type === "connected" ? "websocket" : null,
+          error:
+            state.type === "errored"
+              ? state.error?.message || String(state.error)
+              : undefined,
+          timestamp: Date.now(),
+        };
+        this.connectionState = newState;
+        this.updateStatistics();
+        this.emitChange();
+      },
+      { withEventTarget: true },
+    );
     this.unsubscribers.push(unsubUpdate);
 
     // Listen to settings changes to update message limit

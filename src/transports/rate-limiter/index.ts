@@ -373,7 +373,10 @@ export class RateLimitedTransport<
           state = refillRateLimitState(state, now);
         }
 
-        if (state.tokens < 1) {
+        // At this point, state is guaranteed to be non-null
+        const currentState = state;
+
+        if (currentState.tokens < 1) {
           const getUserId = rule.getUserId ?? this.defaultGetUserId;
           const getDocumentId = rule.getDocumentId ?? this.defaultGetDocumentId;
           const exceededData: RateLimitExceededData<Context> = {
@@ -384,7 +387,7 @@ export class RateLimitedTransport<
             currentCount: 0,
             maxMessages: currentMaxMessages,
             windowMs: currentWindowMs,
-            resetAt: state.lastRefill + state.windowMs,
+            resetAt: currentState.lastRefill + currentState.windowMs,
             message,
           };
           this.onRateLimitExceeded?.(exceededData);
@@ -398,9 +401,9 @@ export class RateLimitedTransport<
         }
 
         // Consume token
-        state.tokens -= 1;
+        currentState.tokens -= 1;
 
-        await storage.setState(key, state, currentWindowMs);
+        await storage.setState(key, currentState, currentWindowMs);
         this.metricsCollector?.recordRateLimitStateOperation(
           "set",
           rule.trackBy,
@@ -408,7 +411,7 @@ export class RateLimitedTransport<
         this.eventEmitter?.call("rate-limit-state-updated", {
           ruleId: rule.id,
           key,
-          tokens: state.tokens,
+          tokens: currentState.tokens,
           trackBy: rule.trackBy,
         });
 

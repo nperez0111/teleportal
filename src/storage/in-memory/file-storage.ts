@@ -1,10 +1,6 @@
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type {
-  Document,
-  DocumentMetadataUpdater,
-  DocumentStorage,
   File,
-  FileMetadata,
   FileStorage,
   FileUploadResult,
   TemporaryUploadStorage,
@@ -21,33 +17,12 @@ export class InMemoryFileStorage implements FileStorage {
   readonly type = "file-storage" as const;
 
   temporaryUploadStorage?: TemporaryUploadStorage;
-  #metadataUpdater?: DocumentMetadataUpdater;
-  #documentStorage?: DocumentStorage;
   #files = new Map<string, File>();
 
   constructor(options?: {
-    metadataUpdater?: DocumentMetadataUpdater;
-    documentStorage?: DocumentStorage;
     temporaryUploadStorage?: TemporaryUploadStorage;
   }) {
-    this.#documentStorage = options?.documentStorage;
-    // If documentStorage is provided, use it as metadataUpdater too
-    // (since DocumentStorage extends DocumentMetadataUpdater)
-    this.#metadataUpdater = options?.metadataUpdater ?? options?.documentStorage;
     this.temporaryUploadStorage = options?.temporaryUploadStorage;
-  }
-
-  /**
-   * Set the document storage reference after construction.
-   * This is used by factory functions to wire up the circular dependency.
-   */
-  setDocumentStorage(documentStorage: DocumentStorage): void {
-    this.#documentStorage = documentStorage;
-    // Also set metadataUpdater if not already set
-    // DocumentStorage implements DocumentMetadataUpdater
-    if (!this.#metadataUpdater) {
-      this.#metadataUpdater = documentStorage as DocumentMetadataUpdater;
-    }
   }
 
   /**
@@ -56,11 +31,6 @@ export class InMemoryFileStorage implements FileStorage {
    */
   async storeFile(file: File): Promise<void> {
     this.#files.set(file.id, file);
-
-    const documentId = file.metadata.documentId;
-    if (this.#metadataUpdater && documentId) {
-      await this.#metadataUpdater.addFileToDocument(documentId, file.id);
-    }
   }
 
   async getFile(fileId: File["id"]): Promise<File | null> {
@@ -78,42 +48,7 @@ export class InMemoryFileStorage implements FileStorage {
   }
 
   async deleteFile(fileId: File["id"]): Promise<void> {
-    const file = this.#deleteFileData(fileId);
-
-    const documentId = file?.metadata.documentId;
-    if (this.#metadataUpdater && documentId) {
-      await this.#metadataUpdater.removeFileFromDocument(documentId, fileId);
-    }
-  }
-
-  async listFileMetadataByDocument(
-    documentId: Document["id"],
-  ): Promise<FileMetadata[]> {
-    if (!this.#documentStorage) return [];
-    const metadata =
-      await this.#documentStorage.getDocumentMetadata(documentId);
-    const fileIds = metadata.files ?? [];
-    const files = await Promise.all(fileIds.map((id) => this.getFile(id)));
-    return files.filter(Boolean).map((f) => (f as File).metadata);
-  }
-
-  async deleteFilesByDocument(documentId: Document["id"]): Promise<void> {
-    if (!this.#documentStorage) return;
-
-    await this.#documentStorage.transaction(documentId, async () => {
-      const metadata =
-        await this.#documentStorage!.getDocumentMetadata(documentId);
-      const fileIds = metadata.files ?? [];
-
-      // Delete file data without nested transactions to avoid deadlock
-      for (const id of fileIds) this.#deleteFileData(id);
-
-      await this.#documentStorage!.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files: [],
-        updatedAt: Date.now(),
-      });
-    });
+    this.#deleteFileData(fileId);
   }
 
   async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {

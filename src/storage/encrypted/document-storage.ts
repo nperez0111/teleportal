@@ -16,10 +16,7 @@ import {
 } from "teleportal/protocol/encryption";
 import {
   type DocumentMetadata as BaseDocumentMetadata,
-  type DocumentMetadataUpdater,
   type DocumentStorage,
-  type FileStorage,
-  type MilestoneStorage,
   type Document,
 } from "../types";
 import { EncryptedBinary } from "teleportal/encryption-key";
@@ -44,44 +41,9 @@ export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
  * and implement a "trust-but-verify" strategy, where they use the milestone, but verify against the merkle tree afterwards in the background. This might prove to be a good compromise of initial sync speed and security.
  */
 
-export abstract class EncryptedDocumentStorage
-  implements DocumentStorage, DocumentMetadataUpdater
-{
+export abstract class EncryptedDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
   storageType: "encrypted" = "encrypted";
-
-  fileStorage?: FileStorage;
-  milestoneStorage?: MilestoneStorage;
-
-  async addFileToDocument(
-    documentId: Document["id"],
-    fileId: string,
-  ): Promise<void> {
-    await this.transaction(documentId, async () => {
-      const metadata = await this.getDocumentMetadata(documentId);
-      const files = [...new Set([...(metadata.files ?? []), fileId])];
-      await this.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      } as EncryptedDocumentMetadata);
-    });
-  }
-
-  async removeFileFromDocument(
-    documentId: Document["id"],
-    fileId: string,
-  ): Promise<void> {
-    await this.transaction(documentId, async () => {
-      const metadata = await this.getDocumentMetadata(documentId);
-      const files = (metadata.files ?? []).filter((id) => id !== fileId);
-      await this.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      } as EncryptedDocumentMetadata);
-    });
-  }
 
   abstract writeDocumentMetadata(
     key: string,
@@ -203,8 +165,11 @@ export abstract class EncryptedDocumentStorage
     const { seenMessages } = metadata;
     const updates: DecodedEncryptedUpdatePayload[] = [];
     for (const clientId of Object.keys(seenMessages)) {
-      for (const counter of Object.keys(seenMessages[Number.parseInt(clientId)])) {
-        const messageId = seenMessages[Number.parseInt(clientId)][Number.parseInt(counter)];
+      for (const counter of Object.keys(
+        seenMessages[Number.parseInt(clientId)],
+      )) {
+        const messageId =
+          seenMessages[Number.parseInt(clientId)][Number.parseInt(counter)];
         const message = await this.fetchEncryptedMessage(key, messageId);
         if (message) {
           updates.push({

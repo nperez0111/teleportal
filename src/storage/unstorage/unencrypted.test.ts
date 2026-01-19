@@ -218,39 +218,6 @@ describe("UnstorageDocumentStorage", () => {
       await storage.deleteDocument(key);
 
       expect(await storage.getDocument(key)).toBeNull();
-      const metadata = await storage.getDocumentMetadata(key);
-      // Should return default metadata after deletion
-      expect(metadata.createdAt).toBeGreaterThan(0);
-    });
-
-    it("should cascade delete files when fileStorage is provided", async () => {
-      const key = "test-doc-11";
-      let deleteFilesByDocumentCalled = false;
-      let deleteFilesByDocumentKey: string | undefined;
-
-      mockFileStorage = {
-        type: "file-storage" as const,
-        getFile: async () => null,
-        deleteFile: async () => {},
-        listFileMetadataByDocument: async () => [],
-        deleteFilesByDocument: async (documentId: string) => {
-          deleteFilesByDocumentCalled = true;
-          deleteFilesByDocumentKey = documentId;
-        },
-        storeFileFromUpload: async () => {},
-      };
-
-      storage = new UnstorageDocumentStorage(createStorage(), {
-        fileStorage: mockFileStorage,
-      });
-      const doc = new Y.Doc();
-      const update = Y.encodeStateAsUpdateV2(doc) as Update;
-
-      await storage.handleUpdate(key, update);
-      await storage.deleteDocument(key);
-
-      expect(deleteFilesByDocumentCalled).toBe(true);
-      expect(deleteFilesByDocumentKey).toBe(key);
     });
 
     it("should delete all updates in scanKeys mode", async () => {
@@ -418,94 +385,6 @@ describe("UnstorageDocumentStorage", () => {
       const newDoc = new Y.Doc();
       Y.applyUpdateV2(newDoc, retrieved!.content.update);
       expect(newDoc.getText("content").toString()).toBe("First Second");
-    });
-  });
-
-  describe("milestoneStorage", () => {
-    it("should be undefined when not provided", () => {
-      const testStorage = new UnstorageDocumentStorage(createStorage());
-      expect(testStorage.milestoneStorage).toBeUndefined();
-    });
-
-    it("should use provided milestoneStorage when provided", () => {
-      const customMilestoneStorage: MilestoneStorage = {
-        type: "milestone-storage",
-        createMilestone: async () => "custom-id",
-        getMilestone: async () => null,
-        getMilestones: async () => [],
-        deleteMilestone: async () => {},
-        restoreMilestone: async () => {},
-        updateMilestoneName: async () => {},
-      };
-
-      const testStorage = new UnstorageDocumentStorage(createStorage(), {
-        milestoneStorage: customMilestoneStorage,
-      });
-
-      expect(testStorage.milestoneStorage).toBe(customMilestoneStorage);
-    });
-
-    it("should allow creating milestones when milestoneStorage is provided", async () => {
-      const testStorage = new UnstorageDocumentStorage(createStorage(), {
-        milestoneStorage: new UnstorageMilestoneStorage(createStorage()),
-      });
-      const snapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
-
-      const milestoneId = await testStorage.milestoneStorage!.createMilestone({
-        name: "v1.0.0",
-        documentId: "test-doc",
-        createdAt: Date.now(),
-        snapshot,
-        createdBy: { type: "system", id: "test-node" },
-      });
-
-      expect(typeof milestoneId).toBe("string");
-      expect(milestoneId.length).toBeGreaterThan(0);
-
-      const milestone = await testStorage.milestoneStorage!.getMilestone(
-        "test-doc",
-        milestoneId,
-      );
-      expect(milestone).not.toBeNull();
-      expect(milestone!.id).toBe(milestoneId);
-      expect(milestone!.name).toBe("v1.0.0");
-    });
-
-    it("should allow creating milestones with custom milestoneStorage", async () => {
-      let createMilestoneCalled = false;
-      let createMilestoneCtx: any;
-
-      const customMilestoneStorage: MilestoneStorage = {
-        type: "milestone-storage",
-        createMilestone: async (ctx) => {
-          createMilestoneCalled = true;
-          createMilestoneCtx = ctx;
-          return "custom-milestone-id";
-        },
-        getMilestone: async () => null,
-        getMilestones: async () => [],
-        deleteMilestone: async () => {},
-        restoreMilestone: async () => {},
-        updateMilestoneName: async () => {},
-      };
-
-      const testStorage = new UnstorageDocumentStorage(createStorage(), {
-        milestoneStorage: customMilestoneStorage,
-      });
-
-      const snapshot = new Uint8Array([1, 2, 3]) as MilestoneSnapshot;
-      const milestoneId = await testStorage.milestoneStorage!.createMilestone({
-        name: "custom-milestone",
-        documentId: "test-doc",
-        createdAt: 1_234_567_890,
-        snapshot,
-        createdBy: { type: "system", id: "test-node" },
-      });
-
-      expect(createMilestoneCalled).toBe(true);
-      expect(createMilestoneCtx.name).toBe("custom-milestone");
-      expect(createMilestoneCtx.documentId).toBe("test-doc");
-      expect(milestoneId).toBe("custom-milestone-id");
     });
   });
 });

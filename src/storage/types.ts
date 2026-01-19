@@ -170,34 +170,6 @@ export interface File {
   contentId: Uint8Array;
 }
 
-/**
- * Interface for updating document metadata when files are stored.
- * This allows FileStorage to update document metadata without creating
- * a circular dependency with DocumentStorage.
- */
-export interface DocumentMetadataUpdater {
-  /**
-   * Add a file ID to a document's metadata.
-   * This should be called within a transaction to ensure atomicity.
-   *
-   * @param documentId - The document ID
-   * @param fileId - The file ID to add
-   */
-  addFileToDocument(documentId: Document["id"], fileId: string): Promise<void>;
-
-  /**
-   * Remove a file ID from a document's metadata.
-   * This should be called within a transaction to ensure atomicity.
-   *
-   * @param documentId - The document ID
-   * @param fileId - The file ID to remove
-   */
-  removeFileFromDocument(
-    documentId: Document["id"],
-    fileId: string,
-  ): Promise<void>;
-}
-
 export interface FileStorage {
   /**
    * The type of the storage.
@@ -226,23 +198,6 @@ export interface FileStorage {
    * @param fileId - The ID of the file
    */
   deleteFile(fileId: File["id"]): Promise<void>;
-
-  /**
-   * Get all files associated with a document.
-   *
-   * @param documentId - The document ID
-   * @returns Array of file data
-   */
-  listFileMetadataByDocument(
-    documentId: Document["id"],
-  ): Promise<FileMetadata[]>;
-
-  /**
-   * Delete all files associated with a document.
-   *
-   * @param documentId - The document ID
-   */
-  deleteFilesByDocument(documentId: Document["id"]): Promise<void>;
 
   /**
    * Store a file incrementally using the result from completeUpload.
@@ -444,23 +399,11 @@ export interface Document {
 /**
  * A storage interface for a document.
  */
-export interface DocumentStorage extends DocumentMetadataUpdater {
+export interface DocumentStorage {
   /**
    * The type of the storage.
    */
   readonly type: "document-storage";
-
-  /**
-   * Optional file storage for this document.
-   * If not provided, file operations will be rejected.
-   */
-  fileStorage?: FileStorage;
-
-  /**
-   * Optional milestone storage for this document.
-   * If not provided, milestone operations will be rejected.
-   */
-  milestoneStorage?: MilestoneStorage;
 
   /**
    * Whether the storage can store encrypted documents.

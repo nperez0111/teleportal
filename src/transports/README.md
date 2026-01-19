@@ -190,23 +190,9 @@ Adds acknowledgment message support for reliable message delivery.
 - Promise-based ACK waiting
 - PubSub-based ACK distribution
 
-### File Transfer Transport
+### File Transfer
 
-#### Send File (`send-file/`)
-
-Adds file upload/download capabilities to any transport.
-
-- **`withSendFile`**: Wraps a transport with file transfer methods
-
-**Features:**
-
-- Chunked file upload/download
-- Merkle tree verification for integrity
-- Optional encryption support
-- File caching to avoid duplicate downloads
-- Upload/download state tracking
-
-**Methods added:**
+File transfer functionality has been moved to the Provider level using RPC handlers. See the [File Protocol documentation](../protocols/file/README.md) for details on using `getFileClientHandlers()` with the Provider's `rpcHandlers` option.
 
 - `upload(file, document, fileId?, encryptionKey?)`: Upload a file
 - `download(fileId, document, encryptionKey?, timeout?)`: Download a file
@@ -339,28 +325,29 @@ const transport = getEncryptedTransport(handler);
 
 ### File Transfer
 
-```typescript
-import { withSendFile } from "teleportal/transports/send-file";
+File transfer is now handled at the Provider level. See the [File Protocol documentation](../protocols/file/README.md) for details.
 
-const fileTransport = withSendFile({
-  transport: baseTransport,
-  context: { clientId: "client-1" },
+```typescript
+import { Provider } from "teleportal/providers";
+import { getFileClientHandlers } from "teleportal/protocols/file";
+
+const provider = await Provider.create({
+  url: "wss://...",
+  document: "my-document",
+  encryptionKey, // optional
+  rpcHandlers: {
+    ...getFileClientHandlers({ encryptionKey }),
+  },
 });
 
 // Upload a file
-const fileId = await fileTransport.upload(
+const fileId = await provider.uploadFile(
   file,
-  "my-document",
   undefined, // auto-generate fileId
-  encryptionKey, // optional
 );
 
 // Download a file
-const downloadedFile = await fileTransport.download(
-  fileId,
-  "my-document",
-  encryptionKey, // optional
-);
+const downloadedFile = await provider.downloadFile(fileId);
 ```
 
 ### ACK-Based Reliable Delivery

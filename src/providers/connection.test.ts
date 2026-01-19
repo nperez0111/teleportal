@@ -3,11 +3,11 @@ import {
   AckMessage,
   AwarenessMessage,
   DocMessage,
-  FileMessage,
   Message,
   type ClientContext,
   type StateVector,
 } from "teleportal";
+import { RpcMessage } from "teleportal/protocol";
 import { Connection, type ConnectionState } from "./connection";
 import { Timer } from "./utils";
 
@@ -818,20 +818,32 @@ describe("Connection", () => {
         expect(connection.inFlightMessageCount).toBe(0);
       });
 
-      it("should track file messages as in-flight when sent", async () => {
+      it("should track RPC stream (file-part) messages as in-flight when sent", async () => {
         await connection.connect();
         expect(connection.inFlightMessageCount).toBe(0);
 
-        const fileMessage = new FileMessage(
+        const filePartMessage = new RpcMessage<ClientContext>(
           "test-doc",
           {
-            type: "file-download",
-            fileId: "test-file-id",
+            type: "success",
+            payload: {
+              fileId: "test-file-id",
+              chunkIndex: 0,
+              chunkData: new Uint8Array([1, 2, 3]),
+              merkleProof: [],
+              totalChunks: 1,
+              bytesUploaded: 3,
+              encrypted: false,
+            },
           },
+          "fileDownload",
+          "stream",
+          "original-request-id",
           { clientId: "test-client" } as ClientContext,
+          false,
         );
 
-        await connection.send(fileMessage);
+        await connection.send(filePartMessage);
         expect(connection.inFlightMessageCount).toBeGreaterThan(0);
         expect(connection.inFlightMessageCount).toBe(1);
       });

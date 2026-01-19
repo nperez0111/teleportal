@@ -10,23 +10,100 @@ import {
 import { ws } from "msw";
 import { setupServer } from "msw/node";
 import {
-  AckMessage,
   ClientContext,
-  FileMessage,
   Message,
   ServerContext,
   decodeMessage,
   isBinaryMessage,
+  RpcMessage,
 } from "teleportal";
-import { withSendFile } from "../../transports/send-file";
+import { getFileClientHandlers } from "../../protocols/file";
+import { Provider } from "../provider";
 import { WebSocketConnection } from "./connection";
-import { FileHandler } from "../../server/file-handler";
+import { getFileRpcHandlers } from "../../protocols/file";
+import type { FilePartStream } from "../../protocols/file/methods";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
+import { YDocStorage } from "../../storage/in-memory/ydoc";
 import { noopTransport, withPassthrough } from "../../transports/passthrough";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
+import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
 
 const wsUrl = "ws://localhost:8080";
+
+/**
+ * Helper to process RPC messages using file RPC handlers.
+ * Simulates how the Session processes RPC messages.
+ */
+async function processRpcMessage(
+  handlers: RpcHandlerRegistry,
+  message: RpcMessage<ServerContext>,
+  sendMessage: (msg: Message<ServerContext>) => Promise<void>,
+): Promise<void> {
+  const handler = handlers[message.rpcMethod];
+  if (!handler) return;
+
+  // Create a storage instance for document metadata management
+  const documentStorage = new YDocStorage();
+
+  const context: RpcServerContext = {
+    server: {} as any,
+    documentId: message.document ?? "",
+    session: {
+      storage: documentStorage,
+    } as any,
+  };
+
+  if (message.requestType === "request" && message.payload.type === "success") {
+    const result = await handler.handler(message.payload.payload, context);
+
+    // Send stream chunks first if present
+    if (result.stream) {
+      for await (const chunk of result.stream) {
+        await sendMessage(
+          new RpcMessage(
+            message.document ?? "",
+            { type: "success" as const, payload: chunk },
+            message.rpcMethod,
+            "stream",
+            message.id,
+            message.context,
+            message.encrypted,
+          ),
+        );
+      }
+    }
+
+    // Send response
+    const responsePayload =
+      (result.response as { type?: string }).type === "error"
+        ? (result.response as { type: "error"; statusCode: number; details: string })
+        : { type: "success" as const, payload: result.response };
+
+    await sendMessage(
+      new RpcMessage(
+        message.document ?? "",
+        responsePayload,
+        message.rpcMethod,
+        "response",
+        message.id,
+        message.context,
+        message.encrypted,
+      ),
+    );
+  } else if (
+    message.requestType === "stream" &&
+    message.payload.type === "success" &&
+    handler.streamHandler
+  ) {
+    await handler.streamHandler(
+      message.payload.payload as FilePartStream,
+      context,
+      message.id,
+      sendMessage,
+    );
+  }
+}
 
 function connectionToTransport(
   connection: WebSocketConnection,
@@ -79,7 +156,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
-      const fileHandler = new FileHandler(fileStorage);
+      const handlers = getFileRpcHandlers(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
 
@@ -97,20 +174,24 @@ describeOrSkip("WebSocketConnection with MSW", () => {
               const message = decoded as Message<ServerContext>;
               receivedMessages.push(message);
 
-              // Process file messages
-              if (message.type === "file") {
+              // Only process RPC messages through file handlers
+              if (message.type === "rpc") {
                 try {
-                  await fileHandler.handle(message, async (response) => {
-                    sentResponses.push(response);
+                  await processRpcMessage(
+                    handlers,
+                    message as RpcMessage<ServerContext>,
+                    async (response) => {
+                      sentResponses.push(response);
 
-                    // Send response back through WebSocket
-                    const encoded = response.encoded;
-                    const arrayBuffer = encoded.buffer.slice(
-                      encoded.byteOffset,
-                      encoded.byteOffset + encoded.byteLength,
-                    );
-                    wsClient.send(arrayBuffer);
-                  });
+                      // Send response back through WebSocket
+                      const encoded = response.encoded;
+                      const arrayBuffer = encoded.buffer.slice(
+                        encoded.byteOffset,
+                        encoded.byteOffset + encoded.byteLength,
+                      );
+                      wsClient.send(arrayBuffer);
+                    },
+                  );
                 } catch (error) {
                   // Log and re-throw file handler errors
                   console.error("File handler error:", error);
@@ -118,10 +199,10 @@ describeOrSkip("WebSocketConnection with MSW", () => {
                 }
               }
             } catch (error) {
-              // Only ignore decode errors for non-file messages
-              // File handler errors should propagate
+              // Only ignore decode errors for non-RPC messages
+              // RPC handler errors should propagate
               const message = receivedMessages.at(-1);
-              if (message?.type === "file") {
+              if (message?.type === "rpc") {
                 throw error;
               }
             }
@@ -142,19 +223,16 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const context: ClientContext = { clientId: "test-client" };
-      const wrappedTransport = withSendFile({
-        // we don't care what the transport is underlying, we just want to test the file transport
-        transport: noopTransport<ClientContext>(),
-        context,
+      // Use Provider with rpcHandlers instead of withSendFile
+      const provider = await Provider.create({
+        client,
+        document: "test-doc",
+        rpcHandlers: {
+          ...getFileClientHandlers(),
+        },
       });
 
-      // messages emitted from the file transport should be sent to the server, through the client
-      wrappedTransport.readable.pipeTo(client.writable);
-      // messages emitted from the client should be sent to the file transport
-      client.getReader().readable.pipeTo(wrappedTransport.writable);
-
-      const fileId = await wrappedTransport.upload(file, "test-file-id");
+      const fileId = await provider.uploadFile(file, "test-file-id");
 
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
@@ -176,36 +254,63 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
-      const fileHandler = new FileHandler(fileStorage);
+      const handlers = getFileRpcHandlers(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
 
+      // Use a mutex to ensure sequential message processing
+      // This prevents race conditions when multiple chunks arrive concurrently
+      let processingPromise = Promise.resolve();
+
       server.use(
         wsHandler.addEventListener("connection", ({ client: wsClient }) => {
-          wsClient.addEventListener("message", async (event) => {
-            const data = new Uint8Array(event.data as ArrayBuffer);
-            try {
-              if (!isBinaryMessage(data)) {
-                return;
+          wsClient.addEventListener("message", (event) => {
+            // Queue message processing to ensure sequential handling
+            processingPromise = processingPromise.then(async () => {
+              const data = new Uint8Array(event.data as ArrayBuffer);
+              try {
+                if (!isBinaryMessage(data)) {
+                  return;
+                }
+
+                // Decode message
+                const decoded = decodeMessage(data);
+                const message = decoded as Message<ServerContext>;
+                receivedMessages.push(message);
+
+                // Only process RPC messages through file handlers
+                if (message.type === "rpc") {
+                  try {
+                    await processRpcMessage(
+                      handlers,
+                      message as RpcMessage<ServerContext>,
+                      async (response) => {
+                        sentResponses.push(response);
+
+                        // Send response back through WebSocket
+                        const encoded = response.encoded;
+                        const arrayBuffer = encoded.buffer.slice(
+                          encoded.byteOffset,
+                          encoded.byteOffset + encoded.byteLength,
+                        );
+                        wsClient.send(arrayBuffer);
+                      },
+                    );
+                  } catch (error) {
+                    // Log and re-throw file handler errors
+                    console.error("File handler error:", error);
+                    throw error;
+                  }
+                }
+              } catch (error) {
+                // Only ignore decode errors for non-RPC messages
+                // RPC handler errors should propagate
+                const message = receivedMessages.at(-1);
+                if (message?.type === "rpc") {
+                  throw error;
+                }
               }
-
-              // Decode message
-              const decoded = decodeMessage(data);
-              const message = decoded as Message<ServerContext>;
-              receivedMessages.push(message);
-
-              // Process file messages
-              if (message.type === "file") {
-                await fileHandler.handle(message, async (response) => {
-                  sentResponses.push(response);
-
-                  // Send response back through WebSocket
-                  wsClient.send(response.encoded);
-                });
-              }
-            } catch {
-              // Ignore decode errors for non-file messages
-            }
+            });
           });
         }),
       );
@@ -224,24 +329,21 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const context: ClientContext = { clientId: "test-client" };
-      const wrappedTransport = withSendFile({
-        // we don't care what the transport is underlying, we just want to test the file transport
-        transport: noopTransport<ClientContext>(),
-        context,
+      // Use Provider with rpcHandlers instead of withSendFile
+      const provider = await Provider.create({
+        client,
+        document: "test-doc",
+        rpcHandlers: {
+          ...getFileClientHandlers(),
+        },
       });
 
-      // messages emitted from the file transport should be sent to the server, through the client
-      wrappedTransport.readable.pipeTo(client.writable);
-      // messages emitted from the client should be sent to the file transport
-      client.getReader().readable.pipeTo(wrappedTransport.writable);
+      const fileId = await provider.uploadFile(file, "test-large-file-id");
 
-      const fileId = await wrappedTransport.upload(file, "test-large-file-id");
-
-      // wait for the storage to be updated with retries
+      // wait for the storage to be updated with retries (longer wait for large files)
       let storedFile = await fileStorage.getFile(fileId);
-      for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let i = 0; i < 50 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -259,7 +361,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       const wsHandler = ws.link(wsUrl);
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
-      const fileHandler = new FileHandler(fileStorage);
+      const handlers = getFileRpcHandlers(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const sentResponses: Message<ServerContext>[] = [];
 
@@ -277,20 +379,24 @@ describeOrSkip("WebSocketConnection with MSW", () => {
               const message = decoded as Message<ServerContext>;
               receivedMessages.push(message);
 
-              // Process file messages
-              if (message.type === "file") {
+              // Only process RPC messages through file handlers
+              if (message.type === "rpc") {
                 try {
-                  await fileHandler.handle(message, async (response) => {
-                    sentResponses.push(response);
+                  await processRpcMessage(
+                    handlers,
+                    message as RpcMessage<ServerContext>,
+                    async (response) => {
+                      sentResponses.push(response);
 
-                    // Send response back through WebSocket
-                    const encoded = response.encoded;
-                    const arrayBuffer = encoded.buffer.slice(
-                      encoded.byteOffset,
-                      encoded.byteOffset + encoded.byteLength,
-                    );
-                    wsClient.send(arrayBuffer);
-                  });
+                      // Send response back through WebSocket
+                      const encoded = response.encoded;
+                      const arrayBuffer = encoded.buffer.slice(
+                        encoded.byteOffset,
+                        encoded.byteOffset + encoded.byteLength,
+                      );
+                      wsClient.send(arrayBuffer);
+                    },
+                  );
                 } catch (error) {
                   // Log and re-throw file handler errors
                   console.error("File handler error:", error);
@@ -298,10 +404,10 @@ describeOrSkip("WebSocketConnection with MSW", () => {
                 }
               }
             } catch (error) {
-              // Only ignore decode errors for non-file messages
-              // File handler errors should propagate
+              // Only ignore decode errors for non-RPC messages
+              // RPC handler errors should propagate
               const message = receivedMessages.at(-1);
-              if (message?.type === "file") {
+              if (message?.type === "rpc") {
                 throw error;
               }
             }
@@ -322,22 +428,18 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const context: ClientContext = { clientId: "test-client" };
-      const wrappedTransport = withSendFile({
-        // we don't care what the transport is underlying, we just want to test the file transport
-        transport: noopTransport<ClientContext>(),
-        context,
+      // Use Provider with rpcHandlers instead of withSendFile
+      const provider = await Provider.create({
+        client,
+        document: "test-doc",
+        rpcHandlers: {
+          ...getFileClientHandlers(),
+        },
       });
 
-      // messages emitted from the file transport should be sent to the server, through the client
-      wrappedTransport.readable.pipeTo(client.writable);
-      // messages emitted from the client should be sent to the file transport
-      client.getReader().readable.pipeTo(wrappedTransport.writable);
-
       // Upload file
-      const fileId = await wrappedTransport.upload(
+      const fileId = await provider.uploadFile(
         file,
-        "test-doc",
         "test-file-id",
       );
 
@@ -354,10 +456,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       expect(storedFile!.metadata.size).toBe(fileContent.length);
 
       // Download file
-      const downloadedFile = await wrappedTransport.download(
-        fileId,
-        "test-doc",
-      );
+      const downloadedFile = await provider.downloadFile(fileId);
 
       // Verify downloaded file matches original
       expect(downloadedFile).toBeInstanceOf(File);

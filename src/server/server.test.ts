@@ -25,8 +25,6 @@ import type {
 class MockDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
   storageType: "encrypted" | "unencrypted" = "unencrypted";
-  fileStorage = undefined;
-  milestoneStorage = undefined;
 
   public mockHandleUpdate = false;
   public storedUpdate: Update | null = null;
@@ -1187,7 +1185,7 @@ describe("Server", () => {
       transport.closeReadable();
     });
 
-    it("should send ACK for file messages", async () => {
+    it("should send ACK for file-part RPC stream messages", async () => {
       const writtenMessages: Message<ServerContext>[] = [];
       const writable = new WritableStream({
         write(chunk) {
@@ -1205,13 +1203,24 @@ describe("Server", () => {
         id: "client-1",
       });
 
-      const { FileMessage } = await import("teleportal");
-      const message = new FileMessage(
+      const { RpcMessage } = await import("teleportal/protocol");
+      const message = new RpcMessage<ServerContext>(
         "test-doc",
         {
-          type: "file-download",
-          fileId: "test-file-id",
+          type: "success",
+          payload: {
+            fileId: "test-file-id",
+            chunkIndex: 0,
+            chunkData: new Uint8Array([1, 2, 3]),
+            merkleProof: [],
+            totalChunks: 1,
+            bytesUploaded: 3,
+            encrypted: false,
+          },
         },
+        "fileDownload",
+        "stream",
+        "original-request-id",
         { clientId: "client-1", userId: "user-1", room: "room" },
         false,
       );
@@ -1277,7 +1286,7 @@ describe("Server", () => {
       }
     });
 
-    it("should send ACK even when file storage is unavailable", async () => {
+    it("should send ACK even when file handler throws", async () => {
       const writtenMessages: Message<ServerContext>[] = [];
       const writable = new WritableStream({
         write(chunk) {
@@ -1285,42 +1294,53 @@ describe("Server", () => {
         },
       });
 
-      // Create server with storage that has no file storage
       const mockStorage = new MockDocumentStorage();
-      mockStorage.fileStorage = undefined;
-      const serverWithoutFileStorage = new Server({
+      const serverWithFailingHandler = new Server({
         getStorage: () => Promise.resolve(mockStorage),
         pubSub,
+        rpcHandlers: {
+          stream: {
+            handler: async () => {
+              throw new Error("File storage unavailable");
+            },
+          },
+        },
       });
 
-      // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
-      // Override the writable to capture messages
       transport.writable = writable;
 
-      const client = serverWithoutFileStorage.createClient({
+      const client = serverWithFailingHandler.createClient({
         transport,
         id: "client-1",
       });
 
-      const { FileMessage } = await import("teleportal");
-      const message = new FileMessage(
+      const { RpcMessage } = await import("teleportal/protocol");
+      const message = new RpcMessage<ServerContext>(
         "test-doc",
         {
-          type: "file-download",
-          fileId: "test-file-id",
+          type: "success",
+          payload: {
+            fileId: "test-file-id",
+            chunkIndex: 0,
+            chunkData: new Uint8Array([1, 2, 3]),
+            merkleProof: [],
+            totalChunks: 1,
+            bytesUploaded: 3,
+            encrypted: false,
+          },
         },
+        "fileDownload",
+        "stream",
+        "original-request-id",
         { clientId: "client-1", userId: "user-1", room: "room" },
         false,
       );
 
-      // Enqueue message to transport
       transport.enqueueMessage(message);
 
-      // Wait for message to be processed
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should have received an ACK message even though file storage is unavailable
       const ackMessages = writtenMessages.filter(
         (m) => m.type === "ack",
       ) as AckMessage<ServerContext>[];
@@ -1328,7 +1348,7 @@ describe("Server", () => {
       expect(ackMessages[0].payload.messageId).toBe(message.id);
 
       transport.closeReadable();
-      await serverWithoutFileStorage[Symbol.asyncDispose]();
+      await serverWithFailingHandler[Symbol.asyncDispose]();
     });
   });
 
@@ -1780,93 +1800,6 @@ describe("Server", () => {
       if (syncDone && syncDone.type === "doc") {
         expect(syncDone.payload.type).toBe("sync-done");
         expect(syncDone.document).toBe("test-doc");
-      }
-
-      // Clean up - try to close, but ignore errors if already closed
-      try {
-        transport.closeReadable();
-      } catch (error) {
-        // Ignore errors if already closed
-      }
-      await serverWithToken[Symbol.asyncDispose]();
-    });
-
-    it("should send auth-message when milestone-create-request is denied due to write permissions", async () => {
-      const tokenManager = createTokenManager({
-        secret: "test-secret",
-      });
-      const token = await tokenManager.createToken("user-1", "room-1", [
-        { pattern: "test-doc", permissions: ["read"] },
-      ]);
-
-      const payload = await tokenManager.verifyToken(token);
-      if (!payload.valid || !payload.payload) {
-        throw new Error("Token verification failed");
-      }
-
-      const serverWithToken = new Server({
-        getStorage: mockGetStorage,
-        pubSub,
-        checkPermission: checkPermissionWithTokenManager(tokenManager),
-      });
-
-      const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
-
-      const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
-
-      const client = serverWithToken.createClient({
-        transport,
-        id: "client-1",
-      });
-
-      const message = new DocMessage(
-        "test-doc",
-        {
-          type: "milestone-create-request",
-          name: "v1.0.0",
-          snapshot: new Uint8Array([1, 2, 3]) as any,
-        },
-        {
-          clientId: "client-1",
-          ...payload.payload,
-        } as ServerContext,
-        false,
-      );
-
-      transport.enqueueMessage(message);
-
-      // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Should have sent an auth error message
-      const errorMessages = writtenMessages.filter(
-        (m) =>
-          m.type === "doc" &&
-          (m as any).payload?.type === "auth-message" &&
-          (m as any).payload?.permission === "denied",
-      );
-      expect(errorMessages.length).toBeGreaterThan(0);
-
-      // Verify the auth-message structure
-      const authMessage = errorMessages[0];
-      if (
-        authMessage &&
-        authMessage.type === "doc" &&
-        authMessage.payload.type === "auth-message"
-      ) {
-        expect(authMessage.payload.type).toBe("auth-message");
-        expect(authMessage.payload.permission).toBe("denied");
-        expect(authMessage.payload.reason).toContain(
-          "Insufficient permissions",
-        );
-        expect(authMessage.payload.reason).toContain("test-doc");
-        expect(authMessage.document).toBe("test-doc");
       }
 
       // Clean up - try to close, but ignore errors if already closed

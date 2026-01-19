@@ -247,13 +247,9 @@ describe("UnstorageFileStorage", () => {
   });
 
   describe("deleteFile", () => {
-    it("deletes a single file and removes it from document metadata", async () => {
+    it("deletes a single file", async () => {
       const unstorage = createStorage();
-      const documentStorage = createMockDocumentStorage();
-      const fileStorage = new UnstorageFileStorage(unstorage, {
-        documentStorage,
-      });
-      fileStorage.setDocumentStorage(documentStorage);
+      const fileStorage = new UnstorageFileStorage(unstorage);
       const temp = new UnstorageTemporaryUploadStorage(unstorage);
       fileStorage.temporaryUploadStorage = temp;
 
@@ -279,10 +275,6 @@ describe("UnstorageFileStorage", () => {
       let file = await fileStorage.getFile(fileId);
       expect(file).not.toBeNull();
 
-      // Verify file is in document metadata
-      let metadata = await documentStorage.getDocumentMetadata(documentId);
-      expect(metadata.files).toContain(fileId);
-
       // Verify file chunks exist in storage
       const chunkKeysBefore = await unstorage.getKeys(
         `file:file:${fileId}:chunk:`,
@@ -306,107 +298,6 @@ describe("UnstorageFileStorage", () => {
       const fileKey = `file:file:${fileId}`;
       const fileData = await unstorage.getItem(fileKey);
       expect(fileData).toBeNull();
-
-      // Verify file is removed from document metadata
-      metadata = await documentStorage.getDocumentMetadata(documentId);
-      expect(metadata.files).not.toContain(fileId);
-      expect(metadata.files?.length).toBe(0);
-    });
-  });
-
-  describe("deleteFilesByDocument", () => {
-    it("deletes all files for a document and clears document metadata", async () => {
-      const unstorage = createStorage();
-      const documentStorage = createMockDocumentStorage();
-      const fileStorage = new UnstorageFileStorage(unstorage, {
-        documentStorage,
-      });
-      fileStorage.setDocumentStorage(documentStorage);
-      const temp = new UnstorageTemporaryUploadStorage(unstorage);
-      fileStorage.temporaryUploadStorage = temp;
-
-      const documentId = "test-doc";
-
-      // Create and store multiple files
-      const fileIds: string[] = [];
-      for (let i = 0; i < 3; i++) {
-        const chunks = [new Uint8Array([i, i + 1, i + 2, i + 3])];
-        const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
-        fileIds.push(fileId);
-
-        const uploadId = `test-upload-${i}`;
-        await temp.beginUpload(uploadId, {
-          filename: `test-${i}.txt`,
-          size: chunks[0].length,
-          mimeType: "text/plain",
-          encrypted: false,
-          lastModified: Date.now(),
-          documentId,
-        });
-
-        await temp.storeChunk(uploadId, 0, chunks[0], []);
-        const result = await temp.completeUpload(uploadId, fileId);
-        await fileStorage.storeFileFromUpload(result);
-      }
-
-      // Verify all files exist
-      for (const fileId of fileIds) {
-        const file = await fileStorage.getFile(fileId);
-        expect(file).not.toBeNull();
-      }
-
-      // Verify all files are in document metadata
-      let metadata = await documentStorage.getDocumentMetadata(documentId);
-      expect(metadata.files?.length).toBe(3);
-      for (const fileId of fileIds) {
-        expect(metadata.files).toContain(fileId);
-      }
-
-      // Verify file chunks exist in storage
-      for (const fileId of fileIds) {
-        const chunkKeys = await unstorage.getKeys(`file:file:${fileId}:chunk:`);
-        expect(chunkKeys.length).toBeGreaterThan(0);
-      }
-
-      // Delete all files for the document
-      await fileStorage.deleteFilesByDocument(documentId);
-
-      // Verify all files are deleted
-      for (const fileId of fileIds) {
-        const file = await fileStorage.getFile(fileId);
-        expect(file).toBeNull();
-
-        // Verify file chunks are deleted
-        const chunkKeys = await unstorage.getKeys(`file:file:${fileId}:chunk:`);
-        expect(chunkKeys.length).toBe(0);
-
-        // Verify file metadata is deleted
-        const fileKey = `file:file:${fileId}`;
-        const fileData = await unstorage.getItem(fileKey);
-        expect(fileData).toBeNull();
-      }
-
-      // Verify document metadata is cleared
-      metadata = await documentStorage.getDocumentMetadata(documentId);
-      expect(metadata.files).toEqual([]);
-    });
-
-    it("handles deleting files when document has no files", async () => {
-      const unstorage = createStorage();
-      const documentStorage = createMockDocumentStorage();
-      const fileStorage = new UnstorageFileStorage(unstorage, {
-        documentStorage,
-      });
-      fileStorage.setDocumentStorage(documentStorage);
-
-      const documentId = "test-doc";
-
-      // Delete files for a document with no files (should not error)
-      await fileStorage.deleteFilesByDocument(documentId);
-
-      // Verify metadata files array is empty (not undefined, as it gets set to [])
-      const metadata = await documentStorage.getDocumentMetadata(documentId);
-      expect(metadata.files).toEqual([]);
     });
   });
 });
@@ -416,8 +307,6 @@ function createMockDocumentStorage(): DocumentStorage {
   class MockDocumentStorage implements DocumentStorage {
     readonly type = "document-storage" as const;
     storageType: "unencrypted" = "unencrypted";
-    fileStorage = undefined;
-    milestoneStorage = undefined;
     metadata: Map<string, DocumentMetadata> = new Map();
 
     async handleSyncStep1(
@@ -474,30 +363,6 @@ function createMockDocumentStorage(): DocumentStorage {
 
     transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
       return cb();
-    }
-
-    async addFileToDocument(documentId: string, fileId: string): Promise<void> {
-      await this.transaction(documentId, async () => {
-        const metadata = await this.getDocumentMetadata(documentId);
-        const files = [...new Set([...(metadata.files ?? []), fileId])];
-        await this.writeDocumentMetadata(documentId, {
-          ...metadata,
-          files,
-          updatedAt: Date.now(),
-        });
-      });
-    }
-
-    async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
-      await this.transaction(documentId, async () => {
-        const metadata = await this.getDocumentMetadata(documentId);
-        const files = (metadata.files ?? []).filter((id) => id !== fileId);
-        await this.writeDocumentMetadata(documentId, {
-          ...metadata,
-          files,
-          updatedAt: Date.now(),
-        });
-      });
     }
   }
 

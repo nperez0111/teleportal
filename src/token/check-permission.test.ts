@@ -3,11 +3,11 @@ import {
   AckMessage,
   DocMessage,
   AwarenessMessage,
-  FileMessage,
   type ClientContext,
   type ServerContext,
   type StateVector,
 } from "teleportal";
+import { RpcMessage } from "teleportal/protocol";
 import { TokenManager, createTokenManager } from "./index";
 import { checkPermissionWithTokenManager } from "./check-permission";
 
@@ -76,6 +76,81 @@ describe("checkPermissionWithTokenManager", () => {
         documentId: "test-doc",
         fileId: undefined,
         message: awarenessMessage,
+        type: "read",
+      });
+
+      expect(result).toBe(true);
+    });
+  });
+
+  describe("RPC messages", () => {
+    it("should allow RPC messages without permission checks", async () => {
+      const rpcMessage = new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { snapshotIds: [] } },
+        "milestoneList",
+        "request",
+        undefined,
+        context,
+      );
+
+      const result = await checkPermission({
+        context,
+        documentId: "test-doc",
+        fileId: undefined,
+        message: rpcMessage,
+        type: "read",
+      });
+
+      expect(result).toBe(true);
+    });
+
+    it("should allow fileUpload RPC messages", async () => {
+      const rpcMessage = new RpcMessage(
+        "test-doc",
+        {
+          type: "success",
+          payload: {
+            fileId: "file-123",
+            filename: "test.txt",
+            size: 100,
+            mimeType: "text/plain",
+            lastModified: Date.now(),
+            encrypted: false,
+          },
+        },
+        "fileUpload",
+        "request",
+        undefined,
+        context,
+      );
+
+      const result = await checkPermission({
+        context,
+        documentId: "test-doc",
+        fileId: "file-123",
+        message: rpcMessage,
+        type: "write",
+      });
+
+      expect(result).toBe(true);
+    });
+
+    it("should allow fileDownload RPC messages", async () => {
+      const rpcMessage = new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { fileId: "file-123" } },
+        "fileDownload",
+        "request",
+        undefined,
+        context,
+      );
+
+      const result = await checkPermission({
+        context,
+        documentId: "test-doc",
+        fileId: "file-123",
+        message: rpcMessage,
         type: "read",
       });
 
@@ -158,66 +233,6 @@ describe("checkPermissionWithTokenManager", () => {
         ...context,
         ...payload.payload,
       } as ServerContext);
-
-      const result = await checkPermission({
-        context: message.context,
-        documentId: "test-doc",
-        fileId: undefined,
-        message,
-        type: "read",
-      });
-
-      expect(result).toBe(true);
-    });
-
-    it("should check read permission for milestone-list-request", async () => {
-      const token = await tokenManager.createToken("user-1", "room-1", [
-        { pattern: "test-doc", permissions: ["read"] },
-      ]);
-
-      const payload = await tokenManager.verifyToken(token);
-      if (!payload.valid || !payload.payload) {
-        throw new Error("Token verification failed");
-      }
-
-      const message = new DocMessage(
-        "test-doc",
-        {
-          type: "milestone-list-request",
-          snapshotIds: [],
-        },
-        { ...context, ...payload.payload } as ServerContext,
-      );
-
-      const result = await checkPermission({
-        context: message.context,
-        documentId: "test-doc",
-        fileId: undefined,
-        message,
-        type: "read",
-      });
-
-      expect(result).toBe(true);
-    });
-
-    it("should check read permission for milestone-snapshot-request", async () => {
-      const token = await tokenManager.createToken("user-1", "room-1", [
-        { pattern: "test-doc", permissions: ["read"] },
-      ]);
-
-      const payload = await tokenManager.verifyToken(token);
-      if (!payload.valid || !payload.payload) {
-        throw new Error("Token verification failed");
-      }
-
-      const message = new DocMessage(
-        "test-doc",
-        {
-          type: "milestone-snapshot-request",
-          milestoneId: "milestone-1",
-        },
-        { ...context, ...payload.payload } as ServerContext,
-      );
 
       const result = await checkPermission({
         context: message.context,
@@ -321,68 +336,6 @@ describe("checkPermissionWithTokenManager", () => {
 
       expect(result).toBe(true);
     });
-
-    it("should check write permission for milestone-create-request", async () => {
-      const token = await tokenManager.createToken("user-1", "room-1", [
-        { pattern: "test-doc", permissions: ["write"] },
-      ]);
-
-      const payload = await tokenManager.verifyToken(token);
-      if (!payload.valid || !payload.payload) {
-        throw new Error("Token verification failed");
-      }
-
-      const message = new DocMessage(
-        "test-doc",
-        {
-          type: "milestone-create-request",
-          name: "v1.0.0",
-          snapshot: new Uint8Array([1, 2, 3]) as any,
-        },
-        { ...context, ...payload.payload } as ServerContext,
-      );
-
-      const result = await checkPermission({
-        context: message.context,
-        documentId: "test-doc",
-        fileId: undefined,
-        message,
-        type: "write",
-      });
-
-      expect(result).toBe(true);
-    });
-
-    it("should check write permission for milestone-update-name-request", async () => {
-      const token = await tokenManager.createToken("user-1", "room-1", [
-        { pattern: "test-doc", permissions: ["write"] },
-      ]);
-
-      const payload = await tokenManager.verifyToken(token);
-      if (!payload.valid || !payload.payload) {
-        throw new Error("Token verification failed");
-      }
-
-      const message = new DocMessage(
-        "test-doc",
-        {
-          type: "milestone-update-name-request",
-          milestoneId: "milestone-1",
-          name: "v1.0.1",
-        },
-        { ...context, ...payload.payload } as ServerContext,
-      );
-
-      const result = await checkPermission({
-        context: message.context,
-        documentId: "test-doc",
-        fileId: undefined,
-        message,
-        type: "write",
-      });
-
-      expect(result).toBe(true);
-    });
   });
 
   describe("Doc messages - auth messages", () => {
@@ -407,39 +360,29 @@ describe("checkPermissionWithTokenManager", () => {
 
       expect(result).toBe(false);
     });
-
-    it("should deny milestone-auth-message", async () => {
-      const message = new DocMessage(
-        "test-doc",
-        {
-          type: "milestone-auth-message",
-          permission: "denied",
-          reason: "Test reason",
-        },
-        context,
-      );
-
-      const result = await checkPermission({
-        context,
-        documentId: "test-doc",
-        fileId: undefined,
-        message,
-        type: "read",
-      });
-
-      expect(result).toBe(false);
-    });
   });
 
-  describe("File messages", () => {
-    it("should allow file messages", async () => {
-      const message = new FileMessage(
+  describe("RPC stream messages (file-parts)", () => {
+    it("should allow RPC stream messages (file-parts)", async () => {
+      const message = new RpcMessage<ServerContext>(
         "test-doc",
         {
-          type: "file-download",
-          fileId: "file-123",
+          type: "success",
+          payload: {
+            fileId: "file-123",
+            chunkIndex: 0,
+            chunkData: new Uint8Array([1, 2, 3]),
+            merkleProof: [],
+            totalChunks: 1,
+            bytesUploaded: 3,
+            encrypted: false,
+          },
         },
+        "fileDownload",
+        "stream",
+        "original-request-id",
         context,
+        false,
       );
 
       const result = await checkPermission({

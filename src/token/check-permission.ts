@@ -15,6 +15,12 @@ export function checkPermissionWithTokenManager(
       return true;
     }
 
+    // RPC messages - permission checks are handled by the RPC handlers themselves
+    // based on the method being called
+    if (message.type === "rpc") {
+      return true;
+    }
+
     if (message.type === "doc") {
       if (!documentId) {
         throw new Error("documentId is required for doc messages");
@@ -27,15 +33,7 @@ export function checkPermissionWithTokenManager(
 
       switch (message.payload.type) {
         case "sync-done":
-        case "sync-step-1":
-        case "milestone-list-request":
-        case "milestone-snapshot-response":
-        case "milestone-snapshot-request":
-        case "milestone-list-response":
-        case "milestone-update-name-response":
-        case "milestone-create-response":
-        case "milestone-delete-response":
-        case "milestone-restore-response": {
+        case "sync-step-1": {
           return tokenManager.hasDocumentPermission(
             tokenPayload,
             documentId,
@@ -43,19 +41,14 @@ export function checkPermissionWithTokenManager(
           );
         }
         case "sync-step-2":
-        case "update":
-        case "milestone-create-request":
-        case "milestone-update-name-request":
-        case "milestone-delete-request":
-        case "milestone-restore-request": {
+        case "update": {
           return tokenManager.hasDocumentPermission(
             tokenPayload,
             documentId,
             "write",
           );
         }
-        case "auth-message":
-        case "milestone-auth-message": {
+        case "auth-message": {
           // Auth messages are responses from the server, not requests from clients
           // They should not be broadcasted, so deny them
           return false;
@@ -66,14 +59,6 @@ export function checkPermissionWithTokenManager(
           );
         }
       }
-    }
-
-    if (message.type === "file") {
-      // File messages use fileId instead of documentId
-      // For now, we allow all file messages through
-      // In the future, you could implement file-specific permission checks here
-      // Note: file-auth-message is already filtered out by the server before this is called
-      return true;
     }
 
     // Allow all other message types through (shouldn't happen, but be permissive)

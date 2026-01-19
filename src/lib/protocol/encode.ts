@@ -3,21 +3,26 @@ import * as encoding from "lib0/encoding";
 import { type BinaryMessage, type Message } from "./message-types";
 import type {
   DocStep,
+  SerializerContext,
   StateVector,
   SyncDone,
   SyncStep1,
   SyncStep2,
   Update,
   UpdateStep,
-} from "./types";
+} from "teleportal/protocol";
 
 /**
  * Encode a {@link Message} into a {@link Uint8Array}.
  *
- * @param update - The encoded update.
+ * @param message - The encoded update.
+ * @param serializer - Optional callback for custom serialization. Receives context and returns serialized bytes, or undefined to use default.
  * @returns The encoded update.
  */
-export function encodeMessage(update: Message): BinaryMessage {
+export function encodeMessage(
+  message: Message,
+  serializer?: (context: SerializerContext) => Uint8Array | undefined,
+): BinaryMessage {
   try {
     const encoder = encoding.createEncoder();
     // Y
@@ -29,22 +34,22 @@ export function encodeMessage(update: Message): BinaryMessage {
     // version
     encoding.writeUint8(encoder, 0x01);
     // document name (empty string for file messages)
-    encoding.writeVarString(encoder, update.document ?? "");
+    encoding.writeVarString(encoder, message.document ?? "");
 
     // encrypted or not
-    encoding.writeUint8(encoder, update.encrypted ? 1 : 0);
+    encoding.writeUint8(encoder, message.encrypted ? 1 : 0);
 
-    switch (update.type) {
+    switch (message.type) {
       case "awareness": {
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 1);
 
-        switch (update.payload.type) {
+        switch (message.payload.type) {
           case "awareness-update": {
             // message type
             encoding.writeUint8(encoder, 0);
             // awareness update
-            encoding.writeVarUint8Array(encoder, update.payload.update);
+            encoding.writeVarUint8Array(encoder, message.payload.update);
             break;
           }
           case "awareness-request": {
@@ -54,9 +59,9 @@ export function encodeMessage(update: Message): BinaryMessage {
           }
           default: {
             // @ts-expect-error - this should be unreachable due to type checking
-            update.payload.type;
+            message.payload.type;
             throw new Error("Invalid update.payload.type", {
-              cause: { update },
+              cause: { update: message },
             });
           }
         }
@@ -66,12 +71,12 @@ export function encodeMessage(update: Message): BinaryMessage {
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 0);
 
-        switch (update.payload.type) {
+        switch (message.payload.type) {
           case "sync-step-1": {
             // message type
             encoding.writeUint8(encoder, 0);
             // state vector
-            encoding.writeVarUint8Array(encoder, update.payload.sv);
+            encoding.writeVarUint8Array(encoder, message.payload.sv);
             break;
           }
           case "update":
@@ -79,10 +84,10 @@ export function encodeMessage(update: Message): BinaryMessage {
             // message type
             encoding.writeUint8(
               encoder,
-              update.payload.type === "sync-step-2" ? 1 : 2,
+              message.payload.type === "sync-step-2" ? 1 : 2,
             );
             // update
-            encoding.writeVarUint8Array(encoder, update.payload.update);
+            encoding.writeVarUint8Array(encoder, message.payload.update);
             break;
           }
           case "sync-done": {
@@ -96,191 +101,11 @@ export function encodeMessage(update: Message): BinaryMessage {
             // permission
             encoding.writeUint8(
               encoder,
-              update.payload.permission === "denied" ? 0 : 1,
+              message.payload.permission === "denied" ? 0 : 1,
             );
             // reason
-            encoding.writeVarString(encoder, update.payload.reason);
+            encoding.writeVarString(encoder, message.payload.reason);
             break;
-          }
-          case "milestone-list-request": {
-            // message type
-            encoding.writeUint8(encoder, 5);
-            // includeDeleted (1 byte)
-            encoding.writeUint8(encoder, update.payload.includeDeleted ? 1 : 0);
-            // snapshotIds array length
-            encoding.writeVarUint(encoder, update.payload.snapshotIds.length);
-            // snapshotIds array
-            for (const snapshotId of update.payload.snapshotIds) {
-              encoding.writeVarString(encoder, snapshotId);
-            }
-            break;
-          }
-          case "milestone-list-response": {
-            // message type
-            encoding.writeUint8(encoder, 6);
-            // milestones array length
-            encoding.writeVarUint(encoder, update.payload.milestones.length);
-            for (const milestone of update.payload.milestones) {
-              encoding.writeVarString(encoder, milestone.id);
-              encoding.writeVarString(encoder, milestone.name);
-              encoding.writeVarString(encoder, milestone.documentId);
-              encoding.writeFloat64(encoder, milestone.createdAt);
-              // deletedAt (opt)
-              encoding.writeUint8(encoder, milestone.deletedAt ? 1 : 0);
-              if (milestone.deletedAt) {
-                encoding.writeFloat64(encoder, milestone.deletedAt);
-              }
-              // lifecycleState (opt)
-              encoding.writeUint8(encoder, milestone.lifecycleState ? 1 : 0);
-              if (milestone.lifecycleState) {
-                encoding.writeVarString(encoder, milestone.lifecycleState);
-              }
-              // expiresAt (opt)
-              encoding.writeUint8(encoder, milestone.expiresAt ? 1 : 0);
-              if (milestone.expiresAt) {
-                encoding.writeFloat64(encoder, milestone.expiresAt);
-              }
-              encoding.writeUint8(
-                encoder,
-                milestone.createdBy.type === "user" ? 1 : 0,
-              );
-              encoding.writeVarString(encoder, milestone.createdBy.id);
-            }
-            break;
-          }
-          case "milestone-snapshot-request": {
-            // message type
-            encoding.writeUint8(encoder, 7);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            break;
-          }
-          case "milestone-snapshot-response": {
-            // message type
-            encoding.writeUint8(encoder, 8);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            // snapshot
-            encoding.writeVarUint8Array(encoder, update.payload.snapshot);
-            break;
-          }
-          case "milestone-create-request": {
-            // message type
-            encoding.writeUint8(encoder, 9);
-            // has name?
-            encoding.writeUint8(encoder, update.payload.name ? 1 : 0);
-            if (update.payload.name) {
-              // name
-              encoding.writeVarString(encoder, update.payload.name);
-            }
-            encoding.writeVarUint8Array(encoder, update.payload.snapshot);
-            break;
-          }
-          case "milestone-create-response": {
-            // message type
-            encoding.writeUint8(encoder, 10);
-            // milestone.id
-            encoding.writeVarString(encoder, update.payload.milestone.id);
-            // milestone.name
-            encoding.writeVarString(encoder, update.payload.milestone.name);
-            // milestone.documentId
-            encoding.writeVarString(
-              encoder,
-              update.payload.milestone.documentId,
-            );
-            // milestone.createdAt
-            encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
-            // milestone.createdBy (always present)
-            encoding.writeUint8(
-              encoder,
-              update.payload.milestone.createdBy.type === "user" ? 1 : 0,
-            );
-            encoding.writeVarString(
-              encoder,
-              update.payload.milestone.createdBy.id,
-            );
-            break;
-          }
-          case "milestone-update-name-request": {
-            // message type
-            encoding.writeUint8(encoder, 11);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            // name
-            encoding.writeVarString(encoder, update.payload.name);
-            break;
-          }
-          case "milestone-update-name-response": {
-            // message type
-            encoding.writeUint8(encoder, 12);
-            // milestone.id
-            encoding.writeVarString(encoder, update.payload.milestone.id);
-            // milestone.name
-            encoding.writeVarString(encoder, update.payload.milestone.name);
-            // milestone.documentId
-            encoding.writeVarString(
-              encoder,
-              update.payload.milestone.documentId,
-            );
-            // milestone.createdAt
-            encoding.writeFloat64(encoder, update.payload.milestone.createdAt);
-            // milestone.createdBy (always present)
-            encoding.writeUint8(
-              encoder,
-              update.payload.milestone.createdBy.type === "user" ? 1 : 0,
-            );
-            encoding.writeVarString(
-              encoder,
-              update.payload.milestone.createdBy.id,
-            );
-            break;
-          }
-          case "milestone-auth-message": {
-            // message type
-            encoding.writeUint8(encoder, 13);
-            // permission
-            encoding.writeUint8(
-              encoder,
-              update.payload.permission === "denied" ? 0 : 1,
-            );
-            // reason
-            encoding.writeVarString(encoder, update.payload.reason);
-            break;
-          }
-          case "milestone-delete-request": {
-            // message type
-            encoding.writeUint8(encoder, 14);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            break;
-          }
-          case "milestone-delete-response": {
-            // message type
-            encoding.writeUint8(encoder, 15);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            break;
-          }
-          case "milestone-restore-request": {
-            // message type
-            encoding.writeUint8(encoder, 16);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            break;
-          }
-          case "milestone-restore-response": {
-            // message type
-            encoding.writeUint8(encoder, 17);
-            // milestoneId
-            encoding.writeVarString(encoder, update.payload.milestoneId);
-            break;
-          }
-          default: {
-            // @ts-expect-error - this should be unreachable due to type checking
-            update.payload.type;
-            throw new Error("Invalid doc.payload.type", {
-              cause: { update },
-            });
           }
         }
         break;
@@ -291,96 +116,84 @@ export function encodeMessage(update: Message): BinaryMessage {
         // message id
         encoding.writeVarUint8Array(
           encoder,
-          fromBase64(update.payload.messageId),
+          fromBase64(message.payload.messageId),
         );
         break;
       }
-      case "file": {
-        // message type (file)
-        encoding.writeUint8(encoder, 3);
+      case "rpc": {
+        encoding.writeUint8(encoder, 4);
 
-        switch (update.payload.type) {
-          case "file-download": {
-            // message type (file-download)
-            encoding.writeUint8(encoder, 0);
-            // fileId (UUID string)
-            encoding.writeVarString(encoder, update.payload.fileId);
-            break;
-          }
-          case "file-upload": {
-            // message type (file-upload)
-            encoding.writeUint8(encoder, 1);
-            // encrypted flag
-            encoding.writeUint8(encoder, update.payload.encrypted ? 1 : 0);
-            // fileId
-            encoding.writeVarString(encoder, update.payload.fileId);
-            // filename
-            encoding.writeVarString(encoder, update.payload.filename);
-            // size
-            encoding.writeVarUint(encoder, update.payload.size);
-            // mimeType
-            encoding.writeVarString(encoder, update.payload.mimeType);
-            // lastModified
-            encoding.writeVarUint(encoder, update.payload.lastModified);
-            break;
-          }
-          case "file-part": {
-            // message type (file-part)
-            encoding.writeUint8(encoder, 2);
-            // fileId (UUID string)
-            encoding.writeVarString(encoder, update.payload.fileId);
-            // chunkIndex
-            encoding.writeVarUint(encoder, update.payload.chunkIndex);
-            // chunkData
-            encoding.writeVarUint8Array(encoder, update.payload.chunkData);
-            // merkleProof array
-            encoding.writeVarUint(encoder, update.payload.merkleProof.length);
-            for (const proofHash of update.payload.merkleProof) {
-              encoding.writeVarUint8Array(encoder, proofHash);
-            }
-            // totalChunks
-            encoding.writeVarUint(encoder, update.payload.totalChunks);
-            // bytesUploaded
-            encoding.writeVarUint(encoder, update.payload.bytesUploaded);
-            // encrypted flag
-            encoding.writeUint8(encoder, update.payload.encrypted ? 1 : 0);
-            break;
-          }
-          case "file-auth-message": {
-            // message type (file-auth-message)
-            encoding.writeUint8(encoder, 3);
-            // permission
-            encoding.writeUint8(
-              encoder,
-              update.payload.permission === "denied" ? 0 : 1,
-            );
-            // fileId
-            encoding.writeVarString(encoder, update.payload.fileId);
-            // status code
-            encoding.writeVarUint(encoder, update.payload.statusCode ?? 500);
-            // has reason?
-            encoding.writeUint8(encoder, update.payload.reason ? 1 : 0);
-            if (update.payload.reason) {
-              // reason
-              encoding.writeVarString(encoder, update.payload.reason);
-            }
-            break;
-          }
-          default: {
-            // @ts-expect-error - this should be unreachable due to type checking
-            update.payload.type;
-            throw new Error("Invalid file.payload.type", {
-              cause: { update },
-            });
-          }
+        // method name
+        encoding.writeVarString(encoder, message.rpcMethod);
+
+        const requestTypeIndex = ["request", "stream", "response"].indexOf(
+          message.requestType,
+        );
+        if (requestTypeIndex === -1) {
+          throw new Error("Invalid RPC request type", {
+            cause: { update: message },
+          });
         }
+        // request type
+        encoding.writeUint8(encoder, requestTypeIndex);
+
+        // original request id
+        if (
+          message.requestType === "response" ||
+          message.requestType === "stream"
+        ) {
+          if (!message.originalRequestId) {
+            throw new Error(
+              "Original request ID is required for response or stream messages",
+              {
+                cause: { message },
+              },
+            );
+          }
+          encoding.writeVarString(encoder, message.originalRequestId);
+        }
+
+        // is error or success
+        encoding.writeUint8(
+          encoder,
+          message.payload.type === "success" ? 0 : 1,
+        );
+        if (message.payload.type === "success") {
+          const serialized = serializer?.({
+            type: "rpc",
+            message,
+            payload: message.payload.payload,
+            encoder: encoding.createEncoder(),
+          });
+          // serialize payload
+          if (serialized === undefined) {
+            const payloadEncoder = encoding.createEncoder();
+            encoding.writeAny(payloadEncoder, message.payload.payload as any);
+            encoding.writeVarUint8Array(
+              encoder,
+              encoding.toUint8Array(payloadEncoder),
+            );
+          } else {
+            encoding.writeVarUint8Array(encoder, serialized);
+          }
+        } else {
+          // status code
+          encoding.writeVarUint(encoder, message.payload.statusCode);
+          // details
+          encoding.writeVarString(encoder, message.payload.details);
+          // has payload
+          encoding.writeVarUint(encoder, message.payload.payload ? 1 : 0);
+          // serialize payload
+          encoding.writeAny(encoder, message.payload.payload as any);
+        }
+
         break;
       }
       default: {
         // @ts-expect-error - this should be unreachable due to type checking
-        update.type;
+        message.type;
         throw new Error("Invalid update type", {
-          cause: { update },
+          cause: { update: message },
         });
       }
     }
@@ -389,7 +202,7 @@ export function encodeMessage(update: Message): BinaryMessage {
   } catch (err) {
     console.error(err);
     throw new Error("Failed to encode message", {
-      cause: { update, err },
+      cause: { update: message, err },
     });
   }
 }

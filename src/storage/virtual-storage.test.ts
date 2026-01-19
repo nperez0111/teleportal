@@ -67,17 +67,6 @@ class MockDocumentStorage implements DocumentStorage {
   async transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
     return cb();
   }
-
-  async addFileToDocument(documentId: string, fileId: string): Promise<void> {
-    // Mock
-  }
-
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
-    // Mock
-  }
 }
 
 describe("VirtualStorage", () => {

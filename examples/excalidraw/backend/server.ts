@@ -4,7 +4,8 @@ import { createStorage } from "unstorage";
 import { getHTTPHandler } from "teleportal/http";
 import { Server } from "teleportal/server";
 import {
-  createUnstorage,
+  UnstorageDocumentStorage,
+  UnstorageEncryptedDocumentStorage,
 } from "teleportal/storage";
 import {
   checkPermissionWithTokenManager,
@@ -24,11 +25,14 @@ const tokenManager = createTokenManager({
 
 const server = new Server({
   getStorage: async (ctx) => {
-    const { documentStorage } = createUnstorage(memoryStorage, {
-      fileKeyPrefix: "file",
-      encrypted: ctx.documentId.includes("encrypted"),
+    if (ctx.documentId.includes("encrypted")) {
+      return new UnstorageEncryptedDocumentStorage(memoryStorage, {
+        keyPrefix: "document",
+      });
+    }
+    return new UnstorageDocumentStorage(memoryStorage, {
+      keyPrefix: "document",
     });
-    return documentStorage;
   },
 
   checkPermission: checkPermissionWithTokenManager(tokenManager),

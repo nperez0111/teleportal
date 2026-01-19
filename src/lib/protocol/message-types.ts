@@ -8,22 +8,6 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
-  DecodedFileAuthMessage,
-  DecodedFileDownload,
-  DecodedFilePart,
-  DecodedFileUpload,
-  DecodedMilestoneAuthMessage,
-  DecodedMilestoneCreateRequest,
-  DecodedMilestoneListRequest,
-  DecodedMilestoneListResponse,
-  DecodedMilestoneResponse,
-  DecodedMilestoneRestoreRequest,
-  DecodedMilestoneRestoreResponse,
-  DecodedMilestoneSnapshotRequest,
-  DecodedMilestoneSnapshotResponse,
-  DecodedMilestoneDeleteRequest,
-  DecodedMilestoneDeleteResponse,
-  DecodedMilestoneUpdateNameRequest,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -31,9 +15,11 @@ import type {
   DocStep,
   EncodedAckMessage,
   EncodedDocUpdateMessage,
-  EncodedFileStep,
-  FileStep,
-} from "./types";
+  EncodedRpcMessage,
+  RpcError,
+  RpcSuccess,
+  SerializerContext,
+} from "teleportal/protocol";
 
 /**
  * A binary representation of a {@link Message} which concerns a document or awareness update.
@@ -42,8 +28,8 @@ export type BinaryMessage =
   | EncodedDocUpdateMessage<DocStep>
   | AwarenessUpdateMessage
   | AwarenessRequestMessage
-  | EncodedFileStep<FileStep>
-  | EncodedAckMessage;
+  | EncodedAckMessage
+  | EncodedRpcMessage;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
@@ -53,7 +39,7 @@ export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>
   | AckMessage<Context>
-  | FileMessage<Context>;
+  | RpcMessage<Context>;
 
 /**
  * A decoded Y.js document update, which was deserialized from a {@link BinaryMessage}.
@@ -164,19 +150,7 @@ export class DocMessage<
       | DecodedSyncStep2
       | DecodedSyncDone
       | DecodedUpdateStep
-      | DecodedAuthMessage
-      | DecodedMilestoneListRequest
-      | DecodedMilestoneListResponse
-      | DecodedMilestoneSnapshotRequest
-      | DecodedMilestoneSnapshotResponse
-      | DecodedMilestoneCreateRequest
-      | DecodedMilestoneResponse
-      | DecodedMilestoneUpdateNameRequest
-      | DecodedMilestoneAuthMessage
-      | DecodedMilestoneDeleteRequest
-      | DecodedMilestoneDeleteResponse
-      | DecodedMilestoneRestoreRequest
-      | DecodedMilestoneRestoreResponse,
+      | DecodedAuthMessage,
     context?: Context,
     public encrypted: boolean = false,
     encoded?: EncodedDocUpdateMessage<DocStep>,
@@ -207,27 +181,52 @@ export class AckMessage<
 }
 
 /**
- * A file message for upload/download operations.
+ * An RPC message for remote procedure calls.
  */
-export class FileMessage<
+export class RpcMessage<
   Context extends Record<string, unknown>,
-> extends CustomMessage<Context, EncodedFileStep<FileStep>> {
-  public type = "file" as const;
+> extends CustomMessage<Context, EncodedRpcMessage> {
+  public type = "rpc" as const;
   public context: Context;
+  #serializer?: (context: SerializerContext) => Uint8Array | undefined;
 
   constructor(
-    public document: string,
-    public payload:
-      | DecodedFileAuthMessage
-      | DecodedFileUpload
-      | DecodedFileDownload
-      | DecodedFilePart,
+    public document: string | undefined,
+    public payload: RpcSuccess | RpcError,
+    public rpcMethod: string,
+    public requestType: "request" | "stream" | "response",
+    public originalRequestId: string | undefined,
     context?: Context,
     public encrypted: boolean = false,
-    encoded?: EncodedFileStep<FileStep>,
+    encoded?: EncodedRpcMessage,
+    serializer?: (context: SerializerContext) => Uint8Array | undefined,
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
+    this.#serializer = serializer;
+  }
+
+  public override encode(): EncodedRpcMessage {
+    return encodeMessage(this as any, this.#serializer) as EncodedRpcMessage;
+  }
+
+  public override toJSON(): Record<string, unknown> {
+    return {
+      type: this.type,
+      document: this.document,
+      payload: this.payload,
+      context: this.context,
+      encrypted: this.encrypted,
+      rpcMethod: this.rpcMethod,
+      requestType: this.requestType,
+      originalRequestId: this.originalRequestId,
+      id: this.id,
+      encoded: this.encoded,
+    };
+  }
+
+  public override toString(): string {
+    return `RpcMessage(type: ${this.type}, rpcMethod: ${this.rpcMethod}, requestType: ${this.requestType}, originalRequestId: ${this.originalRequestId}, payload: ${JSON.stringify(this.payload)}, document: ${this.document}, context: ${JSON.stringify(this.context)}, encrypted: ${this.encrypted}, id: ${this.id})`;
   }
 }
 

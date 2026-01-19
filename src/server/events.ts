@@ -1,4 +1,5 @@
 import type { ServerContext } from "teleportal";
+import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
 
@@ -109,6 +110,28 @@ export type SessionEvents<Context extends ServerContext = ServerContext> = {
     milestoneId: string;
     context: Context;
   }) => void;
+
+  /**
+   * Emitted when a document write operation completes.
+   * This is emitted after the update has been written to storage.
+   */
+  "document-write": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+    encrypted: boolean;
+    context?: Context;
+  }) => void;
+
+  /**
+   * Emitted when the session is about to be disposed.
+   * This allows handlers to clean up any session-related resources.
+   */
+  dispose: (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+  }) => void;
 };
 
 export type ServerEvents<Context extends ServerContext = ServerContext> = {
@@ -120,6 +143,18 @@ export type ServerEvents<Context extends ServerContext = ServerContext> = {
     documentId: string;
     namespacedDocumentId: string;
     sessionId: string;
+    encrypted: boolean;
+    context: Context;
+  }) => void;
+
+  /**
+   * Emitted when a new session is opened.
+   * This provides handlers with access to the Session instance for setting up listeners.
+   */
+  "session-open": (data: {
+    session: Session<Context>;
+    documentId: string;
+    namespacedDocumentId: string;
     encrypted: boolean;
     context: Context;
   }) => void;

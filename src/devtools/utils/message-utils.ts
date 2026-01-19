@@ -14,16 +14,35 @@ export function getMessageTypeLabel(message: MessageType): string {
       ? "awareness-update"
       : "awareness-request";
   }
-  if (message.type === "file") {
-    return message.payload.type;
-  }
   if (message.type === "ack") {
     return "ack";
+  }
+  if (message.type === "rpc") {
+    // Include request type (request/response/stream) for better clarity
+    const requestType = message.requestType;
+    if (requestType === "response") {
+      return `${message.rpcMethod}`;
+    }
+    if (requestType === "stream") {
+      return `${message.rpcMethod} (part)`;
+    }
+    return `${message.rpcMethod}`;
   }
   return "unknown";
 }
 
 export function getMessageTypeColor(message: MessageType): string {
+  // Check message type directly for proper color mapping
+  if (message.type === "rpc") {
+    // Different colors for different RPC request types
+    const requestType = message.requestType;
+    if (requestType === "response") return "devtools-bg-indigo-500";
+    if (requestType === "stream") return "devtools-bg-indigo-400";
+    return "devtools-bg-indigo-600"; // request
+  }
+
+  if (message.type === "ack") return "devtools-bg-gray-500";
+
   const type = getMessageTypeLabel(message);
 
   // Document message types
@@ -32,20 +51,10 @@ export function getMessageTypeColor(message: MessageType): string {
   if (type === "update") return "devtools-bg-green-500";
   if (type === "sync-done") return "devtools-bg-green-600";
   if (type === "auth-message") return "devtools-bg-red-500";
-  if (type.startsWith("milestone-")) return "devtools-bg-purple-500";
 
   // Awareness
   if (type === "awareness-update") return "devtools-bg-yellow-500";
   if (type === "awareness-request") return "devtools-bg-yellow-600";
-
-  // File
-  if (type === "file-upload") return "devtools-bg-indigo-500";
-  if (type === "file-download") return "devtools-bg-indigo-600";
-  if (type === "file-part") return "devtools-bg-indigo-400";
-  if (type === "file-auth-message") return "devtools-bg-red-600";
-
-  // ACK
-  if (type === "ack") return "devtools-bg-gray-500";
 
   return "devtools-bg-gray-400";
 }
@@ -70,9 +79,9 @@ function itemToJSON(item: Y.Item): Record<any, any> {
     right: item.right ? itemToJSON(item.right) : null,
     left: item.left ? itemToJSON(item.left) : null,
     parent: item.parent
-      ? (item.parent instanceof Y.Item
+      ? item.parent instanceof Y.Item
         ? itemToJSON(item.parent)
-        : item.parent)
+        : item.parent
       : null,
     parentSub: item.parentSub,
     origin: item.origin,
@@ -112,29 +121,6 @@ export function formatMessagePayload(
           return JSON.stringify(clients, null, 2);
         }
         case "awareness-request": {
-          return null;
-        }
-      }
-    }
-    case "file": {
-      switch (message.payload.type) {
-        case "file-upload": {
-          return JSON.stringify(message.payload, null, 2);
-        }
-        case "file-download": {
-          return JSON.stringify(message.payload, null, 2);
-        }
-        case "file-part": {
-          return JSON.stringify(
-            { ...message.payload, chunkData: "<chunk data>" },
-            null,
-            2,
-          );
-        }
-        case "file-auth-message": {
-          return JSON.stringify(message.payload, null, 2);
-        }
-        default: {
           return null;
         }
       }
@@ -242,19 +228,13 @@ export function formatMessagePayload(
         case "auth-message": {
           return JSON.stringify(message.payload, null, 2);
         }
-        case "milestone-list-request": {
-          return message.payload.snapshotIds.join(",");
-        }
-        case "milestone-list-response": {
-          return JSON.stringify(message.payload.milestones, null, 2);
-        }
-        case "milestone-snapshot-request": {
-          return message.payload.milestoneId;
-        }
         default: {
           return null;
         }
       }
+    }
+    case "rpc": {
+      return JSON.stringify(message.payload, null, 2);
     }
     default: {
       // @ts-expect-error - this should be unreachable due to type checking

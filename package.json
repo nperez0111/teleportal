@@ -42,6 +42,14 @@
       "types": "./dist/lib/protocol/index.d.mts",
       "default": "./dist/lib/protocol/index.mjs"
     },
+    "./protocols/milestone": {
+      "types": "./dist/protocols/milestone/index.d.mts",
+      "default": "./dist/protocols/milestone/index.mjs"
+    },
+    "./protocols/file": {
+      "types": "./dist/protocols/file/index.d.mts",
+      "default": "./dist/protocols/file/index.mjs"
+    },
     "./protocol/encryption": {
       "types": "./dist/lib/protocol/encryption/index.d.mts",
       "default": "./dist/lib/protocol/encryption/index.mjs"
@@ -57,10 +65,6 @@
     "./transports/nats": {
       "types": "./dist/transports/nats/index.d.mts",
       "default": "./dist/transports/nats/index.mjs"
-    },
-    "./transports/send-file": {
-      "types": "./dist/transports/send-file/index.d.mts",
-      "default": "./dist/transports/send-file/index.mjs"
     },
     "./transports/rate-limiter": {
       "types": "./dist/transports/rate-limiter/index.d.mts",

@@ -5,14 +5,10 @@ import {
   createMerkleTreeTransformStream,
   ENCRYPTED_CHUNK_SIZE,
 } from "teleportal/merkle-tree";
-import { AckMessage, FileMessage, type Message } from "./message-types";
-import type {
-  DecodedFileAuthMessage,
-  DecodedFileDownload,
-  DecodedFilePart,
-  DecodedFileUpload,
-} from "./types";
+import { AckMessage, type Message } from "./message-types";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
+import { RpcMessage } from "teleportal/protocol";
+import type { FilePartStream } from "../../protocols/file/methods";
 
 export namespace FileTransferProtocol {
   export interface UploadState {
@@ -29,7 +25,7 @@ export namespace FileTransferProtocol {
   export interface DownloadState {
     resolve: (file: File) => void;
     reject: (error: Error) => void;
-    fileMetadata: DecodedFileUpload | null;
+    fileMetadata: { filename: string; size: number; mimeType: string } | null;
     chunks: Map<number, Uint8Array>;
     fileId: string;
     timeoutId: ReturnType<typeof setTimeout> | null;
@@ -69,18 +65,22 @@ export namespace FileTransferProtocol {
           numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
       }
 
+      const requestPayload: Record<string, unknown> = {
+        method: "fileUpload",
+        fileId,
+        filename: file.name,
+        size: file.size + encryptionOverhead,
+        mimeType: file.type || "application/octet-stream",
+        lastModified: file.lastModified,
+        encrypted: !!encryptionKey,
+      };
       this.sendMessage(
-        new FileMessage<Context>(
+        new RpcMessage(
           document,
-          {
-            type: "file-upload",
-            fileId,
-            filename: file.name,
-            size: file.size + encryptionOverhead,
-            mimeType: file.type || "application/octet-stream",
-            lastModified: file.lastModified,
-            encrypted: !!encryptionKey,
-          },
+          { type: "success", payload: requestPayload },
+          "fileUpload",
+          "request",
+          undefined,
           context,
           !!encryptionKey,
         ),
@@ -121,13 +121,17 @@ export namespace FileTransferProtocol {
         });
       });
 
+      const requestPayload: Record<string, unknown> = {
+        method: "fileDownload",
+        fileId,
+      };
       this.sendMessage(
-        new FileMessage<Context>(
+        new RpcMessage(
           document,
-          {
-            type: "file-download",
-            fileId,
-          },
+          { type: "success", payload: requestPayload },
+          "fileDownload",
+          "request",
+          undefined,
           context,
           !!encryptionKey,
         ),
@@ -152,40 +156,22 @@ export namespace FileTransferProtocol {
         return this.handleAck(message as AckMessage<Context>);
       }
 
-      if (message.type !== "file") {
-        return false;
+      if (message.type === "rpc") {
+        const rpcMessage = message as RpcMessage<Context>;
+
+        // Handle RPC stream messages (file parts)
+        if (rpcMessage.requestType === "stream") {
+          if (rpcMessage.payload.type === "success") {
+            await this.handleFilePart(rpcMessage.payload.payload as FilePartStream, rpcMessage.context);
+            return true;
+          }
+        }
+
+        // Handle RPC response messages
+        return this.handleRpcResponse(rpcMessage);
       }
 
-      const fileMessage = message as FileMessage<Context>;
-
-      switch (fileMessage.payload.type) {
-        case "file-upload": {
-          this.handleUploadRequest(
-            fileMessage.payload as DecodedFileUpload,
-            fileMessage.context,
-          );
-          break;
-        }
-        case "file-download": {
-          await this.handleDownloadRequest(
-            fileMessage.payload as DecodedFileDownload,
-          );
-          break;
-        }
-        case "file-auth-message": {
-          this.handleAuthMessage(fileMessage.payload as DecodedFileAuthMessage);
-          break;
-        }
-        case "file-part": {
-          await this.handleFilePart(
-            fileMessage.payload as DecodedFilePart,
-            fileMessage.context,
-          );
-          break;
-        }
-      }
-
-      return true;
+      return false;
     }
 
     protected handleAck(message: AckMessage<Context>) {
@@ -202,32 +188,59 @@ export namespace FileTransferProtocol {
       return resolved;
     }
 
-    protected handleUploadRequest(
-      payload: DecodedFileUpload,
-      context?: Context,
-    ) {
-      // Server sending a file to us (part of download)
-      const downloadHandler = this.activeDownloads.get(payload.fileId);
-      if (downloadHandler) {
-        downloadHandler.fileMetadata = payload;
-      }
-    }
-
-    protected async handleDownloadRequest(payload: DecodedFileDownload) {
-      // Server authorized our upload, start sending chunks
-      const activeUpload = this.activeUploads.get(payload.fileId);
-      if (!activeUpload) {
-        return;
+    protected handleRpcResponse(message: RpcMessage<Context>) {
+      if (message.requestType !== "response") {
+        return false;
       }
 
-      await this.processFileUpload(activeUpload);
+      const payload = message.payload as {
+        type: "success" | "error";
+        payload?: {
+          fileId: string;
+          filename: string;
+          size: number;
+          mimeType: string;
+        };
+        details?: string;
+      };
+
+      if (payload.type === "success" && payload.payload) {
+        const downloadHandler = this.activeDownloads.get(
+          payload.payload.fileId,
+        );
+        if (downloadHandler) {
+          downloadHandler.fileMetadata = {
+            filename: payload.payload.filename,
+            size: payload.payload.size,
+            mimeType: payload.payload.mimeType,
+          };
+          // Check if download is complete (file parts may have arrived before this response)
+          this.checkDownloadCompletion(downloadHandler);
+        }
+
+        const uploadHandler = this.activeUploads.get(payload.payload.fileId);
+        if (uploadHandler) {
+          this.processFileUpload(uploadHandler, message.context);
+        }
+      } else if (payload.type === "error") {
+        if (this.activeDownloads.has(message.originalRequestId!)) {
+          this.activeDownloads
+            .get(message.originalRequestId!)
+            ?.reject(
+              new Error(payload.details || "Download permission denied"),
+            );
+          this.activeDownloads.delete(message.originalRequestId!);
+        }
+      }
+
+      return true;
     }
 
     protected async processFileUpload(
       uploadState: UploadState,
       context?: Context,
+      originalRequestId?: string,
     ) {
-      // Create transform stream that chunks the file and builds merkle tree
       const transformStream = createMerkleTreeTransformStream(
         uploadState.file.size,
         uploadState.encryptionKey
@@ -236,36 +249,36 @@ export namespace FileTransferProtocol {
           : undefined,
       );
 
-      // Set fileId from the last chunk (which contains the root hash)
       return uploadState.file
         .stream()
         .pipeThrough(transformStream)
         .pipeTo(
           new WritableStream({
             write: async (chunk) => {
-              // Set fileId from root hash (only set in the last chunk)
               if (chunk.rootHash.length > 0 && !uploadState.fileId) {
                 uploadState.fileId = toBase64(chunk.rootHash);
               }
 
-              // Send chunk with merkle proof
-              const message = new FileMessage<Context>(
+              const filePart: FilePartStream = {
+                fileId: uploadState.uploadId,
+                chunkIndex: chunk.chunkIndex,
+                chunkData: chunk.chunkData,
+                merkleProof: chunk.merkleProof,
+                totalChunks: chunk.totalChunks,
+                bytesUploaded: chunk.bytesProcessed,
+                encrypted: chunk.encrypted,
+              };
+
+              const message = new RpcMessage<Context>(
                 uploadState.document,
-                {
-                  type: "file-part",
-                  fileId: uploadState.uploadId,
-                  chunkIndex: chunk.chunkIndex,
-                  chunkData: chunk.chunkData,
-                  merkleProof: chunk.merkleProof,
-                  totalChunks: chunk.totalChunks,
-                  bytesUploaded: chunk.bytesProcessed,
-                  encrypted: chunk.encrypted,
-                },
+                { type: "success", payload: filePart },
+                "fileUpload",
+                "stream",
+                originalRequestId ?? uploadState.uploadId,
                 context ?? ({} as Context),
                 chunk.encrypted,
               );
 
-              // track sent chunks
               uploadState.sentChunks.add(message.id);
 
               this.sendMessage(message);
@@ -274,36 +287,17 @@ export namespace FileTransferProtocol {
         );
     }
 
-    protected handleAuthMessage(payload: DecodedFileAuthMessage) {
-      if (this.activeUploads.has(payload.fileId)) {
-        this.activeUploads
-          .get(payload.fileId)
-          ?.reject(new Error(payload.reason || "Upload permission denied"));
-        this.activeUploads.delete(payload.fileId);
-      }
-      if (this.activeDownloads.has(payload.fileId)) {
-        this.activeDownloads
-          .get(payload.fileId)
-          ?.reject(new Error(payload.reason || "Download permission denied"));
-        this.activeDownloads.delete(payload.fileId);
-      }
-    }
-
     protected abstract verifyChunk(
-      chunk: DecodedFilePart,
+      chunk: FilePartStream,
       fileId: string,
     ): boolean;
 
-    protected async handleFilePart(
-      payload: DecodedFilePart,
-      context?: Context,
-    ) {
+    protected async handleFilePart(payload: FilePartStream, context?: Context) {
       const handler = this.activeDownloads.get(payload.fileId);
       if (!handler) {
         return;
       }
 
-      // Verify chunk
       const isValid = this.verifyChunk(payload, handler.fileId);
       if (!isValid) {
         handler.reject(
@@ -315,7 +309,6 @@ export namespace FileTransferProtocol {
         return;
       }
 
-      // Store chunk
       if (!handler.chunks.has(payload.chunkIndex)) {
         if (handler.encryptionKey) {
           payload.chunkData = await decryptUpdate(
@@ -324,7 +317,6 @@ export namespace FileTransferProtocol {
           );
         }
         handler.chunks.set(payload.chunkIndex, payload.chunkData);
-        // Check completion
         await this.checkDownloadCompletion(handler);
       }
     }
@@ -333,18 +325,15 @@ export namespace FileTransferProtocol {
       if (!handler.fileMetadata) {
         return;
       }
-      // Calculate chunk size based on whether the file is encrypted
       const chunkSize = handler.encryptionKey
         ? ENCRYPTED_CHUNK_SIZE
         : CHUNK_SIZE;
-      // For empty files, we still need at least one chunk (even if empty)
       const expectedChunks =
         handler.fileMetadata.size === 0
           ? 1
           : Math.ceil(handler.fileMetadata.size / chunkSize);
       if (handler.chunks.size >= expectedChunks) {
         try {
-          // Create a new Uint8Array with the upper bound of the expected size
           const fileData = new Uint8Array(expectedChunks * CHUNK_SIZE);
           let offset = 0;
           for (let i = 0; i < expectedChunks; i++) {
@@ -378,134 +367,207 @@ export namespace FileTransferProtocol {
       message: Message<Context>,
       sendMessage: (message: Message<Context>) => Promise<void>,
     ): Promise<void> {
-      if (message.type !== "file") {
-        throw new Error("ServerFileHandler can only handle file messages");
+      if (message.type !== "rpc") {
+        throw new Error("ServerFileHandler can only handle RPC messages");
       }
 
-      const fileMessage = message as FileMessage<Context>;
-      const document = fileMessage.document;
+      const rpcMessage = message as RpcMessage<Context>;
 
-      switch (fileMessage.payload.type) {
-        case "file-download": {
-          await this.onDownloadRequest(
-            fileMessage.payload as DecodedFileDownload,
-            fileMessage.context,
-            document,
-            fileMessage.encrypted,
-            sendMessage,
-          );
-          break;
-        }
-        case "file-upload": {
-          await this.handleUploadRequest(
-            fileMessage.payload as DecodedFileUpload,
-            fileMessage.context,
-            document,
-            fileMessage.encrypted,
-            sendMessage,
-          );
-          break;
-        }
-        case "file-part": {
-          await this.onChunkReceived(
-            fileMessage.payload as DecodedFilePart,
-            message.id,
-            document,
-            fileMessage.context,
-            sendMessage,
-          );
-          break;
-        }
-        default: {
-          // Ignore other types or handle error
-          break;
-        }
-      }
-    }
-
-    protected async handleUploadRequest(
-      payload: DecodedFileUpload,
-      context: Context,
-      document: string,
-      encrypted: boolean,
-      sendMessage: (message: Message<Context>) => Promise<void>,
-    ) {
-      const allowed = await this.checkUploadPermission(payload, context);
-      if (!allowed.allowed) {
-        await sendMessage(
-          new FileMessage(
-            document,
-            {
-              type: "file-auth-message",
-              permission: "denied",
-              fileId: payload.fileId,
-              reason: allowed.reason,
-              statusCode: 403,
-            },
-            context,
-            encrypted,
-          ),
+      // Handle RPC stream messages (file parts)
+      if (rpcMessage.requestType === "stream" && rpcMessage.payload.type === "success") {
+        await this.onChunkReceived(
+          rpcMessage.payload.payload as FilePartStream,
+          message.id,
+          rpcMessage.document ?? "",
+          rpcMessage.context,
+          sendMessage,
         );
         return;
       }
 
-      try {
-        await this.onUploadStart(payload, context, document, encrypted);
-        await sendMessage(
-          new FileMessage(
-            document,
-            {
-              type: "file-download",
-              fileId: payload.fileId,
-            },
-            context,
-            encrypted,
-          ),
+      // Handle RPC request messages
+      if (rpcMessage.requestType === "request") {
+        return this.handleRpcRequest(rpcMessage, sendMessage);
+      }
+    }
+
+    protected async handleRpcRequest(
+      message: RpcMessage<Context>,
+      sendMessage: (message: Message<Context>) => Promise<void>,
+    ) {
+      if (message.requestType !== "request") {
+        return;
+      }
+
+      if (message.payload.type !== "success") {
+        return;
+      }
+
+      const method = message.rpcMethod;
+      const requestPayload = message.payload.payload as {
+        fileId?: string;
+        filename?: string;
+        size?: number;
+        mimeType?: string;
+        lastModified?: number;
+        encrypted?: boolean;
+      };
+      const payload = {
+        fileId: requestPayload.fileId,
+        filename: requestPayload.filename,
+        size: requestPayload.size,
+        mimeType: requestPayload.mimeType,
+        lastModified: requestPayload.lastModified,
+        encrypted: requestPayload.encrypted,
+      } as {
+        fileId: string;
+        filename?: string;
+        size?: number;
+        mimeType?: string;
+        lastModified?: number;
+        encrypted?: boolean;
+      };
+
+      if (method === "fileUpload") {
+        const allowed = await this.checkUploadPermission(
+          payload,
+          message.context,
         );
-      } catch (error) {
-        await sendMessage(
-          new FileMessage(
-            document,
-            {
-              type: "file-auth-message",
-              permission: "denied",
-              fileId: payload.fileId,
-              reason: (error as Error).message,
-              statusCode: 500,
-            },
-            context,
-            encrypted,
-          ),
+        if (!allowed.allowed) {
+          await sendMessage(
+            new RpcMessage(
+              message.document,
+              {
+                type: "error",
+                statusCode: 403,
+                details: allowed.reason || "Upload permission denied",
+              },
+              method,
+              "response",
+              message.id,
+              message.context,
+              message.encrypted,
+            ),
+          );
+          return;
+        }
+
+        try {
+          await this.onUploadStart(
+            payload,
+            message.context,
+            message.document ?? "",
+            message.encrypted,
+          );
+          await sendMessage(
+            new RpcMessage(
+              message.document ?? "",
+              {
+                type: "success",
+                payload: { fileId: payload.fileId },
+              },
+              method,
+              "response",
+              message.id,
+              message.context,
+              message.encrypted,
+            ),
+          );
+        } catch (error) {
+          await sendMessage(
+            new RpcMessage(
+              message.document ?? "",
+              {
+                type: "error",
+                statusCode: 500,
+                details: (error as Error).message,
+              },
+              method,
+              "response",
+              message.id,
+              message.context,
+              message.encrypted,
+            ),
+          );
+        }
+      } else if (method === "fileDownload") {
+        await this.onDownloadRequest(
+          payload,
+          message.context,
+          message.document ?? "",
+          message.encrypted,
+          sendMessage,
+          message,
         );
       }
     }
 
-    protected abstract checkUploadPermission(
-      metadata: DecodedFileUpload,
+    protected async checkUploadPermission(
+      metadata: {
+        fileId: string;
+        filename?: string;
+        size?: number;
+        mimeType?: string;
+        lastModified?: number;
+        encrypted?: boolean;
+      },
       context: Context,
-    ): Promise<{ allowed: boolean; reason?: string }>;
+    ): Promise<{ allowed: boolean; reason?: string }> {
+      return { allowed: true };
+    }
 
-    protected abstract onUploadStart(
-      metadata: DecodedFileUpload,
+    protected async onUploadStart(
+      metadata: {
+        fileId: string;
+        filename?: string;
+        size?: number;
+        mimeType?: string;
+        lastModified?: number;
+        encrypted?: boolean;
+      },
       context: Context,
       document: string,
       encrypted: boolean,
-    ): Promise<void>;
+    ): Promise<void> {}
 
-    protected abstract onChunkReceived(
-      payload: DecodedFilePart,
+    protected async onChunkReceived(
+      payload: FilePartStream,
       messageId: string,
       document: string,
       context: Context,
       sendMessage: (message: Message<Context>) => Promise<void>,
-    ): Promise<void>;
+    ): Promise<void> {
+      await sendMessage(
+        new AckMessage({
+          type: "ack",
+          messageId,
+        }),
+      );
+    }
 
-    protected abstract onDownloadRequest(
-      payload: DecodedFileDownload,
+    protected async onDownloadRequest(
+      payload: { fileId: string },
       context: Context,
       document: string,
       encrypted: boolean,
       sendMessage: (message: Message<Context>) => Promise<void>,
-    ): Promise<void>;
+      originalMessage: RpcMessage<Context>,
+    ): Promise<void> {
+      await sendMessage(
+        new RpcMessage(
+          document,
+          {
+            type: "error",
+            statusCode: 404,
+            details: "File not found",
+          },
+          originalMessage.rpcMethod,
+          "response",
+          originalMessage.id,
+          context,
+          encrypted,
+        ),
+      );
+    }
   }
 }

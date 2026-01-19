@@ -1,7 +1,6 @@
 import {
   decodeMessage,
   DocMessage,
-  type DecodedMilestoneListRequest,
   type Message,
   type MilestoneSnapshot,
   type PubSub,
@@ -9,7 +8,8 @@ import {
   type SyncStep2Update,
   type Update,
 } from "teleportal";
-import type { DocumentStorage, MilestoneTrigger } from "teleportal/storage";
+import * as decoding from "lib0/decoding";
+import type { DocumentStorage } from "teleportal/storage";
 import { TtlDedupe } from "./dedupe";
 import { Client } from "./client";
 import { getLogger, Logger } from "@logtape/logtape";
@@ -17,12 +17,15 @@ import { toErrorDetails } from "../logging";
 import { Observable } from "../lib/utils";
 import type { DocumentMessageSource, SessionEvents } from "./events";
 import type { MetricsCollector } from "teleportal/monitoring";
+import {
+  RpcMessage,
+  type RpcHandlerRegistry,
+  type RpcError,
+  type RpcSuccess,
+  type RpcServerContext,
+} from "teleportal/protocol";
+import type { Server } from "./server";
 
-type Timer = ReturnType<typeof setTimeout>;
-
-/**
- * A session is a collection of clients which are connected to a document.
- */
 export class Session<Context extends ServerContext> extends Observable<
   SessionEvents<Context>
 > {
@@ -56,15 +59,13 @@ export class Session<Context extends ServerContext> extends Observable<
   #sizeLimitEmitted = false;
   #loaded = false;
 
-  #updateCount: number = 0;
-  #lastMilestoneTime: number = Date.now();
-  #triggerTimers: Map<string, Timer> = new Map();
-
   #clients = new Map<string, Client<Context>>();
   #unsubscribe: Promise<() => Promise<void>> | null = null;
   #cleanupTimeoutId: ReturnType<typeof setTimeout> | undefined;
   #onCleanupScheduled: (session: Session<Context>) => void;
   readonly #CLEANUP_DELAY_MS = 60_000;
+  #rpcHandlers: RpcHandlerRegistry;
+  #server: Server<Context>;
 
   constructor(args: {
     documentId: string;
@@ -78,6 +79,8 @@ export class Session<Context extends ServerContext> extends Observable<
     onCleanupScheduled: (session: Session<Context>) => void;
     metricsCollector?: MetricsCollector;
     documentSizeConfig?: { warningThreshold?: number; limit?: number };
+    rpcHandlers?: RpcHandlerRegistry;
+    server: Server<Context>;
   }) {
     super();
     this.documentId = args.documentId;
@@ -89,6 +92,8 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#nodeId = args.nodeId;
     this.#metrics = args.metricsCollector;
     this.#documentSizeConfig = args.documentSizeConfig;
+    this.#rpcHandlers = args.rpcHandlers ?? {};
+    this.#server = args.server;
     this.#logger = getLogger(["teleportal", "server", "session"]).with({
       name: "session",
       documentId: this.documentId,
@@ -106,6 +111,7 @@ export class Session<Context extends ServerContext> extends Observable<
         encrypted: this.encrypted,
         nodeId: this.#nodeId,
         hasCustomDedupe: !!args.dedupe,
+        hasRpcHandlers: args.rpcHandlers !== undefined,
       })
       .debug("Session instance created");
   }
@@ -130,43 +136,6 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#loaded = true;
 
     try {
-      // Setup triggers
-      const meta = await this.#storage.getDocumentMetadata(
-        this.namespacedDocumentId,
-      );
-      if (meta.milestoneTriggers) {
-        for (const trigger of meta.milestoneTriggers) {
-          if (!trigger.enabled) continue;
-
-          if (trigger.type === "time-based") {
-            const timer = setInterval(async () => {
-              await this.#createAutomaticMilestone(trigger);
-            }, trigger.config.interval);
-            this.#triggerTimers.set(trigger.id, timer);
-          } else if (trigger.type === "event-based") {
-            this.on(trigger.config.event as any, async (data: any) => {
-              try {
-                if (
-                  trigger.config.condition &&
-                  !trigger.config.condition(data)
-                ) {
-                  return;
-                }
-                await this.#createAutomaticMilestone(trigger);
-              } catch (error) {
-                this.#logger
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    triggerId: trigger.id,
-                    event: trigger.config.event,
-                  })
-                  .error("Failed to process event-based trigger");
-              }
-            });
-          }
-        }
-      }
-
       this.#unsubscribe = this.#pubSub.subscribe(
         `document/${this.namespacedDocumentId}` as const,
         async (binary, sourceId) => {
@@ -180,7 +149,14 @@ export class Session<Context extends ServerContext> extends Observable<
 
           let message: Message<Context>;
           try {
-            message = decodeMessage(binary);
+            message = decodeMessage(binary, (ctx) => {
+              if (ctx.type === "rpc") {
+                return this.#rpcHandlers[ctx.method]?.[ctx.requestType]?.decode(
+                  ctx.payload,
+                );
+              }
+              return undefined;
+            });
           } catch (error) {
             replicationLogger
               .with({ error: toErrorDetails(error as Error) })
@@ -189,7 +165,6 @@ export class Session<Context extends ServerContext> extends Observable<
             return;
           }
 
-          // Best-effort: ensure it matches the documentId (client-facing)
           if (message.document !== this.documentId) {
             replicationLogger
               .with({
@@ -409,31 +384,17 @@ export class Session<Context extends ServerContext> extends Observable<
     try {
       await this.#storage.handleUpdate(this.namespacedDocumentId, update);
 
-      this.#updateCount++;
+      this.call("document-write", {
+        documentId: this.documentId,
+        namespacedDocumentId: this.namespacedDocumentId,
+        sessionId: this.id,
+        encrypted: this.encrypted,
+        context,
+      });
+
       const meta = await this.#storage.getDocumentMetadata(
         this.namespacedDocumentId,
       );
-
-      if (meta.milestoneTriggers) {
-        for (const trigger of meta.milestoneTriggers) {
-          if (!trigger.enabled) continue;
-
-          if (trigger.type === "time-based") {
-            const config = trigger.config as { interval: number };
-            // Check if interval has passed since last milestone
-            // This acts as a check in case timers are not reliable or for immediate feedback on update
-            if (Date.now() - this.#lastMilestoneTime >= config.interval) {
-              await this.#createAutomaticMilestone(trigger);
-            }
-          } else if (trigger.type === "update-count") {
-            const config = trigger.config as { updateCount: number };
-            if (this.#updateCount >= config.updateCount) {
-              await this.#createAutomaticMilestone(trigger);
-            }
-          }
-          // Event-based triggers will be handled via event listeners (Task 8)
-        }
-      }
 
       const sizeBytes = meta.sizeBytes ?? 0;
       const warningThreshold =
@@ -486,69 +447,6 @@ export class Session<Context extends ServerContext> extends Observable<
         })
         .error("Failed to write update to storage");
       throw error;
-    }
-  }
-
-  async #createAutomaticMilestone(trigger: MilestoneTrigger) {
-    if (!this.#storage.milestoneStorage) return;
-
-    try {
-      const doc = await this.#storage.getDocument(this.namespacedDocumentId);
-      if (!doc) return;
-
-      // MilestoneSnapshot is Uint8Array (Update)
-      // We use the full document update as the snapshot
-      const snapshot = doc.content.update as unknown as MilestoneSnapshot;
-
-      let name: string;
-      if (typeof trigger.autoName === "string") {
-        name = trigger.autoName;
-      } else {
-        const existingMilestones =
-          await this.#storage.milestoneStorage.getMilestones(
-            this.namespacedDocumentId,
-          );
-        name = `Milestone ${existingMilestones.length + 1}`;
-      }
-
-      const createdAt = Date.now();
-      const milestoneId = await this.#storage.milestoneStorage.createMilestone({
-        name,
-        documentId: this.namespacedDocumentId,
-        createdAt,
-        snapshot,
-        createdBy: { type: "system", id: this.#nodeId },
-      });
-
-      this.#lastMilestoneTime = createdAt;
-      this.#updateCount = 0;
-
-      this.call("milestone-created", {
-        documentId: this.documentId,
-        namespacedDocumentId: this.namespacedDocumentId,
-        milestoneId,
-        milestoneName: name,
-        triggerType: trigger.type,
-        triggerId: trigger.id,
-        context: {} as Context,
-      });
-
-      this.#logger
-        .with({
-          documentId: this.documentId,
-          milestoneId,
-          triggerId: trigger.id,
-          triggerType: trigger.type,
-        })
-        .info("Automatic milestone created");
-    } catch (error) {
-      this.#logger
-        .with({
-          error: toErrorDetails(error as Error),
-          documentId: this.documentId,
-          triggerId: trigger.id,
-        })
-        .error("Failed to create automatic milestone");
     }
   }
 
@@ -605,7 +503,6 @@ export class Session<Context extends ServerContext> extends Observable<
       })
       .debug("Applying message to session");
 
-    // Validate encryption consistency
     if (message.encrypted !== this.encrypted) {
       const error = new Error(
         "Message encryption and document encryption are mismatched",
@@ -690,10 +587,8 @@ export class Session<Context extends ServerContext> extends Observable<
                 })
                 .trace("Processing update message");
 
-              // wait for confirmed write
               await this.write(message.payload.update, message.context);
 
-              // broadcast and replicate
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#pubSub.publish(
@@ -742,7 +637,6 @@ export class Session<Context extends ServerContext> extends Observable<
                 ),
               ]);
 
-              // Emit document-message before the client check
               this.#emitDocumentMessage(
                 message,
                 client,
@@ -798,648 +692,6 @@ export class Session<Context extends ServerContext> extends Observable<
                 .debug("Received auth-message");
               return;
             }
-            case "milestone-list-request": {
-              const payload = message.payload as DecodedMilestoneListRequest;
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  snapshotIds: payload.snapshotIds,
-                })
-                .trace("Processing milestone-list-request");
-
-              if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "milestone-list-request received without client, cannot respond",
-                  );
-                return;
-              }
-
-              if (!this.#storage.milestoneStorage) {
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: "Milestone storage is not available",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                const milestones =
-                  await this.#storage.milestoneStorage.getMilestones(
-                    this.namespacedDocumentId,
-                    { includeDeleted: payload.includeDeleted },
-                  );
-                const snapshotIds = payload.snapshotIds ?? [];
-                // Filter out milestones that are already known
-                const milestoneMetadata = milestones
-                  .filter((m) => !snapshotIds.includes(m.id))
-                  .map((m) => m.toJSON());
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-list-response",
-                      milestones: milestoneMetadata,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                log
-                  .with({
-                    messageId: message.id,
-                    documentId: this.documentId,
-                    milestoneCount: milestoneMetadata.length,
-                    filteredCount: milestones.length - milestoneMetadata.length,
-                  })
-                  .trace("Milestone list sent");
-              } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: message.id,
-                  })
-                  .error("Failed to get milestones");
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: `Failed to get milestones: ${(error as Error).message}`,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-              }
-              return;
-            }
-            case "milestone-snapshot-request": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  milestoneId: (message.payload as any).milestoneId,
-                })
-                .trace("Processing milestone-snapshot-request");
-
-              if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "milestone-snapshot-request received without client, cannot respond",
-                  );
-                return;
-              }
-
-              if (!this.#storage.milestoneStorage) {
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: "Milestone storage is not available",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                const milestoneId = (message.payload as any).milestoneId;
-                const milestone =
-                  await this.#storage.milestoneStorage.getMilestone(
-                    this.namespacedDocumentId,
-                    milestoneId,
-                  );
-
-                if (!milestone) {
-                  await client.send(
-                    new DocMessage(
-                      this.documentId,
-                      {
-                        type: "milestone-auth-message",
-                        permission: "denied",
-                        reason: `Milestone not found: ${milestoneId}`,
-                      },
-                      message.context,
-                      this.encrypted,
-                    ),
-                  );
-                  return;
-                }
-
-                const snapshot = await milestone.fetchSnapshot();
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-snapshot-response",
-                      milestoneId,
-                      snapshot,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                log
-                  .with({
-                    messageId: message.id,
-                    documentId: this.documentId,
-                    milestoneId,
-                  })
-                  .trace("Milestone snapshot sent");
-              } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: message.id,
-                  })
-                  .error("Failed to get milestone snapshot");
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: `Failed to get milestone snapshot: ${(error as Error).message}`,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-              }
-              return;
-            }
-            case "milestone-create-request": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                })
-                .trace("Processing milestone-create-request");
-
-              if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "milestone-create-request received without client, cannot respond",
-                  );
-                return;
-              }
-
-              if (!this.#storage.milestoneStorage) {
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: "Milestone storage is not available",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                const requestedName = (message.payload as any).name;
-                const clientSnapshot = (message.payload as any).snapshot as
-                  | MilestoneSnapshot
-                  | undefined;
-
-                // Require snapshot from client - server never generates it
-                if (!clientSnapshot) {
-                  await client.send(
-                    new DocMessage(
-                      this.documentId,
-                      {
-                        type: "milestone-auth-message",
-                        permission: "denied",
-                        reason: "Snapshot is required from client",
-                      },
-                      message.context,
-                      this.encrypted,
-                    ),
-                  );
-                  return;
-                }
-
-                const snapshot = clientSnapshot;
-
-                // Auto-generate name if not provided
-                let name = requestedName;
-                if (!name) {
-                  const existingMilestones =
-                    await this.#storage.milestoneStorage.getMilestones(
-                      this.namespacedDocumentId,
-                    );
-                  name = `Milestone ${existingMilestones.length + 1}`;
-                }
-
-                const createdAt = Date.now();
-                const milestoneId =
-                  await this.#storage.milestoneStorage.createMilestone({
-                    name,
-                    documentId: this.namespacedDocumentId,
-                    createdAt,
-                    snapshot,
-                    createdBy: {
-                      type: "user",
-                      id: message.context.userId || "unknown",
-                    },
-                  });
-
-                const milestone =
-                  await this.#storage.milestoneStorage.getMilestone(
-                    this.namespacedDocumentId,
-                    milestoneId,
-                  );
-
-                if (!milestone) {
-                  throw new Error("Failed to retrieve created milestone");
-                }
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-create-response",
-                      milestone: milestone.toJSON(),
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                this.call("milestone-created", {
-                  documentId: this.documentId,
-                  namespacedDocumentId: this.namespacedDocumentId,
-                  milestoneId,
-                  milestoneName: name,
-                  triggerType: "manual",
-                  context: message.context,
-                });
-
-                log
-                  .with({
-                    messageId: message.id,
-                    documentId: this.documentId,
-                    milestoneId,
-                    name,
-                  })
-                  .trace("Milestone created");
-              } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: message.id,
-                  })
-                  .error("Failed to create milestone");
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: `Failed to create milestone: ${(error as Error).message}`,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-              }
-              return;
-            }
-            case "milestone-update-name-request": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  milestoneId: (message.payload as any).milestoneId,
-                })
-                .trace("Processing milestone-update-name-request");
-
-              if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "milestone-update-name-request received without client, cannot respond",
-                  );
-                return;
-              }
-
-              if (!this.#storage.milestoneStorage) {
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: "Milestone storage is not available",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                const milestoneId = (message.payload as any).milestoneId;
-                const name = (message.payload as any).name;
-
-                // When user renames a milestone, mark it as user-created
-                await this.#storage.milestoneStorage.updateMilestoneName(
-                  this.namespacedDocumentId,
-                  milestoneId,
-                  name,
-                  { type: "user", id: message.context.userId || "unknown" },
-                );
-
-                const milestone =
-                  await this.#storage.milestoneStorage.getMilestone(
-                    this.namespacedDocumentId,
-                    milestoneId,
-                  );
-
-                if (!milestone) {
-                  await client.send(
-                    new DocMessage(
-                      this.documentId,
-                      {
-                        type: "milestone-auth-message",
-                        permission: "denied",
-                        reason: `Milestone not found: ${milestoneId}`,
-                      },
-                      message.context,
-                      this.encrypted,
-                    ),
-                  );
-                  return;
-                }
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-update-name-response",
-                      milestone: milestone.toJSON(),
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                log
-                  .with({
-                    messageId: message.id,
-                    documentId: this.documentId,
-                    milestoneId,
-                    name,
-                  })
-                  .trace("Milestone name updated");
-              } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: message.id,
-                  })
-                  .error("Failed to update milestone name");
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: `Failed to update milestone name: ${(error as Error).message}`,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-              }
-              return;
-            }
-            case "milestone-delete-request": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  milestoneId: (message.payload as any).milestoneId,
-                })
-                .trace("Processing milestone-delete-request");
-
-              if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "milestone-delete-request received without client, cannot respond",
-                  );
-                return;
-              }
-
-              if (!this.#storage.milestoneStorage) {
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: "Milestone storage is not available",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                const milestoneId = (message.payload as any).milestoneId;
-
-                await this.#storage.milestoneStorage.deleteMilestone(
-                  this.namespacedDocumentId,
-                  milestoneId,
-                  message.context.userId as string | undefined,
-                );
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-delete-response",
-                      milestoneId,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                this.call("milestone-deleted", {
-                  documentId: this.documentId,
-                  namespacedDocumentId: this.namespacedDocumentId,
-                  milestoneId,
-                  deletedBy: message.context.userId as string | undefined,
-                  context: message.context,
-                });
-
-                log
-                  .with({
-                    messageId: message.id,
-                    documentId: this.documentId,
-                    milestoneId,
-                  })
-                  .trace("Milestone deleted");
-              } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: message.id,
-                  })
-                  .error("Failed to soft delete milestone");
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: `Failed to soft delete milestone: ${(error as Error).message}`,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-              }
-              return;
-            }
-            case "milestone-restore-request": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  milestoneId: (message.payload as any).milestoneId,
-                })
-                .trace("Processing milestone-restore-request");
-
-              if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "milestone-restore-request received without client, cannot respond",
-                  );
-                return;
-              }
-
-              if (!this.#storage.milestoneStorage) {
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: "Milestone storage is not available",
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                const milestoneId = (message.payload as any).milestoneId;
-
-                await this.#storage.milestoneStorage.restoreMilestone(
-                  this.namespacedDocumentId,
-                  milestoneId,
-                );
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-restore-response",
-                      milestoneId,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                this.call("milestone-restored", {
-                  documentId: this.documentId,
-                  namespacedDocumentId: this.namespacedDocumentId,
-                  milestoneId,
-                  context: message.context,
-                });
-
-                log
-                  .with({
-                    messageId: message.id,
-                    documentId: this.documentId,
-                    milestoneId,
-                  })
-                  .trace("Milestone restored");
-              } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: message.id,
-                  })
-                  .error("Failed to restore milestone");
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    {
-                      type: "milestone-auth-message",
-                      permission: "denied",
-                      reason: `Failed to restore milestone: ${(error as Error).message}`,
-                    },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-              }
-              return;
-            }
-            case "milestone-list-response":
-            case "milestone-snapshot-response":
-            case "milestone-create-response":
-            case "milestone-update-name-response":
-            case "milestone-delete-response":
-            case "milestone-restore-response":
-            case "milestone-auth-message": {
-              // These are response messages, just log them
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  payloadType: (message.payload as any).type,
-                })
-                .debug("Received milestone response message");
-              return;
-            }
             default: {
               log
                 .with({
@@ -1451,6 +703,266 @@ export class Session<Context extends ServerContext> extends Observable<
               return;
             }
           }
+        }
+        case "rpc": {
+          if (!client) {
+            log
+              .with({ messageId: message.id })
+              .warn("RPC message received without client, cannot respond");
+            return;
+          }
+
+          const rpcMessage = message as RpcMessage<Context>;
+          const { requestType, originalRequestId } = rpcMessage;
+
+          if (requestType === "request") {
+            const method = rpcMessage.rpcMethod;
+
+            if (rpcMessage.payload.type !== "success") {
+              log
+                .with({
+                  messageId: rpcMessage.id,
+                  documentId: this.documentId,
+                  method,
+                })
+                .warn("RPC request with error payload, ignoring");
+              return;
+            }
+
+            const requestPayload = rpcMessage.payload.payload as {
+              [key: string]: unknown;
+            };
+
+            log
+              .with({
+                messageId: rpcMessage.id,
+                documentId: this.documentId,
+                method,
+              })
+              .trace("Processing RPC request");
+
+            const handler = this.#rpcHandlers[method];
+            if (!handler) {
+              log
+                .with({
+                  messageId: rpcMessage.id,
+                  method,
+                })
+                .warn("No handler found for RPC method");
+
+              const errorMessage = new RpcMessage(
+                this.documentId,
+                {
+                  type: "error",
+                  statusCode: 501,
+                  details: `Unknown RPC method: ${method}`,
+                  payload: { method },
+                },
+                method,
+                "response",
+                rpcMessage.id,
+                rpcMessage.context,
+                rpcMessage.encrypted,
+              );
+              await client.send(errorMessage);
+              return;
+            }
+
+            try {
+              const enrichedContext: RpcServerContext = {
+                ...rpcMessage.context,
+                server: this.#server as any,
+                documentId: this.namespacedDocumentId,
+                session: this as any,
+                userId: rpcMessage.context?.userId,
+                clientId: rpcMessage.context?.clientId,
+              };
+              const result = (await handler.handler(
+                requestPayload,
+                enrichedContext,
+              )) as {
+                response: {
+                  type: string;
+                  payload?: unknown;
+                  statusCode?: number;
+                  details?: string;
+                };
+                stream?: AsyncIterable<unknown>;
+              };
+
+              if ("stream" in result && result.stream) {
+                for await (const chunk of result.stream) {
+                  const serializer = (ctx: any) => {
+                    if (ctx.type === "rpc" && ctx.requestType === "stream") {
+                      return handler.stream?.encode?.(chunk);
+                    }
+                    return undefined;
+                  };
+                  const streamMessage = new RpcMessage(
+                    this.documentId,
+                    { type: "success", payload: chunk },
+                    method,
+                    "stream",
+                    rpcMessage.id,
+                    rpcMessage.context,
+                    rpcMessage.encrypted,
+                    undefined,
+                    serializer,
+                  );
+                  await client.send(streamMessage);
+                }
+              }
+
+              const responsePayload: RpcSuccess | RpcError =
+                (result.response as { type?: string }).type === "error"
+                  ? {
+                      type: "error",
+                      statusCode:
+                        (result.response as RpcError).statusCode ?? 500,
+                      details:
+                        (result.response as RpcError).details ??
+                        "Unknown error",
+                      payload: (result.response as RpcError).payload,
+                    }
+                  : {
+                      type: "success",
+                      payload: result.response,
+                    };
+              const serializer = (ctx: any) => {
+                if (ctx.type === "rpc" && ctx.requestType === "response") {
+                  // Only serialize if it's a success response (not an error)
+                  if (ctx.message.payload.type === "success") {
+                    return handler.response?.encode?.(result.response);
+                  }
+                }
+                return undefined;
+              };
+              const responseMessage = new RpcMessage(
+                this.documentId,
+                responsePayload,
+                method,
+                "response",
+                rpcMessage.id,
+                rpcMessage.context,
+                rpcMessage.encrypted,
+                undefined,
+                serializer,
+              );
+
+              await client.send(responseMessage);
+
+              log
+                .with({
+                  messageId: rpcMessage.id,
+                  documentId: this.documentId,
+                  method,
+                  responseType: result.response.type,
+                })
+                .trace("RPC request processed");
+            } catch (error) {
+              log
+                .with({
+                  error: toErrorDetails(error as Error),
+                  messageId: rpcMessage.id,
+                  method,
+                })
+                .error("RPC handler failed");
+
+              const errorMessage = new RpcMessage(
+                this.documentId,
+                {
+                  type: "error",
+                  statusCode: 500,
+                  details:
+                    error instanceof Error ? error.message : "Internal error",
+                },
+                method,
+                "response",
+                rpcMessage.id,
+                rpcMessage.context,
+                rpcMessage.encrypted,
+              );
+              await client.send(errorMessage);
+            }
+          } else if (requestType === "stream") {
+            const method = rpcMessage.rpcMethod;
+            const handler = this.#rpcHandlers[method];
+
+            log
+              .with({
+                messageId: rpcMessage.id,
+                documentId: this.documentId,
+                originalRequestId,
+                method,
+                hasStreamHandler: !!handler?.streamHandler,
+              })
+              .trace("Processing RPC stream message");
+
+            if (
+              handler?.streamHandler &&
+              rpcMessage.payload.type === "success"
+            ) {
+              try {
+                const enrichedContext: RpcServerContext = {
+                  ...rpcMessage.context,
+                  server: this.#server as any,
+                  documentId: this.namespacedDocumentId,
+                  session: this as any,
+                  userId: rpcMessage.context?.userId,
+                  clientId: rpcMessage.context?.clientId,
+                };
+
+                await handler.streamHandler(
+                  rpcMessage.payload.payload,
+                  enrichedContext,
+                  rpcMessage.id,
+                  async (msg) => {
+                    if (client) {
+                      await client.send(msg);
+                    }
+                  },
+                );
+              } catch (error) {
+                log
+                  .with({
+                    error: toErrorDetails(error as Error),
+                    messageId: rpcMessage.id,
+                    method,
+                  })
+                  .error("Stream handler failed");
+
+                if (client) {
+                  const errorMessage = new RpcMessage(
+                    this.documentId,
+                    {
+                      type: "error",
+                      statusCode: 500,
+                      details:
+                        error instanceof Error
+                          ? error.message
+                          : "Stream processing error",
+                    },
+                    method,
+                    "response",
+                    originalRequestId ?? rpcMessage.id,
+                    rpcMessage.context,
+                    rpcMessage.encrypted,
+                  );
+                  await client.send(errorMessage);
+                }
+              }
+            }
+          } else if (requestType === "response") {
+            log
+              .with({
+                messageId: rpcMessage.id,
+                documentId: this.documentId,
+                originalRequestId,
+              })
+              .trace("Processing RPC response message");
+          }
+
+          return;
         }
         default: {
           log
@@ -1503,9 +1015,6 @@ export class Session<Context extends ServerContext> extends Observable<
     }
   }
 
-  /**
-   * Async dispose the session.
-   */
   async [Symbol.asyncDispose]() {
     this.#logger
       .with({
@@ -1515,14 +1024,7 @@ export class Session<Context extends ServerContext> extends Observable<
       })
       .info("Disposing session");
 
-    // Cancel any pending cleanup
     this.#cancelCleanup();
-
-    // Clear trigger timers
-    for (const timer of this.#triggerTimers.values()) {
-      clearInterval(timer);
-    }
-    this.#triggerTimers.clear();
 
     try {
       if (this.#unsubscribe) {
@@ -1542,7 +1044,13 @@ export class Session<Context extends ServerContext> extends Observable<
         .error("Error unsubscribing from pubSub");
     }
 
-    // Clean up all event listeners
+    // Emit dispose event to allow handlers to clean up resources
+    await this.call("dispose", {
+      documentId: this.documentId,
+      namespacedDocumentId: this.namespacedDocumentId,
+      sessionId: this.id,
+    });
+
     this.destroy();
 
     this.#logger
@@ -1553,11 +1061,7 @@ export class Session<Context extends ServerContext> extends Observable<
       .info("Session disposed");
   }
 
-  /**
-   * Schedule cleanup of this session after the delay period.
-   */
   #scheduleCleanup() {
-    // Clear any existing timeout first
     this.#cancelCleanup();
 
     this.#logger
@@ -1574,9 +1078,6 @@ export class Session<Context extends ServerContext> extends Observable<
     }, this.#CLEANUP_DELAY_MS);
   }
 
-  /**
-   * Cancel any pending cleanup timeout.
-   */
   #cancelCleanup() {
     if (this.#cleanupTimeoutId !== undefined) {
       clearTimeout(this.#cleanupTimeoutId);
@@ -1612,9 +1113,6 @@ export class Session<Context extends ServerContext> extends Observable<
     return this.#clients.size === 0;
   }
 
-  /**
-   * Get the clients in the session.
-   */
   public get clients(): IterableIterator<Client<Context>> {
     return this.#clients.values();
   }

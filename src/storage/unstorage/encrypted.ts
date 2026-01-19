@@ -6,8 +6,6 @@ import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
-import type { FileStorage, MilestoneStorage } from "../types";
-import { UnstorageMilestoneStorage } from "./milestone-storage";
 import { withTransaction } from "./transaction";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
@@ -18,15 +16,11 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     options?: {
       ttl?: number;
       keyPrefix?: string;
-      fileStorage?: FileStorage;
-      milestoneStorage?: MilestoneStorage;
     },
   ) {
     super();
     this.storage = storage;
     this.options = { ttl: 5 * 1000, keyPrefix: "", ...options };
-    this.fileStorage = options?.fileStorage;
-    this.milestoneStorage = options?.milestoneStorage;
   }
 
   #getKey(key: string): string {
@@ -103,10 +97,6 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
   }
 
   async deleteDocument(key: string): Promise<void> {
-    if (this.fileStorage) {
-      await this.fileStorage.deleteFilesByDocument(key);
-    }
-
     const metadata = await this.getDocumentMetadata(key);
     const prefixedKey = this.#getKey(key);
 

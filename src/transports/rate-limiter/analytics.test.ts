@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Server } from "../../server/server";
-import { createInMemory } from "../../storage/in-memory";
+import { YDocStorage } from "../../storage/in-memory/ydoc";
 import { noopTransport } from "../passthrough";
 import { withRateLimit } from "./index";
 import { DocMessage } from "teleportal";
@@ -68,9 +68,9 @@ describe("Rate Limit Analytics", () => {
 
   beforeEach(() => {
     // Create server with minimal config
-    const storage = createInMemory();
+    const documentStorage = new YDocStorage();
     server = new Server({
-      getStorage: async () => storage.documentStorage,
+      getStorage: async () => documentStorage,
     });
   });
 

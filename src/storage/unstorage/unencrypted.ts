@@ -5,13 +5,7 @@ import * as Y from "yjs";
 import { type StateVector, type Update } from "teleportal";
 import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import type {
-  Document,
-  DocumentMetadata,
-  FileStorage,
-  MilestoneStorage,
-} from "../types";
-import { UnstorageMilestoneStorage } from "./milestone-storage";
+import type { Document, DocumentMetadata } from "../types";
 import { withTransaction } from "./transaction";
 
 /**
@@ -34,8 +28,6 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       scanKeys?: boolean;
       ttl?: number;
       keyPrefix?: string;
-      fileStorage?: FileStorage;
-      milestoneStorage?: MilestoneStorage;
     },
   ) {
     super();
@@ -46,8 +38,6 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       keyPrefix: "",
       ...options,
     };
-    this.fileStorage = options?.fileStorage;
-    this.milestoneStorage = options?.milestoneStorage;
   }
 
   #getKey(key: string): string {
@@ -208,11 +198,6 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   }
 
   async deleteDocument(key: string): Promise<void> {
-    // Cascade delete files
-    if (this.fileStorage) {
-      await this.fileStorage.deleteFilesByDocument(key);
-    }
-
     const prefixedKey = this.#getKey(key);
     // Delete metadata
     await this.storage.removeItem(this.#getMetadataKey(key));

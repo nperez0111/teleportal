@@ -5,7 +5,6 @@ import { useCreateBlockNote } from "@blocknote/react";
 import { use, useEffect } from "react";
 import { ClientContext, Milestone, Transport } from "teleportal";
 import { DefaultTransportProperties, Provider } from "teleportal/providers";
-import { FileTransportMethods } from "teleportal/transports";
 import { yXmlFragmentToProseMirrorRootNode } from "y-prosemirror";
 import * as Y from "yjs";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
@@ -15,8 +14,7 @@ interface EditorProps {
   provider: Provider<
     Transport<
       ClientContext,
-      DefaultTransportProperties &
-        FileTransportMethods & { handler?: EncryptionClient }
+      DefaultTransportProperties & { handler?: EncryptionClient }
     >
   >;
   user?: {
@@ -54,9 +52,8 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     },
     async uploadFile(file, blockId) {
       try {
-        const fileId = await provider.transport.upload(
+        const fileId = await provider.uploadFile(
           file,
-          provider.document,
           blockId,
           provider.transport.handler?.key,
         );
@@ -70,9 +67,8 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     async resolveFileUrl(url) {
       if (url.startsWith("teleportal://")) {
         const fileId = url.split("://")[1];
-        const file = await provider.transport.download(
+        const file = await provider.downloadFile(
           fileId,
-          provider.document,
           provider.transport.handler?.key,
         );
         return URL.createObjectURL(file);

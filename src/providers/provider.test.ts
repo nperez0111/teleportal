@@ -1,14 +1,20 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-  Message,
-  type ClientContext,
-  type Transport,
   DocMessage,
-  type StateVector,
+  Message,
+  RpcMessage,
+  type ClientContext,
   type MilestoneSnapshot,
+  type StateVector,
+  type Transport,
 } from "teleportal";
+import * as Y from "yjs";
+import {
+  type MilestoneCreateResponse,
+  type MilestoneGetResponse,
+  type MilestoneListResponse,
+  type MilestoneUpdateNameResponse,
+} from "../protocols/milestone";
 import { Connection, type ConnectionState } from "./connection";
 import { Provider, type DefaultTransportProperties } from "./provider";
 
@@ -488,16 +494,19 @@ describe("Provider milestone operations", () => {
   it("should list milestones", async () => {
     await setupProvider();
 
-    // Set up response handler
+    // Set up response handler for RPC messages
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-list-request"
-      ) {
-        return new DocMessage<ClientContext>(
-          "test-doc",
-          {
-            type: "milestone-list-response",
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (message.rpcMethod === "milestoneList") {
+          const payload =
+            message.payload.type === "success"
+              ? (message.payload.payload as {
+                  snapshotIds?: string[];
+                  includeDeleted?: boolean;
+                })
+              : undefined;
+          if (!payload) return null;
+          const response: MilestoneListResponse = {
             milestones: [
               {
                 id: "milestone-1",
@@ -514,9 +523,17 @@ describe("Provider milestone operations", () => {
                 createdBy: { type: "system", id: "test-node" },
               },
             ],
-          } as any,
-          { clientId: "test-client" },
-        );
+          };
+          return new RpcMessage(
+            "test-doc",
+            { type: "success", payload: response },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
       }
       return null;
     };
@@ -535,23 +552,29 @@ describe("Provider milestone operations", () => {
 
     const testSnapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
 
-    // Set up response handler for snapshot request
+    // Set up response handler for RPC snapshot request
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-snapshot-request"
-      ) {
-        const payload = (message as any).payload;
-        if (payload.milestoneId === "milestone-1") {
-          return new DocMessage<ClientContext>(
-            "test-doc",
-            {
-              type: "milestone-snapshot-response",
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (
+          message.rpcMethod === "milestoneGet" &&
+          message.payload.type === "success"
+        ) {
+          const payload = message.payload.payload as { milestoneId: string };
+          if (payload.milestoneId === "milestone-1") {
+            const response: MilestoneGetResponse = {
               milestoneId: "milestone-1",
               snapshot: testSnapshot,
-            } as any,
-            { clientId: "test-client" },
-          );
+            };
+            return new RpcMessage(
+              "test-doc",
+              { type: "success", payload: response },
+              message.rpcMethod,
+              "response",
+              message.id,
+              { clientId: "test-client" },
+              false,
+            );
+          }
         }
       }
       return null;
@@ -569,17 +592,15 @@ describe("Provider milestone operations", () => {
     const ytext = ydoc.getText("content");
     ytext.insert(0, "Hello, World!");
 
-    // Set up response handler
+    // Set up response handler for RPC create request
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-create-request"
-      ) {
-        const payload = (message as any).payload;
-        return new DocMessage<ClientContext>(
-          "test-doc",
-          {
-            type: "milestone-create-response",
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (
+          message.rpcMethod === "milestoneCreate" &&
+          message.payload.type === "success"
+        ) {
+          const payload = message.payload.payload as { name?: string };
+          const response: MilestoneCreateResponse = {
             milestone: {
               id: "milestone-1",
               name: payload.name || "v1.0.0",
@@ -587,9 +608,17 @@ describe("Provider milestone operations", () => {
               createdAt: Date.now(),
               createdBy: { type: "system", id: "test-node" },
             },
-          } as any,
-          { clientId: "test-client" },
-        );
+          };
+          return new RpcMessage(
+            "test-doc",
+            { type: "success", payload: response },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
       }
       return null;
     };
@@ -604,16 +633,15 @@ describe("Provider milestone operations", () => {
   it("should create milestone without name (auto-generate)", async () => {
     await setupProvider();
 
-    // Set up response handler
+    // Set up response handler for RPC create request
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-create-request"
-      ) {
-        return new DocMessage<ClientContext>(
-          "test-doc",
-          {
-            type: "milestone-create-response",
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (
+          message.rpcMethod === "milestoneCreate" &&
+          message.payload.type === "success"
+        ) {
+          const payload = message.payload.payload as Record<string, unknown>;
+          const response: MilestoneCreateResponse = {
             milestone: {
               id: "milestone-1",
               name: "v1.0.0", // Server auto-generated
@@ -621,9 +649,17 @@ describe("Provider milestone operations", () => {
               createdAt: Date.now(),
               createdBy: { type: "system", id: "test-node" },
             },
-          } as any,
-          { clientId: "test-client" },
-        );
+          };
+          return new RpcMessage(
+            "test-doc",
+            { type: "success", payload: response },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
       }
       return null;
     };
@@ -637,18 +673,19 @@ describe("Provider milestone operations", () => {
   it("should update milestone name", async () => {
     await setupProvider();
 
-    // Set up response handler
+    // Set up response handler for RPC update request
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-update-name-request"
-      ) {
-        const payload = (message as any).payload;
-        if (payload.milestoneId === "milestone-1") {
-          return new DocMessage<ClientContext>(
-            "test-doc",
-            {
-              type: "milestone-update-name-response",
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (
+          message.rpcMethod === "milestoneUpdateName" &&
+          message.payload.type === "success"
+        ) {
+          const payload = message.payload.payload as {
+            milestoneId: string;
+            name: string;
+          };
+          if (payload.milestoneId === "milestone-1") {
+            const response: MilestoneUpdateNameResponse = {
               milestone: {
                 id: "milestone-1",
                 name: payload.name,
@@ -656,9 +693,17 @@ describe("Provider milestone operations", () => {
                 createdAt: 1234567890,
                 createdBy: { type: "system", id: "test-node" },
               },
-            } as any,
-            { clientId: "test-client" },
-          );
+            };
+            return new RpcMessage(
+              "test-doc",
+              { type: "success", payload: response },
+              message.rpcMethod,
+              "response",
+              message.id,
+              { clientId: "test-client" },
+              false,
+            );
+          }
         }
       }
       return null;
@@ -676,45 +721,47 @@ describe("Provider milestone operations", () => {
   it("should handle milestone auth errors", async () => {
     await setupProvider();
 
-    // Set up response handler to return auth error
+    // Set up response handler to return RPC error response
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-list-request"
-      ) {
-        return new DocMessage<ClientContext>(
-          "test-doc",
-          {
-            type: "milestone-auth-message",
-            reason: "Permission denied",
-          } as any,
-          { clientId: "test-client" },
-        );
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (
+          message.rpcMethod === "milestoneList" &&
+          message.payload.type === "success"
+        ) {
+          const payload = message.payload.payload as { snapshotIds?: string[] };
+          return new RpcMessage(
+            "test-doc",
+            { type: "error", statusCode: 403, details: "Permission denied" },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
       }
       return null;
     };
 
     await expect(provider.listMilestones()).rejects.toThrow(
-      "Milestone operation denied: Permission denied",
+      "RPC error (403): Permission denied",
     );
   });
 
   it("should handle milestone list with snapshotIds filter", async () => {
     await setupProvider();
 
-    // Set up response handler
+    // Set up response handler for RPC list request
     mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "doc" &&
-        (message as any).payload?.type === "milestone-list-request"
-      ) {
-        const payload = (message as any).payload;
-        // Verify snapshotIds were sent
-        expect(payload.snapshotIds).toEqual(["milestone-1"]);
-        return new DocMessage<ClientContext>(
-          "test-doc",
-          {
-            type: "milestone-list-response",
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (
+          message.rpcMethod === "milestoneList" &&
+          message.payload.type === "success"
+        ) {
+          const payload = message.payload.payload as { snapshotIds?: string[] };
+          // Verify snapshotIds were sent
+          expect(payload.snapshotIds).toEqual(["milestone-1"]);
+          const response: MilestoneListResponse = {
             milestones: [
               {
                 id: "milestone-2",
@@ -724,9 +771,17 @@ describe("Provider milestone operations", () => {
                 createdBy: { type: "system", id: "test-node" },
               },
             ],
-          } as any,
-          { clientId: "test-client" },
-        );
+          };
+          return new RpcMessage(
+            "test-doc",
+            { type: "success", payload: response },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
       }
       return null;
     };

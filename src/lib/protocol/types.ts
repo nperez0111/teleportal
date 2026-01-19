@@ -129,20 +129,7 @@ export type DocStep =
   | SyncStep2
   | SyncDone
   | UpdateStep
-  | AuthMessage
-  | MilestoneListRequest
-  | MilestoneListResponse
-  | MilestoneSnapshotRequest
-  | MilestoneSnapshotResponse
-  | MilestoneCreateRequest
-  | MilestoneCreateResponse
-  | MilestoneUpdateNameRequest
-  | MilestoneUpdateNameResponse
-  | MilestoneAuthMessage
-  | MilestoneDeleteRequest
-  | MilestoneDeleteResponse
-  | MilestoneRestoreRequest
-  | MilestoneRestoreResponse;
+  | AuthMessage;
 
 /**
  * Any Y.js update which contains awareness updates.
@@ -155,359 +142,157 @@ export type AwarenessStep = AwarenessRequestMessage | AwarenessUpdateMessage;
 export type EncodedDocUpdateMessage<T extends DocStep> = Tag<Uint8Array, T>;
 
 /**
- * A file download message for initiating downloads.
- */
-export type EncodedFileDownloadMessage = Tag<Uint8Array, "file-download">;
-
-/**
- * A file upload message for initiating uploads.
- */
-export type EncodedFileUploadMessage = Tag<Uint8Array, "file-upload">;
-
-/**
- * A file part message containing chunk data and merkle proof.
- */
-export type EncodedFilePartMessage = Tag<Uint8Array, "file-part">;
-
-/**
- * A file step message for initiating uploads, downloads, or parts.
- */
-export type FileStep =
-  | EncodedFileDownloadMessage
-  | EncodedFileUploadMessage
-  | EncodedFilePartMessage;
-
-/**
- * A file step message for initiating uploads, downloads, or parts.
- */
-export type EncodedFileStep<T extends FileStep> = Tag<Uint8Array, T>;
-
-/**
- * A decoded file upload message.
- * This message is the preamble to a file upload.
- * A client uploads a file to a sever, and a server uploads a file to a client.
- * @note Sending from local to remote.
- */
-export type DecodedFileUpload = {
-  type: "file-upload";
-  /**
-   * A client-generated identifier for resumable upload of the same file.
-   */
-  fileId: string;
-  /**
-   * Original filename
-   */
-  filename: string;
-  /**
-   * File size in bytes (max 2^53 - 1 bytes)
-   */
-  size: number;
-  /**
-   * MIME type of the file
-   */
-  mimeType: string;
-  /**
-   * Last modified timestamp of the file
-   */
-  lastModified: number;
-  /**
-   * Whether the file is encrypted
-   */
-  encrypted: boolean;
-};
-
-/**
- * A decoded file download message.
- * This message is the preamble to a file download.
- * A client downloads a file from a server, and a server downloads a file from a client.
- * @note Sending from remote to local (if exists)
- */
-export type DecodedFileDownload = {
-  type: "file-download";
-  /**
-   * The fileId (merkle root hash) of the file to download.
-   */
-  fileId: string;
-};
-
-/**
- * A decoded file progress message.
- */
-export type DecodedFilePart = {
-  type: "file-part";
-  /**
-   * Client-generated UUID identifying this file transfer
-   */
-  fileId: string;
-  /**
-   * Zero-based index of this chunk
-   */
-  chunkIndex: number;
-  /**
-   * Chunk data (64KB)
-   */
-  chunkData: Uint8Array;
-  /**
-   * Merkle proof path for this chunk
-   */
-  merkleProof: Uint8Array[];
-  /**
-   * Total number of chunks in the file
-   */
-  totalChunks: number;
-  /**
-   * Total bytes uploaded so far
-   */
-  bytesUploaded: number;
-  /**
-   * Whether the file is encrypted
-   */
-  encrypted: boolean;
-};
-
-/**
- * A decoded file auth message.
- */
-export type DecodedFileAuthMessage = {
-  type: "file-auth-message";
-  /**
-   * The permission granted or denied for the file
-   */
-  permission: "denied";
-  /**
-   * The fileId of the file that was denied authorization for
-   */
-  fileId: string;
-  /**
-   * The reason for the authorization denial
-   */
-  reason?: string;
-  /**
-   * The HTTP status code of the response
-   */
-  statusCode: 404 | 403 | 401 | 500 | 501;
-};
-
-/**
  * A {@link MilestoneSnapshot} is a binary encoded snapshot of a document at a point in time.
  */
 export type MilestoneSnapshot = Tag<Uint8Array, "milestone-snapshot">;
 
-/**
- * An encoded {@link MilestoneListRequest} message.
- */
-export type MilestoneListRequest = Tag<Uint8Array, "milestone-list-request">;
+export type RpcRequestType = "request" | "stream" | "response";
 
-/**
- * A decoded {@link MilestoneListRequest} message.
- * Includes a list of snapshot IDs so the response can send only milestones that are not already known.
- */
-export type DecodedMilestoneListRequest = {
-  type: "milestone-list-request";
+export type RpcSuccess<Payload = unknown> = {
+  type: "success";
   /**
-   * List of snapshot IDs that the client already knows.
-   * The server should only send milestones that are not in this list.
+   * The payload of a successful RPC response.
    */
-  snapshotIds: string[];
-  /**
-   * Whether to include soft-deleted milestones in the response.
-   */
-  includeDeleted?: boolean;
+  payload: Payload;
 };
 
-/**
- * An encoded {@link DecodedMilestoneListResponse} message.
- */
-export type MilestoneListResponse = Tag<Uint8Array, "milestone-list-response">;
+export type RpcError<Payload = unknown> = {
+  type: "error";
+  statusCode: number;
+  details: string;
+  /**
+   * The payload of an error RPC response.
+   */
+  payload?: Payload;
+};
+
+export type RpcStream<Payload = unknown> = {
+  type: "stream";
+  /**
+   * The payload of a stream RPC message.
+   */
+  payload: Payload;
+};
+
+export type RpcResponse<OK = unknown, Error = unknown> =
+  | RpcSuccess<OK>
+  | RpcError<Error>;
+
+export type RpcRequest = unknown;
+
+export type EncodedRpcMessage = Tag<Uint8Array, "rpc-message">;
+
+export type DecodedRpcMessage<OK = unknown, Error = unknown> = {
+  type: "rpc";
+  method: string;
+  requestType: RpcRequestType;
+  originalRequestId?: string;
+  payload: RpcResponse<OK, Error>;
+};
+
+import type { Message, RpcMessage, ServerContext } from "teleportal";
+import type { Server } from "../../server/server";
+import type { Session } from "../../server/session";
 
 /**
- * A decoded {@link MilestoneListResponse} message.
+ * Base context provided to all RPC handlers on the server.
+ * This is automatically enriched by Session when invoking handlers.
  */
-export type DecodedMilestoneListResponse = {
-  type: "milestone-list-response";
-  milestones: Array<{
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    deletedAt?: number;
-    lifecycleState?: "active" | "deleted" | "archived" | "expired";
-    expiresAt?: number;
-    createdBy: { type: "user" | "system"; id: string };
+export interface RpcServerContext<
+  Context extends ServerContext = ServerContext,
+> {
+  /** The Server instance */
+  server: Server<Context>;
+  /** The namespaced document ID */
+  documentId: string;
+  /** The Session instance for this document */
+  session: Session<Context>;
+  /** User ID from the message context (if authenticated) */
+  userId?: Context["userId"];
+  /** Client ID from the message context */
+  clientId?: Context["clientId"];
+  /** Any additional context from the original message */
+  [key: string]: unknown;
+}
+
+export interface RpcServerRequestHandler<
+  Request,
+  Response,
+  Stream = never,
+  Context extends RpcServerContext = RpcServerContext,
+> {
+  handler: (
+    payload: Request,
+    context: Context,
+  ) => Promise<{
+    response: Response | RpcError;
+    stream?: AsyncIterable<Stream>;
   }>;
-};
 
-/**
- * An encoded {@link MilestoneSnapshotRequest} message.
- */
-export type MilestoneSnapshotRequest = Tag<
-  Uint8Array,
-  "milestone-snapshot-request"
->;
+  /**
+   * Optional handler for incoming stream messages.
+   * Used for protocols that receive streaming data (e.g., file uploads).
+   * @param payload - The stream payload
+   * @param context - The RPC context including session, server, etc.
+   * @param messageId - The ID of the stream message (for ACK responses)
+   * @param sendMessage - Function to send messages back to the client
+   * @returns Promise that resolves when the stream chunk is processed
+   */
+  streamHandler?: (
+    payload: Stream,
+    context: Context,
+    messageId: string,
+    sendMessage: (message: Message<any>) => Promise<void>,
+  ) => Promise<void>;
 
-/**
- * A decoded {@link MilestoneSnapshotRequest} message.
- */
-export type DecodedMilestoneSnapshotRequest = {
-  type: "milestone-snapshot-request";
-  milestoneId: string;
-};
+  /**
+   * Optional initialization function called when the handler is registered with a Server.
+   * Can return a cleanup function that will be called when the server is disposed.
+   */
+  init?: (server: Server<any>) => (() => void) | void;
 
-/**
- * An encoded {@link MilestoneSnapshotResponse} message.
- */
-export type MilestoneSnapshotResponse = Tag<
-  Uint8Array,
-  "milestone-snapshot-response"
->;
-
-/**
- * A decoded {@link MilestoneSnapshotResponse} message.
- */
-export type DecodedMilestoneSnapshotResponse = {
-  type: "milestone-snapshot-response";
-  milestoneId: string;
-  snapshot: MilestoneSnapshot;
-};
-
-/**
- * An encoded {@link MilestoneCreateRequest} message.
- */
-export type MilestoneCreateRequest = Tag<
-  Uint8Array,
-  "milestone-create-request"
->;
-
-/**
- * A decoded {@link MilestoneCreateRequest} message.
- */
-export type DecodedMilestoneCreateRequest = {
-  type: "milestone-create-request";
-  name?: string;
-  snapshot: MilestoneSnapshot;
-};
-
-/**
- * An encoded {@link MilestoneCreateResponse} message.
- */
-export type MilestoneCreateResponse = Tag<
-  Uint8Array,
-  "milestone-create-response"
->;
-
-/**
- * A decoded {@link MilestoneCreateResponse} or {@link MilestoneUpdateNameResponse} message.
- */
-export type DecodedMilestoneResponse = {
-  type: "milestone-create-response" | "milestone-update-name-response";
-  milestone: {
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    createdBy: { type: "user" | "system"; id: string };
+  request?: {
+    encode: (payload: Request) => Uint8Array;
+    decode: (payload: Uint8Array) => Request;
   };
+  response?: {
+    encode: (payload: Response) => Uint8Array;
+    decode: (payload: Uint8Array) => Response;
+  };
+  stream?: {
+    encode: (payload: Stream) => Uint8Array;
+    decode: (payload: Uint8Array) => Stream;
+  };
+}
+
+export type RpcHandlerRegistry = {
+  [method: string]: RpcServerRequestHandler<
+    unknown,
+    unknown,
+    unknown,
+    RpcServerContext
+  >;
 };
 
-/**
- * An encoded {@link MilestoneUpdateNameRequest} message.
- */
-export type MilestoneUpdateNameRequest = Tag<
-  Uint8Array,
-  "milestone-update-name-request"
->;
+import type * as decoding from "lib0/decoding";
+import type * as encoding from "lib0/encoding";
 
-/**
- * A decoded {@link MilestoneUpdateNameRequest} message.
- */
-export type DecodedMilestoneUpdateNameRequest = {
-  type: "milestone-update-name-request";
-  milestoneId: string;
-  name: string;
+// Context for serialization (encoding)
+export type RpcSerializerContext = {
+  type: "rpc";
+  message: RpcMessage<any>;
+  payload: unknown;
+  encoder: encoding.Encoder; // fresh encoder for lib0 encoding
 };
+export type SerializerContext = RpcSerializerContext; // extensible union
 
-/**
- * An encoded {@link MilestoneUpdateNameResponse} message.
- */
-export type MilestoneUpdateNameResponse = Tag<
-  Uint8Array,
-  "milestone-update-name-response"
->;
-
-/**
- * An encoded {@link MilestoneAuthMessage} message.
- */
-export type MilestoneAuthMessage = Tag<Uint8Array, "milestone-auth-message">;
-
-/**
- * A decoded {@link MilestoneAuthMessage} message.
- */
-export type DecodedMilestoneAuthMessage = {
-  type: "milestone-auth-message";
-  permission: "denied";
-  reason: string;
+// Context for deserialization (decoding)
+export type RpcDeserializerContext = {
+  type: "rpc";
+  method: string;
+  requestType: RpcRequestType;
+  originalRequestId?: string;
+  payload: Uint8Array;
+  decoder: decoding.Decoder; // positioned at payload start
 };
-
-/**
- * An encoded {@link MilestoneDeleteRequest} message.
- */
-export type MilestoneDeleteRequest = Tag<
-  Uint8Array,
-  "milestone-delete-request"
->;
-
-/**
- * A decoded {@link MilestoneDeleteRequest} message.
- */
-export type DecodedMilestoneDeleteRequest = {
-  type: "milestone-delete-request";
-  milestoneId: string;
-};
-
-/**
- * An encoded {@link MilestoneDeleteResponse} message.
- */
-export type MilestoneDeleteResponse = Tag<
-  Uint8Array,
-  "milestone-delete-response"
->;
-
-/**
- * A decoded {@link MilestoneDeleteResponse} message.
- */
-export type DecodedMilestoneDeleteResponse = {
-  type: "milestone-delete-response";
-  milestoneId: string;
-};
-
-/**
- * An encoded {@link MilestoneRestoreRequest} message.
- */
-export type MilestoneRestoreRequest = Tag<
-  Uint8Array,
-  "milestone-restore-request"
->;
-
-/**
- * A decoded {@link MilestoneRestoreRequest} message.
- */
-export type DecodedMilestoneRestoreRequest = {
-  type: "milestone-restore-request";
-  milestoneId: string;
-};
-
-/**
- * An encoded {@link MilestoneRestoreResponse} message.
- */
-export type MilestoneRestoreResponse = Tag<
-  Uint8Array,
-  "milestone-restore-response"
->;
-
-/**
- * A decoded {@link MilestoneRestoreResponse} message.
- */
-export type DecodedMilestoneRestoreResponse = {
-  type: "milestone-restore-response";
-  milestoneId: string;
-};
+export type DeserializerContext = RpcDeserializerContext; // extensible union

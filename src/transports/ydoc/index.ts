@@ -329,23 +329,6 @@ export function getYDocSink<Context extends ClientContext>({
                   controller.error(new Error(chunk.payload.reason));
                   break;
                 }
-                case "milestone-list-request":
-                case "milestone-list-response":
-                case "milestone-snapshot-request":
-                case "milestone-snapshot-response":
-                case "milestone-create-request":
-                case "milestone-create-response":
-                case "milestone-update-name-request":
-                case "milestone-update-name-response":
-                case "milestone-auth-message":
-                case "milestone-delete-request":
-                case "milestone-delete-response":
-                case "milestone-restore-request":
-                case "milestone-restore-response": {
-                  // Milestone messages are handled by the server, not the client transport
-                  // They can be passed through but are not processed here
-                  break;
-                }
                 default: {
                   // This should be unreachable due to type checking
                   const _exhaustive: never = chunk.payload;
@@ -357,10 +340,21 @@ export function getYDocSink<Context extends ClientContext>({
               }
               break;
             }
+            case "rpc": {
+              // RPC messages are handled by the RPC client and RPC handlers,
+              // not the Y.doc transport. They should NOT be passed through to
+              // the readable stream, as that would cause them to be re-sent.
+              break;
+            }
+            case "ack": {
+              // ACK messages are handled by the connection layer,
+              // not the Y.doc transport.
+              break;
+            }
             default: {
-              // Pass through any non-doc/awareness messages (e.g. file messages)
-              // so higher-level transports (like send-file) can handle them.
-              observer.call("message", chunk);
+              // Exhaustive check for message types - all types should be handled above
+              const _exhaustive: never = chunk;
+              _exhaustive;
               break;
             }
           }

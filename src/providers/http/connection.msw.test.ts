@@ -16,17 +16,94 @@ import {
   type Message,
   type Transport,
   decodeMessageArray,
+  RpcMessage,
 } from "teleportal";
-import { withSendFile } from "../../transports/send-file";
+import { getFileClientHandlers } from "../../protocols/file";
+import { Provider } from "../provider";
 import { ConnectionState } from "../connection";
 import { HttpConnection } from "./connection";
-import { FileHandler } from "../../server/file-handler";
+import { getFileRpcHandlers } from "../../protocols/file";
+import type { FilePartStream } from "../../protocols/file/methods";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
-import { noopTransport } from "../../transports/passthrough";
+import { YDocStorage } from "../../storage/in-memory/ydoc";
 import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type { ServerContext } from "teleportal";
-import { getLogger } from "@logtape/logtape";
+import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
+
+/**
+ * Helper to process RPC messages using file RPC handlers.
+ * Simulates how the Session processes RPC messages.
+ */
+async function processRpcMessage(
+  handlers: RpcHandlerRegistry,
+  message: RpcMessage<ServerContext>,
+  sendMessage: (msg: Message<ServerContext>) => Promise<void>,
+): Promise<void> {
+  const handler = handlers[message.rpcMethod];
+  if (!handler) return;
+
+  // Create a storage instance for document metadata management
+  const documentStorage = new YDocStorage();
+
+  const context: RpcServerContext = {
+    server: {} as any,
+    documentId: message.document ?? "",
+    session: {
+      storage: documentStorage,
+    } as any,
+  };
+
+  if (message.requestType === "request" && message.payload.type === "success") {
+    const result = await handler.handler(message.payload.payload, context);
+
+    // Send stream chunks first if present
+    if (result.stream) {
+      for await (const chunk of result.stream) {
+        await sendMessage(
+          new RpcMessage(
+            message.document ?? "",
+            { type: "success" as const, payload: chunk },
+            message.rpcMethod,
+            "stream",
+            message.id,
+            message.context,
+            message.encrypted,
+          ),
+        );
+      }
+    }
+
+    // Send response
+    const responsePayload =
+      (result.response as { type?: string }).type === "error"
+        ? (result.response as { type: "error"; statusCode: number; details: string })
+        : { type: "success" as const, payload: result.response };
+
+    await sendMessage(
+      new RpcMessage(
+        message.document ?? "",
+        responsePayload,
+        message.rpcMethod,
+        "response",
+        message.id,
+        message.context,
+        message.encrypted,
+      ),
+    );
+  } else if (
+    message.requestType === "stream" &&
+    message.payload.type === "success" &&
+    handler.streamHandler
+  ) {
+    await handler.streamHandler(
+      message.payload.payload as FilePartStream,
+      context,
+      message.id,
+      sendMessage,
+    );
+  }
+}
 
 /**
  * MSW SSE Testing Approach for Node.js
@@ -1098,7 +1175,7 @@ describe("HttpConnection with MSW", () => {
       const testClientId = "test-client-file";
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
-      const fileHandler = new FileHandler(fileStorage);
+      const handlers = getFileRpcHandlers(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
@@ -1116,9 +1193,9 @@ describe("HttpConnection with MSW", () => {
               const message = decoded as Message<ServerContext>;
               receivedMessages.push(message);
 
-              // Process file messages
-              if (message.type === "file") {
-                await fileHandler.handle(message, async (response) => {
+              // Process file messages - handle RPC messages
+              if (message.type === "rpc") {
+                const sendResponse = async (msg: Message<ServerContext>) => {
                   // Send response back via SSE
                   // Wait a bit to ensure EventSource is ready
                   let attempts = 0;
@@ -1142,23 +1219,28 @@ describe("HttpConnection with MSW", () => {
                       await new Promise((resolve) => setTimeout(resolve, 10));
                     }
                     if (listenerReady) {
-                      const encoded = toBase64(response.encoded);
+                      const encoded = toBase64(msg.encoded);
                       await eventSourceRef.current.simulateMessage(
                         encoded,
                         "message",
-                        response.id,
+                        msg.id,
                       );
                     }
                   }
-                });
+                };
+                await processRpcMessage(
+                  handlers,
+                  message as RpcMessage<ServerContext>,
+                  sendResponse,
+                );
               }
             }
 
             return HttpResponse.json({ success: true });
-          } catch {
+          } catch (err) {
             // Return error response
             return HttpResponse.json(
-              { error: "Failed to process message" },
+              { error: "Failed to process message", details: (err as Error).message },
               { status: 500 },
             );
           }
@@ -1204,28 +1286,17 @@ describe("HttpConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const context: ClientContext = { clientId: testClientId };
-      const wrappedTransport = withSendFile({
-        // we don't care what the transport is underlying, we just want to test the file transport
-        transport: noopTransport<ClientContext>(),
-        context,
-      });
-
-      // Create a writable stream that sends messages via HTTP connection
-      const httpWritable = new WritableStream<Message<ClientContext>>({
-        async write(message) {
-          await client.send(message);
+      // Use Provider with rpcHandlers instead of withSendFile
+      const provider = await Provider.create({
+        client,
+        document: "test-doc",
+        rpcHandlers: {
+          ...getFileClientHandlers(),
         },
       });
 
-      // messages emitted from the file transport should be sent to the server, through the client
-      wrappedTransport.readable.pipeTo(httpWritable);
-      // messages emitted from the client should be sent to the file transport
-      client.getReader().readable.pipeTo(wrappedTransport.writable);
-
-      const fileId = await wrappedTransport.upload(
+      const fileId = await provider.uploadFile(
         file,
-        "test-doc",
         "test-file-id",
       );
 
@@ -1249,7 +1320,7 @@ describe("HttpConnection with MSW", () => {
       const testClientId = "test-client-large-file";
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
-      const fileHandler = new FileHandler(fileStorage);
+      const handlers = getFileRpcHandlers(fileStorage);
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
       };
@@ -1264,47 +1335,55 @@ describe("HttpConnection with MSW", () => {
             const messages = decodeMessageArray(data as any);
             for (const decoded of messages) {
               const message = decoded as Message<ServerContext>;
-              if (message.type === "file") {
-                await fileHandler.handle(message, async (response) => {
-                  // Send response back via SSE
-                  // Wait a bit to ensure EventSource is ready
-                  let attempts = 0;
-                  while (!eventSourceRef.current && attempts < 50) {
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                    attempts++;
-                  }
-                  if (eventSourceRef.current) {
-                    // Ensure listeners are attached
-                    let listenerReady = false;
-                    for (let i = 0; i < 50; i++) {
-                      if (
-                        eventSourceRef.current.listeners.has("message") &&
-                        eventSourceRef.current.listeners.get("message")?.size &&
-                        eventSourceRef.current.listeners.get("message")!.size >
-                          0
-                      ) {
-                        listenerReady = true;
-                        break;
-                      }
+              // Process file messages - handle RPC messages
+              if (message.type === "rpc") {
+                await processRpcMessage(
+                  handlers,
+                  message as RpcMessage<ServerContext>,
+                  async (response: Message<ServerContext>) => {
+                    // Send response back via SSE
+                    // Wait a bit to ensure EventSource is ready
+                    let attempts = 0;
+                    while (!eventSourceRef.current && attempts < 50) {
                       await new Promise((resolve) => setTimeout(resolve, 10));
+                      attempts++;
                     }
-                    if (listenerReady) {
-                      const encoded = toBase64(response.encoded);
-                      await eventSourceRef.current.simulateMessage(
-                        encoded,
-                        "message",
-                        response.id,
-                      );
+                    if (eventSourceRef.current) {
+                      // Ensure listeners are attached
+                      let listenerReady = false;
+                      for (let i = 0; i < 50; i++) {
+                        if (
+                          eventSourceRef.current.listeners.has("message") &&
+                          eventSourceRef.current.listeners.get("message")
+                            ?.size &&
+                          eventSourceRef.current.listeners.get("message")!
+                            .size > 0
+                        ) {
+                          listenerReady = true;
+                          break;
+                        }
+                        await new Promise((resolve) =>
+                          setTimeout(resolve, 10),
+                        );
+                      }
+                      if (listenerReady) {
+                        const encoded = toBase64(response.encoded);
+                        await eventSourceRef.current.simulateMessage(
+                          encoded,
+                          "message",
+                          response.id,
+                        );
+                      }
                     }
-                  }
-                });
+                  },
+                );
               }
             }
 
             return HttpResponse.json({ success: true });
-          } catch {
+          } catch (err) {
             return HttpResponse.json(
-              { error: "Failed to process message" },
+              { error: "Failed to process message", details: (err as Error).message },
               { status: 500 },
             );
           }
@@ -1351,35 +1430,24 @@ describe("HttpConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const context: ClientContext = { clientId: testClientId };
-      const wrappedTransport = withSendFile({
-        // we don't care what the transport is underlying, we just want to test the file transport
-        transport: noopTransport<ClientContext>(),
-        context,
-      });
-
-      // Create a writable stream that sends messages via HTTP connection
-      const httpWritable = new WritableStream<Message<ClientContext>>({
-        async write(message) {
-          await client.send(message);
+      // Use Provider with rpcHandlers instead of withSendFile
+      const provider = await Provider.create({
+        client,
+        document: "test-doc",
+        rpcHandlers: {
+          ...getFileClientHandlers(),
         },
       });
 
-      // messages emitted from the file transport should be sent to the server, through the client
-      wrappedTransport.readable.pipeTo(httpWritable);
-      // messages emitted from the client should be sent to the file transport
-      client.getReader().readable.pipeTo(wrappedTransport.writable);
-
-      const fileId = await wrappedTransport.upload(
+      const fileId = await provider.uploadFile(
         file,
-        "test-doc",
         "test-large-file-id",
       );
 
-      // wait for the storage to be updated with retries
+      // wait for the storage to be updated with retries (longer wait for large files)
       let storedFile = await fileStorage.getFile(fileId);
-      for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let i = 0; i < 50 && !storedFile; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -1396,7 +1464,7 @@ describe("HttpConnection with MSW", () => {
       const testClientId = "test-client-roundtrip";
       const fileStorage = new InMemoryFileStorage();
       fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
-      const fileHandler = new FileHandler(fileStorage);
+      const handlers = getFileRpcHandlers(fileStorage);
       const receivedMessages: Message<ServerContext>[] = [];
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
@@ -1414,9 +1482,9 @@ describe("HttpConnection with MSW", () => {
               const message = decoded as Message<ServerContext>;
               receivedMessages.push(message);
 
-              // Process file messages
-              if (message.type === "file") {
-                await fileHandler.handle(message, async (response) => {
+              // Process file messages - handle RPC messages
+              if (message.type === "rpc") {
+                const sendResponse = async (msg: Message<ServerContext>) => {
                   // Send response back via SSE
                   // Wait a bit to ensure EventSource is ready
                   let attempts = 0;
@@ -1440,15 +1508,20 @@ describe("HttpConnection with MSW", () => {
                       await new Promise((resolve) => setTimeout(resolve, 10));
                     }
                     if (listenerReady) {
-                      const encoded = toBase64(response.encoded);
+                      const encoded = toBase64(msg.encoded);
                       await eventSourceRef.current.simulateMessage(
                         encoded,
                         "message",
-                        response.id,
+                        msg.id,
                       );
                     }
                   }
-                });
+                };
+                await processRpcMessage(
+                  handlers,
+                  message as RpcMessage<ServerContext>,
+                  sendResponse,
+                );
               }
             }
 
@@ -1502,29 +1575,18 @@ describe("HttpConnection with MSW", () => {
         type: "text/plain",
       });
 
-      const context: ClientContext = { clientId: testClientId };
-      const wrappedTransport = withSendFile({
-        // we don't care what the transport is underlying, we just want to test the file transport
-        transport: noopTransport<ClientContext>(),
-        context,
-      });
-
-      // Create a writable stream that sends messages via HTTP connection
-      const httpWritable = new WritableStream<Message<ClientContext>>({
-        async write(message) {
-          await client.send(message);
+      // Use Provider with rpcHandlers instead of withSendFile
+      const provider = await Provider.create({
+        client,
+        document: "test-doc",
+        rpcHandlers: {
+          ...getFileClientHandlers(),
         },
       });
 
-      // messages emitted from the file transport should be sent to the server, through the client
-      wrappedTransport.readable.pipeTo(httpWritable);
-      // messages emitted from the client should be sent to the file transport
-      client.getReader().readable.pipeTo(wrappedTransport.writable);
-
       // Upload file
-      const fileId = await wrappedTransport.upload(
+      const fileId = await provider.uploadFile(
         file,
-        "test-doc",
         "test-file-id",
       );
 
@@ -1541,10 +1603,7 @@ describe("HttpConnection with MSW", () => {
       expect(storedFile!.metadata.size).toBe(fileContent.length);
 
       // Download file
-      const downloadedFile = await wrappedTransport.download(
-        fileId,
-        "test-doc",
-      );
+      const downloadedFile = await provider.downloadFile(fileId);
 
       // Verify downloaded file matches original
       expect(downloadedFile).toBeInstanceOf(File);

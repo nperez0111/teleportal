@@ -1,14 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
+import { RpcMessage, type RpcSuccess } from "teleportal/protocol";
 import {
   AckMessage,
   AwarenessMessage,
   AwarenessUpdateMessage,
-  DecodedFilePart,
   decodeMessage,
   DocMessage,
   encodePingMessage,
   encodePongMessage,
-  FileMessage,
   getEmptyStateVector,
   getEmptyUpdate,
   isEmptyStateVector,
@@ -19,8 +20,8 @@ import {
   SyncStep2Update,
   Update,
 } from ".";
+import type { FilePartStream } from "../../protocols/file/methods";
 import { CHUNK_SIZE } from "../merkle-tree/merkle-tree";
-import { toBase64 } from "lib0/buffer";
 
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {
@@ -243,142 +244,7 @@ describe("can encode and decode", () => {
     expect(decoded.context).toEqual({});
   });
 
-  it("can encode and decode a file message (file-upload)", () => {
-    expect(
-      decodeMessage(
-        new FileMessage<Record<string, unknown>>(
-          "test-doc",
-          {
-            type: "file-upload",
-            fileId: "test-upload-id",
-            filename: "test.txt",
-            size: 1024,
-            mimeType: "text/plain",
-            lastModified: 1763526701897,
-            encrypted: false,
-          },
-          {},
-          false,
-        ).encoded,
-      ),
-    ).toMatchInlineSnapshot(`
-      FileMessage {
-        "context": {},
-        "document": "test-doc",
-        "encrypted": false,
-        "payload": {
-          "encrypted": false,
-          "fileId": "test-upload-id",
-          "filename": "test.txt",
-          "lastModified": 1763526701897,
-          "mimeType": "text/plain",
-          "size": 1024,
-          "type": "file-upload",
-        },
-        "type": "file",
-      }
-    `);
-  });
-
-  it("can encode and decode a file message (file-upload) with all fields", () => {
-    const filePayload = {
-      type: "file-upload" as const,
-      fileId: "test-upload-id-detailed",
-      filename: "detailed-test.txt",
-      size: 12345,
-      mimeType: "application/json",
-      lastModified: 1763526701898,
-      encrypted: true,
-    };
-
-    const originalMessage = new FileMessage<Record<string, unknown>>(
-      "detailed-doc",
-      filePayload,
-      { userId: "user-123" },
-      true, // message encrypted
-    );
-
-    const decoded = decodeMessage(originalMessage.encoded);
-
-    expect(decoded).toBeInstanceOf(FileMessage);
-    expect(decoded.document).toBe("detailed-doc");
-    expect(decoded.encrypted).toBe(true); // Message encryption status
-
-    // Check payload fields
-    const payload = decoded.payload;
-    if (payload.type !== "file-upload") {
-      throw new Error("Expected payload type to be file-upload");
-    }
-
-    expect(payload.type).toBe(filePayload.type);
-    expect(payload.fileId).toBe(filePayload.fileId);
-    expect(payload.filename).toBe(filePayload.filename);
-    expect(payload.size).toBe(filePayload.size);
-    expect(payload.mimeType).toBe(filePayload.mimeType);
-    expect(payload.lastModified).toBe(filePayload.lastModified);
-    expect(payload.encrypted).toBe(filePayload.encrypted); // Payload encryption status
-  });
-
-  it("can encode and decode a file message (file-download)", () => {
-    const contentId = new Uint8Array(32);
-    contentId.fill(42);
-    const fileId = toBase64(contentId);
-
-    expect(
-      decodeMessage(
-        new FileMessage<Record<string, unknown>>(
-          "test-doc",
-          {
-            type: "file-download",
-            fileId,
-          },
-          {},
-          false,
-        ).encoded,
-      ),
-    ).toMatchInlineSnapshot(`
-      FileMessage {
-        "context": {},
-        "document": "test-doc",
-        "encrypted": false,
-        "payload": {
-          "fileId": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
-          "type": "file-download",
-        },
-        "type": "file",
-      }
-    `);
-  });
-
-  it("can encode and decode a file message (file-download) with all fields", () => {
-    const filePayload = {
-      type: "file-download" as const,
-      fileId: "test-download-id",
-    };
-
-    const originalMessage = new FileMessage<Record<string, unknown>>(
-      "download-doc",
-      filePayload,
-      { userId: "user-456" },
-      false,
-    );
-
-    const decoded = decodeMessage(originalMessage.encoded);
-
-    expect(decoded).toBeInstanceOf(FileMessage);
-    expect(decoded.document).toBe("download-doc");
-    expect(decoded.encrypted).toBe(false);
-
-    const payload = decoded.payload;
-    if (payload.type !== "file-download") {
-      throw new Error("Expected payload type to be file-download");
-    }
-
-    expect(payload.type).toBe(filePayload.type);
-    expect(payload.fileId).toBe(filePayload.fileId);
-  });
-
-  it("can encode and decode a file message (file-part)", () => {
+  it("can encode and decode an RPC stream message (file-part)", () => {
     const chunkData = new Uint8Array(CHUNK_SIZE);
     chunkData.fill(1);
 
@@ -387,124 +253,45 @@ describe("can encode and decode", () => {
       new Uint8Array(32).fill(3),
     ];
 
-    const decoded = decodeMessage(
-      new FileMessage<Record<string, unknown>>(
-        "test-doc",
-        {
-          type: "file-part",
-          fileId: "test-file-id",
-          chunkIndex: 0,
-          chunkData,
-          merkleProof,
-          totalChunks: 10,
-          bytesUploaded: CHUNK_SIZE,
-          encrypted: false,
-        },
-        {},
-        false,
-      ).encoded,
-    );
-    expect((decoded.payload as DecodedFilePart).chunkData).toBeTruthy();
-    (decoded.payload as Partial<DecodedFilePart>).chunkData = undefined;
+    const filePart: FilePartStream = {
+      fileId: "test-file-id",
+      chunkIndex: 0,
+      chunkData,
+      merkleProof,
+      totalChunks: 10,
+      bytesUploaded: CHUNK_SIZE,
+      encrypted: false,
+    };
 
-    expect(decoded).toMatchInlineSnapshot(`
-      FileMessage {
-        "context": {},
-        "document": "test-doc",
-        "encrypted": false,
-        "payload": {
-          "bytesUploaded": 65536,
-          "chunkData": undefined,
-          "chunkIndex": 0,
-          "encrypted": false,
-          "fileId": "test-file-id",
-          "merkleProof": [
-            Uint8Array [
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-              2,
-            ],
-            Uint8Array [
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-              3,
-            ],
-          ],
-          "totalChunks": 10,
-          "type": "file-part",
-        },
-        "type": "file",
-      }
-    `);
+    const streamMessage = new RpcMessage<Record<string, unknown>>(
+      "test-doc",
+      { type: "success", payload: filePart },
+      "testMethod",
+      "stream",
+      "original-request-id",
+      {},
+      false,
+    );
+
+    const decoded = decodeMessage(streamMessage.encoded);
+    expect(decoded).toBeInstanceOf(RpcMessage);
+    expect(decoded.type).toBe("rpc");
+
+    const rpcMessage = decoded as RpcMessage<Record<string, unknown>>;
+    expect(rpcMessage.requestType).toBe("stream");
+    expect(rpcMessage.originalRequestId).toBe("original-request-id");
+
+    expect(rpcMessage.payload.type).toBe("success");
   });
 
-  it("can encode and decode a file message (file-part) with all fields", () => {
+  it("can encode and decode an RPC stream message (file-part) with all fields", () => {
     const chunkData = new Uint8Array([1, 2, 3, 4, 5]);
     const merkleProof = [
       new Uint8Array([10, 11, 12]),
       new Uint8Array([20, 21, 22]),
     ];
 
-    const filePayload = {
-      type: "file-part" as const,
+    const filePart: FilePartStream = {
       fileId: "test-part-id",
       chunkIndex: 5,
       chunkData: chunkData,
@@ -514,443 +301,495 @@ describe("can encode and decode", () => {
       encrypted: true,
     };
 
-    const originalMessage = new FileMessage<Record<string, unknown>>(
+    const originalMessage = new RpcMessage<Record<string, unknown>>(
       "part-doc",
-      filePayload,
+      { type: "success", payload: filePart },
+      "testMethod",
+      "stream",
+      "original-request-id",
       { userId: "user-789" },
       true,
     );
 
     const decoded = decodeMessage(originalMessage.encoded);
 
-    expect(decoded).toBeInstanceOf(FileMessage);
+    expect(decoded).toBeInstanceOf(RpcMessage);
     expect(decoded.document).toBe("part-doc");
     expect(decoded.encrypted).toBe(true);
 
-    const payload = decoded.payload;
-    if (payload.type !== "file-part") {
-      throw new Error("Expected payload type to be file-part");
-    }
+    const rpcMessage = decoded as RpcMessage<Record<string, unknown>>;
+    expect(rpcMessage.requestType).toBe("stream");
+    expect(rpcMessage.originalRequestId).toBe("original-request-id");
 
-    expect(payload.type).toBe(filePayload.type);
-    expect(payload.fileId).toBe(filePayload.fileId);
-    expect(payload.chunkIndex).toBe(filePayload.chunkIndex);
-    expect(payload.chunkData).toEqual(filePayload.chunkData);
-    expect(payload.merkleProof).toEqual(filePayload.merkleProof);
-    expect(payload.totalChunks).toBe(filePayload.totalChunks);
-    expect(payload.bytesUploaded).toBe(filePayload.bytesUploaded);
-    expect(payload.encrypted).toBe(filePayload.encrypted);
+    expect(rpcMessage.payload.type).toBe("success");
   });
 
-  it("file message (file-auth-message)", () => {
-    expect(
-      new FileMessage<Record<string, unknown>>("test-doc", {
-        type: "file-auth-message",
-        permission: "denied",
-        fileId: "test-file-id",
-        statusCode: 404,
-        reason: "test",
-      }).encoded,
-    ).toMatchInlineSnapshot(`
-      Uint8Array [
-        89,
-        74,
-        83,
-        1,
-        8,
-        116,
-        101,
-        115,
-        116,
-        45,
-        100,
-        111,
-        99,
-        0,
-        3,
-        3,
-        0,
-        12,
-        116,
-        101,
-        115,
-        116,
-        45,
-        102,
-        105,
-        108,
-        101,
-        45,
-        105,
-        100,
-        148,
-        3,
-        1,
-        4,
-        116,
-        101,
-        115,
-        116,
-      ]
-    `);
-  });
-
-  it("can encode and decode a file message (file-auth-message) with all fields", () => {
-    const filePayload = {
-      type: "file-auth-message" as const,
-      permission: "denied" as const,
-      fileId: "test-auth-id",
-      statusCode: 403 as const,
-      reason: "Access denied for test",
-    };
-
-    const originalMessage = new FileMessage<Record<string, unknown>>(
-      "auth-doc",
-      filePayload,
-      { userId: "user-999" },
+  it("can encode and decode an RPC request message", () => {
+    const original = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { data: "testData" } },
+      "testMethod",
+      "request",
+      undefined,
+      {},
       false,
     );
 
-    const decoded = decodeMessage(originalMessage.encoded);
+    const encoded = original.encoded;
+    expect(encoded).toBeInstanceOf(Uint8Array);
 
-    expect(decoded).toBeInstanceOf(FileMessage);
-    expect(decoded.document).toBe("auth-doc");
-    expect(decoded.encrypted).toBe(false);
-
-    const payload = decoded.payload;
-    if (payload.type !== "file-auth-message") {
-      throw new Error("Expected payload type to be file-auth-message");
-    }
-
-    expect(payload.type).toBe(filePayload.type);
-    expect(payload.permission).toBe(filePayload.permission);
-    expect(payload.fileId).toBe(filePayload.fileId);
-    expect(payload.statusCode).toBe(filePayload.statusCode);
-    expect(payload.reason).toBe(filePayload.reason);
+    const decoded = decodeMessage(encoded);
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).rpcMethod).toBe("testMethod");
+    expect((decoded as RpcMessage<any>).requestType).toBe("request");
+    expect((decoded as RpcMessage<any>).originalRequestId).toBeUndefined();
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual({
+      data: "testData",
+    });
   });
 
-  it("can encode and decode a milestone-list-request", () => {
-    expect(
-      decodeMessage(
-        new DocMessage("test-doc", {
-          type: "milestone-list-request",
-          snapshotIds: ["known-1", "known-2"],
-        }).encoded,
-      ),
-    ).toMatchInlineSnapshot(`
-      DocMessage {
-        "context": {},
-        "document": "test-doc",
-        "encrypted": false,
-        "payload": {
-          "includeDeleted": false,
-          "snapshotIds": [
-            "known-1",
-            "known-2",
-          ],
-          "type": "milestone-list-request",
-        },
-        "type": "doc",
-      }
-    `);
-  });
-
-  it("can encode and decode a milestone-list-response", () => {
-    const milestones = [
-      {
-        id: "milestone-1",
-        name: "v1.0.0",
-        documentId: "test-doc",
-        createdAt: 1234567890,
-        createdBy: { type: "system" as const, id: "test-node" },
-      },
-      {
-        id: "milestone-2",
-        name: "v1.0.1",
-        documentId: "test-doc",
-        createdAt: 1234567891,
-        createdBy: { type: "system" as const, id: "test-node" },
-      },
-    ];
-
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-list-response",
-        milestones,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-list-response"
-    ) {
-      expect(decoded.payload.milestones).toEqual(milestones);
-    }
-  });
-
-  it("can encode and decode a milestone-snapshot-request", () => {
-    expect(
-      decodeMessage(
-        new DocMessage("test-doc", {
-          type: "milestone-snapshot-request",
-          milestoneId: "milestone-123",
-        }).encoded,
-      ),
-    ).toMatchInlineSnapshot(`
-      DocMessage {
-        "context": {},
-        "document": "test-doc",
-        "encrypted": false,
-        "payload": {
-          "milestoneId": "milestone-123",
-          "type": "milestone-snapshot-request",
-        },
-        "type": "doc",
-      }
-    `);
-  });
-
-  it("can encode and decode a milestone-snapshot-response", () => {
-    const snapshot = new Uint8Array([
-      1, 2, 3, 4, 5,
-    ]) as import(".").MilestoneSnapshot;
-
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-snapshot-response",
-        milestoneId: "milestone-123",
-        snapshot,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-snapshot-response"
-    ) {
-      expect(decoded.payload.milestoneId).toBe("milestone-123");
-      expect(decoded.payload.snapshot).toEqual(snapshot);
-    }
-  });
-
-  it("can encode and decode a milestone-create-request with name", () => {
-    const snapshot = new Uint8Array([
-      1, 2, 3, 4, 5,
-    ]) as import(".").MilestoneSnapshot;
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-create-request",
-        name: "v1.0.0",
-        snapshot,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-create-request"
-    ) {
-      expect(decoded.payload.name).toBe("v1.0.0");
-      expect(decoded.payload.snapshot).toEqual(snapshot);
-    }
-  });
-
-  it("can encode and decode a milestone-create-request without name", () => {
-    const snapshot = new Uint8Array([
-      6, 7, 8, 9, 10,
-    ]) as import(".").MilestoneSnapshot;
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-create-request",
-        snapshot,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-create-request"
-    ) {
-      expect(decoded.payload.name).toBeUndefined();
-      expect(decoded.payload.snapshot).toEqual(snapshot);
-    }
-  });
-
-  it("can encode and decode a milestone-create-request with snapshot", () => {
-    const snapshot = new Uint8Array([
-      1, 2, 3, 4, 5,
-    ]) as import(".").MilestoneSnapshot;
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-create-request",
-        name: "v1.0.0",
-        snapshot,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-create-request"
-    ) {
-      expect(decoded.payload.name).toBe("v1.0.0");
-      expect(decoded.payload.snapshot).toEqual(snapshot);
-    }
-  });
-
-  it("can encode and decode a milestone-create-request with snapshot but no name", () => {
-    const snapshot = new Uint8Array([
-      6, 7, 8, 9, 10,
-    ]) as import(".").MilestoneSnapshot;
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-create-request",
-        snapshot,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-create-request"
-    ) {
-      expect(decoded.payload.name).toBeUndefined();
-      expect(decoded.payload.snapshot).toEqual(snapshot);
-    }
-  });
-
-  it("can encode and decode a milestone-create-response", () => {
-    const milestone = {
-      id: "milestone-123",
-      name: "v1.0.0",
-      documentId: "test-doc",
-      createdAt: 1234567890,
-      createdBy: { type: "system" as const, id: "test-node" },
-    };
-
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-create-response",
-        milestone,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-create-response"
-    ) {
-      expect(decoded.payload.milestone).toEqual(milestone);
-    }
-  });
-
-  it("can encode and decode a milestone-update-name-request", () => {
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-update-name-request",
-        milestoneId: "milestone-123",
-        name: "v1.0.1",
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-update-name-request"
-    ) {
-      expect(decoded.payload.milestoneId).toBe("milestone-123");
-      expect(decoded.payload.name).toBe("v1.0.1");
-    }
-  });
-
-  it("can encode and decode a milestone-update-name-response", () => {
-    const milestone = {
-      id: "milestone-123",
-      name: "v1.0.1",
-      documentId: "test-doc",
-      createdAt: 1234567890,
-      createdBy: { type: "system" as const, id: "test-node" },
-    };
-
-    const decoded = decodeMessage(
-      new DocMessage("test-doc", {
-        type: "milestone-update-name-response",
-        milestone,
-      }).encoded,
-    );
-
-    expect(decoded).toBeInstanceOf(DocMessage);
-    expect(decoded.document).toBe("test-doc");
-    if (
-      decoded instanceof DocMessage &&
-      decoded.payload.type === "milestone-update-name-response"
-    ) {
-      expect(decoded.payload.milestone).toEqual(milestone);
-    }
-  });
-
-  it("can encode and decode a milestone-auth-message", () => {
-    expect(
-      decodeMessage(
-        new DocMessage("test-doc", {
-          type: "milestone-auth-message",
-          permission: "denied",
-          reason: "Milestone not found",
-        }).encoded,
-      ),
-    ).toMatchInlineSnapshot(`
-      DocMessage {
-        "context": {},
-        "document": "test-doc",
-        "encrypted": false,
-        "payload": {
-          "permission": "denied",
-          "reason": "Milestone not found",
-          "type": "milestone-auth-message",
-        },
-        "type": "doc",
-      }
-    `);
-  });
-
-  it("can encode and decode milestone messages with context", () => {
-    const milestoneRequest = new DocMessage(
+  it("can encode and decode an RPC stream message", () => {
+    const original = new RpcMessage(
       "test-doc",
-      {
-        type: "milestone-list-request",
-        snapshotIds: [],
-      },
-      { userId: "user-123" },
-    );
-
-    expect(milestoneRequest.context).toEqual({ userId: "user-123" });
-    const decoded = decodeMessage(milestoneRequest.encoded);
-    expect(decoded.context).toEqual({});
-  });
-
-  it("can encode and decode milestone messages with encryption", () => {
-    const milestoneRequest = new DocMessage(
-      "test-doc",
-      {
-        type: "milestone-list-request",
-        snapshotIds: [],
-      },
+      { type: "success", payload: { chunkIndex: 0, data: [1, 2, 3] } },
+      "testMethod",
+      "stream",
+      "request-123",
       {},
-      true, // encrypted
+      false,
     );
 
-    expect(milestoneRequest.encrypted).toBe(true);
-    const decoded = decodeMessage(milestoneRequest.encoded);
-    expect(decoded.encrypted).toBe(true);
+    const encoded = original.encoded;
+    expect(encoded).toBeInstanceOf(Uint8Array);
+
+    const decoded = decodeMessage(encoded);
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).requestType).toBe("stream");
+    expect((decoded as RpcMessage<any>).originalRequestId).toBe("request-123");
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual({
+      chunkIndex: 0,
+      data: [1, 2, 3],
+    });
+  });
+
+  it("can encode and decode an RPC success response message", () => {
+    const original = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { id: "123", name: "test" } },
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+    );
+
+    const encoded = original.encoded;
+    expect(encoded).toBeInstanceOf(Uint8Array);
+
+    const decoded = decodeMessage(encoded);
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).requestType).toBe("response");
+    expect((decoded as RpcMessage<any>).originalRequestId).toBe("request-123");
+    expect((decoded as RpcMessage<any>).payload).toEqual({
+      type: "success",
+      payload: { id: "123", name: "test" },
+    });
+  });
+
+  it("can encode and decode an RPC error response message", () => {
+    const original = new RpcMessage(
+      "test-doc",
+      {
+        type: "error",
+        statusCode: 500,
+        details: "Internal server error",
+        payload: { trace: "abc" },
+      },
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+    );
+
+    const encoded = original.encoded;
+    expect(encoded).toBeInstanceOf(Uint8Array);
+
+    const decoded = decodeMessage(encoded);
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).requestType).toBe("response");
+    expect((decoded as RpcMessage<any>).originalRequestId).toBe("request-123");
+    expect((decoded as RpcMessage<any>).payload).toEqual({
+      type: "error",
+      statusCode: 500,
+      details: "Internal server error",
+      payload: { trace: "abc" },
+    });
+  });
+
+  it("can preserve context through encode/decode for RPC messages", () => {
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { data: "testData" } },
+      "testMethod",
+      "request",
+      undefined,
+      { userId: "user-123", role: "admin" },
+      false,
+    );
+
+    expect(message.context).toEqual({ userId: "user-123", role: "admin" });
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded);
+
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).rpcMethod).toBe("testMethod");
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual({
+      data: "testData",
+    });
+  });
+
+  it("can preserve encryption flag through encode/decode for RPC messages", () => {
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { data: "testData" } },
+      "testMethod",
+      "request",
+      undefined,
+      {},
+      true,
+    );
+
+    expect(message.encrypted).toBe(true);
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded);
+
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).rpcMethod).toBe("testMethod");
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual({
+      data: "testData",
+    });
+  });
+
+  it("can handle nested objects in RPC message payloads", () => {
+    const payload = {
+      filter: {
+        createdAfter: 1609459200000,
+        createdBefore: 1640995200000,
+        tags: ["important", "draft"],
+      },
+      pagination: {
+        limit: 50,
+        offset: 0,
+      },
+    };
+
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload },
+      "queryData",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded);
+
+    expect((decoded as RpcMessage<any>).rpcMethod).toBe("queryData");
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual(payload);
+  });
+
+  it("can handle arrays in RPC message payloads", () => {
+    const payload = {
+      items: [1, 2, 3, 4, 5],
+      names: ["a", "b", "c"],
+    };
+
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload },
+      "batchProcess",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded);
+
+    expect((decoded as RpcMessage<any>).rpcMethod).toBe("batchProcess");
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual(payload);
+  });
+
+  it("can handle binary data in RPC message payloads", () => {
+    const binaryData = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { data: binaryData } },
+      "uploadChunk",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded);
+
+    expect((decoded as RpcMessage<any>).rpcMethod).toBe("uploadChunk");
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect(
+      ((decoded as RpcMessage<any>).payload.payload as { data: Uint8Array })
+        .data,
+    ).toEqual(binaryData);
+  });
+});
+
+describe("custom serialization", () => {
+  it("uses custom serializer when provided for response", () => {
+    const customBytes = new Uint8Array([0xaa, 0xbb, 0xcc]);
+    const serializer = (ctx: any) => {
+      if (ctx.type === "rpc" && ctx.message.requestType === "response") {
+        return customBytes;
+      }
+      return undefined;
+    };
+
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { id: "123" } },
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+      undefined,
+      serializer,
+    );
+
+    const encoded = message.encoded;
+    // Decode and check that the payload bytes match our custom serialization
+    // We need to manually decode to check the payload bytes
+    const decoder = decoding.createDecoder(encoded);
+    // Skip magic, version, document, encrypted, message type, method, request type, originalRequestId
+    decoding.readUint8(decoder); // Y
+    decoding.readUint8(decoder); // J
+    decoding.readUint8(decoder); // S
+    decoding.readUint8(decoder); // version
+    decoding.readVarString(decoder); // document
+    decoding.readUint8(decoder); // encrypted
+    decoding.readUint8(decoder); // message type (4 = rpc)
+    decoding.readVarString(decoder); // method
+    decoding.readUint8(decoder); // request type (2 = response)
+    decoding.readVarString(decoder); // originalRequestId
+    decoding.readUint8(decoder); // isSuccess
+    const payloadBytes = decoding.readVarUint8Array(decoder);
+
+    expect(payloadBytes).toEqual(customBytes);
+  });
+
+  it("uses custom serializer when provided for stream", () => {
+    const customBytes = new Uint8Array([0xdd, 0xee, 0xff]);
+    const serializer = (ctx: any) => {
+      if (ctx.type === "rpc" && ctx.message.requestType === "stream") {
+        return customBytes;
+      }
+      return undefined;
+    };
+
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { chunk: 1 } },
+      "testMethod",
+      "stream",
+      "request-123",
+      {},
+      false,
+      undefined,
+      serializer,
+    );
+
+    const encoded = message.encoded;
+    const decoder = decoding.createDecoder(encoded);
+    decoding.readUint8(decoder); // Y
+    decoding.readUint8(decoder); // J
+    decoding.readUint8(decoder); // S
+    decoding.readUint8(decoder); // version
+    decoding.readVarString(decoder); // document
+    decoding.readUint8(decoder); // encrypted
+    decoding.readUint8(decoder); // message type
+    decoding.readVarString(decoder); // method
+    decoding.readUint8(decoder); // request type
+    decoding.readVarString(decoder); // originalRequestId
+    decoding.readUint8(decoder); // isSuccess
+    const payloadBytes = decoding.readVarUint8Array(decoder);
+
+    expect(payloadBytes).toEqual(customBytes);
+  });
+
+  it("falls back to default serialization when serializer returns undefined", () => {
+    const serializer = () => undefined; // Always return undefined
+
+    const originalPayload: RpcSuccess = {
+      type: "success",
+      payload: { id: "123" },
+    };
+    const message = new RpcMessage(
+      "test-doc",
+      originalPayload,
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+      undefined,
+      serializer,
+    );
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded);
+
+    expect((decoded as RpcMessage<any>).payload).toEqual(originalPayload);
+  });
+
+  it("uses custom deserializer when provided for request", () => {
+    const customPayload = { method: "testMethod", customField: "customValue" };
+    const deserializer = (ctx: any) => {
+      if (ctx.type === "rpc" && ctx.method === "testMethod") {
+        return customPayload;
+      }
+      return undefined;
+    };
+
+    // Create a message with default encoding
+    const originalMessage = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { data: "testData" } },
+      "testMethod",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const encoded = originalMessage.encoded;
+    const decoded = decodeMessage(encoded, deserializer);
+
+    expect((decoded as RpcMessage<any>).payload.type).toBe("success");
+    expect((decoded as RpcMessage<any>).payload.payload).toEqual(customPayload);
+  });
+
+  it("falls back to default deserialization when deserializer returns undefined", () => {
+    const deserializer = () => undefined; // Always return undefined
+
+    const originalPayload: RpcSuccess = {
+      type: "success",
+      payload: { data: "testData" },
+    };
+    const message = new RpcMessage(
+      "test-doc",
+      originalPayload,
+      "testMethod",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const encoded = message.encoded;
+    const decoded = decodeMessage(encoded, deserializer);
+
+    expect((decoded as RpcMessage<any>).payload).toEqual(originalPayload);
+  });
+
+  it("provides encoder in serializer context", () => {
+    let receivedEncoder: any = null;
+    const serializer = (ctx: any) => {
+      if (ctx.type === "rpc") {
+        receivedEncoder = ctx.encoder;
+        // Use the encoder to write custom data
+        encoding.writeVarString(ctx.encoder, "custom");
+        return encoding.toUint8Array(ctx.encoder);
+      }
+      return undefined;
+    };
+
+    const deserializer = (ctx: any) => {
+      if (ctx.type === "rpc") {
+        // Read the custom string format
+        return decoding.readVarString(ctx.decoder);
+      }
+      return undefined;
+    };
+
+    const message = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { id: "123" } },
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+      undefined,
+      serializer,
+    );
+
+    // Access encoded to trigger encoding and serializer call
+    const encoded = message.encoded;
+    expect(receivedEncoder).not.toBeNull();
+    const decoded = decodeMessage(encoded, deserializer);
+
+    // The payload should be decoded as "custom" string (since we used custom serialization)
+    const rpcMessage = decoded as RpcMessage<any>;
+    expect(rpcMessage.payload.type).toBe("success");
+    expect(rpcMessage.payload.payload).toBe("custom");
+  });
+
+  it("provides decoder in deserializer context", () => {
+    let receivedDecoder: any = null;
+    let deserializedValue: any = null;
+    const deserializer = (ctx: any) => {
+      if (ctx.type === "rpc") {
+        receivedDecoder = ctx.decoder;
+        // Use the decoder to read the payload and return a custom value
+        const originalPayload = decoding.readAny(ctx.decoder);
+        deserializedValue = originalPayload;
+        return { method: "testMethod", customData: "deserialized" };
+      }
+      return undefined;
+    };
+
+    // Create a message with default encoding, then test deserializer
+    const originalMessage = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { data: "testData" } },
+      "testMethod",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const encoded = originalMessage.encoded;
+    const decoded = decodeMessage(encoded, deserializer);
+
+    expect(receivedDecoder).not.toBeNull();
+    const rpcMessage = decoded as RpcMessage<any>;
+    // Verify that the deserializer was called and returned our custom value
+    expect(rpcMessage.payload.type).toBe("success");
+    expect((rpcMessage.payload.payload as any).customData).toBe("deserialized");
   });
 });
 

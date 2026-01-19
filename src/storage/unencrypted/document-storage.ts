@@ -11,10 +11,7 @@ import {
 import type {
   Document,
   DocumentMetadata,
-  DocumentMetadataUpdater,
   DocumentStorage,
-  FileStorage,
-  MilestoneStorage,
 } from "../types";
 
 function defaultMetadata(now: number, encrypted: boolean): DocumentMetadata {
@@ -30,44 +27,9 @@ function defaultMetadata(now: number, encrypted: boolean): DocumentMetadata {
  *
  * Provides default sync behavior using Yjs diffing.
  */
-export abstract class UnencryptedDocumentStorage
-  implements DocumentStorage, DocumentMetadataUpdater
-{
+export abstract class UnencryptedDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
   storageType: "unencrypted" = "unencrypted";
-
-  fileStorage?: FileStorage;
-  milestoneStorage?: MilestoneStorage;
-
-  async addFileToDocument(
-    documentId: Document["id"],
-    fileId: string,
-  ): Promise<void> {
-    await this.transaction(documentId, async () => {
-      const metadata = await this.getDocumentMetadata(documentId);
-      const files = Array.from(new Set([...(metadata.files ?? []), fileId]));
-      await this.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
-  }
-
-  async removeFileFromDocument(
-    documentId: Document["id"],
-    fileId: string,
-  ): Promise<void> {
-    await this.transaction(documentId, async () => {
-      const metadata = await this.getDocumentMetadata(documentId);
-      const files = (metadata.files ?? []).filter((id) => id !== fileId);
-      await this.writeDocumentMetadata(documentId, {
-        ...metadata,
-        files,
-        updatedAt: Date.now(),
-      });
-    });
-  }
 
   abstract handleUpdate(
     documentId: Document["id"],

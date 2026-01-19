@@ -14,9 +14,6 @@
       "teleportal/storage": ["./src/storage/index.ts"],
       "teleportal/transports/redis": ["./src/transports/redis/index.ts"],
       "teleportal/transports/nats": ["./src/transports/nats/index.ts"],
-      "teleportal/transports/send-file": [
-        "./src/transports/send-file/index.ts"
-      ],
       "teleportal/transports/rate-limiter": [
         "./src/transports/rate-limiter/index.ts"
       ],
@@ -27,6 +24,8 @@
         "./src/lib/protocol/encryption/index.ts"
       ],
       "teleportal/protocol": ["./src/lib/protocol/index.ts"],
+      "teleportal/protocols/milestone": ["./src/protocols/milestone/index.ts"],
+      "teleportal/protocols/file": ["./src/protocols/file/index.ts"],
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
