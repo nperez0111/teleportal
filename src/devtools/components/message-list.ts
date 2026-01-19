@@ -6,21 +6,39 @@ export class MessageList {
   private messages: DevtoolsMessage[] = [];
   private selectedMessageId: string | null = null;
   private onSelectMessage: (message: DevtoolsMessage) => void;
+  private onClearMessages: (() => void) | null = null;
   private listContainer: HTMLElement;
+  private header: HTMLElement;
 
-  constructor(onSelectMessage: (message: DevtoolsMessage) => void) {
+  constructor(
+    onSelectMessage: (message: DevtoolsMessage) => void,
+    onClearMessages?: () => void,
+  ) {
     this.onSelectMessage = onSelectMessage;
+    this.onClearMessages = onClearMessages || null;
     this.element = document.createElement("div");
     this.element.className =
       "devtools-flex devtools-flex-col devtools-h-full devtools-bg-white";
 
     // Header - matches inspector header styling
-    const header = document.createElement("div");
-    header.className = "devtools-list-header";
+    this.header = document.createElement("div");
+    this.header.className = "devtools-list-header";
     const title = document.createElement("h2");
     title.className = "devtools-list-header-title";
-    header.append(title);
-    this.element.append(header);
+    this.header.append(title);
+    this.element.append(this.header);
+
+    // Clear button
+    if (this.onClearMessages) {
+      const clearButton = document.createElement("button");
+      clearButton.className = "devtools-button devtools-text-xs";
+      clearButton.textContent = "Clear";
+      clearButton.title = "Clear all messages from memory";
+      clearButton.addEventListener("click", () => {
+        this.onClearMessages?.();
+      });
+      this.header.append(clearButton);
+    }
 
     // List container
     this.listContainer = document.createElement("div");

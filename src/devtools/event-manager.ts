@@ -411,6 +411,14 @@ export class EventManager {
     return this.statistics;
   }
 
+  clearMessages() {
+    this.messages = [];
+    this.ackMessages.clear();
+    this.messageRateTimestamps = [];
+    this.updateStatistics();
+    this.emitChange();
+  }
+
   destroy() {
     this.unsubscribers.forEach((unsub) => unsub());
     this.unsubscribers = [];

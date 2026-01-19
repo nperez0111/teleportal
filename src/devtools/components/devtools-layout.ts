@@ -15,11 +15,14 @@ export class DevtoolsLayout {
   private messageInspector: MessageInspector;
   private filtersPanel: FiltersPanel;
   private selectedMessage: DevtoolsMessage | null = null;
+  private onClearMessages: (() => void) | null = null;
 
   constructor(
     settingsManager: SettingsManager,
     filterManager: FilterManager,
+    onClearMessages?: () => void,
   ) {
+    this.onClearMessages = onClearMessages || null;
     this.element = document.createElement("div");
     this.element.className =
       "devtools-container devtools-h-full devtools-w-full";
@@ -36,11 +39,14 @@ export class DevtoolsLayout {
     );
 
     // Create message list
-    this.messageList = new MessageList((message) => {
-      this.selectedMessage = message;
-      this.messageInspector.setMessage(message);
-      this.messageList.setSelectedMessageId(message.id);
-    });
+    this.messageList = new MessageList(
+      (message) => {
+        this.selectedMessage = message;
+        this.messageInspector.setMessage(message);
+        this.messageList.setSelectedMessageId(message.id);
+      },
+      this.onClearMessages || undefined,
+    );
 
     // Create message inspector
     this.messageInspector = new MessageInspector();
