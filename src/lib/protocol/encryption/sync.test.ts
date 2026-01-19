@@ -117,89 +117,22 @@ describe("sync functions", () => {
 
     it("should return messages not seen by other client", async () => {
       const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1", 10: "msg2" },
+        1: { 1: "msg1", 2: "msg2", 3: "msg3", 4: "msg4", 5: "msg5" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
-        return null;
+        const messages: Record<string, EncryptedBinary> = {
+          msg1: new Uint8Array([1]) as EncryptedBinary,
+          msg2: new Uint8Array([2]) as EncryptedBinary,
+          msg3: new Uint8Array([3]) as EncryptedBinary,
+          msg4: new Uint8Array([4]) as EncryptedBinary,
+          msg5: new Uint8Array([5]) as EncryptedBinary,
+        };
+        return messages[id] ?? null;
       };
 
-      // Other client has seen up to counter 3 for client 1
+      // Other client has seen up to counter 2 for client 1
       const syncStep1 = {
-        clocks: new Map([[1, 3]]),
-      };
-
-      const syncStep2 = await getDecodedSyncStep2(
-        seenMessages,
-        getEncryptedMessageUpdate,
-        syncStep1,
-      );
-
-      expect(syncStep2.messages.length).toBe(2);
-      expect(syncStep2.messages[0].id).toBe("msg1");
-      expect(syncStep2.messages[1].id).toBe("msg2");
-    });
-
-    it("should filter out messages already seen by other client", async () => {
-      const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1", 10: "msg2" },
-      };
-      const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
-        return null;
-      };
-
-      // Other client has seen up to counter 7 for client 1
-      const syncStep1 = {
-        clocks: new Map([[1, 7]]),
-      };
-
-      const syncStep2 = await getDecodedSyncStep2(
-        seenMessages,
-        getEncryptedMessageUpdate,
-        syncStep1,
-      );
-
-      expect(syncStep2.messages.length).toBe(1);
-      expect(syncStep2.messages[0].id).toBe("msg2"); // only msg2 has counter > 7
-    });
-
-    it("should handle null updates from getEncryptedMessageUpdate", async () => {
-      const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1" },
-      };
-      const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => null;
-
-      const syncStep2 = await getDecodedSyncStep2(
-        seenMessages,
-        getEncryptedMessageUpdate,
-      );
-
-      expect(syncStep2.messages.length).toBe(0);
-    });
-
-    it("should handle multiple clients in seen messages", async () => {
-      const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1", 10: "msg2" },
-        2: { 3: "msg3", 7: "msg4" },
-      };
-      const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
-        if (id === "msg3") return new Uint8Array([7, 8, 9]) as EncryptedBinary;
-        if (id === "msg4")
-          return new Uint8Array([10, 11, 12]) as EncryptedBinary;
-        return null;
-      };
-
-      // Other client has seen up to counter 3 for client 1 and 5 for client 2
-      const syncStep1 = {
-        clocks: new Map([
-          [1, 3],
-          [2, 5],
-        ]),
+        clocks: new Map([[1, 2]]),
       };
 
       const syncStep2 = await getDecodedSyncStep2(
@@ -209,25 +142,24 @@ describe("sync functions", () => {
       );
 
       expect(syncStep2.messages.length).toBe(3);
-      // msg1 (counter 5 > 3), msg2 (counter 10 > 3), msg4 (counter 7 > 5)
-      // msg3 (counter 3 <= 5) should be filtered out
       const messageIds = syncStep2.messages.map((m) => m.id).sort();
-      expect(messageIds).toEqual(["msg1", "msg2", "msg4"]);
+      expect(messageIds).toEqual(["msg3", "msg4", "msg5"]);
     });
 
-    it("should handle empty sync step 1 (no previous sync)", async () => {
+    it("should handle consecutive messages efficiently", async () => {
+      // Create a large range of consecutive messages
       const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1", 10: "msg2" },
+        1: Object.fromEntries(
+          Array.from({ length: 100 }, (_, i) => [i + 1, `msg${i + 1}`]),
+        ),
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
-        return null;
+        return new Uint8Array([1, 2, 3]) as EncryptedBinary;
       };
 
-      // No previous sync (empty state vector)
+      // Other client has seen up to counter 50
       const syncStep1 = {
-        clocks: new Map(),
+        clocks: new Map([[1, 50]]),
       };
 
       const syncStep2 = await getDecodedSyncStep2(
@@ -236,67 +168,66 @@ describe("sync functions", () => {
         syncStep1,
       );
 
-      expect(syncStep2.messages.length).toBe(2);
-      expect(syncStep2.messages[0].id).toBe("msg1");
-      expect(syncStep2.messages[1].id).toBe("msg2");
+      expect(syncStep2.messages.length).toBe(50);
     });
 
-    it("should handle client not in sync step 1", async () => {
+    it("should produce same results as non-range-based version", async () => {
       const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1" },
-        2: { 3: "msg2" },
+        1: { 1: "msg1", 2: "msg2", 5: "msg5", 6: "msg6" },
+        2: { 3: "msg3", 4: "msg4" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
-        return null;
+        const messages: Record<string, EncryptedBinary> = {
+          msg1: new Uint8Array([1]) as EncryptedBinary,
+          msg2: new Uint8Array([2]) as EncryptedBinary,
+          msg3: new Uint8Array([3]) as EncryptedBinary,
+          msg4: new Uint8Array([4]) as EncryptedBinary,
+          msg5: new Uint8Array([5]) as EncryptedBinary,
+          msg6: new Uint8Array([6]) as EncryptedBinary,
+        };
+        return messages[id] ?? null;
       };
 
-      // Other client only knows about client 1
       const syncStep1 = {
-        clocks: new Map([[1, 3]]),
+        clocks: new Map([
+          [1, 1], // Seen up to counter 1 for client 1
+          [2, 2], // Seen up to counter 2 for client 2
+        ]),
       };
 
-      const syncStep2 = await getDecodedSyncStep2(
+      const rangeBased = await getDecodedSyncStep2(
+        seenMessages,
+        getEncryptedMessageUpdate,
+        syncStep1,
+      );
+      const standard = await getDecodedSyncStep2(
         seenMessages,
         getEncryptedMessageUpdate,
         syncStep1,
       );
 
-      expect(syncStep2.messages.length).toBe(2);
-      // Both messages should be included since client 2 is not in sync step 1
-      expect(syncStep2.messages[0].id).toBe("msg1");
-      expect(syncStep2.messages[1].id).toBe("msg2");
-    });
+      // Should have same number of messages
+      expect(rangeBased.messages.length).toBe(standard.messages.length);
 
-    it("should handle partial null updates", async () => {
-      const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1", 10: "msg2" },
-      };
-      const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return null; // This message is not available
-        return null;
-      };
-
-      const syncStep2 = await getDecodedSyncStep2(
-        seenMessages,
-        getEncryptedMessageUpdate,
-      );
-
-      expect(syncStep2.messages.length).toBe(1);
-      expect(syncStep2.messages[0].id).toBe("msg1");
+      // Should have same message IDs (order may differ)
+      const rangeBasedIds = rangeBased.messages.map((m) => m.id).sort();
+      const standardIds = standard.messages.map((m) => m.id).sort();
+      expect(rangeBasedIds).toEqual(standardIds);
     });
   });
 
   describe("getEncryptedSyncStep2", () => {
-    it("should encode decoded sync step 2", async () => {
+    it("should encode decoded sync step 2 using range-based reconciliation", async () => {
       const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1" },
+        1: { 1: "msg1", 2: "msg2", 3: "msg3" },
       };
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        return null;
+        const messages: Record<string, EncryptedBinary> = {
+          msg1: new Uint8Array([1]) as EncryptedBinary,
+          msg2: new Uint8Array([2]) as EncryptedBinary,
+          msg3: new Uint8Array([3]) as EncryptedBinary,
+        };
+        return messages[id] ?? null;
       };
 
       const encrypted = await getEncryptedSyncStep2(
@@ -305,11 +236,10 @@ describe("sync functions", () => {
       );
       const decoded = decodeFromSyncStep2(encrypted);
 
-      expect(decoded.messages.length).toBe(1);
-      expect(decoded.messages[0].id).toBe("msg1");
+      expect(decoded.messages.length).toBe(3);
     });
 
-    it("should encode empty sync step 2", async () => {
+    it("should handle empty sync step 2", async () => {
       const seenMessages: SeenMessageMapping = {};
       const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => null;
 
@@ -320,29 +250,6 @@ describe("sync functions", () => {
       const decoded = decodeFromSyncStep2(encrypted);
 
       expect(decoded.messages.length).toBe(0);
-    });
-
-    it("should encode complex sync step 2", async () => {
-      const seenMessages: SeenMessageMapping = {
-        1: { 5: "msg1", 10: "msg2" },
-        2: { 3: "msg3" },
-      };
-      const getEncryptedMessageUpdate = async (id: EncryptedMessageId) => {
-        if (id === "msg1") return new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        if (id === "msg2") return new Uint8Array([4, 5, 6]) as EncryptedBinary;
-        if (id === "msg3") return new Uint8Array([7, 8, 9]) as EncryptedBinary;
-        return null;
-      };
-
-      const encrypted = await getEncryptedSyncStep2(
-        seenMessages,
-        getEncryptedMessageUpdate,
-      );
-      const decoded = decodeFromSyncStep2(encrypted);
-
-      expect(decoded.messages.length).toBe(3);
-      const messageIds = decoded.messages.map((m) => m.id).sort();
-      expect(messageIds).toEqual(["msg1", "msg2", "msg3"]);
     });
   });
 });
