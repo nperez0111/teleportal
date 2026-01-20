@@ -55,10 +55,17 @@ export class EventManager {
           connection.state
         ) {
           const connState = connection.state;
-          if (connState.type && connState.type !== this.connectionState?.type) {
+          const transport =
+            connState.type === "connected"
+              ? connState.context.connectionType
+              : null;
+          if (
+            (connState.type && connState.type !== this.connectionState?.type) ||
+            transport !== this.connectionState?.transport
+          ) {
             const newState: ConnectionStateInfo = {
               type: connState.type,
-              transport: connState.type === "connected" ? "websocket" : null,
+              transport,
               error:
                 connState.type === "errored"
                   ? connState.error?.message || String(connState.error)

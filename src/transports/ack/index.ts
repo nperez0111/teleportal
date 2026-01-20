@@ -1,5 +1,6 @@
 import {
   AckMessage,
+  decodeMessage,
   type PubSub,
   type PubSubTopic,
   type ServerContext,
@@ -166,7 +167,6 @@ export function withAckTrackingSink<
   const setupAckSubscription = async () => {
     if (unsubscribeAck) return;
 
-    const { decodeMessage } = await import("teleportal");
     unsubscribeAck = await pubSub.subscribe(
       ackTopic,
       (message, messageSourceId) => {
@@ -193,7 +193,7 @@ export function withAckTrackingSink<
   if (abortSignal) {
     abortSignal.addEventListener("abort", () => {
       // Reject all pending ACKs
-      for (const [messageId, pending] of pendingAcks.entries()) {
+      for (const pending of pendingAcks.values()) {
         clearTimeout(pending.timeout);
         pending.reject(new Error("Request aborted"));
       }

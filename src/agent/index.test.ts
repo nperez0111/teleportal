@@ -21,7 +21,7 @@ describe("Agent", () => {
     mockGetStorage = () => Promise.resolve(new YDocStorage());
 
     server = new Server({
-      getStorage: mockGetStorage,
+      storage: mockGetStorage,
       pubSub,
     });
 

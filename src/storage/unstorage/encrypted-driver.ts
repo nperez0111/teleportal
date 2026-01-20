@@ -7,14 +7,17 @@ import TransformDriver from "./transform-driver";
 
 export function createEncryptedDriver(
   driver: Driver,
-  getKey: (key: string) => CryptoKey,
+  getKey:
+    | CryptoKey
+    | Promise<CryptoKey>
+    | ((key: string) => CryptoKey | Promise<CryptoKey>),
 ) {
   return TransformDriver({
     driver,
     onWrite: async (key, value) => {
       return toBase64(
         await encryptUpdate(
-          getKey(key),
+          typeof getKey === "function" ? await getKey(key) : await getKey,
           encoding.encode((encoder) => {
             encoding.writeAny(encoder, value);
           }),
@@ -27,7 +30,10 @@ export function createEncryptedDriver(
       }
 
       const decoder = decoding.createDecoder(
-        await decryptUpdate(getKey(key), fromBase64(value)),
+        await decryptUpdate(
+          typeof getKey === "function" ? await getKey(key) : await getKey,
+          fromBase64(value),
+        ),
       );
       return decoding.readAny(decoder);
     },

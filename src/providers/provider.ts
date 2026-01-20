@@ -100,7 +100,7 @@ export type ProviderOptions<
     DefaultTransportProperties
   >,
 > = {
-  client: Connection<any>;
+  connection: Connection<any>;
   document: string;
   ydoc?: Y.Doc;
   awareness?: Awareness;
@@ -210,7 +210,7 @@ export class Provider<
   #initInProgress = false;
 
   private constructor({
-    client,
+    connection,
     document,
     ydoc = new Y.Doc(),
     awareness = new Awareness(ydoc),
@@ -237,9 +237,9 @@ export class Provider<
         return getYTransportFromYDoc({ ydoc, document, awareness });
       },
     });
-    this.#underlyingConnection = client;
+    this.#underlyingConnection = connection;
     this.#messageReader = this.#underlyingConnection.getReader();
-    this.#rpcClient = new RpcClient(client);
+    this.#rpcClient = new RpcClient(connection);
 
     // Initialize RPC handlers
     this.#initRpcHandlers();
@@ -260,65 +260,65 @@ export class Provider<
       this.initOfflinePersistence();
     }
 
-    if (client.state.type === "connected") {
+    if (connection.state.type === "connected") {
       this.init();
     }
 
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("connected", this.init),
+      connection.on("connected", this.init),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("connected", () => {
+      connection.on("connected", () => {
         this.call("connected");
         teleportalEventClient.emit("connected", {
           provider: this,
-          connection: client,
+          connection,
         });
       }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("disconnected", () => {
+      connection.on("disconnected", () => {
         this.call("disconnected");
         teleportalEventClient.emit("disconnected", {
           provider: this,
-          connection: client,
+          connection,
         });
       }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("received-message", (message) => {
+      connection.on("received-message", (message) => {
         this.call("received-message", message);
         teleportalEventClient.emit("received-message", {
           message,
           provider: this,
-          connection: client,
+          connection,
         });
         // RPC messages and ACKs are routed in #initRpcHandlers()
       }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("sent-message", (message) => {
+      connection.on("sent-message", (message) => {
         this.call("sent-message", message);
         teleportalEventClient.emit("sent-message", {
           message,
           provider: this,
-          connection: client,
+          connection,
         });
       }),
     );
     this.abortController.signal.addEventListener(
       "abort",
-      client.on("update", (state) => {
+      connection.on("update", (state) => {
         this.call("update", state);
         teleportalEventClient.emit("update", {
           state,
           provider: this,
-          connection: client,
+          connection,
         });
       }),
     );
@@ -444,7 +444,7 @@ export class Provider<
    * @returns A new Provider instance for the new document
    */
   public switchDocument(
-    options: Omit<ProviderOptions<T>, "client">,
+    options: Omit<ProviderOptions<T>, "connection">,
   ): Provider<T> {
     this.destroy({ destroyConnection: false });
     return this.openDocument(options);
@@ -454,13 +454,13 @@ export class Provider<
    * Create a new provider instance for a new document, without destroying this provider.
    */
   public openDocument(
-    options: Omit<ProviderOptions<T>, "client">,
+    options: Omit<ProviderOptions<T>, "connection">,
   ): Provider<T> {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
 
     return new Provider<T>({
-      client: this.#underlyingConnection,
+      connection: this.#underlyingConnection,
       ydoc: doc,
       awareness,
       getTransport: options.getTransport ?? (this.#getTransport as any),
@@ -1033,25 +1033,22 @@ export class Provider<
     >,
   >(
     options: (
-      | {
-          url: string;
-          client?: undefined;
-          /** Timeout for WebSocket connection attempts in milliseconds @default 5000 */
-          websocketTimeout?: number;
-          /** WebSocket-specific options */
-          websocketOptions?: {
-            protocols?: string[];
-            WebSocket?: typeof WebSocket;
-          };
-          /** HTTP-specific options */
-          httpOptions?: {
-            fetch?: typeof fetch;
-            EventSource?: typeof EventSource;
-          };
-        }
-      | { url?: undefined; client: Connection<any> }
-    ) &
-      Omit<ProviderOptions<T>, "client">,
+      | { url: string; connection?: undefined }
+      | { url?: undefined; connection: Connection<any> }
+    ) & {
+      /** Timeout for WebSocket connection attempts in milliseconds @default 5000 */
+      websocketTimeout?: number;
+      /** WebSocket-specific options */
+      websocketOptions?: {
+        protocols?: string[];
+        WebSocket?: typeof WebSocket;
+      };
+      /** HTTP-specific options */
+      httpOptions?: {
+        fetch?: typeof fetch;
+        EventSource?: typeof EventSource;
+      };
+    } & Omit<ProviderOptions<T>, "connection">,
   ): Promise<Provider<T>> {
     const {
       url,
@@ -1063,12 +1060,11 @@ export class Provider<
       indexedDBPrefix,
       encryptionKey,
       rpcHandlers,
-      client,
     } = options;
 
     // Create connection based on options
     const connection =
-      client ??
+      options.connection ??
       new FallbackConnection({
         url: url!,
         websocketTimeout:
@@ -1082,7 +1078,7 @@ export class Provider<
     await connection.connected;
 
     return new Provider({
-      client: connection,
+      connection,
       ydoc,
       document,
       awareness,

@@ -27,7 +27,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server<TokenPayload & { clientId: string }>({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(memoryStorage, {
         keyPrefix: "document",
@@ -40,12 +40,12 @@ const server = new Server<TokenPayload & { clientId: string }>({
   },
 });
 
-const ws = crossws(
-  tokenAuthenticatedWebsocketHandler({
+const ws = crossws({
+  hooks: tokenAuthenticatedWebsocketHandler({
     server,
     tokenManager,
   }),
-);
+});
 
 const instance = Bun.serve({
   development: {

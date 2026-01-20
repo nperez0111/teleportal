@@ -62,7 +62,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     });
 
     server = new Server<ServerContext>({
-      getStorage: async () => storage,
+      storage: async () => storage,
       pubSub,
       rpcHandlers: handlers,
     });
@@ -109,7 +109,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     });
 
     server = new Server<ServerContext>({
-      getStorage: async () => storage,
+      storage: async () => storage,
       pubSub,
       rpcHandlers: handlers,
     });
@@ -151,7 +151,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     });
 
     server = new Server<ServerContext>({
-      getStorage: async () => storage,
+      storage: async () => storage,
       pubSub,
       rpcHandlers: handlers,
     });
@@ -178,7 +178,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     });
 
     server = new Server<ServerContext>({
-      getStorage: async () => storage,
+      storage: async () => storage,
       pubSub,
       rpcHandlers: handlers,
     });
@@ -225,7 +225,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     });
 
     server = new Server<ServerContext>({
-      getStorage: async () => storage,
+      storage: async () => storage,
       pubSub,
       rpcHandlers: handlers,
     });
@@ -265,7 +265,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     });
 
     server = new Server<ServerContext>({
-      getStorage: async () => storage,
+      storage: async () => storage,
       pubSub,
       rpcHandlers: handlers,
     });

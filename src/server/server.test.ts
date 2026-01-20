@@ -1,12 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { getLogger } from "@logtape/logtape";
+
 import { Server } from "./server";
+import { checkPermissionWithTokenManager } from "./check-permission";
 import { Client } from "./client";
 import { AckMessage, InMemoryPubSub, DocMessage } from "teleportal";
-import {
-  createTokenManager,
-  checkPermissionWithTokenManager,
-} from "teleportal/token";
+import { createTokenManager } from "teleportal/token";
 import type {
   ServerContext,
   Message,
@@ -178,7 +176,7 @@ describe("Server", () => {
     mockGetStorage = () => Promise.resolve(new MockDocumentStorage());
 
     server = new Server({
-      getStorage: mockGetStorage,
+      storage: mockGetStorage,
       pubSub,
     });
   });
@@ -195,7 +193,7 @@ describe("Server", () => {
 
     it("should use default pubSub when not provided", async () => {
       const serverWithDefaultPubSub = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
       });
       expect(serverWithDefaultPubSub.pubSub).toBeDefined();
       await serverWithDefaultPubSub[Symbol.asyncDispose]();
@@ -203,7 +201,7 @@ describe("Server", () => {
 
     it("should use provided nodeId", async () => {
       const serverWithNodeId = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         nodeId: "custom-node-id",
       });
@@ -213,11 +211,11 @@ describe("Server", () => {
 
     it("should generate random nodeId when not provided", async () => {
       const server1 = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
       });
       const server2 = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
       });
       // Node IDs should be different
@@ -336,7 +334,7 @@ describe("Server", () => {
       };
 
       const customServer = new Server({
-        getStorage: customGetStorage,
+        storage: customGetStorage,
         pubSub,
       });
 
@@ -360,7 +358,7 @@ describe("Server", () => {
       };
 
       const customServer = new Server({
-        getStorage: customGetStorage,
+        storage: customGetStorage,
         pubSub,
       });
 
@@ -582,7 +580,7 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission,
       });
@@ -626,7 +624,7 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission,
       });
@@ -703,7 +701,7 @@ describe("Server", () => {
       };
 
       const serverWithPermission = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission,
       });
@@ -1296,7 +1294,7 @@ describe("Server", () => {
 
       const mockStorage = new MockDocumentStorage();
       const serverWithFailingHandler = new Server({
-        getStorage: () => Promise.resolve(mockStorage),
+        storage: () => Promise.resolve(mockStorage),
         pubSub,
         rpcHandlers: {
           stream: {
@@ -1358,7 +1356,7 @@ describe("Server", () => {
         secret: "test-secret",
       });
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1411,7 +1409,7 @@ describe("Server", () => {
         secret: "test-secret",
       });
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1475,7 +1473,7 @@ describe("Server", () => {
       }
 
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1537,7 +1535,7 @@ describe("Server", () => {
       }
 
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1599,7 +1597,7 @@ describe("Server", () => {
       }
 
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1662,7 +1660,7 @@ describe("Server", () => {
       }
 
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1745,7 +1743,7 @@ describe("Server", () => {
       }
 
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });
@@ -1823,7 +1821,7 @@ describe("Server", () => {
       }
 
       const serverWithToken = new Server({
-        getStorage: mockGetStorage,
+        storage: mockGetStorage,
         pubSub,
         checkPermission: checkPermissionWithTokenManager(tokenManager),
       });

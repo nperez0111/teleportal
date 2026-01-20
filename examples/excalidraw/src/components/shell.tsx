@@ -38,12 +38,12 @@ export default function Shell() {
           new DocumentAccessBuilder().admin("*").build(),
         );
 
-        const client = new FallbackConnection({
+        const connection = new FallbackConnection({
           url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
         });
 
         const websocketProvider = await Provider.create({
-          client,
+          connection,
           document: "whiteboard",
         });
 

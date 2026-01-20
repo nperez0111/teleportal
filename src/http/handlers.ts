@@ -17,7 +17,6 @@ import {
   getSSESink,
   pipe,
   toMessageArrayStream,
-  withAckSink,
   withAckTrackingSink,
 } from "teleportal/transports";
 import { getDocumentsFromQueryParams } from "./utils";
@@ -78,13 +77,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
 
     logger.trace("sse request");
 
-    // Wrap the SSE sink to send ACKs after messages are sent
-    const sseSink = withAckSink(getSSESink({ context }), {
-      pubSub: server.pubSub,
-      ackTopic: `ack/${context.clientId}`,
-      sourceId: "sse-reader-" + context.clientId,
-      context,
-    });
+    const sseSink = getSSESink({ context });
 
     const sseTransport = compose(
       getPubSubSource({
@@ -158,7 +151,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
 
 /**
  * Creates an HTTP endpoint that pipes the {@link Message}s to the
- * {@link getSSEReaderEndpoint} via the {@link PubSub} which is listening by the {@link ClientContext.clientId}.
+ * {@link getSSEReaderEndpoint} via the {@link PubSub} which is listening by the {@link ClientContext['clientId']}.
  */
 export function getSSEWriterEndpoint<Context extends ServerContext>({
   server,
@@ -340,5 +333,60 @@ export function getHTTPEndpoint<Context extends ServerContext>({
         },
       },
     );
+  };
+}
+
+/**
+ * Returns the health status of the server.
+ */
+export function getHealthHandler(server: Server<any>) {
+  return async (request: Request): Promise<Response> => {
+    try {
+      const health = await server.getHealth();
+      return Response.json(health);
+    } catch (error) {
+      return Response.json(
+        {
+          status: "unhealthy",
+          timestamp: new Date().toISOString(),
+          checks: { server: "unhealthy" },
+          error: (error as Error).message,
+        },
+        { status: 500 },
+      );
+    }
+  };
+}
+
+/**
+ * Returns the metrics of the server.
+ */
+export function getMetricsHandler(server: Server<any>) {
+  return async (request: Request): Promise<Response> => {
+    try {
+      const metrics = await server.getMetrics();
+      return new Response(metrics, {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    } catch {
+      return new Response("Metrics collection failed", { status: 500 });
+    }
+  };
+}
+
+/**
+ * Returns the status of the server.
+ */
+export function getStatusHandler(server: Server<any>) {
+  return async (request: Request): Promise<Response> => {
+    try {
+      const status = await server.getStatus();
+      return Response.json(status);
+    } catch (error) {
+      return Response.json(
+        { error: "Status retrieval failed", message: (error as Error).message },
+        { status: 500 },
+      );
+    }
   };
 }

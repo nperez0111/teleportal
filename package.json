@@ -19,7 +19,8 @@
   "type": "module",
   "workspaces": [
     "playground",
-    "examples/*"
+    "examples/*",
+    "docs"
   ],
   "private": false,
   "publishConfig": {
@@ -125,32 +126,52 @@
   },
   "dependencies": {
     "@logtape/logtape": "^1.2.0",
-    "@nats-io/transport-node": "^3.2.0",
     "@tanstack/devtools-event-client": "0.4.0",
-    "crossws": "^0.4.1",
     "hookable": "^5.5.3",
-    "ioredis": "^5.8.2",
     "jose": "^6.1.1",
     "lib0": "^0.2.114",
-    "srvx": "^0.9.6",
-    "unstorage": "^1.17.2",
     "y-indexeddb": "^9.0.12",
     "y-protocols": "^1.0.6",
     "yjs": "^13.6.27"
   },
   "devDependencies": {
+    "@nats-io/transport-node": "^3.2.0",
     "@types/bun": "^1.3.2",
     "@typescript-eslint/eslint-plugin": "^8.46.4",
     "@typescript-eslint/parser": "^8.46.4",
     "automd": "^0.4.2",
     "bun-plugin-tailwind": "0.1.2",
     "changelogen": "^0.6.2",
-    "eslint": "^9.39.1",
+    "crossws": "^0.4.3",
     "eslint-config-unjs": "^0.5.0",
+    "eslint": "^9.39.1",
+    "ioredis": "^5.8.2",
     "msw": "2.12.1",
     "prettier": "^3.6.2",
+    "srvx": "^0.10.1",
     "typescript": "5.9.3",
+    "unstorage": "^1.17.2",
     "unbuild": "^3.6.1"
+  },
+  "peerDependencies": {
+    "@nats-io/transport-node": "^3.2.0",
+    "crossws": "^0.4.3",
+    "ioredis": "^5.8.2",
+    "unstorage": "^1.17.2"
+  },
+  "peerDependenciesMeta": {
+    "@nats-io/transport-node": {
+      "optional": true
+    },
+    "crossws": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "unstorage": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=24"

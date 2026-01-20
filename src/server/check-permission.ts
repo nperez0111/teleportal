@@ -1,5 +1,5 @@
-import type { ServerOptions } from "teleportal/server";
-import type { TokenManager, TokenPayload } from ".";
+import type { ServerOptions } from "./server";
+import type { TokenManager, TokenPayload } from "teleportal/token";
 
 export function checkPermissionWithTokenManager(
   tokenManager: TokenManager,

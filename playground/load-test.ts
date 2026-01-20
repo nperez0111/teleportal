@@ -17,14 +17,14 @@ const token = await createTokenManager({
     .build(),
 );
 
-const websocketClient = new websocket.WebSocketConnection({
+const websocketConnection = new websocket.WebSocketConnection({
   url: `ws://localhost:1235/?token=${token}`,
 });
 
-await websocketClient.connected;
+await websocketConnection.connected;
 
 const provider = await Provider.create({
-  client: websocketClient,
+  connection: websocketConnection,
   document: "test-load",
   getTransport({ getDefaultTransport }) {
     return withPassthrough(getDefaultTransport(), {

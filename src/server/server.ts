@@ -7,6 +7,7 @@ import {
   type PubSub,
   RpcMessage,
   type ServerContext,
+  Transport,
 } from "teleportal";
 import type { DocumentStorage, MilestoneTrigger } from "teleportal/storage";
 import type { RateLimitStorage } from "teleportal/storage";
@@ -33,21 +34,24 @@ export type ServerOptions<Context extends ServerContext> = {
   /**
    * Retrieve per-document storage.
    */
-  getStorage: (ctx: {
-    documentId: string;
-    context: Context;
-    encrypted: boolean;
-  }) => Promise<DocumentStorage>;
+  storage:
+    | DocumentStorage
+    | Promise<DocumentStorage>
+    | ((ctx: {
+        documentId: string;
+        context: NoInfer<Context>;
+        encrypted: boolean;
+      }) => DocumentStorage | Promise<DocumentStorage>);
 
   /**
    * Optional permission checker for read/write.
    * Either documentId or fileId will be provided, but not both.
    */
   checkPermission?: (ctx: {
-    context: Context;
+    context: NoInfer<Context>;
     documentId?: string;
     fileId?: string;
-    message: Message<Context>;
+    message: Message<NoInfer<Context>>;
     type: "read" | "write";
   }) => Promise<boolean>;
 
@@ -112,13 +116,13 @@ export type ServerOptions<Context extends ServerContext> = {
      * Default function to extract user ID from message.
      * Individual rules can override this with their own getUserId.
      */
-    getUserId?: (message: Message<Context>) => string | undefined;
+    getUserId?: (message: Message<NoInfer<Context>>) => string | undefined;
 
     /**
      * Default function to extract document ID from message.
      * Individual rules can override this with their own getDocumentId.
      */
-    getDocumentId?: (message: Message<Context>) => string | undefined;
+    getDocumentId?: (message: Message<NoInfer<Context>>) => string | undefined;
 
     /**
      * Function to check if rate limiting should be skipped for this message.
@@ -126,7 +130,7 @@ export type ServerOptions<Context extends ServerContext> = {
      * Useful for admin users or allow-listed sources.
      */
     shouldSkipRateLimit?: (
-      message: Message<Context>,
+      message: Message<NoInfer<Context>>,
     ) => Promise<boolean> | boolean;
 
     /**
@@ -141,7 +145,7 @@ export type ServerOptions<Context extends ServerContext> = {
       maxMessages: number;
       windowMs: number;
       resetAt: number;
-      message: Message<Context>;
+      message: Message<NoInfer<Context>>;
     }) => void;
 
     /**
@@ -150,12 +154,10 @@ export type ServerOptions<Context extends ServerContext> = {
     onMessageSizeExceeded?: (details: {
       size: number;
       maxSize: number;
-      message: Message<Context>;
+      message: Message<NoInfer<Context>>;
     }) => void;
   };
 };
-
-type Timer = ReturnType<typeof setTimeout>;
 
 export class Server<Context extends ServerContext> extends Observable<
   ServerEvents<Context>
@@ -342,11 +344,13 @@ export class Server<Context extends ServerContext> extends Observable<
 
     const sessionPromise = (async (): Promise<Session<Context>> => {
       try {
-        const storage = await this.#options.getStorage({
-          documentId: compositeDocumentId,
-          context,
-          encrypted,
-        });
+        const storage = await (typeof this.#options.storage === "function"
+          ? this.#options.storage({
+              documentId: compositeDocumentId,
+              context,
+              encrypted,
+            })
+          : this.#options.storage);
 
         sessionLogger.debug("Storage retrieved for session");
 
@@ -465,21 +469,12 @@ export class Server<Context extends ServerContext> extends Observable<
       })
       .info("Deleting document");
 
-    // Get storage directly to delete document data
-    const storage = await this.#options.getStorage({
-      documentId: compositeDocumentId,
-      context,
-      encrypted,
-    });
-
     // Close existing session if any
     const session = this.#sessions.get(compositeDocumentId);
+    let storage = session?.storage;
     if (session) {
       // Disconnect all clients
-      for (const client of session.clients) {
-        // Optionally notify clients about deletion
-        // await client.send(new DocMessage(documentId, { type: "deleted" }, context, encrypted));
-      }
+      storage = session.storage;
 
       this.call("document-unload", {
         documentId: session.documentId,
@@ -491,6 +486,15 @@ export class Server<Context extends ServerContext> extends Observable<
 
       await session[Symbol.asyncDispose]();
       this.#sessions.delete(compositeDocumentId);
+    } else {
+      // Reload the storage instance directly to delete document
+      storage = await (typeof this.#options.storage === "function"
+        ? this.#options.storage({
+            documentId: compositeDocumentId,
+            context,
+            encrypted,
+          })
+        : this.#options.storage);
     }
 
     // Wait for any pending session creation
@@ -544,7 +548,7 @@ export class Server<Context extends ServerContext> extends Observable<
     id = "client-" + uuidv4(),
     abortSignal,
   }: {
-    transport: import("teleportal").Transport<Context>;
+    transport: Transport<Context>;
     id?: string;
     abortSignal?: AbortSignal;
   }) {
@@ -816,7 +820,15 @@ export class Server<Context extends ServerContext> extends Observable<
                 },
                 message.context,
               );
+
               await client.send(ackMessage);
+              // Publish ACK to pubsub topic if it's not a client-to-client message
+              await this.pubSub.publish(
+                `ack/${client.id}` as const,
+                ackMessage.encoded,
+                `server-${client.id}`,
+              );
+
               msgLogger
                 .with({
                   messageId: message.id,

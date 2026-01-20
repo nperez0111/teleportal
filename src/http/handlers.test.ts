@@ -138,7 +138,7 @@ describe("HTTP Handlers", () => {
     });
 
     server = new Server({
-      getStorage: mockGetStorage,
+      storage: mockGetStorage,
       pubSub,
     });
   });

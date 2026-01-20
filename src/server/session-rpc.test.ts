@@ -133,7 +133,7 @@ class MockDocumentStorage implements DocumentStorage {
 // Mock Server for testing
 function createMockServer(): Server<ServerContext> {
   return new Server<ServerContext>({
-    getStorage: async () => {
+    storage: async () => {
       throw new Error("Not implemented in mock");
     },
   });

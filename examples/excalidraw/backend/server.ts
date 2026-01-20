@@ -1,16 +1,13 @@
 import crossws from "crossws/adapters/bun";
 import { createStorage } from "unstorage";
 
-import { getHTTPHandler } from "teleportal/http";
-import { Server } from "teleportal/server";
+import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
+import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import {
   UnstorageDocumentStorage,
   UnstorageEncryptedDocumentStorage,
 } from "teleportal/storage";
-import {
-  checkPermissionWithTokenManager,
-  createTokenManager,
-} from "teleportal/token";
+import { createTokenManager } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import homepage from "../src/index.html";
@@ -24,7 +21,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(memoryStorage, {
         keyPrefix: "document",
@@ -38,18 +35,16 @@ const server = new Server({
   checkPermission: checkPermissionWithTokenManager(tokenManager),
 });
 
-const ws = crossws(
-  tokenAuthenticatedWebsocketHandler({
+const ws = crossws({
+  hooks: tokenAuthenticatedWebsocketHandler({
     server,
     tokenManager,
   }),
-);
+});
 
-const httpHandlers = getHTTPHandler({
+const httpHandlers = tokenAuthenticatedHTTPHandler({
   server,
-  getContext: async () => {
-    return { userId: "123", room: "123" };
-  },
+  tokenManager,
 });
 
 const instance = Bun.serve({

@@ -8,7 +8,7 @@ import {
   type StateVector,
 } from "teleportal";
 import { RpcMessage } from "teleportal/protocol";
-import { TokenManager, createTokenManager } from "./index";
+import { TokenManager, createTokenManager } from "../token/index";
 import { checkPermissionWithTokenManager } from "./check-permission";
 
 describe("checkPermissionWithTokenManager", () => {

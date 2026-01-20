@@ -131,7 +131,7 @@ describe("getHTTPHandler", () => {
     });
 
     server = new Server({
-      getStorage: mockGetStorage,
+      storage: mockGetStorage,
       pubSub,
     });
 

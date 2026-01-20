@@ -3,6 +3,8 @@ import {
   websocket,
   Provider,
   DefaultTransportProperties,
+  Connection,
+  FallbackConnection,
 } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { getFileClientHandlers } from "teleportal/protocols/file";
@@ -26,8 +28,7 @@ class ProviderManager {
       DefaultTransportProperties & { handler?: EncryptionClient }
     >
   > | null = null;
-  private websocketConnection: Promise<websocket.WebSocketConnection> | null =
-    null;
+  private websocketConnection: Promise<Connection> | null = null;
   private subscribers = new Set<(provider: Provider | null) => void>();
 
   private constructor() {}
@@ -39,7 +40,7 @@ class ProviderManager {
     return ProviderManager.instance;
   }
 
-  private async getWebSocketConnection(): Promise<websocket.WebSocketConnection> {
+  private async getProviderConnection(): Promise<Connection> {
     if (!this.websocketConnection) {
       this.websocketConnection = tokenManager
         .createToken(
@@ -53,7 +54,7 @@ class ProviderManager {
             .build(),
         )
         .then((token) => {
-          return new websocket.WebSocketConnection({
+          return new FallbackConnection({
             url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
           });
         });
@@ -66,9 +67,9 @@ class ProviderManager {
     key: CryptoKey | undefined,
   ): Promise<NonNullable<ProviderManager["provider"]>> {
     if (!this.provider) {
-      const client = await this.getWebSocketConnection();
+      const connection = await this.getProviderConnection();
       this.provider = (await Provider.create({
-        client,
+        connection,
         document: documentId,
         encryptionKey: key,
         rpcHandlers: {

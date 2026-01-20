@@ -1,17 +1,14 @@
 import { createStorage } from "unstorage";
 
-import { Server } from "teleportal/server";
+import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
+import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import {
-  UnstorageEncryptedDocumentStorage,
   UnstorageDocumentStorage,
+  UnstorageEncryptedDocumentStorage,
 } from "teleportal/storage";
-import { getHTTPHandler } from "teleportal/http";
 
+import { createTokenManager } from "teleportal/token";
 import homepage from "../src/index.html";
-import {
-  checkPermissionWithTokenManager,
-  createTokenManager,
-} from "teleportal/token";
 
 const memoryStorage = createStorage();
 const tokenManager = createTokenManager({
@@ -21,7 +18,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     if (ctx.documentId.includes("encrypted")) {
       return new UnstorageEncryptedDocumentStorage(memoryStorage);
     }
@@ -30,20 +27,16 @@ const server = new Server({
   checkPermission: checkPermissionWithTokenManager(tokenManager),
 });
 
-const httpHandlers = getHTTPHandler({
+const httpHandlers = tokenAuthenticatedHTTPHandler({
   server,
-  getContext: async () => {
-    return { userId: "123", room: "123" };
-  },
+  tokenManager,
 });
 
 const instance = Bun.serve({
   routes: {
     "/": homepage,
   },
-  async fetch(request) {
-    return httpHandlers(request);
-  },
+  fetch: httpHandlers,
 });
 
 console.info(`Server running on http://${instance.hostname}:${instance.port}`);

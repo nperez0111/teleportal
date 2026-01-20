@@ -1,7 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
 
-export * from "./check-permission";
-
 export type Permission = "admin" | "write" | "read" | "comment" | "suggest";
 
 export type DocumentAccess = {

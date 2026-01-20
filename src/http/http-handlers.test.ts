@@ -3,7 +3,7 @@ import {
   getHealthHandler,
   getMetricsHandler,
   getStatusHandler,
-} from "./http-handlers";
+} from "./handlers";
 
 // Mock server implementation
 class MockServer {

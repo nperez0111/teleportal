@@ -70,123 +70,119 @@ export function getWebsocketHandlers<
     message: BinaryMessage;
     peer: crossws.Peer;
   }) => void | Promise<void>;
-}): {
-  hooks: crossws.Hooks;
-} {
+}): crossws.Hooks {
   const logger = getLogger(["teleportal", "websocket-server"]);
   return {
-    hooks: {
-      async upgrade(request) {
-        logger
-          .with({ requestUrl: request.url })
-          .info("upgrade websocket connection");
-        try {
-          const { context, headers } = await onUpgrade(request);
+    async upgrade(request) {
+      logger
+        .with({ requestUrl: request.url })
+        .info("upgrade websocket connection");
+      try {
+        const { context, headers } = await onUpgrade(request);
 
-          return {
-            context: {
-              ...context,
-              clientId: "upgrade",
-              transport: {} as any,
-              writer: {} as any,
-            },
-            headers: {
-              "x-powered-by": "teleportal",
-              ...headers,
-            },
-          };
-        } catch (err) {
-          logger
-            .with(toErrorDetails(err))
-            .with({ requestUrl: request.url })
-            .error("rejected upgrade websocket connection");
-          if (err instanceof Response) {
-            throw err;
-          }
-          throw new Response("Unauthorized", {
-            status: 401,
-            headers: {
-              "WWW-Authenticate":
-                'Basic realm="Websocket Authentication", charset="UTF-8"',
-            },
-          });
-        }
-      },
-      async open(peer) {
-        logger.with({ clientId: peer.id }).info("open websocket connection");
-        const transform = new TransformStream<BinaryMessage, BinaryMessage>();
-
-        peer.context.clientId = peer.id;
-        peer.context.writer = transform.writable.getWriter();
-        peer.context.transport = {
-          readable: transform.readable,
-          writable: new WritableStream({
-            write(chunk) {
-              peer.send(chunk);
-            },
-          }),
+        return {
+          context: {
+            ...context,
+            clientId: "upgrade",
+            transport: {} as any,
+            writer: {} as any,
+          },
+          headers: {
+            "x-powered-by": "teleportal",
+            ...headers,
+          },
         };
+      } catch (err) {
+        logger
+          .with(toErrorDetails(err))
+          .with({ requestUrl: request.url })
+          .error("rejected upgrade websocket connection");
+        if (err instanceof Response) {
+          throw err;
+        }
+        throw new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            "WWW-Authenticate":
+              'Basic realm="Websocket Authentication", charset="UTF-8"',
+          },
+        });
+      }
+    },
+    async open(peer) {
+      logger.with({ clientId: peer.id }).info("open websocket connection");
+      const transform = new TransformStream<BinaryMessage, BinaryMessage>();
 
-        try {
-          await onConnect?.({
-            transport: peer.context.transport,
-            context: peer.context as any,
-            id: peer.id,
-            peer,
-          });
-        } catch (err) {
-          logger
-            .with(toErrorDetails(err))
-            .with({ clientId: peer.id })
-            .error("failed to connect");
-          peer.close();
-        }
-      },
-      async message(peer, msg) {
-        logger.with({ clientId: peer.id, messageId: msg.id }).trace("message");
-        const message = msg.uint8Array();
-        if (!isBinaryMessage(message)) {
-          throw new Error("Invalid message");
-        }
-        try {
-          await onMessage?.({
-            message,
-            peer,
-          });
-          await peer.context.writer.ready;
-          await peer.context.writer.write(message);
-        } catch (err) {
-          new Error("Failed to write message", { cause: { err: err } });
-        }
-      },
-      async close(peer) {
-        logger.with({ clientId: peer.id }).info("close websocket connection");
-        await onDisconnect?.({
+      peer.context.clientId = peer.id;
+      peer.context.writer = transform.writable.getWriter();
+      peer.context.transport = {
+        readable: transform.readable,
+        writable: new WritableStream({
+          write(chunk) {
+            peer.send(chunk);
+          },
+        }),
+      };
+
+      try {
+        await onConnect?.({
           transport: peer.context.transport,
           context: peer.context as any,
           id: peer.id,
           peer,
         });
-        try {
-          await peer.context.writer.close();
-        } catch {
-          // no-op
-        }
-        try {
-          if (!peer.context.transport.writable.locked) {
-            await peer.context.transport.writable.close();
-          }
-        } catch {
-          // no-op
-        }
-      },
-      async error(peer, error) {
+      } catch (err) {
         logger
-          .with({ error: toErrorDetails(error), clientId: peer.id })
-          .error("error");
-        await peer.context.writer.abort(error);
-        await peer.context.transport.writable.abort(error);
-      },
+          .with(toErrorDetails(err))
+          .with({ clientId: peer.id })
+          .error("failed to connect");
+        peer.close();
+      }
+    },
+    async message(peer, msg) {
+      logger.with({ clientId: peer.id, messageId: msg.id }).trace("message");
+      const message = msg.uint8Array();
+      if (!isBinaryMessage(message)) {
+        throw new Error("Invalid message");
+      }
+      try {
+        await onMessage?.({
+          message,
+          peer,
+        });
+        await peer.context.writer.ready;
+        await peer.context.writer.write(message);
+      } catch (err) {
+        new Error("Failed to write message", { cause: { err: err } });
+      }
+    },
+    async close(peer) {
+      logger.with({ clientId: peer.id }).info("close websocket connection");
+      await onDisconnect?.({
+        transport: peer.context.transport,
+        context: peer.context as any,
+        id: peer.id,
+        peer,
+      });
+      try {
+        await peer.context.writer.close();
+      } catch {
+        // no-op
+      }
+      try {
+        if (!peer.context.transport.writable.locked) {
+          await peer.context.transport.writable.close();
+        }
+      } catch {
+        // no-op
+      }
+    },
+    async error(peer, error) {
+      logger
+        .with({ error: toErrorDetails(error), clientId: peer.id })
+        .error("error");
+      await peer.context.writer.abort(error);
+      await peer.context.transport.writable.abort(error);
     },
   };
 }

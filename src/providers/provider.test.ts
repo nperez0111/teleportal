@@ -183,7 +183,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -224,7 +224,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -263,7 +263,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -300,7 +300,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -337,7 +337,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -384,7 +384,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -416,7 +416,7 @@ describe("Provider sync events", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -464,7 +464,7 @@ describe("Provider milestone operations", () => {
   async function setupProvider() {
     mockConnection.triggerConnect();
     provider = await Provider.create({
-      client: mockConnection,
+      connection: mockConnection,
       document: "test-doc",
       ydoc,
       getTransport: () => mockTransport,
@@ -798,7 +798,7 @@ describe("Provider milestone operations", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -856,7 +856,7 @@ describe("Provider milestone operations", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -898,7 +898,7 @@ describe("Provider milestone operations", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -983,7 +983,7 @@ describe("Provider events", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -1016,7 +1016,7 @@ describe("Provider events", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -1046,7 +1046,7 @@ describe("Provider events", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -1082,7 +1082,7 @@ describe("Provider events", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -1123,7 +1123,7 @@ describe("Provider events", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,
@@ -1165,7 +1165,7 @@ describe("Provider events", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       provider = await Provider.create({
-        client: mockConnection,
+        connection: mockConnection,
         document: "test-doc",
         ydoc,
         getTransport: () => mockTransport,

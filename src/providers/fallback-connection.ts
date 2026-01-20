@@ -288,8 +288,8 @@ export class FallbackConnection extends Connection<FallbackContext> {
     connection: WebSocketConnection | HttpConnection,
     type: "websocket" | "http",
     attemptId: number,
-  ): void {
-    connection.addListeners({
+  ): () => void {
+    return connection.addListeners({
       update: (state) => {
         // Only handle updates if this is still the current attempt
         if (attemptId !== this.#connectionAttemptId) {
@@ -316,6 +316,18 @@ export class FallbackConnection extends Connection<FallbackContext> {
             underlyingContext: state.context,
           },
         } as ConnectionState<FallbackContext>);
+      },
+      "messages-in-flight": (hasInFlight: boolean) => {
+        // Only handle messages if this is still the current attempt
+        if (attemptId === this.#connectionAttemptId) {
+          this.call("messages-in-flight", hasInFlight);
+        }
+      },
+      "sent-message": (message: Message) => {
+        // Only handle messages if this is still the current attempt
+        if (attemptId === this.#connectionAttemptId) {
+          this.call("sent-message", message);
+        }
       },
       "received-message": (message: Message) => {
         // Only handle messages if this is still the current attempt

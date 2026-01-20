@@ -6,14 +6,9 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
 import { importEncryptionKey } from "teleportal/encryption-key";
-import {
-  getHealthHandler,
-  getMetricsHandler,
-  getStatusHandler,
-} from "teleportal/monitoring";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
-import { Server } from "teleportal/server";
+import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import {
   createEncryptedDriver,
   UnstorageDocumentStorage,
@@ -23,22 +18,16 @@ import {
   UnstorageRateLimitStorage,
   UnstorageTemporaryUploadStorage,
 } from "teleportal/storage";
-import {
-  checkPermissionWithTokenManager,
-  createTokenManager,
-  TokenPayload,
-} from "teleportal/token";
+import { createTokenManager, TokenPayload } from "teleportal/token";
 import type { RateLimitRule } from "teleportal/transports/rate-limiter";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import "../src/backend/logger";
 
 import homepage from "../src/index.html";
+import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 // import { RedisPubSub } from "teleportal/transports/redis";
 
-const key = await importEncryptionKey(
-  "s1RZEGnuBelCbov-WC6dvddacpT1pzGmhmeVHKr-1Zg",
-);
 const db = createDatabase(
   bunSqlite({
     name: "yjs.db",
@@ -51,7 +40,7 @@ const storage = createStorage({
       database: db,
       tableName: "yjs",
     }),
-    () => key,
+    importEncryptionKey("s1RZEGnuBelCbov-WC6dvddacpT1pzGmhmeVHKr-1Zg"),
   ),
 });
 
@@ -103,7 +92,7 @@ const rateLimitRules: RateLimitRule<TokenPayload & { clientId: string }>[] = [
 ];
 
 const server = new Server<TokenPayload & { clientId: string }>({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // return ctx.encrypted ? new EncryptedMemoryStorage() : new YDocStorage();
     // In production, use the memory storage, I don't want your files
     const backingStorage =
@@ -142,16 +131,17 @@ const server = new Server<TokenPayload & { clientId: string }>({
   },
 });
 
-const ws = crossws(
-  tokenAuthenticatedWebsocketHandler({
+const ws = crossws({
+  hooks: tokenAuthenticatedWebsocketHandler({
     server,
     tokenManager,
   }),
-);
+});
 
-const healthHandler = getHealthHandler(server);
-const metricsHandler = getMetricsHandler(server);
-const statusHandler = getStatusHandler(server);
+const httpHandler = tokenAuthenticatedHTTPHandler({
+  server,
+  tokenManager,
+});
 
 const instance = Bun.serve({
   development: {
@@ -174,19 +164,6 @@ const instance = Bun.serve({
     const pathname = url.pathname;
     const distDir = import.meta.dir + "/../dist";
 
-    // Monitoring endpoints
-    if (pathname === "/health") {
-      return await healthHandler(request);
-    }
-
-    if (pathname === "/metrics") {
-      return await metricsHandler(request);
-    }
-
-    if (pathname === "/status") {
-      return await statusHandler(request);
-    }
-
     // Just serve the index.html file for the root path
     if (pathname === "/") {
       return new Response(Bun.file(distDir + "/index.html"));
@@ -200,8 +177,8 @@ const instance = Bun.serve({
       return new Response(file);
     }
 
-    // Otherwise, just return a 404
-    return new Response("Not Found", { status: 404 });
+    // Otherwise, check if the request is handled by the HTTP handler
+    return httpHandler(request);
   },
 });
 

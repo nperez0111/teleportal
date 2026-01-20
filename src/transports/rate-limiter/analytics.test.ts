@@ -70,7 +70,7 @@ describe("Rate Limit Analytics", () => {
     // Create server with minimal config
     const documentStorage = new YDocStorage();
     server = new Server({
-      getStorage: async () => documentStorage,
+      storage: async () => documentStorage,
     });
   });
 
@@ -125,7 +125,7 @@ describe("Rate Limit Analytics", () => {
     );
 
     const writer2 = rateLimitedTransport.writable.getWriter();
-    
+
     // First message consumed the token, so second should be rate limited
     try {
       await writer2.write(message2);

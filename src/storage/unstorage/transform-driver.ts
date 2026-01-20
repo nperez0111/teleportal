@@ -1,5 +1,5 @@
+import type { Driver, StorageValue } from "unstorage";
 import { defineDriver } from "unstorage";
-import type { Driver, StorageMeta, StorageValue } from "unstorage";
 
 export interface TransformDriverOptions {
   driver: Driver;

@@ -121,7 +121,7 @@ const DEFAULT_MAX_BACKOFF_TIME = 30_000;
 const DEFAULT_MESSAGE_RECONNECT_TIMEOUT = 30_000;
 
 export abstract class Connection<
-  Context extends ConnectionContext,
+  Context extends ConnectionContext = any,
 > extends Observable<{
   update: (state: ConnectionState<Context>) => void;
   connected: () => void;

@@ -5,14 +5,11 @@ import { createStorage } from "unstorage";
 // @ts-ignore - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
 
-import { Server } from "teleportal/server";
+import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import { UnstorageEncryptedDocumentStorage } from "teleportal/storage";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
-import {
-  checkPermissionWithTokenManager,
-  createTokenManager,
-} from "teleportal/token";
+import { createTokenManager } from "teleportal/token";
 import homepage from "../src/index.html";
 
 const db = createDatabase(
@@ -35,7 +32,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     return new UnstorageEncryptedDocumentStorage(storage, {
       keyPrefix: "document",
     });
@@ -43,12 +40,12 @@ const server = new Server({
   checkPermission: checkPermissionWithTokenManager(tokenManager),
 });
 
-const ws = crossws(
-  tokenAuthenticatedWebsocketHandler({
+const ws = crossws({
+  hooks: tokenAuthenticatedWebsocketHandler({
     server,
     tokenManager,
   }),
-);
+});
 
 Bun.serve({
   routes: {

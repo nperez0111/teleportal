@@ -77,7 +77,11 @@ async function processRpcMessage(
     // Send response
     const responsePayload =
       (result.response as { type?: string }).type === "error"
-        ? (result.response as { type: "error"; statusCode: number; details: string })
+        ? (result.response as {
+            type: "error";
+            statusCode: number;
+            details: string;
+          })
         : { type: "success" as const, payload: result.response };
 
     await sendMessage(
@@ -225,7 +229,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
       // Use Provider with rpcHandlers instead of withSendFile
       const provider = await Provider.create({
-        client,
+        connection: client,
         document: "test-doc",
         rpcHandlers: {
           ...getFileClientHandlers(),
@@ -331,7 +335,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
       // Use Provider with rpcHandlers instead of withSendFile
       const provider = await Provider.create({
-        client,
+        connection: client,
         document: "test-doc",
         rpcHandlers: {
           ...getFileClientHandlers(),
@@ -430,7 +434,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
       // Use Provider with rpcHandlers instead of withSendFile
       const provider = await Provider.create({
-        client,
+        connection: client,
         document: "test-doc",
         rpcHandlers: {
           ...getFileClientHandlers(),
@@ -438,10 +442,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       });
 
       // Upload file
-      const fileId = await provider.uploadFile(
-        file,
-        "test-file-id",
-      );
+      const fileId = await provider.uploadFile(file, "test-file-id");
 
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);

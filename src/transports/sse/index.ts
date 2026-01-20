@@ -95,7 +95,7 @@ export function getSSESource<Context extends ClientContext>({
   Context,
   {
     /**
-     * The first message an SSE sends is it's {@link ClientContext.clientId},
+     * The first message an SSE sends is it's {@link ClientContext['clientId']},
      * so this tells you that the SSE is ready and can be used.
      */
     clientId: Promise<string>;

@@ -77,7 +77,11 @@ async function processRpcMessage(
     // Send response
     const responsePayload =
       (result.response as { type?: string }).type === "error"
-        ? (result.response as { type: "error"; statusCode: number; details: string })
+        ? (result.response as {
+            type: "error";
+            statusCode: number;
+            details: string;
+          })
         : { type: "success" as const, payload: result.response };
 
     await sendMessage(
@@ -1240,7 +1244,10 @@ describe("HttpConnection with MSW", () => {
           } catch (err) {
             // Return error response
             return HttpResponse.json(
-              { error: "Failed to process message", details: (err as Error).message },
+              {
+                error: "Failed to process message",
+                details: (err as Error).message,
+              },
               { status: 500 },
             );
           }
@@ -1288,17 +1295,14 @@ describe("HttpConnection with MSW", () => {
 
       // Use Provider with rpcHandlers instead of withSendFile
       const provider = await Provider.create({
-        client,
+        connection: client,
         document: "test-doc",
         rpcHandlers: {
           ...getFileClientHandlers(),
         },
       });
 
-      const fileId = await provider.uploadFile(
-        file,
-        "test-file-id",
-      );
+      const fileId = await provider.uploadFile(file, "test-file-id");
 
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
@@ -1362,9 +1366,7 @@ describe("HttpConnection with MSW", () => {
                           listenerReady = true;
                           break;
                         }
-                        await new Promise((resolve) =>
-                          setTimeout(resolve, 10),
-                        );
+                        await new Promise((resolve) => setTimeout(resolve, 10));
                       }
                       if (listenerReady) {
                         const encoded = toBase64(response.encoded);
@@ -1383,7 +1385,10 @@ describe("HttpConnection with MSW", () => {
             return HttpResponse.json({ success: true });
           } catch (err) {
             return HttpResponse.json(
-              { error: "Failed to process message", details: (err as Error).message },
+              {
+                error: "Failed to process message",
+                details: (err as Error).message,
+              },
               { status: 500 },
             );
           }
@@ -1432,17 +1437,14 @@ describe("HttpConnection with MSW", () => {
 
       // Use Provider with rpcHandlers instead of withSendFile
       const provider = await Provider.create({
-        client,
+        connection: client,
         document: "test-doc",
         rpcHandlers: {
           ...getFileClientHandlers(),
         },
       });
 
-      const fileId = await provider.uploadFile(
-        file,
-        "test-large-file-id",
-      );
+      const fileId = await provider.uploadFile(file, "test-large-file-id");
 
       // wait for the storage to be updated with retries (longer wait for large files)
       let storedFile = await fileStorage.getFile(fileId);
@@ -1577,7 +1579,7 @@ describe("HttpConnection with MSW", () => {
 
       // Use Provider with rpcHandlers instead of withSendFile
       const provider = await Provider.create({
-        client,
+        connection: client,
         document: "test-doc",
         rpcHandlers: {
           ...getFileClientHandlers(),
@@ -1585,10 +1587,7 @@ describe("HttpConnection with MSW", () => {
       });
 
       // Upload file
-      const fileId = await provider.uploadFile(
-        file,
-        "test-file-id",
-      );
+      const fileId = await provider.uploadFile(file, "test-file-id");
 
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);

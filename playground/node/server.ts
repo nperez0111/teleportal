@@ -6,13 +6,10 @@ import { createStorage } from "unstorage";
 // @ts-ignore - unstorage driver types can't be resolved via exports but work at runtime
 import dbDriver from "unstorage/drivers/db0";
 import type { ServerContext } from "teleportal";
-import { Server } from "teleportal/server";
+import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import { UnstorageDocumentStorage } from "teleportal/storage";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
-import {
-  checkPermissionWithTokenManager,
-  createTokenManager,
-} from "teleportal/token";
+import { createTokenManager } from "teleportal/token";
 
 const db = createDatabase(
   sqlite({
@@ -34,7 +31,7 @@ const tokenManager = createTokenManager({
 });
 
 const serverInstance = new Server({
-  getStorage: async (ctx: {
+  storage: async (ctx: {
     documentId: string;
     context: ServerContext;
     encrypted: boolean;
@@ -47,12 +44,12 @@ const serverInstance = new Server({
   checkPermission: checkPermissionWithTokenManager(tokenManager) as any,
 });
 
-const ws = crossws(
-  tokenAuthenticatedWebsocketHandler({
+const ws = crossws({
+  hooks: tokenAuthenticatedWebsocketHandler({
     server: serverInstance as any,
     tokenManager: tokenManager as any,
   }),
-);
+});
 
 const server = createServer(async (req, res) => {
   res.end("");
