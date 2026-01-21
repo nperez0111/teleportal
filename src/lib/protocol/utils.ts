@@ -1,4 +1,5 @@
 import type { StateVector, SyncStep2Update, Update } from "teleportal/protocol";
+import * as Y from "yjs";
 
 /**
  * An empty Update for use as a placeholder.
@@ -43,4 +44,38 @@ export function isEmptySyncStep2(syncStep2: SyncStep2Update): boolean {
  */
 export function isEmptyStateVector(stateVector: StateVector): boolean {
   return stateVector[0] === 0 && stateVector.length === 1;
+}
+
+/**
+ * Encodes a Y.js update(s) into a state vector.
+ * @param update - The update(s) to get the state vector from.
+ * @returns The state vector of the update(s).
+ */
+export function getStateVectorFromUpdate(
+  update: Update | Update[],
+): StateVector {
+  if (Array.isArray(update)) {
+    return Y.encodeStateVectorFromUpdateV2(
+      Y.mergeUpdatesV2(update),
+    ) as StateVector;
+  }
+  return Y.encodeStateVectorFromUpdateV2(update) as StateVector;
+}
+
+/**
+ * Encodes a Y.js document into a Y.js update.
+ * @param doc - The document to encode.
+ * @returns The update of the document.
+ */
+export function getUpdateFromDoc(doc: Y.Doc): Update {
+  return Y.encodeStateAsUpdateV2(doc) as Update;
+}
+
+/**
+ * Merges a list of updates into a single update.
+ * @param updates - The updates to merge.
+ * @returns The merged update.
+ */
+export function mergeUpdates(updates: Update[]): Update {
+  return Y.mergeUpdatesV2(updates) as Update;
 }

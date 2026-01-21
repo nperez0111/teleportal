@@ -1,6 +1,10 @@
 import * as Y from "yjs";
 
-import type { StateVector, Update } from "teleportal";
+import {
+  getStateVectorFromUpdate,
+  getUpdateFromDoc,
+  type Update,
+} from "teleportal";
 import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
 import type { Document, DocumentMetadata } from "../types";
@@ -26,7 +30,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
 
     await this.transaction(key, async () => {
       const meta = await this.getDocumentMetadata(key);
-      const fullUpdate = Y.encodeStateAsUpdateV2(doc);
+      const fullUpdate = getUpdateFromDoc(doc);
       const sizeBytes = calculateDocumentSize(fullUpdate as Update);
       await this.writeDocumentMetadata(key, {
         ...meta,
@@ -43,7 +47,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     const doc = YDocStorage.docs.get(key) ?? new Y.Doc();
 
     YDocStorage.docs.set(key, doc);
-    const update = Y.encodeStateAsUpdateV2(doc) as Update;
+    const update = getUpdateFromDoc(doc);
     const metadata = await this.getDocumentMetadata(key);
 
     return {
@@ -51,7 +55,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
       metadata,
       content: {
         update,
-        stateVector: Y.encodeStateVectorFromUpdateV2(update) as StateVector,
+        stateVector: getStateVectorFromUpdate(update),
       },
     };
   }

@@ -1,11 +1,14 @@
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
-import * as Y from "yjs";
 
-import { type StateVector, type Update } from "teleportal";
-import { calculateDocumentSize } from "../utils";
-import { UnencryptedDocumentStorage } from "../unencrypted";
+import {
+  getStateVectorFromUpdate,
+  mergeUpdates,
+  type Update,
+} from "teleportal";
 import type { Document, DocumentMetadata } from "../types";
+import { UnencryptedDocumentStorage } from "../unencrypted";
+import { calculateDocumentSize } from "../utils";
 import { withTransaction } from "./transaction";
 
 /**
@@ -112,7 +115,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       return null;
     }
 
-    const stateVector = Y.encodeStateVectorFromUpdateV2(update) as StateVector;
+    const stateVector = getStateVectorFromUpdate(update);
     const metadata = await this.getDocumentMetadata(key);
 
     return {
@@ -142,7 +145,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       return await this.storage.getItemRaw([...keys][0]);
     }
 
-    const update = Y.mergeUpdatesV2(
+    const update = mergeUpdates(
       // TODO little naive, but it's ok for now
       (
         await Promise.all([...keys].map((key) => this.storage.getItemRaw(key)))
