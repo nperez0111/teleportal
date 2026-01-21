@@ -12,7 +12,7 @@ import type {
   DocumentStorage,
 } from "teleportal/storage";
 import { Server } from "../server/server";
-import { getHTTPHandler } from "./server";
+import { getHTTPHandlers } from "./server";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage implements DocumentStorage {
@@ -135,7 +135,7 @@ describe("getHTTPHandler", () => {
       pubSub,
     });
 
-    handler = getHTTPHandler({
+    handler = getHTTPHandlers({
       server,
       getContext: mockGetContext,
     });
@@ -262,7 +262,7 @@ describe("getHTTPHandler", () => {
         { document: "custom-doc", encrypted: false },
       ];
 
-      const handlerWithInitialDocs = getHTTPHandler({
+      const handlerWithInitialDocs = getHTTPHandlers({
         server,
         getContext: mockGetContext,
         getInitialDocuments: customGetInitialDocuments,
@@ -288,7 +288,7 @@ describe("getHTTPHandler", () => {
     });
 
     it("should work without getInitialDocuments", async () => {
-      const handlerWithoutInitialDocs = getHTTPHandler({
+      const handlerWithoutInitialDocs = getHTTPHandlers({
         server,
         getContext: mockGetContext,
       });
@@ -309,7 +309,7 @@ describe("getHTTPHandler", () => {
         throw new Error("Context error");
       };
 
-      const errorHandler = getHTTPHandler({
+      const errorHandler = getHTTPHandlers({
         server,
         getContext: errorGetContext,
       });

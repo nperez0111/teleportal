@@ -38,7 +38,9 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
   /**
    * A function that extracts the context from the request.
    */
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (
+    request: Request,
+  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   /**
    * Callback function to extract documents to subscribe to from the request with optional encryption flag.
    *
@@ -159,7 +161,9 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
   ackTimeout = 5000,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (
+    request: Request,
+  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   /**
    * Timeout in milliseconds for waiting for ACKs.
    * @default 5000 (5 seconds)
@@ -277,7 +281,9 @@ export function getHTTPEndpoint<Context extends ServerContext>({
   getContext,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (
+    request: Request,
+  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
 }) {
   const baseLogger = getLogger(["teleportal", "http", "http-endpoint"]);
 

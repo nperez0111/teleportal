@@ -1,15 +1,15 @@
+import { getLogger } from "@logtape/logtape";
 import type * as crossws from "crossws";
 
 import {
   type BinaryMessage,
-  type ServerContext,
   type BinaryTransport,
   isBinaryMessage,
+  type ServerContext,
 } from "teleportal";
-import { fromBinaryTransport } from "../transports/utils";
-import type { Server } from "teleportal/server";
+import type { Client, Server } from "teleportal/server";
 import type { TokenManager } from "teleportal/token";
-import { getLogger } from "@logtape/logtape";
+import { fromBinaryTransport } from "teleportal/transports";
 import { toErrorDetails } from "../logging";
 
 declare module "crossws" {
@@ -19,6 +19,7 @@ declare module "crossws" {
     clientId: string;
     transport: BinaryTransport;
     writer: WritableStreamDefaultWriter<BinaryMessage>;
+    client: Client<ServerContext>;
   }
 }
 
@@ -28,28 +29,28 @@ declare module "crossws" {
  *
  * By not bundling the {@link crossws} library, we can not have to install it
  */
-export function getWebsocketHandlers<
-  T extends Pick<crossws.PeerContext, "room" | "userId">,
->({
+export function getWebsocketHandlers<T extends ServerContext>({
+  server,
   onUpgrade,
   onConnect,
   onDisconnect,
   onMessage,
 }: {
+  server: Server<T>;
   /**
    * Called when a client is attempting to upgrade to a websocket connection.
    *
    * @note You can reject the upgrade by throwing a {@link Response} object.
    */
   onUpgrade: (request: Request) => Promise<{
-    context: T;
+    context: Omit<T, "clientId">;
     headers?: Record<string, string>;
   }>;
   /**
    * Called when a client has connected to the server.
    */
   onConnect?: (ctx: {
-    transport: BinaryTransport;
+    client: Client<T>;
     context: T;
     id: string;
     peer: crossws.Peer;
@@ -58,7 +59,7 @@ export function getWebsocketHandlers<
    * Called when a client has disconnected from the server.
    */
   onDisconnect?: (ctx: {
-    transport: BinaryTransport;
+    client: Client<T>;
     context: T;
     id: string;
     peer: crossws.Peer;
@@ -67,6 +68,7 @@ export function getWebsocketHandlers<
    * Called when a client has sent a message to the server.
    */
   onMessage?: (ctx: {
+    client: Client<T>;
     message: BinaryMessage;
     peer: crossws.Peer;
   }) => void | Promise<void>;
@@ -86,6 +88,7 @@ export function getWebsocketHandlers<
             clientId: "upgrade",
             transport: {} as any,
             writer: {} as any,
+            client: {} as Client<ServerContext>,
           },
           headers: {
             "x-powered-by": "teleportal",
@@ -123,10 +126,17 @@ export function getWebsocketHandlers<
           },
         }),
       };
-
       try {
+        peer.context.client = await server.createClient({
+          transport: fromBinaryTransport(
+            peer.context.transport,
+            Object.assign({ clientId: peer.id }, peer.context) as unknown as T,
+          ),
+          id: peer.id,
+        });
+
         await onConnect?.({
-          transport: peer.context.transport,
+          client: peer.context.client as unknown as Client<T>,
           context: peer.context as any,
           id: peer.id,
           peer,
@@ -147,24 +157,30 @@ export function getWebsocketHandlers<
       }
       try {
         await onMessage?.({
+          client: peer.context.client as unknown as Client<T>,
           message,
           peer,
         });
         await peer.context.writer.ready;
         await peer.context.writer.write(message);
       } catch (err) {
-        new Error("Failed to write message", { cause: { err: err } });
+        logger
+          .with(toErrorDetails(err))
+          .with({ clientId: peer.id, messageId: msg.id })
+          .error("failed to write message");
       }
     },
     async close(peer) {
       logger.with({ clientId: peer.id }).info("close websocket connection");
-      await onDisconnect?.({
-        transport: peer.context.transport,
-        context: peer.context as any,
-        id: peer.id,
-        peer,
-      });
+
       try {
+        await onDisconnect?.({
+          client: peer.context.client as unknown as Client<T>,
+          context: peer.context as any,
+          id: peer.id,
+          peer,
+        });
+        await server.disconnectClient(peer.id);
         await peer.context.writer.close();
       } catch {
         // no-op
@@ -216,9 +232,10 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
 }: {
   server: Server<T>;
   tokenManager: TokenManager;
-  hooks?: Partial<Parameters<typeof getWebsocketHandlers>[0]>;
+  hooks?: Partial<Omit<Parameters<typeof getWebsocketHandlers>[0], "server">>;
 }) {
-  return getWebsocketHandlers({
+  return getWebsocketHandlers<T>({
+    server,
     onUpgrade: async (request) => {
       const url = new URL(request.url);
       const token = url.searchParams.get("token");
@@ -230,25 +247,11 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
 
       await hooks.onUpgrade?.(request);
       return {
-        context: result.payload as unknown as Omit<T, "clientId">,
+        context: result.payload as T,
       };
     },
-    onConnect: async (ctx) => {
-      await hooks.onConnect?.(ctx);
-      await server.createClient({
-        transport: fromBinaryTransport(
-          ctx.transport,
-          Object.assign({ clientId: ctx.id }, ctx.context) as T,
-        ),
-        id: ctx.id,
-      });
-    },
-    onDisconnect: async (ctx) => {
-      await hooks.onDisconnect?.(ctx);
-      await server.disconnectClient(ctx.id);
-    },
-    onMessage: async (ctx) => {
-      await hooks.onMessage?.(ctx);
-    },
+    onConnect: hooks.onConnect,
+    onDisconnect: hooks.onDisconnect,
+    onMessage: hooks.onMessage,
   });
 }

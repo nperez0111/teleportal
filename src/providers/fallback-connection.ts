@@ -84,12 +84,18 @@ export class FallbackConnection extends Connection<FallbackContext> {
 
   private getWebSocketUrl(baseUrl: string): string {
     const url = new URL(baseUrl);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    if (url.protocol.startsWith("http")) {
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    }
     return url.toString();
   }
 
   private getHttpUrl(baseUrl: string): string {
-    return new URL(baseUrl).toString();
+    const url = new URL(baseUrl);
+    if (url.protocol.startsWith("ws")) {
+      url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+    }
+    return url.toString();
   }
 
   protected async initConnection(): Promise<void> {

@@ -23,13 +23,15 @@ import { TokenManager } from "teleportal/token";
  *
  * @note if a request is not handled by any of the above endpoints, a `404` response is returned.
  */
-export function getHTTPHandler<Context extends ServerContext>({
+export function getHTTPHandlers<Context extends ServerContext>({
   server,
   getContext,
   getInitialDocuments,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (
+    request: Request,
+  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   getInitialDocuments?: (
     request: Request,
   ) => { document: string; encrypted?: boolean }[];
@@ -80,7 +82,7 @@ export function getHTTPHandler<Context extends ServerContext>({
 }
 
 /**
- * Creates an instance of {@link getHTTPHandler} that is token authenticated.
+ * Creates an instance of {@link getHTTPHandlers} that is token authenticated.
  *
  * It extracts the token from the `Authorization` header (or `token` query parameter) and verifies it using the {@link TokenManager}.
  * If the token is invalid, a `401` response is returned.
@@ -111,7 +113,7 @@ export function tokenAuthenticatedHTTPHandler({
   server: Server<ServerContext>;
   tokenManager: TokenManager;
 }) {
-  return getHTTPHandler({
+  return getHTTPHandlers({
     server,
     getContext: async (request) => {
       const token =
