@@ -6,10 +6,11 @@ WORKDIR /usr/src/app
 # install dependencies into temp directory
 # this will cache them and speed up future builds
 FROM base AS release
-RUN mkdir -p playground
+RUN mkdir -p playground docs
+COPY docs/package.json docs/
 COPY playground/package.json playground/
 COPY package.json bun.lock bunfig.toml .
-RUN bun install
+RUN bun install --filter '!docs'
 
 
 COPY . .
