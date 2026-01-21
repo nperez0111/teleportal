@@ -11,23 +11,24 @@ import { ws } from "msw";
 import { setupServer } from "msw/node";
 import {
   ClientContext,
-  Message,
-  ServerContext,
   decodeMessage,
   isBinaryMessage,
+  Message,
   RpcMessage,
+  ServerContext,
 } from "teleportal";
-import { getFileClientHandlers } from "../../protocols/file";
-import { Provider } from "../provider";
-import { WebSocketConnection } from "./connection";
-import { getFileRpcHandlers } from "../../protocols/file";
+import { CHUNK_SIZE } from "teleportal/merkle-tree";
+import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
+import {
+  getFileClientHandlers,
+  getFileRpcHandlers,
+} from "../../protocols/file";
 import type { FilePartStream } from "../../protocols/file/methods";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
 import { YDocStorage } from "../../storage/in-memory/ydoc";
-import { noopTransport, withPassthrough } from "../../transports/passthrough";
-import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
-import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
+import { Provider } from "../provider";
+import { WebSocketConnection } from "./connection";
 
 const wsUrl = "ws://localhost:8080";
 

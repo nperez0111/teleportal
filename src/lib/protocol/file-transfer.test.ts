@@ -1,17 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { fromBase64, toBase64 } from "lib0/buffer";
+import {
+  buildMerkleTree,
+  generateMerkleProof,
+  verifyMerkleProof,
+} from "teleportal/merkle-tree";
+import { RpcMessage } from "teleportal/protocol";
+import type { FilePartStream } from "../../protocols/file/methods";
+import { FileTransferProtocol } from "./file-transfer";
 import { AckMessage, type Message } from "./message-types";
 
 type TestContext = Record<string, unknown>;
-import {
-  buildMerkleTree,
-  CHUNK_SIZE,
-  generateMerkleProof,
-  verifyMerkleProof,
-} from "../merkle-tree/merkle-tree";
-import { FileTransferProtocol } from "./file-transfer";
-import { RpcMessage } from "teleportal/protocol";
-import type { FilePartStream } from "../../protocols/file/methods";
 
 describe("FileTransferProtocol.Client - file-part only", () => {
   it("should handle file-part message", async () => {

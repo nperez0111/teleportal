@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
+import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import { RpcMessage, type RpcSuccess } from "teleportal/protocol";
 import {
   AckMessage,
@@ -21,7 +22,6 @@ import {
   Update,
 } from ".";
 import type { FilePartStream } from "../../protocols/file/methods";
-import { CHUNK_SIZE } from "../merkle-tree/merkle-tree";
 
 describe("can encode and decode", () => {
   it("can encode and decode an awareness update", () => {

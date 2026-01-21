@@ -1,5 +1,5 @@
+import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { Storage } from "unstorage";
-import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import type {
   File,
   FileMetadata,

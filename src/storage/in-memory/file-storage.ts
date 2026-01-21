@@ -1,4 +1,4 @@
-import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
+import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type {
   File,
   FileStorage,
@@ -19,9 +19,7 @@ export class InMemoryFileStorage implements FileStorage {
   temporaryUploadStorage?: TemporaryUploadStorage;
   #files = new Map<string, File>();
 
-  constructor(options?: {
-    temporaryUploadStorage?: TemporaryUploadStorage;
-  }) {
+  constructor(options?: { temporaryUploadStorage?: TemporaryUploadStorage }) {
     this.temporaryUploadStorage = options?.temporaryUploadStorage;
   }
 

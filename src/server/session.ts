@@ -1,29 +1,27 @@
+import { getLogger, Logger } from "@logtape/logtape";
 import {
   decodeMessage,
   DocMessage,
   type Message,
-  type MilestoneSnapshot,
   type PubSub,
   type ServerContext,
   type SyncStep2Update,
   type Update,
 } from "teleportal";
-import * as decoding from "lib0/decoding";
-import type { DocumentStorage } from "teleportal/storage";
-import { TtlDedupe } from "./dedupe";
-import { Client } from "./client";
-import { getLogger, Logger } from "@logtape/logtape";
-import { toErrorDetails } from "../logging";
-import { Observable } from "../lib/utils";
-import type { DocumentMessageSource, SessionEvents } from "./events";
 import type { MetricsCollector } from "teleportal/monitoring";
 import {
   RpcMessage,
-  type RpcHandlerRegistry,
   type RpcError,
-  type RpcSuccess,
+  type RpcHandlerRegistry,
   type RpcServerContext,
+  type RpcSuccess,
 } from "teleportal/protocol";
+import type { DocumentStorage } from "teleportal/storage";
+import { Observable } from "../lib/utils";
+import { toErrorDetails } from "../logging";
+import { Client } from "./client";
+import { TtlDedupe } from "./dedupe";
+import type { DocumentMessageSource, SessionEvents } from "./events";
 import type { Server } from "./server";
 
 export class Session<Context extends ServerContext> extends Observable<

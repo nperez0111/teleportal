@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { createStorage } from "unstorage";
-import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import { toBase64 } from "lib0/buffer";
+import type { StateVector, SyncStep2Update, Update } from "teleportal";
+import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import { createStorage } from "unstorage";
+import type { Document, DocumentMetadata, DocumentStorage } from "../types";
 import { UnstorageFileStorage } from "./file-storage";
 import { UnstorageTemporaryUploadStorage } from "./temporary-upload-storage";
-import type { Document, DocumentMetadata, DocumentStorage } from "../types";
-import type { StateVector, SyncStep2Update, Update } from "teleportal";
 
 describe("UnstorageFileStorage", () => {
   let storage: UnstorageFileStorage;

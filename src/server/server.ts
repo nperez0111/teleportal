@@ -1,3 +1,4 @@
+import { getLogger } from "@logtape/logtape";
 import { uuidv4 } from "lib0/random";
 import {
   AckMessage,
@@ -9,26 +10,28 @@ import {
   type ServerContext,
   Transport,
 } from "teleportal";
-import type { DocumentStorage, MilestoneTrigger } from "teleportal/storage";
-import type { RateLimitStorage } from "teleportal/storage";
+import {
+  HealthStatus,
+  MetricsCollector,
+  StatusData,
+} from "teleportal/monitoring";
+import type { RpcHandlerRegistry } from "teleportal/protocol";
+import type {
+  DocumentStorage,
+  MilestoneTrigger,
+  RateLimitStorage,
+} from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
 import {
   type RateLimitRule,
   withRateLimit,
 } from "teleportal/transports/rate-limiter";
-import { toErrorDetails } from "../logging";
-import { getLogger } from "@logtape/logtape";
-import { register } from "../monitoring/metrics";
-import { Session } from "./session";
-import { Client } from "./client";
-import {
-  HealthStatus,
-  StatusData,
-  MetricsCollector,
-} from "teleportal/monitoring";
 import { Observable } from "../lib/utils";
-import type { ServerEvents, ClientDisconnectReason } from "./events";
-import type { RpcHandlerRegistry } from "teleportal/protocol";
+import { toErrorDetails } from "../logging";
+import { register } from "../monitoring/metrics";
+import { Client } from "./client";
+import type { ClientDisconnectReason, ServerEvents } from "./events";
+import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
   /**

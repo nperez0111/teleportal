@@ -1,10 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
+import { toBase64 } from "lib0/buffer";
+import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
 import { InMemoryFileStorage } from "./file-storage";
 import { InMemoryTemporaryUploadStorage } from "./temporary-upload-storage";
-import { toBase64 } from "lib0/buffer";
-import type { Document, DocumentMetadata, DocumentStorage } from "../types";
-import type { StateVector, SyncStep2Update, Update } from "teleportal";
 
 describe("InMemoryFileStorage", () => {
   it("stores completed files and can retrieve them", async () => {
@@ -281,5 +279,4 @@ describe("InMemoryFileStorage", () => {
       expect(file).toBeNull();
     });
   });
-
 });

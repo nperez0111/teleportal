@@ -1,7 +1,7 @@
-import type { Storage } from "unstorage";
-import type { MerkleTree } from "teleportal/merkle-tree";
-import { buildMerkleTree, CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
 import { toBase64 } from "lib0/buffer";
+import type { MerkleTree } from "teleportal/merkle-tree";
+import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import type { Storage } from "unstorage";
 import type {
   File,
   FileMetadata,

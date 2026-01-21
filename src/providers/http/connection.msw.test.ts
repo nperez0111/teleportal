@@ -27,7 +27,7 @@ import type { FilePartStream } from "../../protocols/file/methods";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
 import { YDocStorage } from "../../storage/in-memory/ydoc";
-import { CHUNK_SIZE } from "../../lib/merkle-tree/merkle-tree";
+import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { ServerContext } from "teleportal";
 import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
 

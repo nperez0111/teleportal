@@ -3,20 +3,20 @@ import { toBase64 } from "lib0/buffer";
 import {
   AckMessage,
   type Message,
-  type ServerContext,
   type RpcServerContext,
+  type ServerContext,
 } from "teleportal";
 import {
   buildMerkleTree,
   CHUNK_SIZE,
   generateMerkleProof,
-} from "../../lib/merkle-tree/merkle-tree";
+} from "teleportal/merkle-tree";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
-import type { DocumentStorage, DocumentMetadata } from "../../storage/types";
 import { YDocStorage } from "../../storage/in-memory/ydoc";
-import { FileHandler } from "./server-handlers";
+import type { DocumentStorage } from "../../storage/types";
 import type { FilePartStream } from "./methods";
+import { FileHandler } from "./server-handlers";
 
 function createMockContext(
   documentId: string,
@@ -99,9 +99,14 @@ describe("FileHandler", () => {
       encrypted: false,
     };
 
-    await fileHandler.handleFilePart(part0, "message-id-0", async (m) => {
-      sent.push(m);
-    }, context);
+    await fileHandler.handleFilePart(
+      part0,
+      "message-id-0",
+      async (m) => {
+        sent.push(m);
+      },
+      context,
+    );
 
     expect(sent.length).toBe(1);
     expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
@@ -122,9 +127,14 @@ describe("FileHandler", () => {
       encrypted: false,
     };
 
-    await fileHandler.handleFilePart(part1, "message-id-1", async (m) => {
-      sent.push(m);
-    }, context);
+    await fileHandler.handleFilePart(
+      part1,
+      "message-id-1",
+      async (m) => {
+        sent.push(m);
+      },
+      context,
+    );
     expect(sent.length).toBe(1);
     expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
 
