@@ -36,5 +36,5 @@
     },
     "jsx": "react-jsx"
   },
-  "include": ["src", "playground", "examples"]
+  "include": ["src", "playground", "examples", "guides"]
 }

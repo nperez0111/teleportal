@@ -1,0 +1,54 @@
+---
+title: Teleportal
+description: "Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport."
+template: splash # Remove or comment out this line to display the site sidebar on this page.
+hero:
+  tagline: The open-source real-time collaborative editing framework for Y.js, so you can sync documents with confidence.
+  image:
+    file: ../../assets/pepper.svg
+  actions:
+    - text: Docs
+      link: /docs/introduction/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/nperez0111/teleportal
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## Features
+
+<CardGrid stagger>
+  <Card title="Collaborative Editing" icon="seti:db">
+    Integrates with any editor supporting Y.js - ProseMirror, Quill, Monaco,
+    BlockNote, Tiptap, and more.
+  </Card>
+  <Card title="Storage Agnostic" icon="seti:db">
+    Use any storage backend - Redis, PostgreSQL, S3, Cloudflare R2, or implement
+    your own. Documents are never stored in-memory, making it perfect for
+    scalable deployments.
+  </Card>
+  <Card title="Transport Flexible" icon="seti:html">
+    Works with WebSockets, HTTP, Server-Sent Events, or any transport that
+    supports bidirectional communication. Built on web-native Streams APIs.
+  </Card>
+  <Card title="Runtime Agnostic" icon="node">
+    Built on web primitives and works on any JavaScript runtime - Node.js, Bun,
+    Deno, or any modern JavaScript environment. It's only plain JavaScript.
+  </Card>
+  <Card title="Modular Architecture" icon="seti:folder">
+    Teleportal is built as a composable set of modules that can be used together
+    to make a complete sync server. Use your own auth, storage, and more.
+  </Card>
+  <Card title="Encryption" icon="seti:lock">
+    Supports end-to-end encryption and encryption at rest. Optional AES-GCM
+    encryption for document updates and file transfers. Includes key management
+    utilities and encrypted transport layers.
+  </Card>
+  <Card title="Monitoring & Observability" icon="information">
+    Built-in Prometheus metrics, health checks, and status endpoints. Track
+    clients, sessions, messages, and performance metrics.
+  </Card>
+</CardGrid>
