@@ -1,0 +1,85 @@
+# Outline
+
+- Getting Started
+  - Show a minimal working example of a server and client, with a simple document sync, with comments explaining what each part does
+  - Link to an integration guide which details how to integrate Teleportal into your application, like decision tree on what you should consider
+    - What database? -> Unstorage, or your own custom storage implementation
+    - What transport? -> Websockets, HTTP, HTTP SSE, your own custom transport implementation
+    - What runtime? -> Node.js, Bun, Deno, Cloudflare Workers, Vercel Edge Functions, Netlify Edge Functions, your own custom runtime implementation
+    - What authentication? -> JWT, your own custom authentication logic
+    - What features do you need? -> Document synchronization, file synchronization, milestone synchronization, your own custom features
+    - How to deploy? -> single-node, multi-node with pubsub (Redis, NATS), multi-node with HTTP (load balancer), your own custom deployment strategy
+    - What monitoring? -> Prometheus, Grafana, your own custom monitoring solution
+    - What logging & tracing? -> logtape docs and adapters
+- What is Teleportal?
+  - Teleportal is a real-time collaborative editing framework built on Y.js. It allows you to sync documents in a conflict-free manner, with support for any storage, transport, and runtime.
+  - Teleportal is designed to be a framework, so you should have all of the tools you need to build a custom deployment strategy based on your needs
+    - Document storage is completely de-coupled from the library, you can store documents in a KV, relational database or even S3, totally up to you
+    - Transport is completely de-coupled from the library, you can use Websockets, HTTP, HTTP SSE, or any other transport that supports bidirectional communication
+    - Built on web primitives, everything should work on any JavaScript runtime, with minimal dependencies
+    - Scalable, horizontally or vertically, by de-coupling storage from compute, and pub-sub to coordinate the gaps
+    - Modular, you can use only the parts you need, and compose them together to build your own custom solution
+    - Flexible, you can use your own authentication logic, storage backend, transport layer, and more
+    - Easy to use & extend, with a simple API and a focus on developer experience
+
+- Core Concepts
+  - Protocol
+    - How the protocol works: sync-step1, sync-step2, update, awareness, ACKs, ping/pong with mermaid diagrams
+    - The protocol is extendable with RPC messages (API not finalized, yet)
+  - Server
+    - Connects clients to documents through shared sessions
+    - pub-sub, to share messages between server instances
+    - abstract storage implementation for switching out storage providers
+    - documents do not have to be kept in-memory, they can purely operate out of storage for scaling
+    - observability (prometheus metrics), logging, tracing, health checks
+    - per-message authentication, read-only vs. read-write, use your own auth logic, or use our built-in JWT token authentication
+  - Transport
+    - Designed after the WebTransport API, for bi-directional communication, but can use any transport method, HTTP, HTTP SSE, WebSockets are implemented
+    - Based on the streams API allowing efficient message handling and transformations over the same pipe
+    - The server's perspective is `{readable: messagesFromClient, writable: messagesToClient }` and the client's perspective is `{readable: messagesFromTheServer, writable: messagesToServer }`
+    - There are a number of implemented transports, like:
+      - rate limiting
+      - message encryption
+      - sending/receiving to/from pub-sub (in-memory, Redis, NATS)
+      - message validation (permission checks)
+      - logging
+      - (skip others they are experimental)
+  - Provider
+    - The client to the server, it holds the currently open ydoc in-memory
+    - Can open multiple documents, it will re-use the same Connection
+    - Supports Y.js sub-documents, and properly lets the ydoc know that it is synced
+    - Connection types:
+      - Websocket: the default connection type, sends & receives all messages over the websocket protocol
+      - HTTP: a fallback for when websockets don't work (some corporate networks), utilizes HTTP POSTs for writes and a long-running HTTP SSE connection for reads
+      - Fallback: will attempt to connection over one connection type, then fallback to another if it fails (while still attempting to re-dial in the background if possible to upgrade to the preferred connection type)
+  - Milestones
+    - Is a document snapshot as the client saw the document at a point in time
+    - Stored separately from the document as a sort of version history, that can be pulled back over the network again
+    - Is an example of the RPC system, which adds custom messages & handlers for custom operations over the transport layer in-protocol
+  - Authentication
+    - The general model for authentication is to issue a JWT token which is signed by the server, and it should contain the user's ID, their room/organization ID, and the document access patterns and permissions to documents
+    - The token is then checked on every message received, which is why it should be lightweight and fast to verify against
+    - We implement a TokenManager which helps with this, and it should be flexible enough to be used in a variety of ways, feel free to sub-class it to add your own custom logic
+
+- Guides
+  - Each guide in `/guides` should be described in an .mdx files in the docs/guides folder, with more explanation about how to set things up and how it works.
+
+- Advanced
+  - Devtools
+    - Visualize the message flow & inspect the message contents in real-time
+  - Custom Storage
+    - Guide on how to implement a custom document storage backend
+  - Custom Transport
+    - Guide on how to implement a custom transport layer
+  - Performance
+    - Rate limiting
+    - VirtualStorage for in-memory buffering of writes to the storage backend
+  - Scaling
+    - Single-node
+    - Multi-node with pubsub (Redis, NATS)
+      - The purpose of the pubsub broker is to coordinate messages between server instances, so that multiple servers can operate on the same document simultaneously
+      - In some cases, this may put pressure on the pubsub broker, which can be mitigated by co-locating users onto the same server instances, please reach out to us if you need help with this
+    - Your own custom deployment strategy based on your needs
+      - After-all, Teleportal is a framework, so you should have all of the tools you need to build a custom deployment strategy based on your needs
+  - Protocol
+    - Specification on how the protocol works, sync-step1, sync-step2, update, awareness, ACKs, ping/pong with mermaid diagrams

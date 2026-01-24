@@ -3,7 +3,7 @@ title: Teleportal
 description: "Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport."
 template: splash # Remove or comment out this line to display the site sidebar on this page.
 hero:
-  tagline: The open-source real-time collaborative editing framework for Y.js, so you can sync documents with confidence.
+  tagline: Real-time collaborative editing framework for Y.js <br/>Sync documents with confidence.
   image:
     file: ../../assets/pepper.svg
   actions:
@@ -14,12 +14,19 @@ hero:
       link: https://github.com/nperez0111/teleportal
       icon: external
       variant: minimal
----
 
+banner:
+    content: |
+      See our talk at <a href="https://openlocalfirst.org/schedules/#13-teleportal"><b>FOSDEM 2026</b></a>! 🚀
+
+---
+import CardHover from "../../components/CardHover.astro";
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
 ## Features
 
+<CardHover />
+<div class="card-cnt">
 <CardGrid stagger>
   <Card title="Collaborative Editing" icon="seti:db">
     Integrates with any editor supporting Y.js - ProseMirror, Quill, Monaco,
@@ -52,3 +59,11 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
     clients, sessions, messages, and performance metrics.
   </Card>
 </CardGrid>
+</div>
+
+
+<div class="hero-code">
+    <h2 class="head">The Collaborative Editing Framework</h2>
+
+Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.
+</div>

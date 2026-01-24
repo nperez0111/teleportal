@@ -1,0 +1,16 @@
+---
+// CardHover.astro - Adds mouse tracking hover effects to cards
+---
+
+<script>
+  const cards: NodeListOf<HTMLDivElement> = document.querySelectorAll(".card");
+  console.log(cards);
+  for (const card of cards) {
+    card.addEventListener("mousemove", (e: MouseEvent) => {
+      const x = e.pageX - card.offsetLeft;
+      const y = e.pageY - card.offsetTop;
+      card.style.setProperty("--x", `${x}px`);
+      card.style.setProperty("--y", `${y}px`);
+    });
+  }
+</script>
