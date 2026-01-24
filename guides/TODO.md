@@ -8,4 +8,3 @@
 - [ ] Providers
   - [ ] Connections
 - [ ] HTTP-only
-- [ ] Rate limiting
