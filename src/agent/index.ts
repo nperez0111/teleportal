@@ -60,7 +60,8 @@ export class Agent {
     return {
       ydoc: transport.ydoc,
       awareness: transport.awareness,
-      clientId: client.id,
+      client,
+      session,
       [Symbol.asyncDispose]: async (): Promise<void> => {
         session.removeClient(client);
         transport.ydoc.destroy();

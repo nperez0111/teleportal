@@ -1,4 +1,4 @@
-import type { ServerContext } from "teleportal";
+import type { Message, ServerContext } from "teleportal";
 import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
@@ -230,12 +230,7 @@ export type ServerEvents<Context extends ServerContext = ServerContext> = {
    */
   "client-message": (data: {
     clientId: string;
-    messageId: string;
-    documentId: string | undefined;
-    messageType: string;
-    payloadType: string | undefined;
-    encrypted: boolean;
-    context: Context;
+    message: Message<Context>;
     direction: ClientMessageDirection;
     error?: string;
   }) => void;

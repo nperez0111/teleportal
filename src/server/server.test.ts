@@ -2162,8 +2162,8 @@ describe("Server", () => {
       const inboundMessages = events.filter((e) => e.direction === "in");
       expect(inboundMessages.length).toBeGreaterThan(0);
       expect(inboundMessages[0].clientId).toBe("msg-test-client");
-      expect(inboundMessages[0].messageType).toBe("doc");
-      expect(inboundMessages[0].documentId).toBe("msg-test-doc");
+      expect(inboundMessages[0].message.type).toBe("doc");
+      expect(inboundMessages[0].message.document).toBe("msg-test-doc");
 
       transport.closeReadable();
     });

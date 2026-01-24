@@ -62,7 +62,7 @@ describe("Agent", () => {
       expect(result).toBeDefined();
       expect(result.ydoc).toBeInstanceOf(Y.Doc);
       expect(result.awareness).toBeInstanceOf(Awareness);
-      expect(result.clientId).toBe("test-client");
+      expect(result.client.id).toBe("test-client");
       expect(typeof result[Symbol.asyncDispose]).toBe("function");
 
       // Clean up
@@ -80,7 +80,7 @@ describe("Agent", () => {
         encrypted: false,
       });
 
-      expect(result.clientId).toBe("custom-client-id");
+      expect(result.client.id).toBe("custom-client-id");
 
       await result[Symbol.asyncDispose]();
     }, 15000);
@@ -180,7 +180,7 @@ describe("Agent", () => {
         encrypted: false,
       });
 
-      const clientId = result.clientId;
+      const clientId = result.client.id;
       const session = await server.getOrOpenSession("destroy-test-doc", {
         encrypted: false,
         context: {
@@ -215,8 +215,8 @@ describe("Agent", () => {
 
       expect(agent1.ydoc).toBeDefined();
       expect(agent2.ydoc).toBeDefined();
-      expect(agent1.clientId).toBe("client-1");
-      expect(agent2.clientId).toBe("client-2");
+      expect(agent1.client.id).toBe("client-1");
+      expect(agent2.client.id).toBe("client-2");
 
       await agent1[Symbol.asyncDispose]();
       await agent2[Symbol.asyncDispose]();

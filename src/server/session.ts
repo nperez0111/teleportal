@@ -288,10 +288,10 @@ export class Session<Context extends ServerContext> extends Observable<
    */
   removeClient(clientId: string | Client<Context>) {
     const id = typeof clientId === "string" ? clientId : clientId.id;
-    const hadClient = this.#clients.has(id);
+    const client = this.#clients.get(id);
     this.#clients.delete(id);
 
-    if (hadClient) {
+    if (client) {
       this.call("client-leave", {
         clientId: id,
         documentId: this.documentId,
@@ -312,6 +312,8 @@ export class Session<Context extends ServerContext> extends Observable<
       if (this.#clients.size === 0) {
         this.#scheduleCleanup();
       }
+
+      client.destroy();
     }
   }
 

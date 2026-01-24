@@ -31,6 +31,10 @@ class MockClient<Context extends ServerContext> {
     this.mockSend = true;
     this.sentMessages.push(message);
   }
+
+  destroy() {
+    // No-op for tests
+  }
 }
 
 // Mock DocumentStorage for testing

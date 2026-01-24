@@ -1,6 +1,7 @@
 import type { ServerContext, Message } from "teleportal";
 import { toErrorDetails } from "../logging";
 import { getLogger } from "@logtape/logtape";
+import { Observable } from "../lib/utils";
 
 type QueuedSend<Context extends ServerContext> = {
   message: Message<Context>;
@@ -8,7 +9,13 @@ type QueuedSend<Context extends ServerContext> = {
   reject: (error: Error) => void;
 };
 
-export class Client<Context extends ServerContext> {
+export class Client<Context extends ServerContext> extends Observable<{
+  "client-message": (ctx: {
+    clientId: string;
+    message: Message<Context>;
+    direction: "out";
+  }) => void;
+}> {
   /**
    * The ID of the client.
    */
@@ -21,6 +28,7 @@ export class Client<Context extends ServerContext> {
     id: string;
     writable: WritableStream<Message<Context>>;
   }) {
+    super();
     this.id = args.id;
     this.#writable = args.writable;
 
@@ -38,6 +46,11 @@ export class Client<Context extends ServerContext> {
    * @returns A promise that resolves when the message is sent.
    */
   async send(message: Message<Context>): Promise<void> {
+    this.call("client-message", {
+      clientId: this.id,
+      message,
+      direction: "out",
+    });
     return new Promise((resolve, reject) => {
       this.#sendQueue.push({ message, resolve, reject });
       this.#processQueue();

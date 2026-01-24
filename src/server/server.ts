@@ -608,6 +608,10 @@ export class Server<Context extends ServerContext> extends Observable<
       writable: rateLimitedTransport.writable,
     });
 
+    client.on("client-message", (ctx) => {
+      this.call("client-message", ctx);
+    });
+
     withMessageValidator(rateLimitedTransport, {
       isAuthorized: async (message, type) => {
         if (!this.#options.checkPermission) {
@@ -805,12 +809,7 @@ export class Server<Context extends ServerContext> extends Observable<
               // Emit client-message event for metrics/webhooks
               this.call("client-message", {
                 clientId: client.id,
-                messageId: message.id,
-                documentId: message.document,
-                messageType: message.type,
-                payloadType: (message as any).payload?.type,
-                encrypted: message.encrypted,
-                context: message.context,
+                message,
                 direction: "in",
               });
 
