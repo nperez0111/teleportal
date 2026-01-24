@@ -1,0 +1,88 @@
+---
+title: Fallback Connection
+description: Automatic fallback from WebSocket to HTTP when WebSocket fails
+---
+
+This guide demonstrates a Teleportal server that supports both WebSocket and HTTP transports, with the client automatically falling back to HTTP if WebSocket connection fails.
+
+This is the recommended way to set up a Teleportal server, as it provides the best compatibility with different client environments.
+
+## What it demonstrates
+
+- Setting up a Teleportal server that supports both WebSocket and HTTP transports
+- Client-side automatic fallback from WebSocket to HTTP transport
+- Using the `connectionType` property to determine which transport is active
+
+## Server Setup
+
+The server supports both WebSocket and HTTP:
+
+```typescript
+import { serve } from "crossws/server";
+import { Server } from "teleportal/server";
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+import { getHttpHandlers } from "teleportal/http";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Your storage implementation
+    return documentStorage;
+  },
+});
+
+// WebSocket handlers
+const wsHandlers = getWebsocketHandlers({
+  server,
+  onUpgrade: async () => {
+    return {
+      context: { userId: "user-123" },
+    };
+  },
+});
+
+// HTTP handlers
+const httpHandlers = getHttpHandlers({
+  server,
+  onConnect: async (request) => {
+    return {
+      context: { userId: "user-123" },
+    };
+  },
+});
+
+serve({
+  websocket: wsHandlers,
+  fetch: httpHandlers,
+});
+```
+
+## Client Setup
+
+The `Provider` automatically uses fallback connection:
+
+```typescript
+import { Provider } from "teleportal/providers";
+
+// Provider automatically tries WebSocket first, falls back to HTTP
+const provider = await Provider.create({
+  url: "wss://example.com", // Tries WebSocket first
+  document: "my-document",
+});
+
+// Check which connection type is active
+console.log(provider.connectionType); // "websocket" | "http" | null
+
+await provider.synced;
+```
+
+## How It Works
+
+1. **Initial Attempt**: Provider tries to connect via WebSocket
+2. **Fallback**: If WebSocket fails, automatically falls back to HTTP/SSE
+3. **Reconnection**: Provider continues to attempt WebSocket in the background
+4. **Upgrade**: If WebSocket becomes available, connection is upgraded
+
+## Next Steps
+
+- [WebSocket Only](/docs/guides/websocket-only/) - WebSocket-only setup
+- [HTTP Transport](/docs/guides/http-transport/) - HTTP-only setup

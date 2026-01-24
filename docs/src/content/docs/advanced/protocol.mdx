@@ -1,0 +1,1041 @@
+---
+title: Protocol Specification
+description: Detailed specification of the Teleportal protocol
+---
+
+This document provides a comprehensive specification of the Teleportal protocol, a binary messaging protocol built on top of Y.js for real-time collaborative document synchronization and awareness updates. It describes how all the pieces fit together to enable efficient, type-safe communication for collaborative editing applications.
+
+## Protocol Overview
+
+The Teleportal protocol is designed for efficient transmission of Y.js collaborative editing messages over various transport layers. It supports document synchronization, awareness updates, file transfers, milestone management, and extensible RPC operations—all with optional encryption and robust error handling.
+
+The protocol is built around a flexible message structure that enables:
+- **Document Synchronization**: Bidirectional sync of Y.js documents between clients and server
+- **Awareness Updates**: Real-time user presence and cursor information
+- **File Transfers**: Chunked file uploads/downloads with Merkle tree integrity verification
+- **Milestone Management**: Snapshot-based versioning and document history
+- **RPC Operations**: Extensible custom operations for application-specific needs
+- **Message Acknowledgment**: Delivery confirmation for reliable message handling
+
+## Message Format
+
+### Base Message Structure
+
+All Teleportal messages follow this base structure:
+
+```mermaid
+graph LR
+    A[Message Header] --> B[Message Type]
+    B --> C[Payload]
+    
+    subgraph Header["Message Header"]
+        H1["Magic: YJS<br/>(3 bytes)"]
+        H2["Version: 0x01<br/>(1 byte)"]
+        H3["Doc Name Length<br/>(varint)"]
+        H4["Doc Name<br/>(UTF-8 string)"]
+        H5["Encrypted Flag<br/>(1 byte)"]
+        H1 --> H2 --> H3 --> H4 --> H5
+    end
+    
+    subgraph Type["Message Type (1 byte)"]
+        T1["0x00: Document"]
+        T2["0x01: Awareness"]
+        T3["0x02: ACK"]
+        T4["0x03: File"]
+        T5["0x04: RPC"]
+    end
+    
+    Header --> Type
+    Type --> C
+```
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            Teleportal Message Header                            │
+├─────────────┬─────────────┬─────────────┬─────────────┬─────────────────────────┤
+│ Magic Number│   Version   │ Doc Name Len│ Doc Name    │      Encrypted Flag     │
+│   (3 bytes) │  (1 byte)   │  (varint)   │  (string)   │       (1 byte)          │
+├─────────────┼─────────────┼─────────────┼─────────────┼─────────────────────────┤
+│ 0x59|0x4A|  │    0x01     │   length    │   UTF-8     │    0x00=false           │
+│     0x53    │             │             │   string    │    0x01=true            │
+│    "YJS"    │             │             │             │                         │
+└─────────────┴─────────────┴─────────────┴─────────────┴─────────────────────────┘
+```
+
+**Note**: For file messages, the document name may be an empty string. ACK messages do not have a document name (it is `undefined`).
+
+### Message Type Hierarchy
+
+The protocol organizes messages into categories, each with specific subtypes:
+
+```mermaid
+graph TD
+    A[Teleportal Message] --> B[Document 0x00]
+    A --> C[Awareness 0x01]
+    A --> D[ACK 0x02]
+    A --> E[File 0x03]
+    A --> F[RPC 0x04]
+    
+    B --> B1[Sync Step 1]
+    B --> B2[Sync Step 2]
+    B --> B3[Update]
+    B --> B4[Sync Done]
+    B --> B5[Auth]
+    B --> B6[Milestone Operations]
+    
+    B6 --> B6a[List Request/Response]
+    B6 --> B6b[Snapshot Request/Response]
+    B6 --> B6c[Create Request/Response]
+    B6 --> B6d[Update Name Request/Response]
+    B6 --> B6e[Soft Delete Request/Response]
+    B6 --> B6f[Restore Request/Response]
+    
+    C --> C1[Awareness Update]
+    C --> C2[Awareness Request]
+    
+    D --> D1[ACK]
+    
+    E --> E1[File Download]
+    E --> E2[File Upload]
+    E --> E3[File Part]
+    E --> E4[File Auth]
+    
+    F --> F1[RPC Request]
+    F --> F2[RPC Response]
+    F --> F3[RPC Stream]
+```
+
+## Document Messages (Type 0x00)
+
+Document messages handle Y.js document synchronization, updates, and milestone management. They form the core of the collaborative editing system.
+
+### Document Message Structure
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                        Document Message Format                                │
+├─────────────┬─────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                      │
+│ (1 byte)    │                  (variable)                                     │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x00 = Sync │ State Vector (varint array)                                     │
+│ Step 1      │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x01 = Sync │ Y.js Update (varint array)                                      │
+│ Step 2      │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x02 = Doc  │ Y.js Update (varint array)                                      │
+│ Update      │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x03 = Sync │ (no payload)                                                    │
+│ Done        │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x04 = Auth │ Permission (1 byte) + Reason (varint string)                    │
+│ Message     │ 0x00=denied, 0x01=allowed                                       │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x05 = Mile │ SnapshotIds count (varint) + SnapshotIds array (varint strings) │
+│ List Req    │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x06 = Mile │ Count (varint) + [Id + Name + DocId + CreatedAt + DeletedAt? + │
+│ List Resp   │ LifecycleState? + ExpiresAt? + CreatedBy] * N                   │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x07 = Mile │ MilestoneId (varint string)                                     │
+│ Snapshot Req│                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x08 = Mile │ MilestoneId (varint string) + Snapshot (varint array)           │
+│ Snapshot Res│                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x09 = Mile │ HasName (1 byte) + Name (varint string, optional) +             │
+│ Create Req  │ Snapshot (varint array)                                         │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0A = Mile │ Id + Name + DocId + CreatedAt + CreatedBy (Type + Id)          │
+│ Create Resp │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0B = Mile │ MilestoneId (varint string) + Name (varint string)              │
+│ Update Name │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0C = Mile │ Id + Name + DocId + CreatedAt + CreatedBy (Type + Id)           │
+│ Update Resp │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0D = Mile │ Permission (1 byte) + Reason (varint string)                    │
+│ Auth Msg    │ 0x00=denied, 0x01=allowed                                       │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0E = Mile │ MilestoneId (varint string)                                     │
+│ SoftDel Req │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x0F = Mile │ MilestoneId (varint string)                                     │
+│ SoftDel Resp│                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x10 = Mile │ MilestoneId (varint string)                                     │
+│ Restore Req │                                                                 │
+├─────────────┼─────────────────────────────────────────────────────────────────┤
+│ 0x11 = Mile │ MilestoneId (varint string)                                     │
+│ Restore Resp│                                                                 │
+└─────────────┴─────────────────────────────────────────────────────────────────┘
+```
+
+### Document Synchronization Messages
+
+The document synchronization process uses a bidirectional sync protocol to ensure all clients have consistent document state:
+
+```mermaid
+graph TD
+    A[Client State Vector] --> B[Sync Step 1]
+    B --> C[Server compares state vectors]
+    C --> D[Server sends missing updates]
+    D --> E[Sync Step 2]
+    E --> F[Client applies updates]
+    F --> G[Server sends its state vector]
+    G --> H[Client sends missing updates]
+    H --> I[Sync Step 2 from client]
+    I --> J[Sync Done]
+    J --> K[Real-time Updates]
+    K --> L[Document Update messages]
+    
+    style B fill:#e1f5ff
+    style E fill:#e1f5ff
+    style J fill:#c8e6c9
+    style L fill:#fff9c4
+```
+
+#### Sync Step 1 (0x00)
+
+**Purpose**: Initiates synchronization by sending local state vector  
+**Payload**: Y.js state vector as variable-length byte array  
+**Usage**: Client sends this to request updates from server. The state vector represents what the client knows about the document's current state.
+
+#### Sync Step 2 (0x01)
+
+**Purpose**: Responds to Sync Step 1 with missing updates  
+**Payload**: Y.js update containing missing operations  
+**Usage**: Server responds with updates not present in client's state. This enables efficient synchronization by only sending what's needed.
+
+#### Document Update (0x02)
+
+**Purpose**: Sends incremental document changes  
+**Payload**: Y.js update containing new operations  
+**Usage**: Real-time propagation of document changes after initial sync is complete.
+
+#### Sync Done (0x03)
+
+**Purpose**: Indicates synchronization completion  
+**Payload**: None  
+**Usage**: Signals that both sync steps have been completed and the client is now in sync with the server.
+
+#### Auth Message (0x04)
+
+**Purpose**: Handles authentication and authorization  
+**Payload**: Permission flag (1 byte) + reason string (variable length)  
+**Usage**: Server sends to grant/deny access with explanation. Used when a client attempts to access a document they don't have permission for.
+
+### Milestone Management Messages
+
+Milestones provide snapshot-based versioning for documents, allowing users to save and restore specific document states.
+
+```mermaid
+graph TD
+    A[Client] --> B[List Request]
+    B --> C[Server: List Response<br/>Metadata only]
+    C --> D[Client: Lazy Load]
+    D --> E[Snapshot Request]
+    E --> F[Server: Snapshot Response]
+    
+    G[Client] --> H[Create Request<br/>with Snapshot]
+    H --> I[Server: Create Response]
+    
+    J[Client] --> K[Update Name Request]
+    K --> L[Server: Update Name Response]
+    
+    M[Client] --> N[Soft Delete Request]
+    N --> O[Server: Soft Delete Response]
+    
+    P[Client] --> Q[Restore Request]
+    Q --> R[Server: Restore Response]
+    
+    style C fill:#e1f5ff
+    style F fill:#e1f5ff
+    style I fill:#c8e6c9
+    style L fill:#c8e6c9
+```
+
+#### Milestone List Request (0x05)
+
+**Purpose**: Requests a list of all milestones for a document  
+**Payload**: SnapshotIds count (varint) + SnapshotIds array (varint strings)  
+**Usage**: Client requests milestone metadata (without snapshot content). The client can provide a list of snapshot IDs so the server can send only milestones that are not already known, enabling efficient incremental updates.
+
+#### Milestone List Response (0x06)
+
+**Purpose**: Returns list of milestone metadata  
+**Payload**: Count (varint) + array of milestone metadata  
+**Usage**: Server responds with milestone list. Each milestone includes:
+- Required fields: id, name, documentId, createdAt, createdBy
+- Optional fields: deletedAt, lifecycleState, expiresAt
+- `createdBy`: Indicates who/what created the milestone (`{ type: "user" | "system", id: string }`)
+
+#### Milestone Snapshot Request (0x07)
+
+**Purpose**: Requests the snapshot content for a specific milestone  
+**Payload**: MilestoneId (varint string)  
+**Usage**: Client requests full snapshot data to fulfill lazy loading. This enables efficient initial loading by fetching metadata first, then snapshots on demand.
+
+#### Milestone Snapshot Response (0x08)
+
+**Purpose**: Returns the snapshot content for a milestone  
+**Payload**: MilestoneId (varint string) + Snapshot (varint array - binary encoded)  
+**Usage**: Server responds with milestone snapshot data, which is a Y.js document snapshot that can be applied to restore the document state.
+
+#### Milestone Create Request (0x09)
+
+**Purpose**: Requests creation of a new milestone from current document state  
+**Payload**: HasName (1 byte) + Name (varint string, optional) + Snapshot (varint array)  
+**Usage**: Client requests milestone creation with the document snapshot; server auto-generates name if not provided.
+
+#### Milestone Create Response (0x0A)
+
+**Purpose**: Confirms milestone creation and returns metadata  
+**Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)  
+**Usage**: Server responds with created milestone information. The `createdBy` field indicates who created the milestone:
+- `{ type: "user", id: userId }` for user-created milestones
+- `{ type: "system", id: nodeId }` for system-created milestones
+
+#### Milestone Update Name Request (0x0B)
+
+**Purpose**: Requests updating a milestone's name  
+**Payload**: MilestoneId (varint string) + Name (varint string)  
+**Usage**: Client requests name change for an existing milestone.
+
+#### Milestone Update Name Response (0x0C)
+
+**Purpose**: Confirms milestone name update  
+**Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)  
+**Usage**: Server responds with updated milestone information. When a user renames a milestone, the `createdBy` field is updated to mark it as user-created (`{ type: "user", id: userId }`).
+
+#### Milestone Auth Message (0x0D)
+
+**Purpose**: Error response for milestone operations  
+**Payload**: Permission flag (1 byte) + reason string (variable length)  
+**Usage**: Server sends when milestone operation fails (not found, permission denied, etc.).
+
+#### Milestone Soft Delete Request (0x0E)
+
+**Purpose**: Requests soft deletion of a milestone  
+**Payload**: MilestoneId (varint string)  
+**Usage**: Client requests soft deletion of a milestone, which marks it as deleted but preserves the data.
+
+#### Milestone Soft Delete Response (0x0F)
+
+**Purpose**: Confirms soft deletion of a milestone  
+**Payload**: MilestoneId (varint string)  
+**Usage**: Server responds with ID of the soft deleted milestone.
+
+#### Milestone Restore Request (0x10)
+
+**Purpose**: Requests restoration of a soft-deleted milestone  
+**Payload**: MilestoneId (varint string)  
+**Usage**: Client requests restoration of a deleted milestone.
+
+#### Milestone Restore Response (0x11)
+
+**Purpose**: Confirms restoration of a milestone  
+**Payload**: MilestoneId (varint string)  
+**Usage**: Server responds with ID of the restored milestone.
+
+## ACK Messages (Type 0x02)
+
+ACK messages provide message delivery confirmation, allowing senders to know when their messages have been successfully received and processed.
+
+### ACK Message Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            ACK Message Format                                   │
+├─────────────┬───────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                        │
+│ (1 byte)    │                  (variable)                                       │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x02 = ACK  │ MessageId (varint array) - Base64-decoded message ID              │
+└─────────────┴───────────────────────────────────────────────────────────────────┘
+```
+
+**Purpose**: Acknowledges receipt of a specific message  
+**Payload**: MessageId (varint array) - The base64-decoded message ID of the message being acknowledged  
+**Usage**:
+- Used to confirm delivery of file chunks during uploads
+- Allows senders to track which messages have been successfully received
+- The messageId is the SHA-256 hash (base64-encoded) of the original message's encoded bytes
+
+**Note**: ACK messages do not have a document name and are not tied to a specific document context.
+
+## Awareness Messages (Type 0x01)
+
+Awareness messages handle user presence and cursor information in collaborative sessions, enabling real-time collaboration features like showing where other users are editing.
+
+### Awareness Message Structure
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                       Awareness Message Format                                  │
+├─────────────┬───────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                        │
+│ (1 byte)    │                  (variable)                                       │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x00 = Aware│ Y.js Awareness Update (varint array)                              │
+│ Update      │                                                                   │
+├─────────────┼───────────────────────────────────────────────────────────────────┤
+│ 0x01 = Aware│ (no payload)                                                      │
+│ Request     │                                                                   │
+└─────────────┴───────────────────────────────────────────────────────────────────┘
+```
+
+### Awareness Message Types
+
+#### Awareness Update (0x00)
+
+**Purpose**: Sends user presence and cursor information  
+**Payload**: Y.js awareness update as variable-length byte array  
+**Usage**: Propagates user activity, cursor position, selection state, and other presence information to all connected clients.
+
+#### Awareness Request (0x01)
+
+**Purpose**: Requests current awareness state  
+**Payload**: None  
+**Usage**: Client requests current user presence information when joining a document or when awareness state is needed.
+
+## File Messages (Type 0x03)
+
+File messages handle file uploads and downloads with chunking and Merkle tree verification for integrity. Files are transferred in chunks with cryptographic proofs to ensure data integrity.
+
+### File Message Structure
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                            File Message Format                                    │
+├─────────────┬─────────────────────────────────────────────────────────────────────┤
+│ Msg Type    │                    Payload                                          │
+│ (1 byte)    │                  (variable)                                         │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x00 = File │ FileId (varint string)                                              │
+│ Download    │                                                                     │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x01 = File │ Encrypted (1 byte) + FileId (varint string) + Filename (string)     │
+│ Upload      │ + Size (varint) + MimeType (string) + LastModified (varint)         │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x02 = File │ FileId (varint string) + ChunkIndex (varint) + ChunkData            │
+│ Part        │ (varint array) + MerkleProofLength (varint) + MerkleProof (array) + │
+│             │ TotalChunks (varint) + BytesUploaded (varint) + Encrypted (1 byte)  │
+├─────────────┼─────────────────────────────────────────────────────────────────────┤
+│ 0x03 = File │ Permission (1 byte) + FileId (varint string) + StatusCode           │
+│ Auth        │ (varint) + HasReason (1 byte) + Reason (varint string, optional)    │
+│ Message     │                                                                     │
+└─────────────┴─────────────────────────────────────────────────────────────────────┘
+```
+
+### File Message Types
+
+#### File Download (0x00)
+
+**Purpose**: Initiates file download by requesting a file using its content ID
+
+**Payload Structure**:
+- FileId (varint string): Merkle root hash (base64 string) identifying the file to download
+
+**Usage**: Client requests file by providing the merkle root hash as the fileId. The server responds with file-part messages containing the file chunks.
+
+#### File Upload (0x01)
+
+**Purpose**: Initiates file upload by sending file metadata
+
+**Payload Structure**:
+- Encrypted (1 byte): `0x00` = false, `0x01` = true
+- FileId (varint string): Client-generated UUID for this transfer session
+- Filename (varint string): Original filename
+- Size (varint): File size in bytes (includes encryption overhead if encrypted)
+- MimeType (varint string): MIME type of the file
+- LastModified (varint): Last modified timestamp of the file
+
+**Usage**:
+- Client sends file metadata with a client-generated UUID as `fileId` to initiate upload session
+- During upload, chunks are sent with this same `fileId` (UUID) to identify the transfer session
+- After all chunks are uploaded and verified, the server computes the Merkle root hash
+- The client receives this Merkle root hash (base64-encoded) as the final `fileId`, which should be used for future downloads
+- **Note**: The `fileId` changes from the temporary UUID to the permanent Merkle root hash after upload completion
+
+#### File ID Lifecycle
+
+```mermaid
+flowchart LR
+    A[Client generates UUID] --> B[File Upload Message<br/>fileId: UUID]
+    B --> C[File Part Messages<br/>fileId: UUID]
+    C --> D[All chunks received]
+    D --> E[Server verifies & builds<br/>Merkle tree]
+    E --> F[File Auth Message<br/>fileId: Merkle Root Hash]
+    F --> G[File stored with<br/>contentId]
+    G --> H[File Download Message<br/>fileId: Merkle Root Hash]
+    
+    style B fill:#fff9c4
+    style C fill:#fff9c4
+    style F fill:#c8e6c9
+    style H fill:#c8e6c9
+    
+    B -.->|Temporary| B
+    F -.->|Permanent| F
+```
+
+#### File Part (0x02)
+
+**Purpose**: Sends file chunk data with Merkle proof for verification
+
+**Payload Structure**:
+- FileId (varint string):
+  - **Upload**: Client-generated UUID matching the file upload session
+  - **Download**: Merkle root hash (base64 string) identifying the file
+- ChunkIndex (varint): Zero-based index of this chunk
+- ChunkData (varint array): Chunk data (typically 64KB, or smaller for encrypted chunks)
+- MerkleProofLength (varint): Number of proof hashes in the Merkle proof path
+- MerkleProof (array of varint arrays): Merkle proof path hashes (sibling hashes from leaf to root)
+- TotalChunks (varint): Total number of chunks in the file
+- BytesUploaded (varint): Cumulative bytes uploaded/downloaded so far
+- Encrypted (1 byte): `0x00` = false, `0x01` = true
+
+**Usage**:
+- **Upload**: Client sends chunks sequentially with Merkle proofs for server verification. Each chunk is acknowledged with an ACK message containing the chunk's message ID.
+- **Download**: Server sends chunks sequentially with Merkle proofs for client verification. The client verifies each chunk before assembling the complete file.
+
+**Chunk Verification**: The receiver verifies each chunk by:
+1. Computing the SHA-256 hash of the chunk data
+2. Reconstructing the Merkle tree path using the provided proof hashes
+3. Comparing the computed root hash with the expected fileId
+4. Rejecting the chunk if verification fails
+
+#### File Auth Message (0x03)
+
+**Purpose**: Server response indicating permission denied or authorization status
+
+**Payload Structure**:
+- Permission (1 byte): `0x00` = denied, `0x01` = allowed (currently only denied is supported)
+- FileId (varint string): The fileId of the file that was denied authorization
+- StatusCode (varint): HTTP status code (404, 403, 401, 500, or 501)
+- HasReason (1 byte): `0x00` = no reason, `0x01` = reason follows
+- Reason (varint string, optional): Explanation for denial (only present if HasReason is 1)
+
+**Usage**: Server sends when file request is rejected (e.g., size limit exceeded, unauthorized, file not found)
+
+### File Chunking and Merkle Trees
+
+Files are split into **64KB chunks** for efficient transfer. Each chunk is hashed using SHA-256, and a Merkle tree is constructed to verify file integrity.
+
+#### Merkle Tree Structure
+
+```mermaid
+graph TD
+    Root["Root Hash<br/>(ContentId/FileId)"] --> H1["Hash 1"]
+    Root --> H2["Hash 2"]
+    
+    H1 --> H3["Hash 3"]
+    H1 --> H4["Hash 4"]
+    H2 --> H5["Hash 5"]
+    H2 --> H6["Hash 6"]
+    
+    H3 --> C0["Chunk 0<br/>SHA-256"]
+    H3 --> C1["Chunk 1<br/>SHA-256"]
+    H4 --> C2["Chunk 2<br/>SHA-256"]
+    H4 --> C3["Chunk 3<br/>SHA-256"]
+    H5 --> C4["Chunk 4<br/>SHA-256"]
+    H5 --> C5["Chunk 5<br/>SHA-256"]
+    H6 --> C6["Chunk 6<br/>SHA-256"]
+    H6 --> C7["Chunk 7<br/>SHA-256"]
+    
+    style Root fill:#ffccbc
+    style C0 fill:#c8e6c9
+    style C1 fill:#c8e6c9
+    style C2 fill:#c8e6c9
+    style C3 fill:#c8e6c9
+    style C4 fill:#c8e6c9
+    style C5 fill:#c8e6c9
+    style C6 fill:#c8e6c9
+    style C7 fill:#c8e6c9
+```
+
+**Structure Components**:
+- **Leaf nodes**: SHA-256 hash of each 64KB chunk
+- **Internal nodes**: Hash of concatenated child hashes
+- **Root hash**: Content ID used to uniquely identify the file
+- **Merkle proof**: Path from chunk hash to root (sibling hashes at each level)
+
+#### Merkle Proof Example
+
+When sending Chunk 2, the client includes a Merkle proof that allows the server to verify the chunk:
+
+```mermaid
+graph LR
+    C2["Chunk 2<br/>Data"] --> H2["Hash Chunk 2"]
+    H2 --> P1["Proof: Hash 3<br/>(sibling)"]
+    P1 --> P2["Proof: Hash 2<br/>(sibling)"]
+    P2 --> Verify["Verify Root<br/>matches FileId"]
+    
+    style C2 fill:#c8e6c9
+    style Verify fill:#ffccbc
+```
+
+#### Chunk Verification
+
+The verification process ensures data integrity by reconstructing the Merkle tree path:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    
+    Note over C: Prepare Chunk
+    C->>C: Hash chunk data (SHA-256)
+    C->>C: Build Merkle proof path
+    
+    Note over C,S: Send Chunk
+    C->>S: File Part Message<br/>(Chunk + Merkle Proof)
+    
+    Note over S: Verify Chunk
+    S->>S: Hash received chunk data
+    S->>S: Reconstruct path using proof
+    S->>S: Compute root hash
+    S->>S: Compare with expected fileId
+    
+    alt Verification Success
+        S->>S: Store chunk
+        S->>C: ACK Message
+    else Verification Fails
+        S->>C: File Auth Message<br/>(Error)
+    end
+```
+
+**Verification Steps**:
+1. **Client sends**: Chunk data (64KB) + Merkle proof (sibling hashes) + Chunk index
+2. **Server receives**: Hashes the chunk data to get leaf hash
+3. **Server reconstructs**: Uses proof hashes to build path from leaf to root
+4. **Server verifies**: Compares computed root hash with expected fileId
+5. **Server responds**: ACK on success, File Auth Message (error) on failure
+
+## RPC Messages (Type 0x04)
+
+RPC messages provide extensible custom operations for application-specific needs. They enable the protocol to be extended without modifying the core message types.
+
+### RPC Message Types
+
+#### RPC Request (0x00)
+
+**Purpose**: Client requests a custom operation  
+**Payload**: Method name + Request data  
+**Usage**: Enables custom operations beyond the standard protocol messages.
+
+#### RPC Response (0x01)
+
+**Purpose**: Server responds to RPC request  
+**Payload**: Request ID + Response data (success or error)  
+**Usage**: Returns the result of an RPC operation.
+
+#### RPC Stream (0x02)
+
+**Purpose**: Streaming data for RPC operations  
+**Payload**: Request ID + Stream data  
+**Usage**: Enables streaming responses for operations that produce large amounts of data incrementally.
+
+## Special Message Types
+
+### Ping/Pong Messages
+
+Keep-alive messages for connection health monitoring:
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                          Ping Message                                         │
+├─────────────┬─────────────┬─────────────┬─────────────┬───────────────────────┤
+│ Magic Number│      "ping" ASCII bytes                                         │
+│   (3 bytes) │           (4 bytes)                                             │
+├─────────────┼─────────────┼─────────────┼─────────────┼───────────────────────┤
+│ 0x59|0x4A|  │ 0x70|0x69|  │                                                   │
+│     0x53    │ 0x6E|0x67   │                                                   │
+│    "YJS"    │   "ping"    │                                                   │
+└─────────────┴─────────────┴─────────────┴─────────────┴───────────────────────┘
+```
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                          Pong Message                                         │
+├─────────────┬─────────────┬─────────────┬─────────────┬───────────────────────┤
+│ Magic Number│      "pong" ASCII bytes                                         │
+│   (3 bytes) │           (4 bytes)                                             │
+├─────────────┼─────────────┼─────────────┼─────────────┼───────────────────────┤
+│ 0x59|0x4A|  │ 0x70|0x6F|  │                                                   │
+│     0x53    │ 0x6E|0x67   │                                                   │
+│    "YJS"    │   "pong"    │                                                   │
+└─────────────┴─────────────┴─────────────┴─────────────┴───────────────────────┘
+```
+
+### Message Arrays
+
+Multiple messages can be batched into a single transmission for efficiency. Messages are concatenated sequentially without an explicit count field:
+
+```mermaid
+graph LR
+    A[Message Array] --> B["Message 1<br/>Length varint"]
+    B --> C["Message 1<br/>Binary Data"]
+    C --> D["Message 2<br/>Length varint"]
+    D --> E["Message 2<br/>Binary Data"]
+    E --> F["..."]
+    F --> G["Message N<br/>Length varint"]
+    G --> H["Message N<br/>Binary Data"]
+    
+    style A fill:#e1f5ff
+    style C fill:#c8e6c9
+    style E fill:#c8e6c9
+    style H fill:#c8e6c9
+```
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                        Message Array Format                                   │
+├───────────────────────────────────────────────────────────────────────────────┤
+│ Message 1 Length (varint) + Message 1 Data (BinaryMessage) +                  │
+│ Message 2 Length (varint) + Message 2 Data (BinaryMessage) +                  │
+│ ... (repeated for all messages until end of buffer)                           │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Encoding**: Each message in the array is encoded as a varint-prefixed byte array. The decoder reads messages sequentially until the buffer is exhausted.
+
+**Usage**: Useful for reducing network overhead when sending multiple related messages (e.g., multiple document updates or file chunks).
+
+## Encoding Details
+
+### Message Encoding Flow
+
+The encoding process transforms structured message data into binary format:
+
+```mermaid
+graph LR
+    A[Message Object] --> B[Encode Header]
+    B --> C[Encode Type]
+    C --> D[Encode Payload]
+    D --> E[Binary Message]
+    E --> F[Compute SHA-256]
+    F --> G[Base64 Message ID]
+    
+    H[Binary Message] --> I[Decode Header]
+    I --> J[Decode Type]
+    J --> K[Decode Payload]
+    K --> L[Message Object]
+    
+    style E fill:#c8e6c9
+    style G fill:#ffccbc
+    style H fill:#e1f5ff
+```
+
+### Message IDs
+
+Every message has a unique identifier computed from its encoded bytes:
+
+```mermaid
+graph TD
+    A[Message Object] --> B[Encode to Binary]
+    B --> C[SHA-256 Hash]
+    C --> D[Base64 Encode]
+    D --> E[Message ID]
+    E --> F[Used in ACK Messages]
+    E --> G[Message Deduplication]
+    E --> H[Idempotency Tracking]
+    
+    style C fill:#ffccbc
+    style E fill:#c8e6c9
+```
+
+- **Computation**: SHA-256 hash of the message's encoded binary representation
+- **Encoding**: Base64-encoded for use in ACK messages and other contexts
+- **Purpose**: Enables message deduplication, acknowledgment tracking, and idempotency
+- **Lazy Computation**: Message IDs are computed on-demand and cached for performance
+
+### Variable-Length Encoding
+
+The protocol uses variable-length encoding for efficiency:
+
+```mermaid
+graph TD
+    A[Variable-Length Encoding] --> B[Varint Integers]
+    A --> C[Varint Arrays]
+    A --> D[UTF-8 Strings]
+    
+    B --> B1["Small values: 1 byte<br/>Large values: multiple bytes"]
+    C --> C1["Length varint<br/>+ Raw bytes"]
+    D --> D1["Length varint<br/>+ UTF-8 bytes"]
+    
+    style B fill:#e1f5ff
+    style C fill:#e1f5ff
+    style D fill:#e1f5ff
+```
+
+#### Variable-Length Integers (varint)
+
+- Used for lengths and counts
+- Follows lib0 encoding standard
+- Efficient for small values, expandable for large ones
+
+#### Variable-Length Byte Arrays (varint array)
+
+- Length-prefixed byte arrays
+- Length encoded as varint, followed by raw bytes
+- Used for Y.js updates, state vectors, and string data
+
+#### String Encoding
+
+- UTF-8 encoded strings
+- Length-prefixed with varint length
+- Used for document names and reason strings
+
+## Message Flow Examples
+
+### Document Synchronization Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── Sync Step 1 ──────────▶│  (with state vector)
+  │                                │
+  │◀────── Sync Step 2 ───────────│  (with missing updates)
+  │                                │
+  │─────── Sync Done ────────────▶│
+  │                                │
+  │◀────── Sync Done ─────────────│
+  │                                │
+  │─────── Doc Update ───────────▶│  (real-time changes)
+  │                                │
+  │◀────── Doc Update ────────────│  (propagated to other clients)
+```
+
+### Awareness Flow
+
+```
+Client                           Server
+  │                                │
+  │◀───── Awareness Request ──────│  (request current user states)
+  │                                │
+  │─────── Awareness Update ─────▶│  (user cursor/selection)
+  │                                │
+  │◀────── Awareness Update ──────│  (other clients' user states)
+```
+
+### File Upload Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── File Upload ──────────▶│  (metadata: uploadId, filename, size, etc.)
+  │                                │
+  │                                │  (creates upload session)
+  │                                │
+  │─────── File Part ────────────▶│  (chunk 0 + merkle proof)
+  │                                │
+  │                                │  (verifies chunk, stores)
+  │                                │
+  │─────── File Part ────────────▶│  (chunk 1 + merkle proof)
+  │                                │
+  │                                │  (verifies chunk, stores)
+  │                                │
+  │         ... (more chunks)      │
+  │                                │
+  │─────── File Part ────────────▶│  (final chunk + merkle proof)
+  │                                │
+  │                                │  (verifies all chunks,
+  │                                │   reconstructs merkle tree,
+  │                                │   stores file, removes session)
+  │                                │
+  │◀────── File Auth Message ─────│  (optional: returns contentId/fileId)
+```
+
+### File Download Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── File Download ────────▶│  (fileId: merkle root hash)
+  │                                │
+  │                                │  (looks up file by fileId/contentId)
+  │                                │
+  │◀────── File Part ─────────────│  (chunk 0 + merkle proof)
+  │                                │
+  │                                │  (client verifies chunk)
+  │                                │
+  │◀────── File Part ─────────────│  (chunk 1 + merkle proof)
+  │                                │
+  │                                │  (client verifies chunk)
+  │                                │
+  │         ... (more chunks)      │
+  │                                │
+  │◀────── File Part ─────────────│  (final chunk + merkle proof)
+  │                                │
+  │                                │  (client verifies all chunks,
+  │                                │   reconstructs file)
+  │                                │
+  │◀────── File Auth Message ─────│  (optional: error if file not found)
+```
+
+### Milestone Operations Flow
+
+```
+Client                           Server
+  │                                │
+  │─────── List Request ──────────▶│  (request milestone list)
+  │                                │
+  │◀────── List Response ──────────│  (returns milestone metadata)
+  │                                │
+  │─────── Snapshot Request ──────▶│  (request specific snapshot)
+  │                                │
+  │◀────── Snapshot Response ──────│  (returns snapshot data)
+  │                                │
+  │─────── Create Request ────────▶│  (create milestone with snapshot,
+  │                                │   optional name)
+  │                                │
+  │                                │  (validates snapshot, stores milestone)
+  │                                │
+  │◀────── Create Response ───────│  (returns created milestone metadata)
+  │                                │
+  │─────── Update Name Request ──▶│  (update milestone name)
+  │                                │
+  │◀────── Update Name Response ──│  (returns updated milestone)
+```
+
+## Error Handling
+
+The protocol includes robust error handling:
+
+- **Magic Number Validation**: Ensures message is valid Teleportal format (must start with `0x59 0x4A 0x53` / "YJS")
+- **Version Checking**: Verifies protocol version compatibility (currently only version `0x01` is supported)
+- **Type Validation**: Validates message and payload types
+- **Length Validation**: Ensures proper message boundaries using varint encoding
+- **Decoding Errors**: Invalid messages throw descriptive errors with context about the failure
+- **File Transfer Errors**: File operations can fail with auth messages containing status codes (401, 403, 404, 500, 501) and optional reason strings
+- **Milestone Errors**: Milestone operations can fail with milestone auth messages containing denial reasons
+
+## Security Considerations
+
+- **Encryption Flag**: Built-in support for encrypted payloads at the message level
+- **Authentication**: Auth messages provide access control for documents and operations
+- **Validation**: All inputs are validated before processing
+- **Merkle Tree Verification**: File transfers use cryptographic proofs to ensure data integrity
+- **Message IDs**: Enable deduplication and prevent replay attacks when combined with proper server-side validation
+
+## How It All Fits Together
+
+The Teleportal protocol integrates multiple subsystems into a cohesive collaborative editing platform. The following diagram illustrates how all components interact:
+
+```mermaid
+graph TB
+    subgraph Transport["Transport Layer"]
+        WS[WebSocket]
+        HTTP[HTTP]
+        CUSTOM[Custom Transport]
+    end
+    
+    subgraph Protocol["Teleportal Protocol"]
+        subgraph Core["Core Messages"]
+            DOC[Document Messages]
+            AWARE[Awareness Messages]
+            ACK[ACK Messages]
+        end
+        
+        subgraph Extended["Extended Features"]
+            FILE[File Messages]
+            MILESTONE[Milestone Messages]
+            RPC[RPC Messages]
+        end
+        
+        ENCODE[Message Encoding]
+        DECODE[Message Decoding]
+    end
+    
+    subgraph Features["Protocol Features"]
+        SYNC[Document Sync]
+        PRESENCE[User Presence]
+        TRANSFER[File Transfer]
+        VERSIONING[Milestone Versioning]
+        EXTENSIBILITY[RPC Extensibility]
+    end
+    
+    subgraph Storage["Storage Layer"]
+        DOC_STORE[Document Storage]
+        FILE_STORE[File Storage]
+        MILESTONE_STORE[Milestone Storage]
+    end
+    
+    Transport --> Protocol
+    Protocol --> Features
+    Features --> Storage
+    
+    DOC --> SYNC
+    AWARE --> PRESENCE
+    FILE --> TRANSFER
+    MILESTONE --> VERSIONING
+    RPC --> EXTENSIBILITY
+    
+    ACK -.->|Reliability| FILE
+    ACK -.->|Delivery Confirmation| DOC
+    
+    SYNC --> DOC_STORE
+    TRANSFER --> FILE_STORE
+    VERSIONING --> MILESTONE_STORE
+    
+    style Protocol fill:#e1f5ff
+    style Features fill:#c8e6c9
+    style Storage fill:#fff9c4
+```
+
+### System Integration
+
+1. **Document Synchronization**: The core Y.js sync protocol (sync-step-1, sync-step-2, updates) ensures all clients have consistent document state. The bidirectional sync allows both client and server to request missing updates.
+
+2. **Awareness System**: Runs in parallel with document sync, providing real-time presence information. This enables collaborative features like showing cursors and selections without affecting document state.
+
+3. **File Transfer**: Uses the same message infrastructure but with chunked transfer and Merkle tree verification. Files are content-addressable (identified by Merkle root hash), enabling deduplication and integrity verification.
+
+4. **Milestone Management**: Built on top of document sync, milestones capture document snapshots at specific points. The lazy loading design (metadata first, snapshots on demand) enables efficient browsing of document history.
+
+5. **RPC System**: Provides extensibility for custom operations without modifying core protocol. This allows applications to add domain-specific features while maintaining protocol compatibility.
+
+6. **Message Acknowledgment**: ACK messages enable reliable delivery tracking, particularly important for file transfers where chunks must be verified and confirmed.
+
+7. **Transport Layer**: The protocol is transport-agnostic, working over WebSockets, HTTP, or any binary-capable transport. The message format is self-contained and doesn't depend on transport-specific features.
+
+### Message Flow Integration
+
+```mermaid
+sequenceDiagram
+    participant C1 as Client 1
+    participant S as Server
+    participant C2 as Client 2
+    
+    Note over C1,S: Document Synchronization
+    C1->>S: Sync Step 1
+    S->>C1: Sync Step 2
+    S->>C1: Sync Step 1
+    C1->>S: Sync Step 2
+    S->>C1: Sync Done
+    
+    Note over C1,S: Awareness (Parallel)
+    C1->>S: Awareness Update
+    S->>C2: Awareness Update
+    
+    Note over C1,S: Real-time Updates
+    C1->>S: Document Update
+    S->>C2: Document Update
+    
+    Note over C1,S: File Transfer
+    C1->>S: File Upload
+    C1->>S: File Part (with Merkle proof)
+    S->>C1: ACK
+    C1->>S: File Part (final)
+    S->>C1: File Auth (success)
+    
+    Note over C1,S: Milestone Management
+    C1->>S: Milestone Create Request
+    S->>C1: Milestone Create Response
+```
+
+All these systems work together through the unified message format, enabling efficient, type-safe, and extensible collaborative editing while maintaining compatibility with the Y.js ecosystem.

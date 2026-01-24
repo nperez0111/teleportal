@@ -1,0 +1,94 @@
+---
+title: Observability
+description: Monitoring and health checks with Prometheus metrics
+---
+
+This guide demonstrates the built-in observability endpoints provided by Teleportal for monitoring and health checks.
+
+## What it demonstrates
+
+- Accessing the `/health` endpoint for server health checks
+- Accessing the `/metrics` endpoint for Prometheus-compatible metrics
+- Accessing the `/status` endpoint for server status information
+
+## Server Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import { getMetricsHandler, getHealthHandler, getStatusHandler } from "teleportal/monitoring";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Your storage implementation
+    return documentStorage;
+  },
+});
+
+// Expose observability endpoints
+app.get("/metrics", getMetricsHandler(server));
+app.get("/health", getHealthHandler(server));
+app.get("/status", getStatusHandler(server));
+```
+
+## Metrics Endpoint
+
+The `/metrics` endpoint returns Prometheus-formatted metrics:
+
+```bash
+curl http://localhost:3000/metrics
+```
+
+Metrics include:
+- `teleportal_sessions_active`: Current number of active sessions
+- `teleportal_clients_active`: Current number of active clients
+- `teleportal_documents_opened_total`: Total documents opened
+- `teleportal_messages_processed_total`: Total messages processed
+- `teleportal_message_duration_seconds`: Message processing duration
+
+## Health Endpoint
+
+The `/health` endpoint returns server health status:
+
+```bash
+curl http://localhost:3000/health
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "checks": { ... },
+  "uptime": 3600
+}
+```
+
+## Status Endpoint
+
+The `/status` endpoint returns detailed operational status:
+
+```bash
+curl http://localhost:3000/status
+```
+
+Response:
+```json
+{
+  "nodeId": "node-123",
+  "activeClients": 10,
+  "activeSessions": 5,
+  "totalMessagesProcessed": 1000,
+  "totalDocumentsOpened": 50,
+  "messageTypeBreakdown": {
+    "doc": 500,
+    "awareness": 300,
+    "file": 200
+  },
+  "uptime": 3600
+}
+```
+
+## Next Steps
+
+- [Monitoring](/docs/monitoring/) - Learn more about monitoring
+- [Server](/docs/core-concepts/server/) - Server configuration

@@ -1,0 +1,126 @@
+---
+title: Custom Storage
+description: Guide on how to implement a custom document storage backend
+---
+
+Teleportal was designed to decouple storage from the compute layer, so you can use any storage backend that you want. There are two layers of abstraction when it comes to storage:
+
+ - **Layer 1**: `DocumentStorage` - The interface that the server uses to store & retrieve documents & document metadata
+ - **Layer 2**:
+   - `UnencryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving document content (which has different constraints than encrypted documents)
+   - `EncryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving encrypted document content (which has different constraints than unencrypted documents)
+
+These layers differ because the `DocumentStorage` interface is designed to essentially handle raw messages & store them as they come in. Whereas, the `UnencryptedDocumentStorage` and `EncryptedDocumentStorage` interfaces are designed to store documents & document metadata via a more convenient API.
+
+## Storage Interface
+
+The `DocumentStorage` interface defines the methods you need to implement:
+
+```typescript
+interface DocumentStorage {
+  readonly type: "document-storage";
+
+  handleUpdate(documentId: string, update: Update): Promise<void>;
+  getDocument(documentId: string): Promise<Document | null>;
+  writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void>;
+  getDocumentMetadata(documentId: string): Promise<DocumentMetadata>;
+  deleteDocument(documentId: string): Promise<void>;
+  transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T>;
+}
+```
+
+## Example: Custom DocumentStorage
+
+```typescript
+import type {
+  DocumentStorage,
+  Document,
+  DocumentMetadata,
+  Update,
+} from "teleportal/storage";
+import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
+import { mergeUpdates, getStateVectorFromUpdate } from "teleportal/storage";
+
+export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
+  readonly type = "document-storage" as const;
+  storageType: "unencrypted" = "unencrypted";
+
+  async handleUpdate(documentId: string, update: Update): Promise<void> {
+    // Store update in your backend
+    // You might want to merge with existing updates
+    const existing = await this.getDocument(documentId);
+    if (existing) {
+      const merged = mergeUpdates([existing.content.update, update]);
+      await myBackend.storeUpdate(documentId, merged);
+    } else {
+      await myBackend.storeUpdate(documentId, update);
+    }
+  }
+
+  async getDocument(documentId: string): Promise<Document | null> {
+    // Retrieve from your backend
+    const update = await myBackend.getUpdate(documentId);
+    if (!update) return null;
+
+    // Build document from your storage
+    return {
+      id: documentId,
+      metadata: await this.getDocumentMetadata(documentId),
+      content: {
+        update,
+        stateVector: getStateVectorFromUpdate(update),
+      },
+    };
+  }
+
+  async writeDocumentMetadata(
+    documentId: string,
+    metadata: DocumentMetadata
+  ): Promise<void> {
+    await myBackend.storeMetadata(documentId, metadata);
+  }
+
+  async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+    return (await myBackend.getMetadata(documentId)) ?? {
+      files: [],
+      milestones: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  async deleteDocument(documentId: string): Promise<void> {
+    await myBackend.deleteDocument(documentId);
+  }
+
+  async transaction<T>(
+    documentId: string,
+    cb: () => Promise<T>
+  ): Promise<T> {
+    // Implement transaction logic for your backend
+    // This might use database transactions, distributed locks, etc.
+    return await myBackend.transaction(documentId, cb);
+  }
+}
+```
+
+## Utility Functions
+
+Teleportal provides utility functions to help with storage implementation:
+
+- **`mergeUpdates(updates: Update[]): Update`**: Merge multiple Y.js updates into one
+- **`getStateVectorFromUpdate(update: Update): Uint8Array`**: Extract state vector from an update
+- **`applyUpdate(ydoc: Y.Doc, update: Update): void`**: Apply an update to a Y.js document
+
+## Best Practices
+
+1. **Handle Updates Efficiently**: Consider merging updates to reduce storage operations
+2. **Implement Transactions**: Use transactions for atomic operations when possible
+3. **Cache State Vectors**: State vectors can be computed from updates, but caching improves performance
+4. **Handle Errors Gracefully**: Storage operations can fail, handle errors appropriately
+5. **Support Metadata**: Store document metadata separately from content for efficient queries
+
+## Next Steps
+
+- [Storage](/docs/storage/) - Learn more about storage interfaces
+- [Server](/docs/core-concepts/server/) - See how storage is used in the server

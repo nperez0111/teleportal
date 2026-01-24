@@ -1,0 +1,35 @@
+---
+title: What is Teleportal?
+description: What is Teleportal?
+---
+
+Teleportal is a real-time collaborative editing framework built on Y.js. It allows you to sync documents in a conflict-free manner, with support for any storage, transport, and runtime.
+
+## What Y.js Provides
+
+Y.js is a powerful CRDT (Conflict-free Replicated Data Type) library that enables real-time collaborative editing. At its core, Y.js provides:
+
+**Conflict-free edits** through its CRDT data structure. This means that changes from multiple clients can be merged together automatically without manual conflict resolution. No matter how edits are applied or in what order, all clients will converge to the same final state.
+
+**Offline editing support**. You can make changes while disconnected, and when you come back online, your changes will be automatically merged with any changes that occurred while you were offline. The CRDT guarantees that the final state will be consistent across all clients.
+
+**Real-time synchronization** of document changes, including awareness information like cursor positions and user presence. This enables rich collaborative experiences where users can see each other's cursors and selections in real-time.
+
+**Flexible data modeling**. Y.js supports anything that can be represented as JSON—from simple text documents to complex structured data like nested objects, arrays, and maps. This makes it suitable for everything from collaborative text editors to real-time data synchronization for complex applications.
+
+The key insight is that with Y.js, multiple clients can edit the same document simultaneously, and regardless of network conditions, timing, or the order in which changes arrive, they will all converge to the same result.
+
+## What Teleportal Provides
+
+Teleportal is an abstraction and utility library built on top of Y.js that focuses on helping you create the **server implementation** for your Y.js-based application.
+
+While Y.js handles the client-side CRDT operations and conflict resolution, you still need a server that:
+
+- **Persists document state to storage** so data survives server restarts and can be loaded on demand
+- **Synchronizes changes between clients** by receiving updates from one client and broadcasting them to others
+- **Enforces permissions and access control** to ensure only authorized users can read or modify documents
+- **Provides observability** through metrics, logging, and monitoring to understand system behavior and debug issues
+- **Handles connection management** for WebSocket and HTTP transports, managing client sessions and reconnections
+- **Supports scaling** across multiple server instances with pub/sub and distributed storage
+
+Teleportal provides all of these server-side capabilities out of the box, with a flexible, extensible architecture that lets you customize storage backends, transport mechanisms, and middleware to fit your specific needs. It's designed to be storage-agnostic, transport-agnostic, and runtime-agnostic, giving you the building blocks to create a production-ready sync server without having to implement all the infrastructure yourself.

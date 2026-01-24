@@ -12,7 +12,10 @@
   --sl-color-gray-6: #eceef2;
   --sl-color-gray-7: #f5f6f8;
   --sl-color-black: #ffffff;
-  --sl-hue-blue: 210;
+  --sl-bg-gradient: radial-gradient(
+    hsla(275, 60%, 74%, 0.183),
+    transparent 40%
+  );
   --sl-community-link: #ffffff;
   --sl-perf-progress: #60a5fa;
   --sl-discord: #5865f2;
@@ -33,7 +36,10 @@
   --sl-color-gray-5: #353841;
   --sl-color-gray-6: #24272f;
   --sl-color-black: #17181c;
-  --sl-hue-blue: 234;
+  --sl-bg-gradient: radial-gradient(
+    hsla(274, 21%, 27%, 0.183),
+    transparent 40%
+  );
   --sl-community-link: #ffffff;
   --sl-perf-progress: #60a5fa;
   --sl-discord: #5865f2;
@@ -69,10 +75,7 @@
   top: var(--y);
   width: calc(4 * var(--size));
   height: calc(4 * var(--size));
-  background: radial-gradient(
-    hsla(var(--sl-hue-blue), 78%, 62%, 26%),
-    transparent 40%
-  );
+  background: var(--sl-bg-gradient);
   transform: translate(-50%, -50%);
   transition:
     width 0.2s ease,

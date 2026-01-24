@@ -1,0 +1,109 @@
+---
+title: Authentication
+description: JWT token-based authentication with permission management
+---
+
+This guide demonstrates JWT token-based authentication for securing Teleportal connections. Both WebSocket and HTTP handlers verify tokens before allowing access.
+
+## What it demonstrates
+
+- Setting up JWT token authentication using `createTokenManager`
+- Using token authentication for secure connections
+- Configuring permission checks with token manager
+- Creating and using JWT tokens on the client side
+
+## Server Setup
+
+```typescript
+import { serve } from "crossws/server";
+import { Server } from "teleportal/server";
+import { createTokenManager } from "teleportal/token";
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+
+const tokenManager = createTokenManager({
+  secret: "your-secret-key",
+  expiresIn: 3600,
+});
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Your storage implementation
+    return documentStorage;
+  },
+  checkPermission: async ({ context, documentId, message, type }) => {
+    const token = (context as any).token;
+    if (!token) return false;
+
+    const result = await tokenManager.verifyToken(token);
+    if (!result.valid || !result.payload) return false;
+
+    const payload = result.payload;
+    const requiredPermission = type === "read" ? "read" : "write";
+    return tokenManager.hasDocumentPermission(
+      payload,
+      documentId!,
+      requiredPermission
+    );
+  },
+});
+
+serve({
+  websocket: getWebsocketHandlers({
+    server,
+    onUpgrade: async (request) => {
+      // Extract token from request
+      const url = new URL(request.url);
+      const token = url.searchParams.get("token") ||
+                   request.headers.get("authorization")?.replace("Bearer ", "");
+
+      if (!token) {
+        throw new Response("No token provided", { status: 401 });
+      }
+
+      const result = await tokenManager.verifyToken(token);
+      if (!result.valid || !result.payload) {
+        throw new Response("Invalid token", { status: 401 });
+      }
+
+      return {
+        context: {
+          userId: result.payload.userId,
+          room: result.payload.room,
+          token,
+        },
+      };
+    },
+  }),
+  fetch: () => new Response("Not found", { status: 404 }),
+});
+```
+
+## Client Setup
+
+```typescript
+import { Provider } from "teleportal/providers";
+import { createTokenManager } from "teleportal/token";
+
+// Create token manager (should match server secret)
+const tokenManager = createTokenManager({
+  secret: "your-secret-key",
+});
+
+// Generate token
+const token = await tokenManager.createToken("user-123", "org-456", [
+  { pattern: "user-123/*", permissions: ["read", "write"] },
+]);
+
+// Connect with token
+const provider = await Provider.create({
+  url: `wss://example.com?token=${token}`,
+  document: "user-123/my-document",
+});
+
+await provider.synced;
+```
+
+## Next Steps
+
+- [Core Concepts: Authentication](/docs/core-concepts/authentication/) - Learn more about authentication
+- [Persistent Storage](/docs/guides/persistent-storage/) - Add persistent storage

@@ -102,6 +102,10 @@
     "./devtools": {
       "types": "./dist/devtools/index.d.mts",
       "default": "./dist/devtools/index.mjs"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.mts",
+      "default": "./dist/agent/index.mjs"
     }
   },
   "main": "./dist/lib/index.mjs",

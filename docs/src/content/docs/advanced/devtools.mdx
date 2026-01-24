@@ -1,0 +1,96 @@
+---
+title: DevTools
+description: Visualize message flow and inspect message contents in real-time
+---
+
+Teleportal includes built-in DevTools for debugging and monitoring your application. The DevTools provide real-time visibility into message flow, connection state, document activity, and system statistics.
+
+## Overview
+
+The Teleportal DevTools helps you debug and monitor your Teleportal applications by providing:
+
+- **Real-time message monitoring**: Track all sent and received messages with detailed metadata
+- **Connection state tracking**: Monitor connection status, transport type, and errors
+- **Message filtering**: Filter messages by document, type, direction, and search text
+- **Message inspection**: View detailed payloads, metadata, and acknowledgment status
+- **Statistics**: Track message counts, rates, document counts, and message types
+
+## Basic Integration
+
+```typescript
+import { createTeleportalDevtools } from "teleportal/devtools";
+
+// Create the devtools element
+const devtoolsElement = createTeleportalDevtools();
+
+// Append to your DOM
+document.body.appendChild(devtoolsElement);
+```
+
+## React Integration
+
+```tsx
+import { useState, useEffect, useRef } from "react";
+import { createTeleportalDevtools, getDevtoolsState } from "teleportal/devtools";
+
+export function TeleportalDevtoolsPanel() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const devtoolsRef = useRef<HTMLElement | null>(null);
+  const [state] = useState(() => getDevtoolsState());
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const devtoolsElement = createTeleportalDevtools(state);
+    containerRef.current.appendChild(devtoolsElement);
+    devtoolsRef.current = devtoolsElement;
+
+    return () => {
+      if (devtoolsRef.current) {
+        const cleanup = (devtoolsRef.current as any).__teleportalDevtoolsCleanup;
+        if (cleanup) {
+          cleanup();
+        }
+        if (
+          containerRef.current &&
+          devtoolsRef.current.parentNode === containerRef.current
+        ) {
+          containerRef.current.removeChild(devtoolsRef.current);
+        }
+      }
+    };
+  }, []);
+
+  return <div ref={containerRef} style={{ height: "100%", width: "100%" }} />;
+}
+```
+
+## Message Types
+
+The devtools recognizes and color-codes various message types:
+
+- **Document Messages**: `sync-step-1`, `sync-step-2`, `update`, `sync-done`, `auth-message`, `milestone-*`
+- **Awareness Messages**: `awareness-update`, `awareness-request`
+- **File Messages**: `file-upload`, `file-download`, `file-part`, `file-auth-message`
+- **ACK Messages**: `ack` (hidden from list but tracked)
+
+## Filtering
+
+The devtools provides powerful filtering capabilities:
+
+- **Document filter**: Show messages from specific documents
+- **Message type filter**: Hide/show specific message types
+- **Direction filter**: Filter by sent/received/all
+- **Search filter**: Text search across message payloads and document IDs
+
+## Settings
+
+Settings are automatically saved to localStorage:
+
+- **Message limit**: Maximum number of messages to keep in memory (default: 200)
+- **Filter persistence**: All filter settings are saved and restored on page reload
+
+## Next Steps
+
+- [Provider](/docs/core-concepts/provider/) - Learn how providers work
+- [Protocol](/docs/core-concepts/protocol/) - Understand the message protocol

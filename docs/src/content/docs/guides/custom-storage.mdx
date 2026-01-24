@@ -1,0 +1,66 @@
+---
+title: Custom Storage
+description: Implementing a custom storage backend
+---
+
+This guide demonstrates how to create a custom storage implementation by extending `UnencryptedDocumentStorage`.
+
+## What it demonstrates
+
+- Creating a custom storage implementation
+- Implementing required methods
+- Using utility functions for document management
+- Building storage backends tailored to specific use cases
+
+## Custom Storage Implementation
+
+```typescript
+import type { DocumentStorage, Document, DocumentMetadata } from "teleportal/storage";
+import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
+import { mergeUpdates, getStateVectorFromUpdate } from "teleportal/storage";
+
+export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
+  readonly type = "document-storage" as const;
+  storageType: "unencrypted" = "unencrypted";
+
+  async handleUpdate(documentId: string, update: Update): Promise<void> {
+    // Store update in your backend
+    await myBackend.storeUpdate(documentId, update);
+  }
+
+  async getDocument(documentId: string): Promise<Document | null> {
+    // Retrieve from your backend
+    const update = await myBackend.getUpdate(documentId);
+    if (!update) return null;
+
+    return {
+      id: documentId,
+      metadata: await this.getDocumentMetadata(documentId),
+      content: {
+        update,
+        stateVector: getStateVectorFromUpdate(update),
+      },
+    };
+  }
+
+  async writeDocumentMetadata(
+    documentId: string,
+    metadata: DocumentMetadata
+  ): Promise<void> {
+    await myBackend.storeMetadata(documentId, metadata);
+  }
+
+  async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+    return (await myBackend.getMetadata(documentId)) ?? defaultMetadata();
+  }
+
+  async deleteDocument(documentId: string): Promise<void> {
+    await myBackend.deleteDocument(documentId);
+  }
+}
+```
+
+## Next Steps
+
+- [Storage](/docs/storage/) - Learn more about storage interfaces
+- [Advanced: Custom Storage](/docs/advanced/custom-storage/) - Detailed custom storage guide

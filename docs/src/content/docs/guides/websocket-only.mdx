@@ -1,0 +1,77 @@
+---
+title: WebSocket Only
+description: Minimal server setup with WebSocket transport
+---
+
+This guide demonstrates a minimal Teleportal server setup using only WebSocket connections. The server uses in-memory storage and accepts all WebSocket upgrade requests.
+
+## What it demonstrates
+
+- Setting up a basic Teleportal server with WebSocket transport only
+- Using in-memory `YDocStorage` for document storage
+- Handling WebSocket upgrades with context extraction
+- Client connection using the `Provider` API with WebSocket transport
+
+## Server Setup
+
+```typescript
+import { serve } from "crossws/server";
+import { Server } from "teleportal/server";
+import { YDocStorage } from "teleportal/storage";
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+
+// Create a Teleportal server with in-memory storage
+const server = new Server({
+  storage: new YDocStorage(),
+});
+
+// Set up WebSocket handlers
+serve({
+  websocket: getWebsocketHandlers({
+    server,
+    onUpgrade: async () => {
+      // Extract user context from the request
+      // In production, you'd verify authentication here
+      return {
+        context: { userId: "nick", room: "test" },
+      };
+    },
+  }),
+  fetch: () => new Response("Not found", { status: 404 }),
+});
+```
+
+## Client Setup
+
+```typescript
+import { Provider } from "teleportal/providers";
+
+const provider = await Provider.create({
+  url: `ws://localhost:3000`,
+  document: "test",
+});
+
+await provider.synced;
+
+provider.doc.getText("test").insert(0, "Hello, world!");
+
+console.log(provider.doc.getText("test").toString());
+
+provider.doc.on("update", () => {
+  console.log(provider.doc.getText("test").toString());
+});
+```
+
+## How It Works
+
+1. **Server**: Creates a `Server` instance with in-memory `YDocStorage`
+2. **WebSocket Handlers**: Uses `getWebsocketHandlers` to handle WebSocket connections
+3. **Context Extraction**: `onUpgrade` callback extracts user context from the request
+4. **Client**: `Provider.create()` automatically connects via WebSocket
+5. **Synchronization**: `provider.synced` waits for the document to be fully synchronized
+
+## Next Steps
+
+- [HTTP Transport](/docs/guides/http-transport/) - Learn about HTTP/SSE transport
+- [Authentication](/docs/guides/authentication/) - Add authentication to your server
+- [Persistent Storage](/docs/guides/persistent-storage/) - Use persistent storage instead of in-memory

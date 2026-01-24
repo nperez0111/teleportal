@@ -1,0 +1,95 @@
+---
+title: Getting Started
+description: Learn how to set up a minimal Teleportal server and client
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## Minimal Example
+
+Here's a complete example of a Teleportal server and client that syncs a simple Y.js document:
+
+### Server
+
+```typescript
+import { serve } from "crossws/server";
+import { Server } from "teleportal/server";
+import { YDocStorage } from "teleportal/storage";
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+
+// Create a Teleportal server with in-memory storage
+const server = new Server({
+  storage: new YDocStorage(),
+});
+
+// Set up WebSocket handlers
+serve({
+  websocket: getWebsocketHandlers({
+    server,
+    onUpgrade: async () => {
+      // Extract user context from the request
+      // In production, you'd verify authentication here
+      return {
+        context: { userId: "user-123", room: "workspace-1" },
+      };
+    },
+  }),
+  fetch: () => new Response("Not found", { status: 404 }),
+});
+```
+
+**What's happening:**
+
+1. **`Server`**: The core Teleportal server that manages document sessions and client connections
+2. **`YDocStorage`**: In-memory storage for documents (data is lost on restart)
+3. **`getWebsocketHandlers`**: Creates WebSocket upgrade and message handlers
+4. **`onUpgrade`**: Called when a client connects - returns the user context for authentication
+
+### Client
+
+```typescript
+import { Provider } from "teleportal/providers";
+import * as Y from "yjs";
+
+// Create a provider that connects to the server
+const provider = await Provider.create({
+  url: "ws://localhost:3000",
+  document: "my-document",
+});
+
+// Wait for the document to sync
+await provider.synced;
+
+// Access the Y.js document
+const ydoc = provider.doc;
+
+// Create a Y.js text type and insert content
+const ytext = ydoc.getText("content");
+ytext.insert(0, "Hello, world!");
+
+// Listen for updates from other clients
+ydoc.on("update", () => {
+  console.log("Document updated:", ytext.toString());
+});
+```
+
+**What's happening:**
+
+1. **`Provider.create()`**: Creates a provider and automatically connects to the server
+2. **`provider.synced`**: A promise that resolves when the document is fully synchronized
+3. **`provider.doc`**: The Y.js document instance - use it like any Y.js document
+4. **Updates**: Changes are automatically synced to other clients connected to the same document
+
+## How It Works
+
+1. **Client connects**: The provider establishes a WebSocket connection to the server
+2. **Sync protocol**: The client and server exchange state vectors to determine what updates are needed
+3. **Document sync**: Missing updates are sent from server to client, and the document is synchronized
+4. **Real-time updates**: When you make changes, they're sent to the server and broadcast to all other clients
+5. **Awareness**: Cursor positions and user presence are automatically synchronized
+
+## Next Steps
+
+- [Integration Guide](/docs/integration/) - Learn how to integrate Teleportal into your application
+- [Core Concepts](/docs/core-concepts/) - Understand the architecture and components
+- [Guides](/docs/guides/) - Step-by-step guides for common scenarios

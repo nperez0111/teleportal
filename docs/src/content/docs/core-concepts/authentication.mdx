@@ -1,0 +1,384 @@
+---
+title: Authentication
+description: JWT token authentication and permission management
+---
+
+Teleportal provides a flexible authentication system based on JWT tokens with IAM-like permission management. The general model is to issue a JWT token which is signed by the server, containing the user's ID, their room/organization ID, and document access patterns and permissions.
+
+## Overview
+
+The authentication model:
+
+1. **Token Issuance**: Server issues a JWT token signed with a secret
+2. **Token Verification**: Token is checked on every message received
+3. **Permission Checking**: Token should be lightweight and fast to verify
+4. **Flexible Implementation**: You can sub-class `TokenManager` to add custom logic
+
+## Implement your own authentication logic
+
+You can opt-out of using the built-in authentication system by implementing your own authentication logic. This is useful if you want to use a different authentication system, or if you want to add custom logic to the authentication process.
+
+```typescript
+const handlers = getWebsocketHandlers({
+  onUpgrade: async (request) => {
+    // Your custom auth logic
+    const user = await verifySession(request);
+    if (!user) throw new Response("Unauthorized", { status: 401 });
+    return { context: { userId: user.id } };
+  },
+});
+```
+
+You can also implement your own authentication logic for the server
+
+```typescript
+const server = new Server({
+  checkPermission: async ({ context, documentId, message, type }) => {
+    // Your custom auth logic
+    const hasPermission = await validateToken(request);
+    if (!hasPermission) {
+      return false;
+    }
+    return true;
+  },
+});
+```
+
+# Built-in authentication system
+
+The built-in authentication system is a JWT token-based authentication system. It is designed to be flexible and easy to use. It is also designed to be secure and easy to audit.
+
+## Token Manager
+
+The token manager is a class that is used to create and verify JWT tokens. It is designed to be flexible and easy to use. It is also designed to be secure and easy to audit.
+
+```typescript
+
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here",
+  expiresIn: 3600,
+  issuer: "my-collaborative-app",
+});
+```
+
+The token manager is used to create and verify JWT tokens. It is designed to be flexible and easy to use. It is also designed to be secure and easy to audit.
+
+```typescript
+const token = await tokenManager.createToken("user-123", "org-456", [
+  { pattern: "*", permissions: ["admin"] },
+]);
+```
+
+The token manager is used to verify JWT tokens. It is designed to be flexible and easy to use. It is also designed to be secure and easy to audit.
+
+```typescript
+const result = await tokenManager.verifyToken(token);
+if (!result.valid || !result.payload) {
+  return false;
+}
+return true;
+```
+
+The token manager is used to verify JWT tokens. It is designed to be flexible and easy to use. It is also designed to be secure and easy to audit.
+
+```typescript
+const result = await tokenManager.verifyToken(token);
+if (!result.valid || !result.payload) {
+  return false;
+}
+return true;
+```
+
+## Token Structure
+
+The JWT token payload contains:
+
+```typescript
+{
+  userId: string;           // User identifier
+  room: string;            // Room/organization identifier
+  documentAccess: [        // Document access patterns
+    {
+      pattern: string;     // Document pattern
+      permissions: Permission[]; // Array of permissions
+    }
+  ];
+  exp?: number;           // Expiration time (Unix timestamp)
+  iat?: number;           // Issued at time (Unix timestamp)
+  iss?: string;           // Issuer
+  aud: "teleportal";       // Audience
+}
+```
+
+## Permission Types
+
+- **`read`**: Can view document content and awareness updates
+- **`write`**: Can modify document content
+- **`comment`**: Can add comments to documents
+- **`suggest`**: Can make suggestions for document changes
+- **`admin`**: Full access to all operations (supersedes other permissions)
+
+## Creating Tokens
+
+### Basic Token Creation
+
+```typescript
+import { createTokenManager } from "teleportal/token";
+
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here",
+  expiresIn: 3600, // 1 hour
+  issuer: "my-collaborative-app",
+});
+
+// Generate a token for a user
+const token = await tokenManager.createToken("user-123", "org-456", [
+  { pattern: "*", permissions: ["admin"] },
+]);
+```
+
+### User Token
+
+Create a token for user-owned documents:
+
+```typescript
+// User owns all documents starting with their userId
+const userToken = await tokenManager.createUserToken("user-123", "org-456", [
+  "read", "write", "comment", "suggest"
+]);
+```
+
+### Admin Token
+
+Create an admin token with full access:
+
+```typescript
+// Admin has access to all documents in the room
+const adminToken = await tokenManager.createAdminToken("admin-789", "org-456");
+```
+
+### Custom Token
+
+Create a custom token with specific access patterns:
+
+```typescript
+const customToken = await tokenManager.createDocumentToken("user-101", "org-456", [
+  {
+    pattern: "shared/*",
+    permissions: ["read", "comment"]
+  },
+  {
+    pattern: "projects/my-project/*",
+    permissions: ["read", "write", "comment", "suggest"]
+  },
+  {
+    pattern: "user-101/*",
+    permissions: ["read", "write", "comment", "suggest", "admin"]
+  }
+]);
+```
+
+## Document Pattern Matching
+
+The token utility supports flexible document pattern matching:
+
+### Exact Match
+
+```typescript
+pattern: "document1"
+// Matches: "document1"
+```
+
+### Prefix Match
+
+```typescript
+pattern: "user/*"
+// Matches: "user/doc1", "user/doc2", "user/project/doc3"
+```
+
+### Wildcard Match
+
+```typescript
+pattern: "*"
+// Matches: any document name
+```
+
+### Suffix Match
+
+```typescript
+pattern: "*.md"
+// Matches: "readme.md", "document.md"
+```
+
+## Document Access Builder
+
+For complex permission scenarios, use the `DocumentAccessBuilder`:
+
+```typescript
+import { DocumentAccessBuilder } from "teleportal/token";
+
+// Basic usage
+const access = new DocumentAccessBuilder()
+  .allow("user/*", ["read", "write"])
+  .deny("private/*")
+  .build();
+
+// Using convenience methods
+const access = new DocumentAccessBuilder()
+  .readOnly("public/*")
+  .readWrite("user/*")
+  .fullAccess("admin/*")
+  .admin("super-admin/*")
+  .build();
+
+// Domain-specific methods
+const access = new DocumentAccessBuilder()
+  .ownDocuments("user-123")
+  .sharedDocuments()
+  .projectDocuments("my-project")
+  .orgDocuments("acme-corp")
+  .build();
+```
+
+## Verifying Tokens
+
+Verify and check permissions:
+
+```typescript
+// Verify a token
+const result = await tokenManager.verifyToken(token);
+if (result.valid && result.payload) {
+  // Check specific permissions
+  const canRead = tokenManager.hasDocumentPermission(
+    result.payload,
+    "user-123/document1",
+    "read"
+  );
+
+  const canWrite = tokenManager.hasDocumentPermission(
+    result.payload,
+    "shared/document1",
+    "write"
+  );
+
+  // Get all permissions for a document
+  const permissions = tokenManager.getDocumentPermissions(
+    result.payload,
+    "user-123/document1"
+  );
+}
+```
+
+## Server Integration
+
+Integrate token authentication with the websocket server:
+
+```typescript
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+import { Server } from "teleportal/server";
+import { createTokenManager } from "teleportal/token";
+
+const tokenManager = createTokenManager({
+  secret: "your-secret-key",
+  expiresIn: 3600,
+});
+
+const server = new Server({
+  getStorage: async ({ context }) => {
+    // Your storage implementation
+    return documentStorage;
+  },
+  checkPermission: async ({ context, documentId, fileId, message, type }) => {
+    // Extract token from context
+    const token = (context as any).token;
+    if (!token) return false;
+
+    // Verify token
+    const result = await tokenManager.verifyToken(token);
+    if (!result.valid || !result.payload) return false;
+
+    const payload = result.payload;
+
+    // Check room access
+    if (payload.room !== context.room) return false;
+
+    // Handle file messages
+    if (message.type === "file") {
+      // File messages use fileId for permission checks
+      return true; // Implement file-specific permission checks
+    }
+
+    // Check document permissions
+    if (!documentId) {
+      throw new Error("documentId is required for doc messages");
+    }
+    const requiredPermission = message.type === "awareness" ? "read" : "write";
+    return tokenManager.hasDocumentPermission(payload, documentId, requiredPermission);
+  },
+});
+
+const handlers = getWebsocketHandlers({
+  onUpgrade: async (request) => {
+    // Extract token from request
+    const url = new URL(request.url);
+    const token = url.searchParams.get("token") ||
+                 request.headers.get("authorization")?.replace("Bearer ", "");
+
+    if (!token) {
+      throw new Response("No token provided", { status: 401 });
+    }
+
+    // Verify token
+    const result = await tokenManager.verifyToken(token);
+    if (!result.valid || !result.payload) {
+      throw new Response("Invalid token", { status: 401 });
+    }
+
+    const payload = result.payload;
+
+    // Check expiration
+    if (payload.exp && Date.now() / 1000 > payload.exp) {
+      throw new Response("Token expired", { status: 401 });
+    }
+
+    return {
+      context: {
+        userId: payload.userId,
+        room: payload.room,
+        token, // Pass token for permission checking
+      },
+    };
+  },
+});
+```
+
+## Security Considerations
+
+1. **Use strong secrets**: Generate cryptographically secure random secrets
+2. **Set appropriate expiration**: Don't make tokens too long-lived
+3. **Validate room access**: Always check that the user is in the correct room
+4. **Check permissions on every operation**: Don't cache permission results
+5. **Use HTTPS**: Always use secure connections in production
+6. **Rotate secrets**: Regularly rotate your JWT signing secrets
+
+## Custom Authentication
+
+You can implement your own authentication logic:
+
+```typescript
+const handlers = getWebsocketHandlers({
+  onUpgrade: async (request) => {
+    // Your custom auth logic
+    const user = await verifySession(request);
+    if (!user) throw new Response("Unauthorized", { status: 401 });
+
+    return { context: { userId: user.id } };
+  },
+});
+```
+
+## Next Steps
+
+- [Server](/docs/core-concepts/server/) - Learn how the server uses authentication
+- [Integration Guide](/docs/integration/) - See authentication options
+- [Token API Reference](/docs/api/token/) - Full API documentation

@@ -1,0 +1,64 @@
+---
+title: HTTP Transport
+description: Using HTTP/SSE transport for environments where WebSockets are blocked
+---
+
+This guide demonstrates a Teleportal server setup using only HTTP connections: HTTP POST & Server-Sent Events (SSE). This is useful for environments where WebSocket upgrades are blocked.
+
+## What it demonstrates
+
+- Setting up a Teleportal server with HTTP transport only
+- Using Server-Sent Events (SSE) for real-time synchronization
+- Client connection using the `Provider` API with HTTP transport
+
+## Server Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import { getHttpHandlers } from "teleportal/http";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Your storage implementation
+    return documentStorage;
+  },
+});
+
+// HTTP handlers
+const handlers = getHttpHandlers({
+  server,
+  onConnect: async (request) => {
+    // Extract context from request
+    return {
+      context: { userId: "user-123" },
+    };
+  },
+});
+```
+
+## Client Setup
+
+The `Provider` automatically uses HTTP transport when WebSocket is not available:
+
+```typescript
+import { Provider } from "teleportal/providers";
+
+// Provider will automatically use HTTP/SSE if WebSocket fails
+const provider = await Provider.create({
+  url: "https://example.com",
+  document: "my-document",
+});
+
+await provider.synced;
+```
+
+## How It Works
+
+1. **HTTP POST**: Client sends messages via HTTP POST requests
+2. **Server-Sent Events**: Server sends messages via SSE connection
+3. **Automatic Fallback**: Provider automatically falls back to HTTP if WebSocket fails
+
+## Next Steps
+
+- [Fallback Connection](/docs/guides/fallback-connection/) - Automatic fallback from WebSocket to HTTP
+- [Authentication](/docs/guides/authentication/) - Add authentication to your server

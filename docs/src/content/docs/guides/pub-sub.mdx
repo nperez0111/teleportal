@@ -1,0 +1,61 @@
+---
+title: Pub/Sub
+description: Multi-server setup with pub/sub for horizontal scaling
+---
+
+This guide demonstrates a multi-server setup using pub/sub for horizontal scaling. Multiple server instances share a pub/sub backend to synchronize document updates across nodes.
+
+## What it demonstrates
+
+In a typical websocket-only setup, each client is connected via the websocket to a single server. But, what happens if you have two clients who access the same document?
+In a multi-node setup, it is possible for one client to be connected to one server and the other client to be connected to another server. This can lead to inconsistent state and conflicts, since the system is operating in a sort of split-brain scenario.
+
+This example demonstrates how each server instance can coordinate with each other over a pub/sub interface to ensure that all clients see the same state. Specifically achieving the following:
+
+- Each server instance has a unique `nodeId`
+- Messages are published to PubSub topics
+- Each server filters out its own messages
+- Document updates are replicated across all server instances
+
+## Server Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import { RedisPubSub } from "teleportal/pubsub/redis";
+import { createUnstorage } from "teleportal/storage";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Shared storage backend
+    return documentStorage;
+  },
+  pubSub: new RedisPubSub({
+    url: "redis://localhost:6379",
+  }),
+  nodeId: process.env.NODE_ID || `node-${uuidv4()}`,
+});
+```
+
+## Running Multiple Instances
+
+```bash
+# Instance 1
+NODE_ID=node-1 PORT=3000 node server.js
+
+# Instance 2
+NODE_ID=node-2 PORT=3001 node server.js
+
+# Instance 3
+NODE_ID=node-3 PORT=3002 node server.js
+```
+
+## How It Works
+
+Anytime that a document update (or other broadcast message) is applied to a server, the server will publish that message to the PubSub topic to broadcast to all other servers that may be listening. Each server will then apply/broadcast that message to its own clients.
+
+In this example, we are using Redis as the PubSub backend, but you can use any PubSub backend that implements the PubSub interface (literally publish/subscribe with callbacks).
+
+## Next Steps
+
+- [Scaling](/docs/advanced/scaling/) - Learn more about scaling strategies
+- [Server](/docs/core-concepts/server/) - Server architecture

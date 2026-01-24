@@ -1,0 +1,39 @@
+---
+title: Guides
+description: Step-by-step guides for common Teleportal scenarios
+---
+
+These guides walk you through implementing common Teleportal features and patterns. Each guide includes working code examples and explanations.
+
+<CardGrid stagger>
+  <Card title="WebSocket Only" icon="seti:html" href="/docs/guides/websocket-only/">
+    Minimal server setup with WebSocket transport and in-memory storage
+  </Card>
+  <Card title="HTTP Transport" icon="seti:html" href="/docs/guides/http-transport/">
+    Using HTTP/SSE transport for environments where WebSockets are blocked
+  </Card>
+  <Card title="Fallback Connection" icon="seti:html" href="/docs/guides/fallback-connection/">
+    Automatic fallback from WebSocket to HTTP when WebSocket fails
+  </Card>
+  <Card title="Authentication" icon="seti:lock" href="/docs/guides/authentication/">
+    JWT token-based authentication with permission management
+  </Card>
+  <Card title="Persistent Storage" icon="seti:db" href="/docs/guides/persistent-storage/">
+    Using persistent storage backends instead of in-memory storage
+  </Card>
+  <Card title="Encryption at Rest" icon="seti:lock" href="/docs/guides/encryption-at-rest/">
+    Encrypting documents in storage for security
+  </Card>
+  <Card title="Pub/Sub" icon="seti:db" href="/docs/guides/pub-sub/">
+    Multi-server setup with pub/sub for horizontal scaling
+  </Card>
+  <Card title="Observability" icon="information" href="/docs/guides/observability/">
+    Monitoring and health checks with Prometheus metrics
+  </Card>
+  <Card title="Custom Storage" icon="seti:db" href="/docs/guides/custom-storage/">
+    Implementing a custom storage backend
+  </Card>
+  <Card title="Rate Limiting" icon="seti:html" href="/docs/guides/rate-limiting/">
+    Rate limiting client messages to prevent abuse
+  </Card>
+</CardGrid>

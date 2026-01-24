@@ -1,0 +1,95 @@
+---
+title: Rate Limiting
+description: Rate limiting client messages to prevent abuse
+---
+
+This guide demonstrates rate limiting client messages to prevent abuse. The server can track rate limits per user, per document, or per user-document pair.
+
+## What it demonstrates
+
+- Configuring rate limiting on the server
+- Tracking rate limits by user, document, or user-document pair
+- Using persistent rate limit storage for multi-node deployments
+- Handling rate limit exceeded events
+
+## Server Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import { createStorage } from "unstorage";
+import { UnstorageDocumentStorage, UnstorageRateLimitStorage } from "teleportal/storage";
+
+const storage = createStorage();
+
+const server = new Server({
+  storage: new UnstorageDocumentStorage(storage),
+  rateLimitConfig: {
+    // Multiple rate limit rules
+    rules: [
+      // Track by user (across all documents)
+      {
+        id: "per-user",
+        maxMessages: 100, // 100 messages per window
+        windowMs: 1000, // 1 second window
+        trackBy: "user",
+      },
+      // Track by document (across all users)
+      {
+        id: "per-document",
+        maxMessages: 500, // 500 messages per window per document
+        windowMs: 10000, // 10 second window
+        trackBy: "document",
+      },
+      // Track by user-document pair
+      {
+        id: "user-document",
+        maxMessages: 100,
+        windowMs: 1000,
+        trackBy: "user-document",
+      },
+    ],
+    // Use persistent storage for multi-node deployments
+    rateLimitStorage: new UnstorageRateLimitStorage(storage),
+    // Callback when rate limit is exceeded
+    onRateLimitExceeded: (details) => {
+      console.warn("Rate limit exceeded", details);
+    },
+    // Maximum message size
+    maxMessageSize: 10 * 1024 * 1024, // 10MB
+    // Callback when message size is exceeded
+    onMessageSizeExceeded: (details) => {
+      console.warn("Message size exceeded", details);
+    },
+  },
+});
+```
+
+## Rate Limit Tracking Modes
+
+- **`"user"`**: Track rate limits per user ID. All connections from the same user share the same limit.
+- **`"document"`**: Track rate limits per document ID. All users editing the same document share the same limit.
+- **`"user-document"`**: Track rate limits per user-document pair. Each user has separate limits for each document.
+- **`"transport"`**: Track rate limits per transport instance (in-memory only, not shared).
+
+## Multi-Node Deployments
+
+For multi-node deployments, use persistent rate limit storage:
+
+```typescript
+import { RedisRateLimitStorage } from "teleportal/transports/redis";
+
+const rateLimitStorage = new RedisRateLimitStorage(redisClient);
+
+const server = new Server({
+  // ... other options
+  rateLimitConfig: {
+    rateLimitStorage, // Shared across server instances
+    // ... other options
+  },
+});
+```
+
+## Next Steps
+
+- [Server](/docs/core-concepts/server/) - Learn more about server configuration
+- [Scaling](/docs/advanced/scaling/) - Multi-node deployment strategies

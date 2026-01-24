@@ -1,0 +1,117 @@
+---
+title: Custom Transport
+description: Guide on how to implement a custom transport layer
+---
+
+You can implement custom transport layers for Teleportal by implementing the `Transport` interface. This guide shows you how.
+
+## Transport Interface
+
+A transport is a combination of a Source (for reading messages) and a Sink (for writing messages):
+
+```typescript
+interface Transport<Context, Properties = {}> {
+  readable: ReadableStream<Message<Context>>;
+  writable: WritableStream<Message<Context>>;
+  // Optional additional properties
+  [key: string]: any;
+}
+```
+
+## Example: Custom Transport
+
+```typescript
+import { compose } from "teleportal/transports";
+import type { Transport, Source, Sink } from "teleportal/transports";
+
+// Create a source that reads from your transport
+function getMyTransportSource(): Source<Context> {
+  return {
+    readable: new ReadableStream({
+      async start(controller) {
+        // Set up your transport's read mechanism
+        myTransport.on("message", (data) => {
+          // Decode message
+          const message = decodeMessage(data);
+          controller.enqueue(message);
+        });
+
+        myTransport.on("close", () => {
+          controller.close();
+        });
+
+        myTransport.on("error", (error) => {
+          controller.error(error);
+        });
+      },
+    }),
+  };
+}
+
+// Create a sink that writes to your transport
+function getMyTransportSink(): Sink<Context> {
+  return {
+    writable: new WritableStream({
+      async write(message) {
+        // Encode message
+        const encoded = encodeMessage(message);
+        // Send via your transport
+        await myTransport.send(encoded);
+      },
+      async close() {
+        await myTransport.close();
+      },
+    }),
+  };
+}
+
+// Compose into a transport
+const transport: Transport<Context> = compose(
+  getMyTransportSource(),
+  getMyTransportSink()
+);
+```
+
+## Binary Transport
+
+If your transport works with raw binary data, you can use binary transport utilities:
+
+```typescript
+import { toBinaryTransport, fromBinaryTransport } from "teleportal/transports";
+
+// Convert to binary transport
+const binaryTransport = toBinaryTransport(transport, context);
+
+// Convert from binary transport
+const messageTransport = fromBinaryTransport(binaryTransport, context);
+```
+
+## Composing with Middleware
+
+You can compose your custom transport with middleware:
+
+```typescript
+import { withLogger, withRateLimit } from "teleportal/transports";
+
+// Add logging
+let transport = withLogger(myTransport);
+
+// Add rate limiting
+transport = withRateLimit(transport, {
+  maxMessages: 100,
+  windowMs: 1000,
+});
+```
+
+## Best Practices
+
+1. **Handle Errors**: Implement proper error handling for connection failures
+2. **Support Cleanup**: Implement cleanup logic for closing connections
+3. **Message Encoding**: Use Teleportal's encoding/decoding utilities
+4. **Stream API**: Follow the Web Streams API patterns
+5. **Context Injection**: Ensure context is properly injected into messages
+
+## Next Steps
+
+- [Transport](/docs/core-concepts/transport/) - Learn more about transports
+- [Server](/docs/core-concepts/server/) - See how transports are used in the server

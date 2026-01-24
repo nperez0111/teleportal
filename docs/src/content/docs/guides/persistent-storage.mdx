@@ -1,0 +1,84 @@
+---
+title: Persistent Storage
+description: Using persistent storage backends instead of in-memory storage
+---
+
+This guide demonstrates using persistent storage instead of in-memory storage. Documents are persisted across server restarts using the unstorage abstraction layer.
+
+## What it demonstrates
+
+- Using `createUnstorage` for persistent document storage
+- Configuring unstorage with different drivers (memory, SQLite, Redis, etc.)
+- Replacing in-memory storage with a persistent storage backend
+
+## Server Setup
+
+```typescript
+import { createStorage } from "unstorage";
+import { createUnstorage } from "teleportal/storage";
+import redisDriver from "unstorage/drivers/redis";
+import { Server } from "teleportal/server";
+
+// Create unstorage instance with Redis driver
+const storage = createStorage({
+  driver: redisDriver({
+    base: "teleportal:",
+    url: "redis://localhost:6379",
+  }),
+});
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    const { documentStorage } = createUnstorage(storage, {
+      documentKeyPrefix: "doc",
+      fileKeyPrefix: "file",
+      encrypted: ctx.encrypted,
+    });
+    return documentStorage;
+  },
+});
+```
+
+## Alternative Storage Backends
+
+### PostgreSQL
+
+```typescript
+import postgresDriver from "unstorage/drivers/postgres";
+
+const storage = createStorage({
+  driver: postgresDriver({
+    connectionString: "postgresql://user:password@localhost/db",
+  }),
+});
+```
+
+### SQLite
+
+```typescript
+import sqliteDriver from "unstorage/drivers/sqlite";
+
+const storage = createStorage({
+  driver: sqliteDriver({
+    db: "./teleportal.db",
+  }),
+});
+```
+
+### S3
+
+```typescript
+import s3Driver from "unstorage/drivers/s3";
+
+const storage = createStorage({
+  driver: s3Driver({
+    bucket: "my-bucket",
+    region: "us-east-1",
+  }),
+});
+```
+
+## Next Steps
+
+- [Encryption at Rest](/docs/guides/encryption-at-rest/) - Encrypt documents in storage
+- [Custom Storage](/docs/guides/custom-storage/) - Implement your own storage backend

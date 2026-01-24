@@ -1,0 +1,56 @@
+---
+title: Encryption at Rest
+description: Encrypting documents in storage for security
+---
+
+This guide demonstrates encrypting documents before storing them in the storage backend. Data is encrypted using a symmetric encryption key.
+
+## What it demonstrates
+
+- Using encrypted storage for document data
+- Importing or creating encryption keys
+- Encrypting document data before it's written to storage
+- Decrypting document data when reading from storage
+
+## Server Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import { createUnstorage } from "teleportal/storage";
+import { createStorage } from "unstorage";
+import redisDriver from "unstorage/drivers/redis";
+
+const storage = createStorage({
+  driver: redisDriver({
+    base: "teleportal:",
+    url: "redis://localhost:6379",
+  }),
+});
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    const { documentStorage } = createUnstorage(storage, {
+      documentKeyPrefix: "doc",
+      encrypted: ctx.encrypted, // Enable encryption based on context
+    });
+    return documentStorage;
+  },
+});
+```
+
+## Encryption Key Management
+
+```typescript
+import { createEncryptionKey, importEncryptionKey } from "teleportal/encryption-key";
+
+// Create a new encryption key
+const key = await createEncryptionKey();
+
+// Import an existing key
+const importedKey = await importEncryptionKey(keyString);
+```
+
+## Next Steps
+
+- [Storage](/docs/storage/) - Learn more about storage options
+- [Core Concepts: Server](/docs/core-concepts/server/) - Server configuration

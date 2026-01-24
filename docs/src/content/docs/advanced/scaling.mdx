@@ -1,0 +1,188 @@
+---
+title: Scaling
+description: Scaling Teleportal deployments
+---
+
+This guide covers scaling strategies for Teleportal deployments.
+
+## Single-Node Deployment
+
+**Best for**: Small to medium applications
+
+- Single server instance
+- In-memory or local storage
+- No coordination needed
+
+```typescript
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Your storage
+  },
+});
+```
+
+## Multi-Node with PubSub
+
+**Best for**: Horizontal scaling, high availability
+
+The purpose of the pubsub broker is to coordinate messages between server instances, so that multiple servers can operate on the same document simultaneously.
+
+### Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import { RedisPubSub } from "teleportal/pubsub/redis";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Shared storage backend
+    return documentStorage;
+  },
+  pubSub: new RedisPubSub({
+    url: "redis://localhost:6379",
+  }),
+  nodeId: process.env.NODE_ID,
+});
+```
+
+### Running Multiple Instances
+
+```bash
+# Instance 1
+NODE_ID=node-1 PORT=3000 node server.js
+
+# Instance 2
+NODE_ID=node-2 PORT=3001 node server.js
+
+# Instance 3
+NODE_ID=node-3 PORT=3002 node server.js
+```
+
+### PubSub Options
+
+- **Redis**: Fast, widely supported
+- **NATS**: Lightweight, high performance
+- **In-Memory**: For testing (not shared across nodes)
+
+### Considerations
+
+In some cases, pubsub may put pressure on the broker. This can be mitigated by:
+
+- **Co-locating users**: Route users to the same server instance when possible
+- **Document affinity**: Route documents to specific servers
+- **Load balancing**: Use sticky sessions to keep users on the same server
+
+## Multi-Node with HTTP Load Balancer
+
+**Best for**: Simple scaling without PubSub
+
+- Multiple server instances behind a load balancer
+- Shared storage
+- Sticky sessions recommended (route same document to same server)
+
+### Setup
+
+```typescript
+// Each server instance
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Shared storage
+    return documentStorage;
+  },
+  // No pubSub - relies on sticky sessions
+});
+```
+
+### Load Balancer Configuration
+
+- **Sticky Sessions**: Route same document to same server
+- **Health Checks**: Monitor server health
+- **Session Affinity**: Use document ID for routing
+
+## Custom Deployment Strategy
+
+Teleportal is a framework, so you can build custom deployment strategies:
+
+### Document Sharding
+
+Route documents to specific servers based on document ID:
+
+```typescript
+function getServerForDocument(documentId: string): string {
+  const hash = hashDocumentId(documentId);
+  const serverIndex = hash % serverCount;
+  return servers[serverIndex];
+}
+```
+
+### Regional Deployment
+
+Deploy servers in different regions:
+
+```typescript
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Regional storage
+    return regionalStorage;
+  },
+  pubSub: new RegionalPubSub({
+    region: "us-east-1",
+  }),
+});
+```
+
+## Storage Scaling
+
+### Separate Storage Types
+
+Use different backends for different storage types:
+
+```typescript
+// PostgreSQL for documents
+const documentStorage = new PostgresDocumentStorage(db);
+
+// S3 for files
+const fileStorage = new S3FileStorage(s3Client);
+
+// Redis for milestones
+const milestoneStorage = new RedisMilestoneStorage(redisClient);
+```
+
+### Storage Replication
+
+Replicate storage across regions for high availability:
+
+```typescript
+const storage = new ReplicatedStorage([
+  primaryStorage,
+  replicaStorage1,
+  replicaStorage2,
+]);
+```
+
+## Monitoring
+
+Monitor your scaled deployment:
+
+```typescript
+// Per-node metrics
+const metrics = await server.getMetrics();
+
+// Aggregate metrics across nodes
+const aggregatedMetrics = await aggregateMetrics(allNodes);
+```
+
+## Best Practices
+
+1. **Use PubSub for Multi-Node**: Always use PubSub when running multiple server instances
+2. **Shared Storage**: Use shared storage backends (Redis, PostgreSQL, etc.)
+3. **Unique Node IDs**: Ensure each server instance has a unique `nodeId`
+4. **Health Checks**: Monitor server health and remove unhealthy instances
+5. **Load Balancing**: Use appropriate load balancing strategies
+6. **Co-location**: Co-locate users onto the same server instances when possible
+
+## Next Steps
+
+- [Pub/Sub Guide](/docs/guides/pub-sub/) - Learn about pub/sub setup
+- [Performance](/docs/advanced/performance/) - Optimize performance
+- [Monitoring](/docs/monitoring/) - Set up monitoring

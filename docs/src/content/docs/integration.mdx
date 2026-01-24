@@ -1,0 +1,189 @@
+---
+title: Integration Guide
+description: Decision tree and considerations for integrating Teleportal into your application
+---
+
+This guide helps you make decisions about how to integrate Teleportal into your application.
+
+## Storage
+
+Teleportal supports any storage backend through the `DocumentStorage` interface. **Unstorage** (recommended) works with Redis, PostgreSQL, S3, and many other backends. For development, use **in-memory storage**. For special requirements, implement a custom `DocumentStorage` interface.
+
+```typescript
+// Unstorage (production)
+import { createStorage } from "unstorage";
+import { createUnstorage } from "teleportal/storage";
+import redisDriver from "unstorage/drivers/redis";
+
+const storage = createStorage({
+  driver: redisDriver({ base: "teleportal:" }),
+});
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    const { documentStorage } = createUnstorage(storage, {
+      documentKeyPrefix: "doc",
+      fileKeyPrefix: "file",
+    });
+    return documentStorage;
+  },
+});
+
+// In-memory (development)
+import { createInMemory } from "teleportal/storage";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    const { documentStorage } = createInMemory();
+    return documentStorage;
+  },
+});
+```
+
+See [Custom Storage](/docs/advanced/custom-storage/) for custom implementations.
+
+## Transport
+
+**WebSocket** (default) provides bidirectional communication with low latency. Use **HTTP with Server-Sent Events** for corporate networks that block WebSockets. The client can automatically use a **fallback connection** that tries WebSocket first, then falls back to HTTP.
+
+```typescript
+// WebSocket
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+
+const handlers = getWebsocketHandlers({
+  server,
+  onUpgrade: async (request) => {
+    return { context: { userId: "user-123" } };
+  },
+});
+
+// HTTP/SSE
+import { getHttpHandlers } from "teleportal/http";
+
+const handlers = getHttpHandlers({
+  server,
+  onConnect: async (request) => {
+    return { context: { userId: "user-123" } };
+  },
+});
+```
+
+## Runtime
+
+Teleportal works on any JavaScript runtime: **Bun** (recommended, fastest), Node.js, Deno, Cloudflare Workers, and edge runtimes (Vercel, Netlify).
+
+## Authentication
+
+**JWT tokens** (built-in) include IAM-like permissions. For existing auth systems, implement custom authentication in `onUpgrade`.
+
+```typescript
+// JWT (built-in)
+import { createTokenManager } from "teleportal/token";
+
+const tokenManager = createTokenManager({
+  secret: "your-secret-key",
+  expiresIn: 3600,
+});
+
+const token = await tokenManager.createToken("user-123", "org-456", [
+  { pattern: "user-123/*", permissions: ["read", "write"] },
+]);
+
+// Custom auth
+const handlers = getWebsocketHandlers({
+  server,
+  onUpgrade: async (request) => {
+    const user = await verifySession(request);
+    if (!user) throw new Response("Unauthorized", { status: 401 });
+    return { context: { userId: user.id } };
+  },
+});
+```
+
+## Features
+
+**Document synchronization** is always included. **File synchronization** and **milestone synchronization** are optional. You can also implement custom RPC handlers.
+
+```typescript
+// File sync (optional)
+import { getFileRpcHandlers } from "teleportal/protocols/file";
+
+const server = new Server({
+  rpcHandlers: {
+    ...getFileRpcHandlers(fileStorage),
+  },
+});
+
+// Milestone sync (optional)
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+
+const server = new Server({
+  rpcHandlers: {
+    ...getMilestoneRpcHandlers(milestoneStorage),
+  },
+});
+```
+
+## Deployment
+
+For **single-node** deployments, run one server instance with in-memory or local storage. For **multi-node** deployments, use shared storage with PubSub (Redis, NATS) for message coordination, or use an HTTP load balancer with sticky sessions.
+
+```typescript
+// Multi-node with PubSub
+import { RedisPubSub } from "teleportal/pubsub/redis";
+
+const server = new Server({
+  getStorage: async (ctx) => {
+    // Shared storage
+  },
+  pubSub: new RedisPubSub({
+    url: "redis://localhost:6379",
+  }),
+  nodeId: process.env.NODE_ID,
+});
+```
+
+See [Scaling](/docs/advanced/scaling/) for custom deployment strategies.
+
+## Monitoring & Logging
+
+Built-in **Prometheus metrics** and **health checks** are available. Integrate custom monitoring using server events. Teleportal uses `@logtape/logtape` for structured logging—configure adapters for your logging system.
+
+```typescript
+// Metrics & health
+import { getMetricsHandler, getHealthHandler } from "teleportal/monitoring";
+
+app.get("/metrics", getMetricsHandler(server));
+app.get("/health", getHealthHandler(server));
+
+// Custom monitoring
+server.on("client-connect", (data) => {
+  // Send to your monitoring system
+});
+```
+
+## Decision Tree
+
+```
+Start
+  │
+  ├─ Storage: Unstorage (most cases) or In-Memory (dev/test)
+  │
+  ├─ Transport: WebSocket (default) or HTTP/SSE (firewalls)
+  │
+  ├─ Runtime: Bun (recommended), Node.js, Deno, or Edge
+  │
+  ├─ Auth: JWT (built-in) or Custom
+  │
+  ├─ Features: Document (always), File (optional), Milestones (optional)
+  │
+  ├─ Deployment: Single-node or Multi-node with PubSub
+  │
+  └─ Monitoring: Prometheus (built-in) or Custom
+```
+
+## Next Steps
+
+- [Core Concepts](/docs/core-concepts/) - Understand the architecture
+- [Guides](/docs/guides/) - Step-by-step implementation guides
+- [Advanced Topics](/docs/advanced/) - Custom implementations and optimizations

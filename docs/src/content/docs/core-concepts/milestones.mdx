@@ -1,0 +1,242 @@
+---
+title: Milestones
+description: Document snapshots and version history
+---
+
+Milestones are document snapshots that represent the document state at a specific point in time. They provide version history and can be used to restore documents to previous states.
+
+## Overview
+
+A **Milestone** is a document snapshot as the client saw the document at a point in time. Milestones are:
+
+- Stored separately from the document as a sort of version history
+- Can be pulled back over the network again
+- An example of the RPC system, which adds custom messages & handlers for custom operations over the transport layer in-protocol
+
+## Creating Milestones
+
+### Manual Creation
+
+Create a milestone from the current document state:
+
+```typescript
+import { Provider } from "teleportal/providers";
+
+const provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document",
+});
+
+// Create a milestone with a name
+const milestone = await provider.createMilestone("v1.0");
+
+// Or let the server auto-generate a name
+const milestone2 = await provider.createMilestone();
+```
+
+### Automatic Creation
+
+Milestones can be created automatically based on triggers:
+
+```typescript
+import { Server } from "teleportal/server";
+
+const server = new Server({
+  // ... other options
+  milestoneTriggerConfig: {
+    defaultTriggers: [
+      {
+        type: "time-based",
+        interval: 3600000, // 1 hour
+      },
+      {
+        type: "update-count",
+        threshold: 1000, // After 1000 updates
+      },
+    ],
+  },
+});
+```
+
+## Listing Milestones
+
+List all milestones for a document:
+
+```typescript
+// List all milestones
+const milestones = await provider.listMilestones();
+
+// List with incremental updates (only new milestones)
+const newMilestones = await provider.listMilestones(
+  existingMilestoneIds
+);
+```
+
+## Retrieving Milestones
+
+Get the snapshot content for a specific milestone:
+
+```typescript
+// Get milestone snapshot
+const snapshot = await provider.getMilestoneSnapshot(milestoneId);
+
+// The snapshot is a Uint8Array containing the Y.js document state
+// You can apply it to a new document:
+import * as Y from "yjs";
+
+const newDoc = new Y.Doc();
+Y.applyUpdate(newDoc, snapshot);
+```
+
+## Updating Milestones
+
+Update a milestone's name:
+
+```typescript
+await provider.updateMilestoneName(milestoneId, "v1.0.1");
+```
+
+## Soft Delete and Restore
+
+Milestones support soft delete and restore:
+
+```typescript
+// Soft delete a milestone
+await provider.deleteMilestone(milestoneId);
+
+// Restore a deleted milestone
+await provider.restoreMilestone(milestoneId);
+```
+
+## Milestone Metadata
+
+Each milestone includes metadata:
+
+```typescript
+interface Milestone {
+  id: string;
+  name: string;
+  documentId: string;
+  createdAt: number;
+  deletedAt?: number;
+  lifecycleState?: "active" | "deleted" | "archived" | "expired";
+  expiresAt?: number;
+  createdBy: {
+    type: "user" | "system";
+    id: string;
+  };
+}
+```
+
+The `createdBy` field indicates who or what created the milestone:
+- `{ type: "user", id: userId }` - Created by a user via `milestone-create-request`
+- `{ type: "system", id: nodeId }` - Created automatically by the system (triggers, API)
+
+## Server Configuration
+
+To enable milestone operations on the server:
+
+```typescript
+import { Server } from "teleportal/server";
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+import { createUnstorage } from "teleportal/storage";
+
+const { documentStorage, milestoneStorage } = createUnstorage(storage, {
+  // ... options
+});
+
+const server = new Server({
+  getStorage: async (ctx) => documentStorage,
+  rpcHandlers: {
+    ...getMilestoneRpcHandlers(milestoneStorage),
+  },
+});
+```
+
+## Storage
+
+Milestones are stored separately from documents using `MilestoneStorage`:
+
+```typescript
+import { MilestoneStorage } from "teleportal/storage";
+
+// MilestoneStorage interface
+interface MilestoneStorage {
+  listMilestones(
+    documentId: string,
+    options?: { snapshotIds?: string[]; includeDeleted?: boolean }
+  ): Promise<Milestone[]>;
+
+  getMilestoneSnapshot(
+    documentId: string,
+    milestoneId: string
+  ): Promise<Uint8Array | null>;
+
+  createMilestone(
+    documentId: string,
+    snapshot: Uint8Array,
+    name?: string,
+    userId?: string
+  ): Promise<Milestone>;
+
+  // ... other methods
+}
+```
+
+## Use Cases
+
+### Version History
+
+Create milestones at important points in the document lifecycle:
+
+```typescript
+// Create milestone when user clicks "Save"
+await provider.createMilestone("Save point 1");
+
+// Create milestone when document is published
+await provider.createMilestone("Published v1.0");
+```
+
+### Document Restoration
+
+Restore a document to a previous milestone:
+
+```typescript
+// Get milestone snapshot
+const snapshot = await provider.getMilestoneSnapshot(milestoneId);
+
+// Apply to current document
+import * as Y from "yjs";
+Y.applyUpdate(provider.doc, snapshot);
+```
+
+### Automatic Backups
+
+Use automatic triggers to create regular backups:
+
+```typescript
+const server = new Server({
+  milestoneTriggerConfig: {
+    defaultTriggers: [
+      {
+        type: "time-based",
+        interval: 3600000, // Every hour
+      },
+    ],
+  },
+});
+```
+
+## Best Practices
+
+1. **Name milestones meaningfully**: Use descriptive names like "v1.0", "Published", "Before refactor"
+2. **Create milestones at important points**: Save milestones at key moments in the document lifecycle
+3. **Use automatic triggers**: Set up automatic milestone creation for regular backups
+4. **Clean up old milestones**: Periodically delete or archive old milestones to save storage
+5. **Track createdBy**: Use the `createdBy` field to distinguish user vs system milestones
+
+## Next Steps
+
+- [Provider](/docs/core-concepts/provider/) - Learn how to use milestones from the client
+- [Server](/docs/core-concepts/server/) - Configure milestone triggers on the server
+- [Storage](/docs/storage/) - Understand milestone storage

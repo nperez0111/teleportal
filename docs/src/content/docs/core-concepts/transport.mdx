@@ -1,0 +1,198 @@
+---
+title: Transport
+description: How messages are transmitted between clients and servers
+---
+
+The transport layer handles how messages are sent and received between clients and servers. Teleportal's transport system is built on the **Web Streams API**, making it composable and allowing multiple transports to be chained together.
+
+## Overview
+
+A **Transport** is a combination of a **Source** (for reading messages) and a **Sink** (for writing messages). The server's perspective is:
+
+```typescript
+{
+  readable: messagesFromClient,
+  writable: messagesToClient
+}
+```
+
+The client's perspective is:
+
+```typescript
+{
+  readable: messagesFromServer,
+  writable: messagesToServer
+}
+```
+
+## Architecture
+
+The transport system follows a composable architecture:
+
+1. **Base transports** handle the actual communication (HTTP, SSE, WebSocket, PubSub)
+2. **Middleware transports** wrap other transports to add functionality (encryption, rate limiting, logging, validation)
+3. **Utility functions** help compose, pipe, and transform transports
+
+### Rate Limiting
+
+Throttles messages using a token bucket algorithm:
+
+```typescript
+import { withRateLimit } from "teleportal/transports/rate-limiter";
+
+const rateLimitedTransport = withRateLimit(transport, {
+  maxMessages: 100,
+  windowMs: 1000,
+  trackBy: "user",
+});
+```
+
+### Message Encryption
+
+Wraps a transport with end-to-end encryption:
+
+```typescript
+import { getEncryptedTransport } from "teleportal/transports/encrypted";
+
+const encryptedTransport = getEncryptedTransport(handler);
+```
+
+### Message Validation
+
+Adds authorization checks to message reading and writing:
+
+```typescript
+import { withMessageValidator } from "teleportal/transports/message-validator";
+
+const validatedTransport = withMessageValidator(transport, {
+  isAuthorized: async (message, type) => {
+    // Your authorization logic
+    return true;
+  },
+});
+```
+
+### Logging
+
+Logs all messages for debugging:
+
+```typescript
+import { withLogger } from "teleportal/transports/logger";
+
+const loggedTransport = withLogger(transport);
+```
+
+### ACK Support
+
+Adds acknowledgment message support for reliable message delivery:
+
+```typescript
+import { withAckSink, withAckTrackingSink } from "teleportal/transports/ack";
+
+// Server: Send ACKs automatically
+const ackSink = withAckSink(sink, {
+  pubSub,
+  ackTopic: "acks",
+  sourceId: "server-1",
+});
+
+// Client: Track ACKs
+const trackingSink = withAckTrackingSink(sink, {
+  pubSub,
+  ackTopic: "acks",
+  sourceId: "client-1",
+  ackTimeout: 10000,
+});
+```
+
+## Transport Composition
+
+Transports can be composed in layers:
+
+```typescript
+// Base transport
+let transport = getBaseTransport();
+
+// Add encryption
+transport = getEncryptedTransport(handler);
+
+// Add rate limiting
+transport = withRateLimit(transport, options);
+
+// Add logging
+transport = withLogger(transport);
+
+// Add message validation
+transport = withMessageValidator(transport, {
+  isAuthorized: async (message, type) => {
+    // Authorization logic
+    return true;
+  },
+});
+```
+
+## Y.js Document Transport
+
+The YDoc transport integrates Y.js documents with the Teleportal transport system:
+
+```typescript
+import { getYTransportFromYDoc } from "teleportal/transports/ydoc";
+
+const transport = getYTransportFromYDoc({
+  ydoc,
+  awareness,
+  document: "my-document",
+  context: { clientId: "client-1" },
+});
+
+// Start synchronization
+await transport.handler.start();
+```
+
+## Utility Functions
+
+### Compose
+
+Combines a Source and Sink into a Transport:
+
+```typescript
+import { compose } from "teleportal/transports";
+
+const transport = compose(source, sink);
+```
+
+### Pipe
+
+Pipes messages from a Source to a Sink:
+
+```typescript
+import { pipe } from "teleportal/transports";
+
+await pipe(source, sink);
+```
+
+### Sync
+
+Bidirectionally syncs two transports:
+
+```typescript
+import { sync } from "teleportal/transports";
+
+await sync(transportA, transportB);
+```
+
+## Best Practices
+
+1. **Compose from bottom up**: Start with base transports, then add middleware
+2. **Handle errors**: Transports can error, ensure proper error handling
+3. **Clean up resources**: Call `close()` or `unsubscribe()` when done
+4. **Use appropriate transports**: Choose transports based on your use case
+5. **Rate limit client transports**: Always rate limit client-side transports to prevent abuse
+6. **Validate messages**: Use message validators for authorization checks
+7. **Monitor with logging**: Use logger transport during development
+
+## Next Steps
+
+- [Server](/docs/core-concepts/server/) - Learn how the server uses transports
+- [Provider](/docs/core-concepts/provider/) - See how clients use transports
+- [Advanced: Custom Transport](/docs/advanced/custom-transport/) - Implement your own transport

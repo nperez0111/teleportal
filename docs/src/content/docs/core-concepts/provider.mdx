@@ -1,0 +1,280 @@
+---
+title: Provider
+description: The client-side API for connecting to Teleportal servers
+---
+import { Aside } from '@astrojs/starlight/components';
+
+The `Provider` is the client-side API that manages Y.js document synchronization, awareness, offline persistence, and RPC operations. It wraps a `Connection` and handles the higher-level document synchronization protocol.
+
+## Overview
+
+The provider system is built on two main abstractions:
+
+- **`Connection`**: Manages the low-level network connection (WebSocket, HTTP, or fallback), handles reconnection logic, message buffering, and connection state.
+- **`Provider`**: Manages Yjs document synchronization, awareness, offline persistence, and RPC operations. It uses a `Connection` for network communication.
+
+## Basic Usage
+
+```typescript
+import { Provider } from "teleportal/providers";
+
+// Create a provider with automatic connection
+const provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document-id",
+});
+
+// Wait for document to be synced
+await provider.synced;
+
+// Access the Yjs document
+const ymap = provider.doc.getMap("data");
+ymap.set("key", "value");
+
+// Listen to connection state
+provider.on("update", (state) => {
+  console.log("Connection state:", state.type);
+});
+```
+
+## Connection Types
+
+
+### Fallback Connection (Default)
+
+Will attempt to connect over one connection type, then fallback to another if it fails (while still attempting to re-dial in the background if possible to upgrade to the preferred connection type):
+
+```typescript
+// Provider.create() automatically uses FallbackConnection
+const provider = await Provider.create({
+  url: "wss://example.com", // Tries WebSocket first, then falls back to HTTP if it fails
+  document: "my-document",
+});
+```
+
+### WebSocket Connection
+
+The default connection type, sends & receives all messages over the websocket protocol:
+
+```typescript
+import { WebSocketConnection } from "teleportal/providers/websocket";
+
+const connection = new WebSocketConnection({
+  url: "wss://example.com",
+});
+
+const provider = new Provider({
+  client: connection,
+  document: "my-document",
+});
+```
+
+### HTTP Connection
+
+A fallback for when websockets don't work (some corporate networks), utilizes HTTP POSTs for writes and a long-running HTTP SSE connection for reads:
+
+```typescript
+import { HttpConnection } from "teleportal/providers/http";
+
+const connection = new HttpConnection({
+  url: "https://example.com",
+});
+
+const provider = new Provider({
+  client: connection,
+  document: "my-document",
+});
+```
+
+<Aside type="caution">
+This connection method has some slight overhead compared to WebSocket, in that, because it is run over HTTP, it does not support binary data & instead must use base64-encoded strings for all data.
+</Aside>
+
+## Document Operations
+
+### Accessing the Document
+
+```typescript
+// Access the Y.js document
+const ydoc = provider.doc;
+
+// Create Y.js types
+const ytext = ydoc.getText("content");
+const ymap = ydoc.getMap("data");
+const yarray = ydoc.getArray("items");
+
+// Make changes
+ytext.insert(0, "Hello, world!");
+ymap.set("key", "value");
+yarray.push([1, 2, 3]);
+```
+
+### Listening to Updates
+
+```typescript
+// Listen to document updates
+ydoc.on("update", (update, origin) => {
+  console.log("Document updated");
+  // Changes are automatically synced to other clients
+});
+```
+
+## Awareness
+
+The provider includes an `Awareness` instance for user presence and cursor information:
+
+```typescript
+// Access awareness
+const awareness = provider.awareness;
+
+// Set local state
+awareness.setLocalStateField("user", {
+  name: "John Doe",
+  color: "#ff0000",
+});
+
+// Listen to awareness updates
+awareness.on("update", ({ added, updated, removed }) => {
+  console.log("Users changed:", { added, updated, removed });
+});
+```
+
+## Subdocuments
+
+The provider supports Y.js sub-documents and properly lets the ydoc know that it is synced:
+
+```typescript
+// Listen to subdocument events
+provider.on("load-subdoc", ({ subdoc, provider: subdocProvider }) => {
+  console.log("Subdocument loaded:", subdoc.guid);
+  // subdocProvider is a Provider instance for the subdocument
+});
+
+// Access subdocuments
+const subdocProvider = provider.subdocs.get("subdoc-guid");
+if (subdocProvider) {
+  await subdocProvider.synced;
+}
+```
+
+## Document Switching
+
+Efficiently switch between documents while maintaining the same connection:
+
+```typescript
+// Switch to a new document (reuses connection)
+const newProvider = provider.switchDocument({
+  document: "new-document-id",
+});
+
+// Old provider is destroyed, new provider is ready
+await newProvider.synced;
+```
+
+## Offline Persistence
+
+The provider automatically enables offline persistence by default using IndexedDB:
+
+```typescript
+const provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document-id",
+  enableOfflinePersistence: true, // default
+  indexedDBPrefix: "my-app-", // custom prefix
+});
+
+// Document will be loaded from IndexedDB if available
+await provider.loaded; // Resolves when local data is loaded
+await provider.synced; // Resolves when synced with server
+```
+
+## Connection State
+
+Monitor connection state:
+
+```typescript
+// Get current connection state
+const connection = provider.state;
+
+if (connection.type === "connected") {
+  console.log("Connected!");
+} else if (connection.type === "errored") {
+  console.error("Connection error:", connection.error);
+}
+
+// Wait for connection
+try {
+  await provider.synced;
+  console.log("Fully synced!");
+} catch (error) {
+  console.error("Sync failed:", error);
+}
+```
+
+## Connection Sharing
+
+Multiple providers can share the same connection:
+
+```typescript
+// Create a connection
+const connection = new WebSocketConnection({
+  url: "wss://example.com",
+});
+
+// Create multiple providers with the same connection
+const provider1 = new Provider({
+  client: connection,
+  document: "doc-1",
+});
+
+const provider2 = new Provider({
+  client: connection,
+  document: "doc-2",
+});
+```
+
+## Lifecycle Management
+
+The provider supports explicit resource management:
+
+```typescript
+// Using explicit resource management
+using provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document",
+});
+
+// Provider automatically disposes when exiting scope
+
+// Or manually destroy
+provider.destroy({
+  destroyConnection: true, // default: true
+  destroyDoc: true, // default: true
+});
+```
+
+## Events
+
+The provider extends `Observable` and emits events:
+
+```typescript
+// Subdocument events
+provider.on("load-subdoc", ({ subdoc, provider }) => {
+  console.log("Subdocument loaded");
+});
+
+provider.on("unload-subdoc", ({ subdoc, provider }) => {
+  console.log("Subdocument unloaded");
+});
+
+// Connection state events (delegated from connection)
+provider.on("update", (state) => {
+  console.log("Connection state changed:", state.type);
+});
+```
+
+## Next Steps
+
+- [Server](/docs/core-concepts/server/) - Learn how the server handles provider connections
+- [Transport](/docs/core-concepts/transport/) - Understand the transport layer
+- [Milestones](/docs/core-concepts/milestones/) - Learn about document versioning

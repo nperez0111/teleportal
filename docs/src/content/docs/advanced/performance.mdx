@@ -1,0 +1,127 @@
+---
+title: Performance
+description: Optimizing Teleportal for performance
+---
+
+This guide covers performance optimization strategies for Teleportal applications.
+
+## Rate Limiting
+
+Rate limiting prevents abuse and ensures fair resource usage:
+
+```typescript
+const server = new Server({
+  rateLimitConfig: {
+    maxMessages: 100,
+    windowMs: 1000,
+    trackBy: "user",
+  },
+});
+```
+
+See [Rate Limiting Guide](/docs/guides/rate-limiting/) for details.
+
+## VirtualStorage for Write Buffering
+
+`VirtualStorage` adds batching and buffering to any `DocumentStorage` implementation, improving write performance:
+
+```typescript
+import { VirtualStorage } from "teleportal/storage";
+
+// Wrap any existing storage with batching
+const batchedStorage = new VirtualStorage(existingDocumentStorage, {
+  batchMaxSize: 100, // Batch every 100 updates
+  batchWaitMs: 2000, // Or every 2 seconds
+});
+
+// Use as normal DocumentStorage
+await batchedStorage.handleUpdate("doc1", update);
+const doc = await batchedStorage.getDocument("doc1"); // Flushes pending writes
+```
+
+**Benefits**:
+- **Faster writes**: Updates are buffered and batched
+- **Reduced I/O**: Fewer database calls
+- **Read consistency**: Pending writes are flushed on reads
+
+**When to use**:
+- High-frequency collaborative updates
+- Slow storage backends (remote DBs, object storage)
+- Write-heavy applications
+
+## Storage Optimization
+
+### Use Appropriate Storage Backend
+
+Choose storage based on your needs:
+
+- **Redis**: Fast, in-memory, good for high-frequency updates
+- **PostgreSQL**: Reliable, transactional, good for complex queries
+- **S3**: Scalable, cost-effective, good for large files
+
+### Indexed Keys vs Key Scanning
+
+For unstorage-based storage:
+
+```typescript
+const { documentStorage } = createUnstorage(storage, {
+  scanKeys: false, // Use indexed keys (better for Redis, Memcached)
+  // or
+  scanKeys: true, // Use key scanning (better for PostgreSQL, MySQL)
+});
+```
+
+## Connection Optimization
+
+### Connection Reuse
+
+Multiple providers can share the same connection:
+
+```typescript
+const connection = new WebSocketConnection({ url: "wss://..." });
+
+const provider1 = new Provider({ client: connection, document: "doc-1" });
+const provider2 = new Provider({ client: connection, document: "doc-2" });
+```
+
+### Document Switching
+
+Use `switchDocument()` to efficiently switch documents:
+
+```typescript
+// Reuses connection instead of creating a new one
+const newProvider = provider.switchDocument({ document: "new-doc" });
+```
+
+## Message Batching
+
+Batch multiple messages together to reduce network overhead:
+
+```typescript
+import { getBatchingTransform } from "teleportal/transports";
+
+const batchedTransport = getBatchingTransform({
+  maxBatchSize: 10,
+  maxBatchDelay: 100,
+});
+```
+
+## Monitoring
+
+Monitor performance using built-in metrics:
+
+```typescript
+const metrics = await server.getMetrics();
+const status = await server.getStatus();
+```
+
+Key metrics to watch:
+- `teleportal_message_duration_seconds`: Message processing time
+- `teleportal_storage_operation_duration_seconds`: Storage operation time
+- `teleportal_sessions_active`: Active session count
+- `teleportal_clients_active`: Active client count
+
+## Next Steps
+
+- [Scaling](/docs/advanced/scaling/) - Learn about scaling strategies
+- [Monitoring](/docs/monitoring/) - Set up monitoring
