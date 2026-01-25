@@ -23,5 +23,16 @@ serve({
   // websocket upgrades are denied if the token is invalid
   websocket: tokenAuthenticatedWebsocketHandler({ server, tokenManager }),
   // HTTP requests are denied if the token is invalid
-  fetch: tokenAuthenticatedHTTPHandler({ server, tokenManager }),
+  fetch: tokenAuthenticatedHTTPHandler({
+    server,
+    tokenManager,
+    fetch: async () => {
+      const res = await fetch(
+        "https://raw.githubusercontent.com/nperez0111/teleportal/refs/heads/main/examples/simple/index.html",
+      );
+      return new Response(await res.text(), {
+        headers: { "Content-Type": "text/html" },
+      });
+    },
+  }),
 });

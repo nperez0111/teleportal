@@ -52,7 +52,7 @@
     );
 
     const provider = await Provider.create({
-      url: `http://localhost:3000?token=${token}`,
+      url: `${window.location.origin}/?token=${token}`,
       document: "test",
     });
 

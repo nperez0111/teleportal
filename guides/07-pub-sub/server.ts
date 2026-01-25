@@ -30,6 +30,14 @@ serve({
     getContext: () => {
       return { userId: "nick", room: "test" };
     },
+    fetch: async () => {
+      const res = await fetch(
+        "https://raw.githubusercontent.com/nperez0111/teleportal/refs/heads/main/examples/simple/index.html",
+      );
+      return new Response(await res.text(), {
+        headers: { "Content-Type": "text/html" },
+      });
+    },
   }),
   // each server runs on a different port
   port: 3000,
@@ -54,6 +62,14 @@ serve({
     server: server2,
     getContext: () => {
       return { userId: "nick", room: "test" };
+    },
+    fetch: async () => {
+      const res = await fetch(
+        "https://raw.githubusercontent.com/nperez0111/teleportal/refs/heads/main/examples/simple/index.html",
+      );
+      return new Response(await res.text(), {
+        headers: { "Content-Type": "text/html" },
+      });
     },
   }),
   // each server runs on a different port
