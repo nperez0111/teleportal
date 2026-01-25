@@ -45,6 +45,9 @@ const storage = createStorage({
 });
 
 const memoryStorage = createStorage();
+// In production, use the memory storage, I don't want your files
+const backingStorage =
+  Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
 const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
   memoryStorage,
@@ -53,12 +56,12 @@ const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
   },
 );
 
-const fileStorage = new UnstorageFileStorage(storage, {
+const fileStorage = new UnstorageFileStorage(backingStorage, {
   keyPrefix: "file",
   temporaryUploadStorage,
 });
 
-const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+const milestoneStorage = new UnstorageMilestoneStorage(backingStorage, {
   keyPrefix: "document-milestone",
 });
 
@@ -93,11 +96,6 @@ const rateLimitRules: RateLimitRule<TokenPayload & { clientId: string }>[] = [
 
 const server = new Server<TokenPayload & { clientId: string }>({
   storage: async (ctx) => {
-    // return ctx.encrypted ? new EncryptedMemoryStorage() : new YDocStorage();
-    // In production, use the memory storage, I don't want your files
-    const backingStorage =
-      Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
-
     if (ctx.encrypted) {
       return new UnstorageEncryptedDocumentStorage(backingStorage, {
         keyPrefix: "document",

@@ -9,6 +9,12 @@ export function Shell() {
   );
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // Check if sidebar should be hidden via query parameter
+  const shouldHideSidebar = (() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("show-sidebar") === "false";
+  })();
+
   useEffect(() => {
     async function load() {
       // Load documents and restore the last viewed document
@@ -88,7 +94,7 @@ export function Shell() {
   return (
     <div className="flex h-screen bg-white dark:bg-gray-950 relative">
       {/* Overlay for mobile when sidebar is open */}
-      {isSidebarOpen && (
+      {!shouldHideSidebar && isSidebarOpen && (
         <div
           className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-30"
           onClick={closeSidebar}
@@ -97,31 +103,33 @@ export function Shell() {
       )}
 
       {/* Sidebar */}
-      <div
-        className={`
-        ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
-        md:translate-x-0
-        fixed md:relative
-        z-40 md:z-auto
-        transition-transform duration-300 ease-in-out
-        h-full
-      `}
-      >
-        <Sidebar
-          currentDocumentId={currentDocumentId}
-          onDocumentSelect={handleDocumentSelect}
-          isMobile={window.innerWidth < 768}
-          onClose={isSidebarOpen ? closeSidebar : undefined}
-        />
-      </div>
+      {!shouldHideSidebar && (
+        <div
+          className={`
+          ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
+          md:translate-x-0
+          fixed md:relative
+          z-40 md:z-auto
+          transition-transform duration-300 ease-in-out
+          h-full
+        `}
+        >
+          <Sidebar
+            currentDocumentId={currentDocumentId}
+            onDocumentSelect={handleDocumentSelect}
+            isMobile={window.innerWidth < 768}
+            onClose={isSidebarOpen ? closeSidebar : undefined}
+          />
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex-1 overflow-hidden">
         <DocumentEditor
           documentId={currentDocumentId}
           isSidebarOpen={isSidebarOpen}
-          toggleSidebar={toggleSidebar}
-          closeSidebar={closeSidebar}
+          toggleSidebar={shouldHideSidebar ? undefined : toggleSidebar}
+          closeSidebar={shouldHideSidebar ? undefined : closeSidebar}
         />
       </div>
     </div>
