@@ -1,6 +1,6 @@
 {
   "name": "teleportal",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A storage, transport & runtime agnostic Y.js server/provider. Built on web primitives, supports subdocs, and handles everything without in-memory storage. Perfect for collaborative apps! 🚀",
   "keywords": [
     "yjs",
