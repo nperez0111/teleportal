@@ -1,6 +1,22 @@
 # Changelog
 
 
+## v0.0.4
+
+[compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.3...v0.0.4)
+
+### 🚀 Enhancements
+
+- **http:** Passthrough fetch handler ([2536df4](https://github.com/nperez0111/teleportal/commit/2536df4))
+
+### 📖 Documentation
+
+- Text with logo ([bc83b4c](https://github.com/nperez0111/teleportal/commit/bc83b4c))
+
+### ❤️ Contributors
+
+- Nick The Sick ([@nperez0111](https://github.com/nperez0111))
+
 ## v0.0.3
 
 [compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.2...v0.0.3)
