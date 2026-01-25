@@ -22,8 +22,22 @@ banner:
 ---
 import CardHover from "../../components/CardHover.astro";
 import { Card, CardGrid } from "@astrojs/starlight/components";
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { LinkButton } from '@astrojs/starlight/components';
+import { Badge } from '@astrojs/starlight/components';
 
-## Features
+## Try it out!
+
+<div style="display: flex; gap: 1rem;">
+<iframe src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false" style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"></iframe>
+<iframe src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false" style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"></iframe>
+</div>
+
+<Badge text="Tip" variant="tip" /> Click on Pepper, the parrot, to open the Teleportal devtools!
+
+<div class="hero-code">
+  <h2 class="head">Features</h2>
+</div>
 
 <CardHover />
 <div class="card-cnt">
@@ -61,9 +75,97 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 </CardGrid>
 </div>
 
+<div class="hero-code">
+    <h2 class="head">Show me the code!</h2>
+</div>
+
+<Tabs>
+  <TabItem label="server.ts">
+```typescript collapse={1-7}
+import { serve } from "crossws/server";
+import { createTokenManager } from "teleportal/token";
+import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
+import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
+import { checkPermissionWithTokenManager, Server } from "teleportal/server";
+import { YDocStorage } from "teleportal/storage";
+
+// token manager is a JWT token verifier and manager.
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here",
+  expiresIn: 3600, // 1 hour
+  issuer: "teleportal.tools",
+});
+
+// Create a Teleportal server instance
+const server = new Server({
+  // you can use any storage backend you want, this one is in-memory
+  storage: new YDocStorage(),
+  // every message is verified against the token's permissions to the document
+  checkPermission: checkPermissionWithTokenManager(tokenManager),
+});
+
+// Serve the Teleportal server with crossws (for multi-runtime support)
+serve({
+  // websocket upgrades are denied if the token is invalid
+  websocket: tokenAuthenticatedWebsocketHandler({ server, tokenManager }),
+  // HTTP requests are denied if the token is invalid
+  fetch: tokenAuthenticatedHTTPHandler({ server, tokenManager }),
+});
+```
+  </TabItem>
+  <TabItem label="client.ts">
+
+```typescript collapse={1-3}
+// Client
+import { Provider } from "teleportal/providers";
+
+// Create a provider that connects to the server
+const provider = await Provider.create({
+  url: "https://teleportal.tools?token=your-token-here",
+  document: "my-document",
+});
+
+// Wait for the document to sync with the server
+await provider.synced;
+
+// Insert text into the document
+const ytext = provider.doc.getText("content");
+ytext.insert(0, "Hello, world!");
+```
+  </TabItem>
+</Tabs>
+
+With that, you have token-authenticated, real-time collaborative editing with Y.js!
+
+<br/>
+<br/>
+---
+
 
 <div class="hero-code">
-    <h2 class="head">The Collaborative Editing Framework</h2>
-
-Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.
+    <h2 class="head">Why Teleportal?</h2>
 </div>
+
+Teleportal is designed not as a standalone server that you need to setup and deploy, but as a framework to build your own sync server, with just the features you need. You don't need to wait until Teleportal has all of the features you need, no more waiting for new APIs or plugins, just build it!
+
+This allows you to use:
+
+
+<div class="card-cnt">
+<CardGrid>
+<Card title="Any storage" icon="seti:db">
+Use any storage backend you want, from Redis to PostgreSQL to S3
+</Card>
+<Card title="Any transport" icon="seti:html">
+Use any transport you want, from WebSockets to HTTP to HTTP SSE
+</Card>
+<Card title="Any JS runtime" icon="node">
+Use any JS runtime you want, from Node.js to Bun to Deno (it even works in the browser!)
+</Card>
+<Card title="Any authentication" icon="seti:lock">
+Use any authentication provider you want, from JWT to OAuth to custom
+</Card>
+</CardGrid>
+</div>
+
+<LinkButton href="/what-is-teleportal/" icon="right-arrow" style="margin-top: 2rem;">Learn more about Teleportal</LinkButton>

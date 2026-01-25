@@ -20,6 +20,11 @@ export default defineConfig({
           label: "GitHub",
           href: "https://github.com/nperez0111/teleportal",
         },
+        {
+          icon: 'blueSky',
+          label: 'BlueSky',
+          href: 'https://bsky.app/profile/teleportal.tools',
+        }
       ],
       sidebar: [
         {
