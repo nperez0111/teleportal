@@ -146,4 +146,4 @@ jobs:
 
       - name: Deploy to Portainer
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: curl -X POST https://portainer.nickthesick.com/api/stacks/webhooks/cc323b02-83de-4638-80ef-572e99eeabf3
+        run: curl -X POST https://portainer.nickthesick.com/api/stacks/webhooks/cc323b02-83de-4638-80ef-572e99eeabf3 && curl -X POST https://portainer.nickthesick.com/api/stacks/webhooks/b9bbeb61-1771-49a5-9576-d4db9a4e4db5
