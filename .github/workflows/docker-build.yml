@@ -96,6 +96,54 @@ jobs:
           subject-name: ghcr.io/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build-and-push.outputs.digest }}
           push-to-registry: true
+
+      # Extract metadata (tags, labels) for Docs Docker image
+      - name: Extract Docker metadata for docs
+        id: meta-docs
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.IMAGE_NAME }}-docs
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      # Build and push Docs Docker image with Buildx (don't push on PR)
+      - name: Build and Push docs container images
+        uses: docker/build-push-action@v6
+        id: build-and-push-docs
+        with:
+          context: ./docs
+          file: ./docs/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-docs.outputs.tags }}
+          labels: ${{ steps.meta-docs.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign the docs images with GitHub OIDC Token
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build-and-push-docs.outputs.digest }}
+          TAGS: ${{ steps.meta-docs.outputs.tags }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: Attest docs image
+        uses: actions/attest-build-provenance@v1
+        id: attest-docs
+        with:
+          subject-name: ghcr.io/${{ env.IMAGE_NAME }}-docs
+          subject-digest: ${{ steps.build-and-push-docs.outputs.digest }}
+          push-to-registry: true
+
       - name: Deploy to Portainer
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: curl -X POST https://portainer.nickthesick.com/api/stacks/webhooks/cc323b02-83de-4638-80ef-572e99eeabf3
