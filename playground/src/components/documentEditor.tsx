@@ -70,13 +70,14 @@ export function DocumentEditor({
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Document Header */}
       <div className="border-b h-auto min-h-[60px] md:h-20 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-4 md:px-6 py-3 md:py-4 shrink-0">
-        <div className="flex items-start md:items-center justify-between flex-col md:flex-row gap-2 md:gap-0">
-          <div className="min-w-0 flex-1 flex items-center gap-2">
+        <div className="flex flex-col gap-2">
+          {/* Top row: Hamburger, Title, Versions button */}
+          <div className="flex items-center gap-2 md:gap-4 flex-nowrap min-w-0">
             {/* Hamburger button for mobile */}
             {toggleSidebar && (
               <button
                 onClick={toggleSidebar}
-                className="md:hidden mr-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className="md:hidden p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shrink-0"
                 aria-label="Toggle sidebar"
                 type="button"
               >
@@ -104,7 +105,8 @@ export function DocumentEditor({
                 </svg>
               </button>
             )}
-            <div className="flex items-center gap-2 min-w-0">
+            {/* Title and icon */}
+            <div className="flex items-center gap-2 min-w-0 shrink">
               <h1 className="text-lg md:text-xl font-semibold text-gray-900 dark:text-white truncate">
                 {document.name}
               </h1>
@@ -124,33 +126,35 @@ export function DocumentEditor({
                 </svg>
               )}
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Created {new Date(document.createdAt).toLocaleDateString()} • Last
-              updated {new Date(document.updatedAt).toLocaleDateString()}
-            </p>
-          </div>
-          <div className="flex items-center space-x-2 shrink-0">
-            <button
-              onClick={() => setIsMilestonePanelOpen(true)}
-              className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-2"
-              title="View document versions"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            {/* Versions button - pushed to the right */}
+            <div className="flex items-center ml-auto shrink-0">
+              <button
+                onClick={() => setIsMilestonePanelOpen(true)}
+                className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
+                title="View document versions"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-              <span className="hidden md:inline">Versions</span>
-            </button>
+                <svg
+                  className="w-4 h-4 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+                <span className="hidden md:inline">Versions</span>
+              </button>
+            </div>
           </div>
+          {/* Bottom row: Date text */}
+          <p className="hidden md:block text-sm text-gray-500 dark:text-gray-400">
+            Created {new Date(document.createdAt).toLocaleDateString()} • Last
+            updated {new Date(document.updatedAt).toLocaleDateString()}
+          </p>
         </div>
       </div>
 
