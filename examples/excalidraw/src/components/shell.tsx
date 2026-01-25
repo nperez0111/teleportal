@@ -1,7 +1,7 @@
 import * as random from "lib0/random";
 import { useEffect, useState } from "react";
 
-import { FallbackConnection, Provider } from "teleportal/providers";
+import { Provider } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { Whiteboard } from "./whiteboard";
 
@@ -38,12 +38,8 @@ export default function Shell() {
           new DocumentAccessBuilder().admin("*").build(),
         );
 
-        const connection = new FallbackConnection({
-          url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
-        });
-
         const websocketProvider = await Provider.create({
-          connection,
+          url: `${window.location.origin}/?token=${token}`,
           document: "whiteboard",
         });
 
