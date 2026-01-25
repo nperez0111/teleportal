@@ -14,6 +14,12 @@ export default defineConfig({
     starlight({
       title: "Teleportal",
       plugins: [starlightLlmsTxt()],
+      logo: {
+        light: './src/assets/logo_light.svg',
+				dark: './src/assets/logo_dark.svg',
+        alt: 'Teleportal',
+        replacesTitle: true,
+      },
       social: [
         {
           icon: "github",
