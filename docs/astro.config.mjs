@@ -20,6 +20,71 @@ export default defineConfig({
         alt: 'Teleportal',
         replacesTitle: true,
       },
+      head: [
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:type',
+            content: 'website',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:title',
+            content: 'Teleportal - Real-time collaborative editing framework for Y.js',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:description',
+            content: 'Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:image',
+            content: 'https://teleportal.tools/og-image.png',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            property: 'og:url',
+            content: 'https://teleportal.tools',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:card',
+            content: 'summary_large_image',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:title',
+            content: 'Teleportal - Real-time collaborative editing framework for Y.js',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:description',
+            content: 'Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.',
+          },
+        },
+        {
+          tag: 'meta',
+          attrs: {
+            name: 'twitter:image',
+            content: 'https://teleportal.tools/og-image.png',
+          },
+        },
+      ],
       social: [
         {
           icon: "github",
