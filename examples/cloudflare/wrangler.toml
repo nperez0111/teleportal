@@ -1,0 +1,16 @@
+name = "teleportal-cloudflare"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "TELEPORTAL_DO"
+class_name = "TeleportalDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["TeleportalDO"]
+
+[[kv_namespaces]]
+binding = "TELEPORTAL_STORAGE"
+id = "86a1b5441bea4ec9b0ba2d42e33c1c87"
