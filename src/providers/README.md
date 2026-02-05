@@ -101,6 +101,10 @@ type ConnectionOptions = {
   isOnline?: boolean; // Initial online state (default: true)
   heartbeatInterval?: number; // Heartbeat interval in ms (default: 0 = disabled)
   messageReconnectTimeout?: number; // Timeout if no messages received (default: 30000)
+  minUptime?: number; // Min ms connection must stay open before resetting backoff (default: 0)
+  reconnectDelayJitter?: number; // Max random ms added to reconnect delay to avoid thundering herd (default: 0)
+  maxBufferedMessages?: number; // Cap on buffered messages when disconnected; over cap are dropped (default: Infinity)
+  reconnectBackoffFactor?: number; // Backoff growth factor, delay = initialReconnectDelay * factor^attempt (default: 2)
   timer?: Timer; // Timer implementation for testing
 };
 ```

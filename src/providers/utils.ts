@@ -87,15 +87,17 @@ export class TimerManager {
 }
 
 /**
- * Exponential backoff implementation inspired by websocket-ts
+ * Exponential backoff implementation inspired by reconnecting-websocket patterns.
+ * Delay = base * factor^i, capped by maxExponent (derived from maxBackoffTime).
  */
 export class ExponentialBackoff {
   private readonly base: number;
   private readonly maxExponent?: number;
+  private readonly factor: number;
   private i: number = 0;
   private _retries: number = 0;
 
-  constructor(base: number, maxExponent?: number) {
+  constructor(base: number, maxExponent?: number, factor: number = 2) {
     if (!Number.isInteger(base) || base < 0) {
       throw new Error("Base must be a positive integer or zero");
     }
@@ -107,9 +109,13 @@ export class ExponentialBackoff {
         "MaxExponent must be undefined, a positive integer or zero",
       );
     }
+    if (typeof factor !== "number" || factor < 1) {
+      throw new Error("Factor must be a number >= 1");
+    }
 
     this.base = base;
     this.maxExponent = maxExponent;
+    this.factor = factor;
   }
 
   get retries(): number {
@@ -117,7 +123,7 @@ export class ExponentialBackoff {
   }
 
   get current(): number {
-    return this.base * Math.pow(2, this.i);
+    return this.base * Math.pow(this.factor, this.i);
   }
 
   next(): number {

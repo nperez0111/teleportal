@@ -1,6 +1,6 @@
 # Enhanced WebSocket Connection Manager
 
-This enhanced WebSocket connection manager provides robust reconnection capabilities with exponential backoff, message buffering, and comprehensive error handling, inspired by the `websocket-ts` library.
+This WebSocket connection manager provides robust reconnection capabilities with exponential backoff, message buffering, and comprehensive error handling.
 
 ## Key Features
 
@@ -40,7 +40,8 @@ const connection = new WebSocketConnection({
   maxReconnectAttempts: 10,
   initialReconnectDelay: 100, // Start with 100ms
   maxBackoffTime: 30000, // Max 30 seconds between attempts
-  messageBufferSize: 100, // Buffer up to 100 messages
+  connectionTimeout: 10_000, // Fail if WebSocket doesn't open within 10s (default)
+  minUptime: 5000, // Reset backoff only after connection stable 5s (optional)
 });
 ```
 

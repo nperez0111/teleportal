@@ -108,6 +108,33 @@ export type ConnectionOptions = {
    */
   messageReconnectTimeout?: number;
   /**
+   * Minimum time in milliseconds the connection must stay open to be considered "stable".
+   * Only after this period do we reset the reconnect attempt count and backoff.
+   * Connections that drop before minUptime still count toward backoff (more robust reconnecting).
+   *
+   * @default 0 (reset immediately on connect; set e.g. 5000 to only reset backoff after connection is stable)
+   */
+  minUptime?: number;
+  /**
+   * Maximum random jitter in milliseconds added to each reconnect delay.
+   * Spreads reconnects across clients to avoid thundering herd.
+   *
+   * @default 0 (no jitter)
+   */
+  reconnectDelayJitter?: number;
+  /**
+   * Maximum number of messages to buffer while disconnected. When full, new messages are dropped.
+   *
+   * @default Infinity (no cap)
+   */
+  maxBufferedMessages?: number;
+  /**
+   * Backoff growth factor per attempt: delay = initialReconnectDelay * factor^attempt, capped at maxBackoffTime.
+   *
+   * @default 1.3
+   */
+  reconnectBackoffFactor?: number;
+  /**
    * Timer implementation for dependency injection (testing)
    *
    * @default defaultTimer
@@ -119,6 +146,10 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
 const DEFAULT_INITIAL_RECONNECT_DELAY = 100;
 const DEFAULT_MAX_BACKOFF_TIME = 30_000;
 const DEFAULT_MESSAGE_RECONNECT_TIMEOUT = 30_000;
+const DEFAULT_MIN_UPTIME = 0;
+const DEFAULT_RECONNECT_DELAY_JITTER = 0;
+const DEFAULT_MAX_BUFFERED_MESSAGES = Number.POSITIVE_INFINITY;
+const DEFAULT_RECONNECT_BACKOFF_FACTOR = 1.3;
 
 export abstract class Connection<
   Context extends ConnectionContext = any,
@@ -145,6 +176,10 @@ export abstract class Connection<
   #backoff: ExponentialBackoff;
   #maxReconnectAttempts: number;
   #reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  #minUptimeMs: number;
+  #minUptimeTimer: ReturnType<typeof setTimeout> | null = null;
+  #reconnectDelayJitter: number;
+  #maxBufferedMessages: number;
 
   // Online/offline state
   #eventTarget: EventTarget;
@@ -187,6 +222,10 @@ export abstract class Connection<
     isOnline,
     heartbeatInterval = 0,
     messageReconnectTimeout = DEFAULT_MESSAGE_RECONNECT_TIMEOUT,
+    minUptime = DEFAULT_MIN_UPTIME,
+    reconnectDelayJitter = DEFAULT_RECONNECT_DELAY_JITTER,
+    maxBufferedMessages = DEFAULT_MAX_BUFFERED_MESSAGES,
+    reconnectBackoffFactor = DEFAULT_RECONNECT_BACKOFF_FACTOR,
     timer,
   }: ConnectionOptions = {}) {
     super();
@@ -194,16 +233,28 @@ export abstract class Connection<
     // Initialize timer manager
     this.timerManager = new TimerManager(timer);
 
-    // Initialize backoff strategy
-    const maxExponent = Math.floor(
-      Math.log2(maxBackoffTime / initialReconnectDelay),
+    // Initialize backoff strategy (delay = initialReconnectDelay * factor^i, capped by maxBackoffTime)
+    const factor = reconnectBackoffFactor;
+    const maxExponent =
+      factor > 1
+        ? Math.floor(
+            Math.log(maxBackoffTime / initialReconnectDelay) / Math.log(factor),
+          )
+        : 0;
+    this.#backoff = new ExponentialBackoff(
+      initialReconnectDelay,
+      Math.max(0, maxExponent),
+      factor,
     );
-    this.#backoff = new ExponentialBackoff(initialReconnectDelay, maxExponent);
     this.#maxReconnectAttempts = maxReconnectAttempts;
+    this.#reconnectDelayJitter = Math.max(0, reconnectDelayJitter);
+    this.#maxBufferedMessages =
+      maxBufferedMessages <= 0 ? Number.POSITIVE_INFINITY : maxBufferedMessages;
 
     // Initialize heartbeat and connection check settings
     this.#heartbeatIntervalMs = heartbeatInterval;
     this.#messageReconnectTimeoutMs = messageReconnectTimeout;
+    this.#minUptimeMs = minUptime;
 
     // Set up event target and online state
     if (globalThis.window === undefined) {
@@ -283,10 +334,47 @@ export abstract class Connection<
     return payload?.type;
   }
 
+  /**
+   * Clear minUptime timer (e.g. when disconnecting or destroying).
+   */
+  #clearMinUptimeTimer(): void {
+    if (this.#minUptimeTimer) {
+      this.timerManager.clearTimeout(this.#minUptimeTimer);
+      this.#minUptimeTimer = null;
+    }
+  }
+
+  /**
+   * Called after minUptime has passed while connected; resets reconnect attempt and backoff.
+   */
+  #onMinUptimeReached(): void {
+    this.#minUptimeTimer = null;
+    this.#reconnectAttempt = 0;
+    this.#backoff.reset();
+  }
+
   protected setState(state: ConnectionState<Context>) {
+    // When leaving connected state, clear minUptime timer
+    if (this._state.type === "connected" && state.type !== "connected") {
+      this.#clearMinUptimeTimer();
+    }
+
     const previousState = this._state;
     this._state = state;
     this.call("update", state);
+
+    // When entering connected state, optionally schedule minUptime before resetting backoff
+    if (state.type === "connected" && this.#minUptimeMs > 0) {
+      this.#clearMinUptimeTimer();
+      this.#minUptimeTimer = this.timerManager.setTimeout(() => {
+        if (this._state.type === "connected") {
+          this.#onMinUptimeReached();
+        }
+      }, this.#minUptimeMs);
+    } else if (state.type === "connected" && this.#minUptimeMs <= 0) {
+      this.#reconnectAttempt = 0;
+      this.#backoff.reset();
+    }
 
     // Invalidate cached connected promise only when transitioning away from connected/errored
     // or when already in connected/errored state (to allow fresh promises)
@@ -470,8 +558,12 @@ export abstract class Connection<
       return;
     }
 
-    // Use exponential backoff for delay calculation
-    const delay = this.#backoff.next();
+    // Use exponential backoff for delay calculation, plus optional jitter to avoid thundering herd
+    let delay = this.#backoff.next();
+    if (this.#reconnectDelayJitter > 0) {
+      delay += Math.random() * this.#reconnectDelayJitter;
+    }
+    delay = Math.max(0, Math.floor(delay));
 
     this.#reconnectTimeout = this.timerManager.setTimeout(() => {
       this.#reconnectTimeout = null;
@@ -550,8 +642,10 @@ export abstract class Connection<
         this.handleConnectionError(error);
       });
     } else {
-      // Buffer message if not connected
-      this.#messageBuffer.push(message);
+      // Buffer message if not connected, up to cap (drop when full to bound memory)
+      if (this.#messageBuffer.length < this.#maxBufferedMessages) {
+        this.#messageBuffer.push(message);
+      }
     }
   }
 
@@ -746,6 +840,7 @@ export abstract class Connection<
       this.#eventTarget.removeEventListener("offline", this.#offlineHandler);
     }
 
+    this.#clearMinUptimeTimer();
     // Clear all timers using timer manager
     this.timerManager.clearAll();
 

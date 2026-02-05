@@ -35,12 +35,21 @@ export type WebSocketConnectionOptions = {
    * The WebSocket implementation to use
    */
   WebSocket?: typeof WebSocket;
+  /**
+   * Time in milliseconds to wait for the WebSocket to open before failing and reconnecting.
+   *
+   * @default 10000
+   */
+  connectionTimeout?: number;
 } & ConnectionOptions;
+
+const DEFAULT_CONNECTION_TIMEOUT = 10_000;
 
 export class WebSocketConnection extends Connection<WebSocketConnectContext> {
   #url: string;
   #protocols: string[];
   #WebSocketImpl: typeof WebSocket;
+  #connectionTimeoutMs: number;
   #currentWebSocket: WebSocket | null = null;
   #eventListeners: Map<
     WebSocket,
@@ -68,6 +77,8 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     this.#url = options.url;
     this.#protocols = options.protocols ?? [];
     this.#WebSocketImpl = options.WebSocket ?? WebSocket;
+    this.#connectionTimeoutMs =
+      options.connectionTimeout ?? DEFAULT_CONNECTION_TIMEOUT;
 
     // Initialize the state with the correct WebSocket context
     this._state = {
@@ -103,18 +114,31 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       // Set state to connecting first
       this.setState({ type: "connecting", context: { ws: websocket } });
 
-      // Set up connection timeout (10 seconds) to handle cases where connection gets stuck
+      // Set up connection timeout to handle cases where connection gets stuck.
+      // Proactively close the socket so we don't leave it hanging.
       this.#connectionTimeout = this.timerManager.setTimeout(() => {
         if (
           this.#currentWebSocket === websocket &&
           this.state.type === "connecting"
         ) {
+          this.#currentWebSocket = null;
+          this.#cleanupWebSocketListeners(websocket);
+          try {
+            if (
+              websocket.readyState === this.#WebSocketImpl.OPEN ||
+              websocket.readyState === this.#WebSocketImpl.CONNECTING
+            ) {
+              websocket.close(1000, "Connection timeout");
+            }
+          } catch {
+            // ignore
+          }
           const error = new Error(
-            "WebSocket connection timeout - connection did not open within 10 seconds",
+            `WebSocket connection timeout - connection did not open within ${this.#connectionTimeoutMs}ms`,
           );
           this.handleConnectionError(error);
         }
-      }, 10000);
+      }, this.#connectionTimeoutMs);
 
       // Set up event listeners with proper cleanup tracking
       const listeners = {
@@ -206,8 +230,20 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
             return;
           }
 
-          // If we were still connecting and the WebSocket never opened, treat as error
+          // If we were still connecting and the WebSocket never opened, treat as error.
+          // Clear the socket reference and close the underlying ws so we don't hold a dead reference.
           if (currentState === "connecting") {
+            this.#currentWebSocket = null;
+            try {
+              if (
+                readyState === this.#WebSocketImpl.OPEN ||
+                readyState === this.#WebSocketImpl.CONNECTING
+              ) {
+                websocket.close(1000, "Connection failed");
+              }
+            } catch {
+              // ignore
+            }
             const error = new Error(
               "WebSocket connection closed during handshake",
               {

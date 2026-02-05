@@ -317,6 +317,30 @@ describe("Connection", () => {
       expect(connection.sentMessages).toContain(message);
     });
 
+    it("should drop messages when buffer is at maxBufferedMessages cap", async () => {
+      const cappedConnection = new MockConnection({
+        connect: false,
+        maxBufferedMessages: 2,
+      });
+      const msg = (i: number) =>
+        new DocMessage(
+          "test-doc",
+          { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+          { clientId: `test-${i}` } as ClientContext,
+        );
+      const m1 = msg(1);
+      const m2 = msg(2);
+      await cappedConnection.send(m1);
+      await cappedConnection.send(m2);
+      await cappedConnection.send(msg(3)); // over cap, should be dropped
+      await cappedConnection.connect();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Only first two should have been buffered and sent
+      expect(cappedConnection.sentMessages.length).toBe(2);
+      expect(cappedConnection.sentMessages).toContain(m1);
+      expect(cappedConnection.sentMessages).toContain(m2);
+    });
+
     it("should not send messages when manually disconnected", async () => {
       await connection.connect();
       await connection.disconnect();
