@@ -42,6 +42,7 @@ class MockConnection extends Connection<{
     maxBackoffTime?: number;
     heartbeatInterval?: number;
     messageReconnectTimeout?: number;
+    maxBufferedMessages?: number;
     timer?: Timer;
     isOnline?: boolean;
     eventTarget?: EventTarget;
