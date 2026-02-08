@@ -20,10 +20,7 @@ type EncryptedDocumentRecord = {
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   constructor(
     private options: {
-      write: (
-        key: string,
-        doc: EncryptedDocumentRecord,
-      ) => Promise<void>;
+      write: (key: string, doc: EncryptedDocumentRecord) => Promise<void>;
       fetch: (key: string) => Promise<EncryptedDocumentRecord | undefined>;
     } = {
       write: async (key, doc) => {
@@ -135,10 +132,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     return doc.snapshots.get(snapshotId)?.metadata ?? null;
   }
 
-  async storeUpdate(
-    key: string,
-    update: StoredEncryptedUpdate,
-  ): Promise<void> {
+  async storeUpdate(key: string, update: StoredEncryptedUpdate): Promise<void> {
     const now = Date.now();
     const doc =
       (await this.options.fetch(key)) ??

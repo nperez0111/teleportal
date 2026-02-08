@@ -194,10 +194,13 @@ export class EncryptionClient
     }
   }
 
+  /** Decrypt and apply in chunks to yield to the event loop and keep UI responsive. */
+  private static readonly DECRYPT_BATCH_SIZE = 100;
+
   private async applyUpdates(
     updates: DecodedEncryptedUpdatePayload[],
   ): Promise<void> {
-    const decrypted: DecryptedBinary[] = [];
+    const toDecrypt: DecodedEncryptedUpdatePayload[] = [];
     for (const update of updates) {
       if (update.snapshotId !== this.activeSnapshotId) {
         this.queueUpdate(update);
@@ -205,13 +208,27 @@ export class EncryptionClient
       }
 
       if (!this.hasSeen(update)) {
-        decrypted.push(await this.decryptUpdate(update.payload));
+        toDecrypt.push(update);
         this.markSeen(update);
+        if (!update.id) {
+          update.id = toBase64(digest(update.payload));
+        }
         this.call("update-stored", update);
       }
       this.handleAcknowledgement(update);
     }
-    await this.applyUpdatesToDoc(decrypted);
+
+    const batchSize = EncryptionClient.DECRYPT_BATCH_SIZE;
+    for (let i = 0; i < toDecrypt.length; i += batchSize) {
+      const batch = toDecrypt.slice(i, i + batchSize);
+      const decrypted = await Promise.all(
+        batch.map((update) => this.decryptUpdate(update.payload)),
+      );
+      await this.applyUpdatesToDoc(decrypted);
+      if (i + batchSize < toDecrypt.length) {
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
+    }
   }
 
   private async applyQueuedUpdates(snapshotId: string): Promise<void> {
@@ -219,9 +236,7 @@ export class EncryptionClient
     if (!queued || queued.length === 0) {
       return;
     }
-    queued.sort(
-      (a, b) => (a.serverVersion ?? 0) - (b.serverVersion ?? 0),
-    );
+    queued.sort((a, b) => (a.serverVersion ?? 0) - (b.serverVersion ?? 0));
     this.queuedUpdates.delete(snapshotId);
     await this.applyUpdates(queued);
   }
@@ -286,7 +301,10 @@ export class EncryptionClient
       payload,
     };
     this.markSeen(update);
-    this.pendingUpdates.set(this.getUpdateKey(update.snapshotId, timestamp), update);
+    this.pendingUpdates.set(
+      this.getUpdateKey(update.snapshotId, timestamp),
+      update,
+    );
     this.call("update-stored", update);
     return update;
   }
@@ -371,14 +389,24 @@ export class EncryptionClient
 
   /**
    * Handles an {@link EncryptedSyncStep2} by decrypting the updates and applying them to the {@link Y.Doc}.
+   * When this was an initial sync (server sent snapshot + updates), returns a compaction snapshot message
+   * so the server can store it as the new active snapshot and avoid replaying the update log for future syncs.
    */
-  public async handleSyncStep2(syncStep2: EncryptedSyncStep2): Promise<void> {
+  public async handleSyncStep2(
+    syncStep2: EncryptedSyncStep2,
+  ): Promise<Message | void> {
     const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
+    const hadSnapshot = !!decodedSyncStep2.snapshot;
+    const hadUpdates = decodedSyncStep2.updates.length > 0;
     if (decodedSyncStep2.snapshot) {
       await this.applySnapshot(decodedSyncStep2.snapshot);
       await this.applyQueuedUpdates(decodedSyncStep2.snapshot.id);
     }
     await this.applyUpdates(decodedSyncStep2.updates);
+
+    if (hadSnapshot && hadUpdates) {
+      return this.createSnapshotMessage();
+    }
   }
 
   /**

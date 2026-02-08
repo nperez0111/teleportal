@@ -125,7 +125,10 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       this.#getSnapshotPayloadKey(key, snapshot.id),
       snapshot.payload,
     );
-    await this.storage.setItem(this.#getSnapshotMetaKey(key, snapshot.id), metadata);
+    await this.storage.setItem(
+      this.#getSnapshotMetaKey(key, snapshot.id),
+      metadata,
+    );
   }
 
   async fetchSnapshot(
@@ -166,10 +169,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     return (metadata as EncryptedSnapshotMetadata) ?? null;
   }
 
-  async storeUpdate(
-    key: string,
-    update: StoredEncryptedUpdate,
-  ): Promise<void> {
+  async storeUpdate(key: string, update: StoredEncryptedUpdate): Promise<void> {
     const updatesKey = this.#getSnapshotUpdatesKey(key, update.snapshotId);
     const existing = (await this.storage.getItem(updatesKey)) as
       | StoredUpdateRecord[]

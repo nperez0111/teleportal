@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { createEncryptionKey } from "teleportal/encryption-key";
-import { decodeEncryptedUpdate } from "teleportal/protocol/encryption";
-import type { DecodedEncryptedUpdatePayload } from "teleportal/protocol/encryption";
+import {
+  decodeEncryptedUpdate,
+  decodeFromSyncStep2,
+} from "teleportal/protocol/encryption";
+import type {
+  DecodedEncryptedUpdatePayload,
+  EncryptedSyncStep2,
+} from "teleportal/protocol/encryption";
 import type { Update } from "teleportal/protocol";
 import { EncryptedMemoryStorage } from "teleportal/storage";
 import { EncryptionClient } from "./client";
@@ -93,5 +99,71 @@ describe("encrypted client integration", () => {
     expect(lastState?.serverVersion).toBe(1);
 
     expect(ydoc.getText("body").toString()).toBe("hello world");
+  });
+
+  it("returns compaction snapshot after initial sync (sync-step-2 with snapshot + updates)", async () => {
+    const key = await createEncryptionKey();
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({
+      document: "doc-1",
+      ydoc: ydocA,
+      key,
+    });
+
+    ydocA.getText("body").insert(0, "hello");
+    const snapshotMsg = await clientA.onUpdate(
+      Y.encodeStateAsUpdateV2(ydocA) as Update,
+    );
+    if (snapshotMsg.type !== "doc" || snapshotMsg.payload.type !== "update") {
+      throw new Error("Expected doc update");
+    }
+    await storage.handleEncryptedUpdate("doc-1", snapshotMsg.payload.update);
+
+    ydocA.getText("body").insert(5, " world");
+    const updateMsg = await clientA.onUpdate(
+      Y.encodeStateAsUpdateV2(ydocA) as Update,
+    );
+    if (updateMsg.type !== "doc" || updateMsg.payload.type !== "update") {
+      throw new Error("Expected doc update");
+    }
+    await storage.handleEncryptedUpdate("doc-1", updateMsg.payload.update);
+
+    const doc = await storage.getDocument("doc-1");
+    expect(doc).not.toBeNull();
+    const syncStep2Payload = doc!.content
+      .update as unknown as EncryptedSyncStep2;
+    const decoded = decodeFromSyncStep2(syncStep2Payload);
+    expect(decoded.snapshot).not.toBeNull();
+    expect(decoded.updates.length).toBeGreaterThan(0);
+
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({
+      document: "doc-1",
+      ydoc: ydocB,
+      key,
+    });
+    const compaction = await clientB.handleSyncStep2(syncStep2Payload);
+
+    expect(compaction).toBeDefined();
+    if (!compaction || compaction.type !== "doc") {
+      throw new Error("Expected doc message");
+    }
+    expect(compaction.payload.type).toBe("update");
+    const compactionDecoded = decodeEncryptedUpdate(compaction.payload.update);
+    expect(compactionDecoded.type).toBe("snapshot");
+    expect(ydocB.getText("body").toString()).toBe("hello world");
+
+    const stored = await storage.handleEncryptedUpdate(
+      "doc-1",
+      compaction.payload.update,
+    );
+    expect(stored).not.toBeNull();
+    const docAfter = await storage.getDocument("doc-1");
+    expect(docAfter).not.toBeNull();
+    if (compactionDecoded.type === "snapshot") {
+      expect(docAfter!.metadata.activeSnapshotId).toBe(
+        compactionDecoded.snapshot.id,
+      );
+    }
   });
 });

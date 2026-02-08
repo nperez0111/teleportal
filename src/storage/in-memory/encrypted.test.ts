@@ -281,12 +281,11 @@ describe("EncryptedMemoryStorage", () => {
       timestamp: [1, 1],
       payload: new Uint8Array([1]) as EncryptedBinary,
     };
-    await expect(
-      storage.handleEncryptedUpdate(
-        "doc-1",
-        encodeEncryptedUpdateMessages([wrongSnapshotUpdate]),
-      ),
-    ).rejects.toThrow("Update snapshot does not match active snapshot");
+    const result = await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([wrongSnapshotUpdate]),
+    );
+    expect(result).toBeNull();
   });
 
   it("rejects update when counter is out of order for same client", async () => {

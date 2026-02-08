@@ -394,7 +394,7 @@ export class Session<Context extends ServerContext> extends Observable<
         encrypted: this.encrypted,
         context,
       });
-      await this.#updateDocumentSizeMetrics(context);
+      void this.#updateDocumentSizeMetrics(context);
 
       writeLogger.debug("Update written to storage successfully");
     } catch (error) {
@@ -635,7 +635,7 @@ export class Session<Context extends ServerContext> extends Observable<
                   ),
                 ]);
 
-                await this.#updateDocumentSizeMetrics(message.context);
+                void this.#updateDocumentSizeMetrics(message.context);
 
                 log
                   .with({
@@ -746,7 +746,7 @@ export class Session<Context extends ServerContext> extends Observable<
                   );
                 }
 
-                await this.#updateDocumentSizeMetrics(message.context);
+                void this.#updateDocumentSizeMetrics(message.context);
 
                 if (!client) {
                   log

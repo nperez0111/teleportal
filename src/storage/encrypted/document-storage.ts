@@ -154,8 +154,10 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     let updates: StoredEncryptedUpdate[] = [];
 
     if (decodedStateVector.snapshotId !== activeSnapshotId) {
-      snapshot = await this.fetchSnapshot(key, activeSnapshotId);
-      updates = await this.fetchUpdates(key, activeSnapshotId, 0);
+      [snapshot, updates] = await Promise.all([
+        this.fetchSnapshot(key, activeSnapshotId),
+        this.fetchUpdates(key, activeSnapshotId, 0),
+      ]);
     } else if (decodedStateVector.serverVersion < serverVersion) {
       updates = await this.fetchUpdates(
         key,
@@ -164,6 +166,10 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       );
     }
 
+    const encodedUpdate = encodeToSyncStep2({
+      snapshot: snapshot ?? undefined,
+      updates,
+    }) as unknown as any;
     return {
       id: key,
       metadata: {
@@ -173,10 +179,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         activeSnapshotVersion: serverVersion,
       },
       content: {
-        update: encodeToSyncStep2({
-          snapshot: snapshot ?? undefined,
-          updates,
-        }) as unknown as any,
+        update: encodedUpdate,
         stateVector: encodeToStateVector({
           snapshotId: activeSnapshotId,
           serverVersion,
@@ -381,9 +384,12 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         ...update,
         serverVersion: assignedVersion,
       };
-      await this.storeUpdate(key, storedUpdate);
       storedUpdates.push(storedUpdate);
       sizeBytes += update.payload.length;
+    }
+
+    for (const update of storedUpdates) {
+      await this.storeUpdate(key, update);
     }
 
     await this.writeSnapshotMetadata(key, snapshotMeta);
@@ -414,8 +420,10 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       now,
     );
     const serverVersion = snapshotMeta?.updateVersion ?? 0;
-    const snapshot = await this.fetchSnapshot(key, activeSnapshotId);
-    const updates = await this.fetchUpdates(key, activeSnapshotId, 0);
+    const [snapshot, updates] = await Promise.all([
+      this.fetchSnapshot(key, activeSnapshotId),
+      this.fetchUpdates(key, activeSnapshotId, 0),
+    ]);
     return {
       id: key,
       metadata: {
