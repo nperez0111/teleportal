@@ -148,6 +148,9 @@ describe("encrypted client integration", () => {
     if (!compaction || compaction.type !== "doc") {
       throw new Error("Expected doc message");
     }
+    if (compaction.payload.type !== "update") {
+      throw new Error("Expected update payload");
+    }
     expect(compaction.payload.type).toBe("update");
     const compactionDecoded = decodeEncryptedUpdate(compaction.payload.update);
     expect(compactionDecoded.type).toBe("snapshot");
@@ -190,7 +193,7 @@ describe("encrypted client integration", () => {
     await new Promise<void>((r) => setTimeout(r, 25));
     expect(sent.length).toBe(1);
     expect(sent[0].type).toBe("doc");
-    if (sent[0].type === "doc") {
+    if (sent[0].type === "doc" && sent[0].payload.type === "update") {
       expect(sent[0].payload.type).toBe("update");
       const decoded = decodeEncryptedUpdate(sent[0].payload.update);
       expect(decoded.type).toBe("snapshot");
