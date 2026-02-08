@@ -11,6 +11,7 @@ import {
 import type {
   DecodedEncryptedUpdatePayload,
   EncryptedSnapshot,
+  EncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
 import { UnstorageEncryptedDocumentStorage } from "./encrypted";
 
@@ -45,7 +46,9 @@ describe("UnstorageEncryptedDocumentStorage", () => {
 
     const doc = await storage.getDocument("doc-1");
     expect(doc).not.toBeNull();
-    const decoded = decodeFromSyncStep2(doc!.content.update);
+    const decoded = decodeFromSyncStep2(
+      doc!.content.update as unknown as EncryptedSyncStep2,
+    );
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(1);
 
@@ -59,7 +62,9 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       "doc-1",
       getEmptyEncryptedStateVector(),
     );
-    const decoded = decodeFromSyncStep2(result.content.update);
+    const decoded = decodeFromSyncStep2(
+      result.content.update as unknown as EncryptedSyncStep2,
+    );
     expect(decoded.updates.length).toBe(0);
     expect(decoded.snapshot).toBeNull();
   });

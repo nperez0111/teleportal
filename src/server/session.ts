@@ -16,8 +16,10 @@ import {
   type RpcServerContext,
   type RpcSuccess,
 } from "teleportal/protocol";
-import type { DocumentStorage } from "teleportal/storage";
-import type { EncryptedDocumentStorage } from "teleportal/storage/encrypted";
+import type {
+  DocumentStorage,
+  EncryptedDocumentStorage,
+} from "teleportal/storage";
 import { Observable } from "../lib/utils";
 import { toErrorDetails } from "../logging";
 import { Client } from "./client";
@@ -712,7 +714,7 @@ export class Session<Context extends ServerContext> extends Observable<
                     context: message.context,
                   });
                   await Promise.all(
-                    payloads.map(async (payload) => {
+                    payloads.map(async (payload: Update) => {
                       const broadcastMessage = new DocMessage(
                         this.documentId,
                         {

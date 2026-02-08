@@ -209,6 +209,19 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         const stored = await this.storeSnapshotMessage(key, decoded.snapshot);
         return stored ? encodeEncryptedSnapshot(stored) : null;
       }
+      // Skip updates that reference a different snapshot (client behind or competing chain).
+      const metadataForUpdate = normalizeDocumentMetadata(
+        await this.getDocumentMetadata(key),
+        Date.now(),
+      );
+      const activeSnapshotIdForUpdate =
+        metadataForUpdate.activeSnapshotId ?? "";
+      if (
+        activeSnapshotIdForUpdate &&
+        decoded.updates.some((u) => u.snapshotId !== activeSnapshotIdForUpdate)
+      ) {
+        return null;
+      }
       const storedUpdates = await this.storeUpdates(key, decoded.updates);
       return storedUpdates.length > 0
         ? encodeEncryptedUpdateMessages(storedUpdates)
@@ -223,6 +236,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     return this.transaction(key, async () => {
       const decoded = decodeFromSyncStep2(syncStep2);
       const payloads: EncryptedUpdatePayload[] = [];
+      let snapshotStored = false;
       if (decoded.snapshot) {
         const storedSnapshot = await this.storeSnapshotMessage(
           key,
@@ -230,6 +244,12 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         );
         if (storedSnapshot) {
           payloads.push(encodeEncryptedSnapshot(storedSnapshot));
+          snapshotStored = true;
+        }
+        // If we skipped the snapshot (e.g. client sent root but we have state),
+        // skip updates too — they reference the client's snapshot chain.
+        if (!snapshotStored) {
+          return payloads;
         }
       }
       if (decoded.updates.length > 0) {
@@ -260,7 +280,10 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     if (activeSnapshotId) {
       const parentId = snapshot.parentSnapshotId ?? null;
       if (!parentId) {
-        throw new Error("Snapshot is missing parent snapshot id");
+        // Client sent a root snapshot but we already have state (e.g. second
+        // client responding before applying our sync-step-2). Skip storing;
+        // caller should not apply updates from this sync-step-2 either.
+        return null;
       }
       if (parentId !== activeSnapshotId) {
         throw new Error("Snapshot parent does not match active snapshot");

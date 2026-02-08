@@ -113,9 +113,13 @@ export function getEncryptedTransport(key: CryptoKey) {
         current[index] = {
           ...current[index],
           ...update,
+          serverVersion: update.serverVersion ?? current[index].serverVersion,
         };
       } else {
-        current.push(update);
+        current.push({
+          ...update,
+          serverVersion: update.serverVersion,
+        });
       }
       writeUpdates(current);
     });
@@ -127,9 +131,15 @@ export function getEncryptedTransport(key: CryptoKey) {
         current[index] = {
           ...current[index],
           ...update,
+          serverVersion: update.serverVersion ?? current[index].serverVersion,
         };
-        writeUpdates(current);
+      } else {
+        current.push({
+          ...update,
+          serverVersion: update.serverVersion,
+        });
       }
+      writeUpdates(current);
     });
 
     return getEncryptedTransportBase(client);

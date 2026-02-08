@@ -30,14 +30,17 @@ describe("encrypted client integration", () => {
       stateUpdates.push(state);
     });
     client.on("update-acknowledged", (update) => {
-      acknowledged = update;
+      acknowledged = update as DecodedEncryptedUpdatePayload;
     });
 
     ydoc.getText("body").insert(0, "hello");
     const initialUpdate = Y.encodeStateAsUpdateV2(ydoc) as Update;
     const snapshotMessage = await client.onUpdate(initialUpdate);
 
-    if (snapshotMessage.type !== "doc" || snapshotMessage.payload.type !== "update") {
+    if (
+      snapshotMessage.type !== "doc" ||
+      snapshotMessage.payload.type !== "update"
+    ) {
       throw new Error("Expected snapshot update message");
     }
 
@@ -59,7 +62,10 @@ describe("encrypted client integration", () => {
     const secondUpdate = Y.encodeStateAsUpdateV2(ydoc) as Update;
     const updateMessage = await client.onUpdate(secondUpdate);
 
-    if (updateMessage.type !== "doc" || updateMessage.payload.type !== "update") {
+    if (
+      updateMessage.type !== "doc" ||
+      updateMessage.payload.type !== "update"
+    ) {
       throw new Error("Expected update message");
     }
 
@@ -78,8 +84,9 @@ describe("encrypted client integration", () => {
 
     await client.handleUpdate(storedUpdatePayload!);
 
-    expect(acknowledged?.serverVersion).toBe(1);
-    expect(acknowledged?.snapshotId).toBe(snapshotId);
+    const ack = acknowledged as DecodedEncryptedUpdatePayload | null;
+    expect(ack?.serverVersion).toBe(1);
+    expect(ack?.snapshotId).toBe(snapshotId);
 
     const lastState = stateUpdates[stateUpdates.length - 1];
     expect(lastState?.snapshotId).toBe(snapshotId);

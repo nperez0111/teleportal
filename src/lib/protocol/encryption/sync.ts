@@ -1,7 +1,6 @@
 import type {
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
-  EncryptedMessageId,
   EncryptedStateVector,
   EncryptedSyncStep2,
   EncryptedSnapshot,
@@ -11,15 +10,6 @@ import {
   encodeToStateVector,
   encodeToSyncStep2,
 } from "./encoding";
-import type { ClientId, Counter } from "./lamport-clock";
-
-/**
- * A mapping of {@link ClientId} to a mapping of {@link Counter} to {@link EncryptedMessageId}
- */
-export type SeenMessageMapping = Record<
-  ClientId,
-  Record<Counter, EncryptedMessageId>
->;
 
 /**
  * Returns the {@link DecodedEncryptedStateVector} for a snapshot/version pair.

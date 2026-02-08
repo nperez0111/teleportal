@@ -17,6 +17,10 @@ import * as Y from "yjs";
 
 export type MessageType = Message | RawReceivedMessage;
 
+function getDocId(message: { document?: string | null }): string {
+  return message.document ?? "";
+}
+
 export function getMessageTypeLabel(message: MessageType): string {
   if (message.type === "doc") {
     return message.payload.type;
@@ -166,20 +170,20 @@ export async function formatMessagePayload(
                   provider.encryptionKey,
                   decoded.snapshot.payload,
                 );
-                items.push(
-                  await formatMessagePayload(
-                    new DocMessage(
-                      message.document,
-                      {
-                        type: "sync-step-2",
-                        update: decrypted as SyncStep2Update,
-                      },
-                      message.context,
-                      false,
-                    ),
-                    provider,
-                  ),
+                const docMsg = new DocMessage(
+                  getDocId(message),
+                  {
+                    type: "sync-step-2",
+                    update: decrypted as SyncStep2Update,
+                  },
+                  message.context,
+                  false,
                 );
+                const formatted = await formatMessagePayload(
+                  docMsg as MessageType,
+                  provider,
+                );
+                if (formatted != null) items.push(formatted);
               }
             }
             return Promise.all(
@@ -195,7 +199,7 @@ export async function formatMessagePayload(
 
                 return formatMessagePayload(
                   new DocMessage(
-                    message.document,
+                    getDocId(message),
                     {
                       type: "sync-step-2",
                       update: decrypted as SyncStep2Update,
@@ -207,7 +211,9 @@ export async function formatMessagePayload(
                 );
               }),
             ).then((res) => {
-              const combined = items.concat(res);
+              const combined = items.concat(
+                res.filter((s): s is string => s != null),
+              );
               if (combined.length === 0) {
                 return `[]`;
               }
@@ -230,7 +236,7 @@ export async function formatMessagePayload(
               );
               const formatted = await formatMessagePayload(
                 new DocMessage(
-                  message.document,
+                  getDocId(message),
                   {
                     type: "sync-step-2",
                     update: decrypted as SyncStep2Update,
@@ -256,7 +262,7 @@ export async function formatMessagePayload(
 
                 return formatMessagePayload(
                   new DocMessage(
-                    message.document,
+                    getDocId(message),
                     {
                       type: "sync-step-2",
                       update: decrypted as SyncStep2Update,
