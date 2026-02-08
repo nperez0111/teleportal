@@ -9,7 +9,7 @@ import type {
   DecodedEncryptedUpdatePayload,
   EncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
-import type { Update } from "teleportal/protocol";
+import type { Message, Update } from "teleportal/protocol";
 import { EncryptedMemoryStorage } from "teleportal/storage";
 import { EncryptionClient } from "./client";
 
@@ -165,5 +165,80 @@ describe("encrypted client integration", () => {
         compactionDecoded.snapshot.id,
       );
     }
+  });
+
+  it("sends compaction snapshot periodically when snapshotIntervalMs > 0", async () => {
+    const key = await createEncryptionKey();
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({
+      document: "doc-1",
+      ydoc,
+      key,
+      snapshotIntervalMs: 20,
+    });
+
+    const sent: Message[] = [];
+    client.on("send-message", (message) => {
+      sent.push(message);
+    });
+
+    ydoc.getText("body").insert(0, "hello");
+    await client.onUpdate(Y.encodeStateAsUpdateV2(ydoc) as Update);
+    expect(sent.length).toBe(0);
+
+    ydoc.getText("body").insert(5, "!");
+    await new Promise<void>((r) => setTimeout(r, 25));
+    expect(sent.length).toBe(1);
+    expect(sent[0].type).toBe("doc");
+    if (sent[0].type === "doc") {
+      expect(sent[0].payload.type).toBe("update");
+      const decoded = decodeEncryptedUpdate(sent[0].payload.update);
+      expect(decoded.type).toBe("snapshot");
+    }
+
+    client.destroy();
+  });
+
+  it("does not send periodic snapshot when there are no changes since last snapshot", async () => {
+    const key = await createEncryptionKey();
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({
+      document: "doc-1",
+      ydoc,
+      key,
+      snapshotIntervalMs: 15,
+    });
+
+    const sent: Message[] = [];
+    client.on("send-message", (message) => {
+      sent.push(message);
+    });
+
+    ydoc.getText("body").insert(0, "hello");
+    await client.onUpdate(Y.encodeStateAsUpdateV2(ydoc) as Update);
+    await new Promise<void>((r) => setTimeout(r, 25));
+    expect(sent.length).toBe(0);
+    client.destroy();
+  });
+
+  it("does not schedule periodic snapshot when snapshotIntervalMs is 0", async () => {
+    const key = await createEncryptionKey();
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({
+      document: "doc-1",
+      ydoc,
+      key,
+      snapshotIntervalMs: 0,
+    });
+
+    const sent: Message[] = [];
+    client.on("send-message", (message) => {
+      sent.push(message);
+    });
+
+    ydoc.getText("body").insert(0, "x");
+    await client.onUpdate(Y.encodeStateAsUpdateV2(ydoc) as Update);
+    await new Promise<void>((r) => setTimeout(r, 50));
+    expect(sent.length).toBe(0);
   });
 });

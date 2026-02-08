@@ -43,6 +43,9 @@ import {
   YDocSourceHandler,
 } from "../ydoc";
 
+/** Default interval for periodic snapshot compaction (5 minutes). Use 0 to disable. */
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
 type EncryptionClientEvents = {
   "snapshot-stored": (snapshot: EncryptedSnapshot) => void;
   "update-stored": (update: DecodedEncryptedUpdatePayload) => void;
@@ -51,6 +54,8 @@ type EncryptionClientEvents = {
     snapshotId: string | null;
     serverVersion: number;
   }) => void;
+  /** Emitted when the client wants to send a message (e.g. periodic compaction snapshot). */
+  "send-message": (message: Message) => void;
 };
 
 export class EncryptionClient
@@ -68,6 +73,8 @@ export class EncryptionClient
   private seenUpdates = new Map<string, Set<string>>();
   private queuedUpdates = new Map<string, DecodedEncryptedUpdatePayload[]>();
   private loadingPromise: Promise<void> | null = null;
+  #snapshotIntervalMs: number;
+  #snapshotTimer: ReturnType<typeof setInterval> | null = null;
 
   public document: string;
   public ydoc: Y.Doc;
@@ -89,6 +96,7 @@ export class EncryptionClient
     key,
     decryptUpdate,
     encryptUpdate,
+    snapshotIntervalMs = DEFAULT_SNAPSHOT_INTERVAL_MS,
   }: {
     document: string;
     ydoc?: Y.Doc;
@@ -102,6 +110,8 @@ export class EncryptionClient
       key: CryptoKey,
       update: DecryptedBinary,
     ) => Promise<EncryptedBinary>;
+    /** Interval in ms to create a compaction snapshot. Default 5 minutes. Set to 0 to disable. */
+    snapshotIntervalMs?: number;
   }) {
     super();
     this.ydoc = ydoc ?? new Y.Doc();
@@ -111,6 +121,49 @@ export class EncryptionClient
     this.key = key;
     this.#decryptUpdate = decryptUpdate ?? defaultDecryptUpdate;
     this.#encryptUpdate = encryptUpdate ?? defaultEncryptUpdate;
+    this.#snapshotIntervalMs = snapshotIntervalMs;
+  }
+
+  /**
+   * Clears the periodic snapshot timer and any other resources. Call when the client is no longer used.
+   */
+  public destroy(): void {
+    this.#clearSnapshotTimer();
+  }
+
+  #clearSnapshotTimer(): void {
+    if (this.#snapshotTimer !== null) {
+      clearInterval(this.#snapshotTimer);
+      this.#snapshotTimer = null;
+    }
+  }
+
+  #scheduleNextSnapshot(): void {
+    this.#clearSnapshotTimer();
+    if (this.#snapshotIntervalMs <= 0 || !this.activeSnapshotId) {
+      return;
+    }
+    this.#snapshotTimer = setInterval(() => {
+      void (async () => {
+        if (!this.activeSnapshotId) return;
+        const currentState = Y.encodeStateAsUpdateV2(this.ydoc);
+        const snapshotState = await this.decryptUpdate(
+          this.activeSnapshot!.payload,
+        );
+        if (
+          currentState.length === snapshotState.length &&
+          currentState.every((b, i) => b === snapshotState[i])
+        ) {
+          return;
+        }
+        try {
+          const message = await this.createSnapshotMessage();
+          this.call("send-message", message);
+        } finally {
+          this.#scheduleNextSnapshot();
+        }
+      })();
+    }, this.#snapshotIntervalMs);
   }
 
   /**
@@ -260,6 +313,7 @@ export class EncryptionClient
       snapshotId: snapshot.id,
       serverVersion: this.serverVersion,
     });
+    this.#scheduleNextSnapshot();
   }
 
   private async createSnapshot(): Promise<EncryptedSnapshot> {
@@ -284,6 +338,7 @@ export class EncryptionClient
       snapshotId: snapshot.id,
       serverVersion: this.serverVersion,
     });
+    this.#scheduleNextSnapshot();
     return snapshot;
   }
 
