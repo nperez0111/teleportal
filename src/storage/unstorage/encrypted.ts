@@ -1,12 +1,45 @@
+import { fromBase64, toBase64 } from "lib0/buffer";
 import type { Storage } from "unstorage";
 
 import { EncryptedBinary } from "teleportal/encryption-key";
-import type { EncryptedMessageId } from "teleportal/protocol/encryption";
+import type { EncryptedSnapshot } from "teleportal/protocol/encryption";
 import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
+  EncryptedSnapshotMetadata,
+  StoredEncryptedUpdate,
 } from "../encrypted";
 import { withTransaction } from "./transaction";
+
+type StoredUpdateRecord = {
+  id: string;
+  snapshotId: string;
+  clientId: number;
+  counter: number;
+  serverVersion: number;
+  payload: string;
+};
+
+function serializeUpdate(update: StoredEncryptedUpdate): StoredUpdateRecord {
+  return {
+    id: update.id,
+    snapshotId: update.snapshotId,
+    clientId: update.timestamp[0],
+    counter: update.timestamp[1],
+    serverVersion: update.serverVersion,
+    payload: toBase64(update.payload),
+  };
+}
+
+function deserializeUpdate(record: StoredUpdateRecord): StoredEncryptedUpdate {
+  return {
+    id: record.id,
+    snapshotId: record.snapshotId,
+    timestamp: [record.clientId, record.counter],
+    payload: fromBase64(record.payload) as EncryptedBinary,
+    serverVersion: record.serverVersion,
+  };
+}
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
   private readonly storage: Storage;
@@ -31,8 +64,16 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     return this.#getKey(key) + ":meta";
   }
 
-  #getMessageKey(key: string, messageId: string): string {
-    return this.#getKey(key) + ":" + messageId;
+  #getSnapshotPayloadKey(key: string, snapshotId: string): string {
+    return this.#getKey(key) + `:snapshot:${snapshotId}:payload`;
+  }
+
+  #getSnapshotMetaKey(key: string, snapshotId: string): string {
+    return this.#getKey(key) + `:snapshot:${snapshotId}:meta`;
+  }
+
+  #getSnapshotUpdatesKey(key: string, snapshotId: string): string {
+    return this.#getKey(key) + `:snapshot:${snapshotId}:updates`;
   }
 
   /**
@@ -63,7 +104,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
         createdAt: now,
         updatedAt: now,
         encrypted: true,
-        seenMessages: {},
+        snapshots: [],
       };
     }
     const m = metadata as EncryptedDocumentMetadata;
@@ -75,40 +116,99 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     };
   }
 
-  async storeEncryptedMessage(
+  async storeSnapshot(
     key: string,
-    messageId: EncryptedMessageId,
-    payload: EncryptedBinary,
+    snapshot: EncryptedSnapshot,
+    metadata: EncryptedSnapshotMetadata,
   ): Promise<void> {
     await this.storage.setItemRaw<EncryptedBinary>(
-      this.#getMessageKey(key, messageId),
+      this.#getSnapshotPayloadKey(key, snapshot.id),
+      snapshot.payload,
+    );
+    await this.storage.setItem(this.#getSnapshotMetaKey(key, snapshot.id), metadata);
+  }
+
+  async fetchSnapshot(
+    key: string,
+    snapshotId: string,
+  ): Promise<EncryptedSnapshot | null> {
+    const payload = await this.storage.getItemRaw<EncryptedBinary>(
+      this.#getSnapshotPayloadKey(key, snapshotId),
+    );
+    if (!payload) {
+      return null;
+    }
+    const metadata = await this.getSnapshotMetadata(key, snapshotId);
+    return {
+      id: snapshotId,
+      parentSnapshotId: metadata?.parentSnapshotId ?? null,
       payload,
+    };
+  }
+
+  async writeSnapshotMetadata(
+    key: string,
+    metadata: EncryptedSnapshotMetadata,
+  ): Promise<void> {
+    await this.storage.setItem(
+      this.#getSnapshotMetaKey(key, metadata.id),
+      metadata,
     );
   }
 
-  async fetchEncryptedMessage(
+  async getSnapshotMetadata(
     key: string,
-    messageId: EncryptedMessageId,
-  ): Promise<EncryptedBinary | null> {
-    const payload = await this.storage.getItemRaw<EncryptedBinary>(
-      this.#getMessageKey(key, messageId),
+    snapshotId: string,
+  ): Promise<EncryptedSnapshotMetadata | null> {
+    const metadata = await this.storage.getItem(
+      this.#getSnapshotMetaKey(key, snapshotId),
     );
-    return payload;
+    return (metadata as EncryptedSnapshotMetadata) ?? null;
+  }
+
+  async storeUpdate(
+    key: string,
+    update: StoredEncryptedUpdate,
+  ): Promise<void> {
+    const updatesKey = this.#getSnapshotUpdatesKey(key, update.snapshotId);
+    const existing = (await this.storage.getItem(updatesKey)) as
+      | StoredUpdateRecord[]
+      | null;
+    const updates = existing ?? [];
+    updates.push(serializeUpdate(update));
+    await this.storage.setItem(updatesKey, updates);
+  }
+
+  async fetchUpdates(
+    key: string,
+    snapshotId: string,
+    afterVersion: number,
+  ): Promise<StoredEncryptedUpdate[]> {
+    const updatesKey = this.#getSnapshotUpdatesKey(key, snapshotId);
+    const existing = (await this.storage.getItem(updatesKey)) as
+      | StoredUpdateRecord[]
+      | null;
+    if (!existing) {
+      return [];
+    }
+    return existing
+      .filter((update) => update.serverVersion > afterVersion)
+      .sort((a, b) => a.serverVersion - b.serverVersion)
+      .map(deserializeUpdate);
   }
 
   async deleteDocument(key: string): Promise<void> {
     const metadata = await this.getDocumentMetadata(key);
-    const prefixedKey = this.#getKey(key);
-
-    // Delete all messages
-    const promises = [];
-    for (const clientId in metadata.seenMessages) {
-      for (const counter in metadata.seenMessages[clientId]) {
-        const messageId = metadata.seenMessages[clientId][counter];
-        promises.push(
-          this.storage.removeItem(this.#getMessageKey(key, messageId)),
-        );
-      }
+    const snapshotIds = Array.isArray(metadata.snapshots)
+      ? metadata.snapshots
+      : [];
+    const promises: Promise<unknown>[] = [];
+    for (const snapshotId of snapshotIds) {
+      promises.push(
+        this.storage.removeItem(this.#getSnapshotPayloadKey(key, snapshotId)),
+        this.storage.removeItem(this.#getSnapshotMetaKey(key, snapshotId)),
+        this.storage.removeItem(this.#getSnapshotUpdatesKey(key, snapshotId)),
+      );
     }
     await Promise.all(promises);
 

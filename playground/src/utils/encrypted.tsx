@@ -2,7 +2,6 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import { useEffect, useState } from "react";
 import {
   createEncryptionKey,
-  EncryptedBinary,
   exportEncryptionKey,
   importEncryptionKey,
 } from "teleportal/encryption-key";
@@ -26,36 +25,113 @@ export function getEncryptedTransport(key: CryptoKey) {
     awareness: Awareness;
   }) => {
     const prefix = "teleportal-encrypted-" + document;
+    const snapshotKey = prefix + "-snapshot";
+    const updatesKey = prefix + "-updates";
+
+    const readSnapshot = () => {
+      const raw = localStorage.getItem(snapshotKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as {
+        id: string;
+        parentSnapshotId?: string | null;
+        payload: string;
+      };
+      return {
+        id: parsed.id,
+        parentSnapshotId: parsed.parentSnapshotId ?? null,
+        payload: fromBase64(parsed.payload),
+      };
+    };
+
+    const readUpdates = () => {
+      const raw = localStorage.getItem(updatesKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Array<{
+        id: string;
+        snapshotId: string;
+        clientId: number;
+        counter: number;
+        payload: string;
+        serverVersion?: number;
+      }>;
+      return parsed.map((update) => ({
+        id: update.id,
+        snapshotId: update.snapshotId,
+        timestamp: [update.clientId, update.counter] as [number, number],
+        payload: fromBase64(update.payload),
+        serverVersion: update.serverVersion,
+      }));
+    };
+
+    const writeUpdates = (
+      updates: Array<{
+        id: string;
+        snapshotId: string;
+        timestamp: [number, number];
+        payload: Uint8Array;
+        serverVersion?: number;
+      }>,
+    ) => {
+      const serialized = updates.map((update) => ({
+        id: update.id,
+        snapshotId: update.snapshotId,
+        clientId: update.timestamp[0],
+        counter: update.timestamp[1],
+        payload: toBase64(update.payload),
+        serverVersion: update.serverVersion,
+      }));
+      localStorage.setItem(updatesKey, JSON.stringify(serialized));
+    };
+
     const client = new EncryptionClient({
       document,
       ydoc,
       awareness,
       key,
-      getEncryptedMessageUpdate: async (messageId) => {
-        const payload = localStorage.getItem(prefix + "-update-" + messageId);
-        if (!payload) {
-          throw new Error("Message not found");
-        }
-        return fromBase64(payload) as EncryptedBinary;
-      },
     });
-    // TODO more convenient way to do this
-    client.on("seen-update", (update) => {
+    const snapshot = readSnapshot();
+    const updates = readUpdates();
+    if (snapshot || updates.length > 0) {
+      void client.loadState({ snapshot, updates });
+    }
+
+    client.on("snapshot-stored", (snapshot) => {
       localStorage.setItem(
-        prefix + "-update-" + update.id,
-        toBase64(update.payload),
+        snapshotKey,
+        JSON.stringify({
+          id: snapshot.id,
+          parentSnapshotId: snapshot.parentSnapshotId ?? null,
+          payload: toBase64(snapshot.payload),
+        }),
       );
     });
-    client.on("update-seen-messages", (seenMessages) => {
-      // TODO instead of storing every seen message like this, we can compact them into a single update & store the un-encrypted version instead (+ metadata that we've seen this update)
-      localStorage.setItem(
-        prefix + "-seen-messages",
-        JSON.stringify(seenMessages),
-      );
+
+    client.on("update-stored", (update) => {
+      const current = readUpdates();
+      const index = current.findIndex((item) => item.id === update.id);
+      if (index >= 0) {
+        current[index] = {
+          ...current[index],
+          ...update,
+        };
+      } else {
+        current.push(update);
+      }
+      writeUpdates(current);
     });
-    client.loadSeenMessages(
-      JSON.parse(localStorage.getItem(prefix + "-seen-messages") ?? "{}"),
-    );
+
+    client.on("update-acknowledged", (update) => {
+      const current = readUpdates();
+      const index = current.findIndex((item) => item.id === update.id);
+      if (index >= 0) {
+        current[index] = {
+          ...current[index],
+          ...update,
+        };
+        writeUpdates(current);
+      }
+    });
+
     return getEncryptedTransportBase(client);
   };
 }

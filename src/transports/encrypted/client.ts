@@ -15,27 +15,20 @@ import {
   Update,
 } from "teleportal/protocol";
 import type {
-  ClientId,
-  DecodedEncryptedStateVector,
-  DecodedEncryptedSyncStep2,
-  EncryptedMessageId,
+  DecodedEncryptedUpdatePayload,
+  EncryptedSnapshot,
   EncryptedStateVector,
   EncryptedSyncStep2,
   EncryptedUpdatePayload,
-  LamportClockId,
-  LamportClockValue,
-  SeenMessageMapping,
 } from "teleportal/protocol/encryption";
 import {
-  DecodedEncryptedUpdatePayload,
   decodeEncryptedUpdate,
   decodeFromStateVector,
   decodeFromSyncStep2,
+  encodeEncryptedSnapshot,
   encodeEncryptedUpdateMessages,
-  getDecodedStateVector,
-  getDecodedSyncStep2,
+  encodeToSyncStep2,
   getEncryptedStateVector,
-  getEncryptedSyncStep2,
   LamportClock,
 } from "teleportal/protocol/encryption";
 import {
@@ -50,12 +43,18 @@ import {
   YDocSourceHandler,
 } from "../ydoc";
 
+type EncryptionClientEvents = {
+  "snapshot-stored": (snapshot: EncryptedSnapshot) => void;
+  "update-stored": (update: DecodedEncryptedUpdatePayload) => void;
+  "update-acknowledged": (update: DecodedEncryptedUpdatePayload) => void;
+  "state-updated": (state: {
+    snapshotId: string | null;
+    serverVersion: number;
+  }) => void;
+};
+
 export class EncryptionClient
-  extends Observable<{
-    "update-seen-messages": (seenMessages: SeenMessageMapping) => void;
-    "seen-update": (node: DecodedEncryptedUpdatePayload) => void;
-    "loaded-seen-messages": () => void;
-  }>
+  extends Observable<EncryptionClientEvents>
   implements YDocSinkHandler, YDocSourceHandler
 {
   /**
@@ -63,18 +62,17 @@ export class EncryptionClient
    */
   private clock: LamportClock;
 
-  /**
-   * A mapping of seen messages by their {@link ClientId} to a mapping of {@link Counter} to their {@link EncryptedMessageId}
-   */
-  public seenMessages: SeenMessageMapping = {};
+  private activeSnapshot: EncryptedSnapshot | null = null;
+  private serverVersion = 0;
+  private pendingUpdates = new Map<string, DecodedEncryptedUpdatePayload>();
+  private seenUpdates = new Map<string, Set<string>>();
+  private queuedUpdates = new Map<string, DecodedEncryptedUpdatePayload[]>();
+  private loadingPromise: Promise<void> | null = null;
 
   public document: string;
   public ydoc: Y.Doc;
   public awareness: Awareness;
   public key: CryptoKey;
-  public getEncryptedMessageUpdate: (
-    messageId: EncryptedMessageId,
-  ) => Promise<EncryptedBinary>;
   #decryptUpdate: (
     key: CryptoKey,
     encryptedUpdate: EncryptedBinary,
@@ -89,7 +87,6 @@ export class EncryptionClient
     ydoc,
     awareness,
     key,
-    getEncryptedMessageUpdate,
     decryptUpdate,
     encryptUpdate,
   }: {
@@ -97,9 +94,6 @@ export class EncryptionClient
     ydoc?: Y.Doc;
     awareness?: Awareness;
     key: CryptoKey;
-    getEncryptedMessageUpdate: (
-      messageId: EncryptedMessageId,
-    ) => Promise<EncryptedBinary>;
     decryptUpdate?: (
       key: CryptoKey,
       encryptedUpdate: EncryptedBinary,
@@ -115,7 +109,6 @@ export class EncryptionClient
     this.clock = new LamportClock(this.awareness.clientID);
     this.document = document;
     this.key = key;
-    this.getEncryptedMessageUpdate = getEncryptedMessageUpdate;
     this.#decryptUpdate = decryptUpdate ?? defaultDecryptUpdate;
     this.#encryptUpdate = encryptUpdate ?? defaultEncryptUpdate;
   }
@@ -135,38 +128,43 @@ export class EncryptionClient
   ): Promise<DecryptedBinary> {
     return this.#decryptUpdate(this.key, encryptedUpdate);
   }
-  private loadedSeenMessages: boolean = false;
 
-  /**
-   * Loads the seen messages from a serialized version of the seen messages by their {@link LamportClockId} to their {@link EncryptedMessageId}
-   */
-  public async loadSeenMessages(
-    seenMessages: SeenMessageMapping,
-  ): Promise<void> {
-    const promises: Promise<DecryptedBinary>[] = [];
-    for (const [clientId, messages] of Object.entries(seenMessages)) {
-      for (const [counter, messageId] of Object.entries(messages)) {
-        promises.push(
-          this.getEncryptedMessageUpdate(messageId)
-            .then((update) => {
-              return this.createMessageNode(messageId, update, [
-                parseInt(clientId),
-                parseInt(counter),
-              ]).payload;
-            })
-            .then((update) => this.decryptUpdate(update)),
-        );
-      }
-    }
-    this.applyUpdates(await Promise.all(promises));
-    this.loadedSeenMessages = true;
-    this.call("loaded-seen-messages");
+  private get activeSnapshotId(): string | null {
+    return this.activeSnapshot?.id ?? null;
   }
 
-  /**
-   * Applies a list of {@link DecryptedBinary}s to the {@link Y.Doc}.
-   */
-  private applyUpdates(updates: DecryptedBinary[]): void {
+  private getUpdateKey(
+    snapshotId: string,
+    timestamp: [number, number],
+  ): string {
+    return `${snapshotId}:${timestamp[0]}-${timestamp[1]}`;
+  }
+
+  private markSeen(update: DecodedEncryptedUpdatePayload) {
+    const snapshotId = update.snapshotId;
+    const key = this.getUpdateKey(snapshotId, update.timestamp);
+    if (!this.seenUpdates.has(snapshotId)) {
+      this.seenUpdates.set(snapshotId, new Set());
+    }
+    this.seenUpdates.get(snapshotId)!.add(key);
+  }
+
+  private hasSeen(update: DecodedEncryptedUpdatePayload): boolean {
+    const snapshotId = update.snapshotId;
+    const key = this.getUpdateKey(snapshotId, update.timestamp);
+    return this.seenUpdates.get(snapshotId)?.has(key) ?? false;
+  }
+
+  private queueUpdate(update: DecodedEncryptedUpdatePayload) {
+    const list = this.queuedUpdates.get(update.snapshotId) ?? [];
+    list.push(update);
+    this.queuedUpdates.set(update.snapshotId, list);
+  }
+
+  private async applyUpdatesToDoc(updates: DecryptedBinary[]): Promise<void> {
+    if (updates.length === 0) {
+      return;
+    }
     this.ydoc.transact((tr) => {
       for (const update of updates) {
         Y.applyUpdateV2(tr.doc, update, getSyncTransactionOrigin(this.ydoc));
@@ -174,17 +172,156 @@ export class EncryptionClient
     });
   }
 
-  public async start(): Promise<Message> {
-    if (!this.loadedSeenMessages) {
-      await new Promise<void>((resolve) => {
-        this.once("loaded-seen-messages", resolve);
+  private handleAcknowledgement(update: DecodedEncryptedUpdatePayload) {
+    if (typeof update.serverVersion !== "number") {
+      return;
+    }
+    if (update.serverVersion > this.serverVersion) {
+      this.serverVersion = update.serverVersion;
+      this.call("state-updated", {
+        snapshotId: this.activeSnapshotId,
+        serverVersion: this.serverVersion,
       });
+    }
+    const key = this.getUpdateKey(update.snapshotId, update.timestamp);
+    const pending = this.pendingUpdates.get(key);
+    if (pending) {
+      this.pendingUpdates.delete(key);
+      this.call("update-acknowledged", {
+        ...pending,
+        serverVersion: update.serverVersion,
+      });
+    }
+  }
+
+  private async applyUpdates(
+    updates: DecodedEncryptedUpdatePayload[],
+  ): Promise<void> {
+    const decrypted: DecryptedBinary[] = [];
+    for (const update of updates) {
+      if (update.snapshotId !== this.activeSnapshotId) {
+        this.queueUpdate(update);
+        continue;
+      }
+
+      if (!this.hasSeen(update)) {
+        decrypted.push(await this.decryptUpdate(update.payload));
+        this.markSeen(update);
+        this.call("update-stored", update);
+      }
+      this.handleAcknowledgement(update);
+    }
+    await this.applyUpdatesToDoc(decrypted);
+  }
+
+  private async applyQueuedUpdates(snapshotId: string): Promise<void> {
+    const queued = this.queuedUpdates.get(snapshotId);
+    if (!queued || queued.length === 0) {
+      return;
+    }
+    queued.sort(
+      (a, b) => (a.serverVersion ?? 0) - (b.serverVersion ?? 0),
+    );
+    this.queuedUpdates.delete(snapshotId);
+    await this.applyUpdates(queued);
+  }
+
+  private async applySnapshot(snapshot: EncryptedSnapshot): Promise<void> {
+    if (this.activeSnapshot?.id === snapshot.id) {
+      return;
+    }
+    const decrypted = await this.decryptUpdate(snapshot.payload);
+    await this.applyUpdatesToDoc([decrypted]);
+
+    this.activeSnapshot = snapshot;
+    this.serverVersion = 0;
+    this.clock = new LamportClock(this.awareness.clientID);
+    this.pendingUpdates.clear();
+    this.seenUpdates.clear();
+    this.queuedUpdates.clear();
+
+    this.call("snapshot-stored", snapshot);
+    this.call("state-updated", {
+      snapshotId: snapshot.id,
+      serverVersion: this.serverVersion,
+    });
+  }
+
+  private async createSnapshot(): Promise<EncryptedSnapshot> {
+    const snapshotId = crypto.randomUUID();
+    const parentSnapshotId = this.activeSnapshotId ?? null;
+    const update = Y.encodeStateAsUpdateV2(this.ydoc) as Update;
+    const encryptedUpdate = await this.encryptUpdate(update);
+    const snapshot: EncryptedSnapshot = {
+      id: snapshotId,
+      parentSnapshotId,
+      payload: encryptedUpdate,
+    };
+    this.activeSnapshot = snapshot;
+    this.serverVersion = 0;
+    this.clock = new LamportClock(this.awareness.clientID);
+    this.pendingUpdates.clear();
+    this.seenUpdates.clear();
+    this.queuedUpdates.clear();
+
+    this.call("snapshot-stored", snapshot);
+    this.call("state-updated", {
+      snapshotId: snapshot.id,
+      serverVersion: this.serverVersion,
+    });
+    return snapshot;
+  }
+
+  private createUpdatePayload(
+    payload: EncryptedBinary,
+  ): DecodedEncryptedUpdatePayload {
+    if (!this.activeSnapshotId) {
+      throw new Error("Cannot create update without an active snapshot");
+    }
+    const timestamp = this.clock.tick();
+    const update: DecodedEncryptedUpdatePayload = {
+      id: toBase64(digest(payload)),
+      snapshotId: this.activeSnapshotId,
+      timestamp,
+      payload,
+    };
+    this.markSeen(update);
+    this.pendingUpdates.set(this.getUpdateKey(update.snapshotId, timestamp), update);
+    this.call("update-stored", update);
+    return update;
+  }
+
+  public async loadState({
+    snapshot,
+    updates,
+  }: {
+    snapshot?: EncryptedSnapshot | null;
+    updates?: DecodedEncryptedUpdatePayload[];
+  }): Promise<void> {
+    this.loadingPromise = (async () => {
+      if (snapshot) {
+        await this.applySnapshot(snapshot);
+      }
+      if (updates && updates.length > 0) {
+        await this.applyUpdates(updates);
+      }
+    })();
+    await this.loadingPromise;
+    this.loadingPromise = null;
+  }
+
+  public async start(): Promise<Message> {
+    if (this.loadingPromise) {
+      await this.loadingPromise;
     }
     return new DocMessage(
       this.document,
       {
         type: "sync-step-1",
-        sv: this.getEncryptedStateVector(),
+        sv: getEncryptedStateVector(
+          this.activeSnapshotId ?? "",
+          this.serverVersion,
+        ),
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -194,15 +331,30 @@ export class EncryptionClient
   }
 
   /**
-   * Handles an {@link EncryptedStateVector} by getting the {@link EncryptedSyncStep2} and returning a {@link DocMessage} with the {@link EncryptedSyncStep2}.
+   * Handles an {@link EncryptedStateVector} by getting the {@link EncryptedSyncStep2}
+   * and returning a {@link DocMessage} with the {@link EncryptedSyncStep2}.
    */
   public async handleSyncStep1(
     syncStep1: EncryptedStateVector,
   ): Promise<DocMessage<ClientContext>> {
-    const decodedEncryptedStateVector = decodeFromStateVector(syncStep1);
-    const encryptedSyncStep2 = await this.getEncryptedSyncStep2(
-      decodedEncryptedStateVector,
-    );
+    const decoded = decodeFromStateVector(syncStep1);
+    let snapshot: EncryptedSnapshot | null = null;
+    let updates: DecodedEncryptedUpdatePayload[] = [];
+
+    if (!decoded.snapshotId && this.activeSnapshot) {
+      snapshot = this.activeSnapshot;
+    }
+
+    if (decoded.snapshotId === this.activeSnapshotId) {
+      updates = Array.from(this.pendingUpdates.values()).filter(
+        (update) => update.snapshotId === decoded.snapshotId,
+      );
+    }
+
+    const encryptedSyncStep2 = encodeToSyncStep2({
+      snapshot: snapshot ?? undefined,
+      updates,
+    });
 
     return new DocMessage(
       this.document,
@@ -222,39 +374,24 @@ export class EncryptionClient
    */
   public async handleSyncStep2(syncStep2: EncryptedSyncStep2): Promise<void> {
     const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
-    const updates = await Promise.all(
-      decodedSyncStep2.messages
-        .map(
-          (message) =>
-            this.createMessageNode(
-              message.id,
-              message.payload,
-              message.timestamp,
-            ).payload,
-        )
-        .map(async (update) => this.decryptUpdate(update)),
-    );
-    this.applyUpdates(updates);
+    if (decodedSyncStep2.snapshot) {
+      await this.applySnapshot(decodedSyncStep2.snapshot);
+      await this.applyQueuedUpdates(decodedSyncStep2.snapshot.id);
+    }
+    await this.applyUpdates(decodedSyncStep2.updates);
   }
 
   /**
    * Handles an {@link EncryptedUpdatePayload} by decrypting the updates and applying them to the {@link Y.Doc}.
    */
   public async handleUpdate(payload: EncryptedUpdatePayload): Promise<void> {
-    const messages = decodeEncryptedUpdate(payload);
-    const updates = await Promise.all(
-      messages
-        .map(
-          (message) =>
-            this.createMessageNode(
-              message.id,
-              message.payload,
-              message.timestamp,
-            ).payload,
-        )
-        .map(async (update) => this.decryptUpdate(update)),
-    );
-    this.applyUpdates(updates);
+    const decoded = decodeEncryptedUpdate(payload);
+    if (decoded.type === "snapshot") {
+      await this.applySnapshot(decoded.snapshot);
+      await this.applyQueuedUpdates(decoded.snapshot.id);
+      return;
+    }
+    await this.applyUpdates(decoded.updates);
   }
 
   /**
@@ -292,28 +429,37 @@ export class EncryptionClient
   }
 
   /**
-   * Tracks an {@link Update} by encrypting it and creating a {@link DecodedEncryptedUpdatePayload}.
-   * This tracks the update in the {@link seenMessages}
-   */
-  private async trackUpdate(payload: Update): Promise<EncryptedUpdatePayload> {
-    const encryptedUpdate = await this.encryptUpdate(payload);
-    const messageId = toBase64(digest(encryptedUpdate));
-    const decodedUpdate = this.createMessageNode(messageId, encryptedUpdate);
-
-    return encodeEncryptedUpdateMessages([decodedUpdate]);
-  }
-
-  /**
    * Handles an {@link Update} by encrypting it and returning a {@link DocMessage}.
-   * This tracks the update in the {@link seenMessages}
    */
   public async onUpdate(update: Update): Promise<Message> {
-    const encryptedUpdate = await this.trackUpdate(update);
+    if (!this.activeSnapshotId) {
+      return this.createSnapshotMessage();
+    }
+    const encryptedUpdate = await this.encryptUpdate(update);
+    const updatePayload = this.createUpdatePayload(encryptedUpdate);
     return new DocMessage(
       this.document,
       {
         type: "update",
-        update: encryptedUpdate,
+        update: encodeEncryptedUpdateMessages([updatePayload]),
+      },
+      {
+        clientId: this.awareness.clientID.toString(),
+      },
+      true,
+    );
+  }
+
+  /**
+   * Creates a snapshot message for the current document state.
+   */
+  public async createSnapshotMessage(): Promise<Message> {
+    const snapshot = await this.createSnapshot();
+    return new DocMessage(
+      this.document,
+      {
+        type: "update",
+        update: encodeEncryptedSnapshot(snapshot),
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -324,7 +470,6 @@ export class EncryptionClient
 
   /**
    * Handles an {@link AwarenessUpdateMessage} by encrypting it and returning a {@link AwarenessMessage}.
-   * This tracks the update in the {@link seenMessages}
    */
   public async onAwarenessUpdate(
     update: AwarenessUpdateMessage,
@@ -341,83 +486,6 @@ export class EncryptionClient
         clientId: this.awareness.clientID.toString(),
       },
       true,
-    );
-  }
-
-  private markMessageAsSeen(
-    timestamp: LamportClockValue,
-    messageId: EncryptedMessageId,
-  ) {
-    const [clientId, counter] = timestamp;
-    if (!this.seenMessages[clientId]) {
-      this.seenMessages[clientId] = {};
-    }
-    this.seenMessages[clientId][counter] = messageId;
-
-    this.call("update-seen-messages", this.seenMessages);
-  }
-
-  private createMessageNode(
-    messageId: EncryptedMessageId,
-    payload: EncryptedBinary,
-    timestamp?: LamportClockValue,
-  ): DecodedEncryptedUpdatePayload {
-    if (timestamp) {
-      this.clock.receive(timestamp);
-    } else {
-      timestamp = this.clock.tick();
-    }
-    if (toBase64(digest(payload)) !== messageId) {
-      throw new Error("Message ID mismatch");
-    }
-
-    this.markMessageAsSeen(timestamp, messageId);
-    const node = { id: messageId, timestamp, payload };
-
-    this.call("seen-update", node);
-
-    return node;
-  }
-
-  /**
-   * Returns the {@link DecodedEncryptedStateVector} of the client.
-   */
-  private getDecodedStateVector(): DecodedEncryptedStateVector {
-    return getDecodedStateVector(this.seenMessages);
-  }
-
-  /**
-   * Returns the {@link EncryptedStateVector} of the client.
-   */
-  private getEncryptedStateVector(): EncryptedStateVector {
-    return getEncryptedStateVector(this.seenMessages);
-  }
-
-  /**
-   * Given a {@link DecodedEncryptedStateVector} of the other client,
-   * returns a {@link DecodedEncryptedSyncStep2} of the messages that the other client has not seen yet.
-   */
-  private async getDecodedSyncStep2(
-    syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
-  ): Promise<DecodedEncryptedSyncStep2> {
-    return getDecodedSyncStep2(
-      this.seenMessages,
-      this.getEncryptedMessageUpdate,
-      syncStep1,
-    );
-  }
-
-  /**
-   * Given a {@link DecodedEncryptedStateVector} of the other client,
-   * returns a {@link EncryptedSyncStep2} of the messages that the other client has not seen yet.
-   */
-  private async getEncryptedSyncStep2(
-    syncStep1: DecodedEncryptedStateVector = { clocks: new Map() },
-  ): Promise<EncryptedSyncStep2> {
-    return getEncryptedSyncStep2(
-      this.seenMessages,
-      this.getEncryptedMessageUpdate,
-      syncStep1,
     );
   }
 }

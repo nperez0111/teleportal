@@ -17,6 +17,7 @@ import {
   type RpcSuccess,
 } from "teleportal/protocol";
 import type { DocumentStorage } from "teleportal/storage";
+import type { EncryptedDocumentStorage } from "teleportal/storage/encrypted";
 import { Observable } from "../lib/utils";
 import { toErrorDetails } from "../logging";
 import { Client } from "./client";
@@ -391,53 +392,7 @@ export class Session<Context extends ServerContext> extends Observable<
         encrypted: this.encrypted,
         context,
       });
-
-      const meta = await this.#storage.getDocumentMetadata(
-        this.namespacedDocumentId,
-      );
-
-      const sizeBytes = meta.sizeBytes ?? 0;
-      const warningThreshold =
-        meta.sizeWarningThreshold ?? this.#documentSizeConfig?.warningThreshold;
-      const sizeLimit = meta.sizeLimit ?? this.#documentSizeConfig?.limit;
-
-      this.#metrics?.recordDocumentSize(
-        this.namespacedDocumentId,
-        sizeBytes,
-        this.encrypted,
-      );
-
-      if (warningThreshold !== undefined && sizeBytes >= warningThreshold) {
-        if (!this.#sizeWarningEmitted) {
-          this.call("document-size-warning", {
-            documentId: this.documentId,
-            namespacedDocumentId: this.namespacedDocumentId,
-            sizeBytes,
-            warningThreshold,
-            context: context ?? ({} as Context),
-          });
-          this.#metrics?.incrementSizeWarning(this.namespacedDocumentId);
-          this.#sizeWarningEmitted = true;
-        }
-      } else {
-        this.#sizeWarningEmitted = false;
-      }
-
-      if (sizeLimit !== undefined && sizeBytes > sizeLimit) {
-        if (!this.#sizeLimitEmitted) {
-          this.call("document-size-limit-exceeded", {
-            documentId: this.documentId,
-            namespacedDocumentId: this.namespacedDocumentId,
-            sizeBytes,
-            sizeLimit,
-            context: context ?? ({} as Context),
-          });
-          this.#metrics?.incrementSizeLimitExceeded(this.namespacedDocumentId);
-          this.#sizeLimitEmitted = true;
-        }
-      } else {
-        this.#sizeLimitEmitted = false;
-      }
+      await this.#updateDocumentSizeMetrics(context);
 
       writeLogger.debug("Update written to storage successfully");
     } catch (error) {
@@ -447,6 +402,55 @@ export class Session<Context extends ServerContext> extends Observable<
         })
         .error("Failed to write update to storage");
       throw error;
+    }
+  }
+
+  async #updateDocumentSizeMetrics(context?: Context) {
+    const meta = await this.#storage.getDocumentMetadata(
+      this.namespacedDocumentId,
+    );
+
+    const sizeBytes = meta.sizeBytes ?? 0;
+    const warningThreshold =
+      meta.sizeWarningThreshold ?? this.#documentSizeConfig?.warningThreshold;
+    const sizeLimit = meta.sizeLimit ?? this.#documentSizeConfig?.limit;
+
+    this.#metrics?.recordDocumentSize(
+      this.namespacedDocumentId,
+      sizeBytes,
+      this.encrypted,
+    );
+
+    if (warningThreshold !== undefined && sizeBytes >= warningThreshold) {
+      if (!this.#sizeWarningEmitted) {
+        this.call("document-size-warning", {
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sizeBytes,
+          warningThreshold,
+          context: context ?? ({} as Context),
+        });
+        this.#metrics?.incrementSizeWarning(this.namespacedDocumentId);
+        this.#sizeWarningEmitted = true;
+      }
+    } else {
+      this.#sizeWarningEmitted = false;
+    }
+
+    if (sizeLimit !== undefined && sizeBytes > sizeLimit) {
+      if (!this.#sizeLimitEmitted) {
+        this.call("document-size-limit-exceeded", {
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sizeBytes,
+          sizeLimit,
+          context: context ?? ({} as Context),
+        });
+        this.#metrics?.incrementSizeLimitExceeded(this.namespacedDocumentId);
+        this.#sizeLimitEmitted = true;
+      }
+    } else {
+      this.#sizeLimitEmitted = false;
     }
   }
 
@@ -587,6 +591,69 @@ export class Session<Context extends ServerContext> extends Observable<
                 })
                 .trace("Processing update message");
 
+              const encryptedStorage =
+                this.encrypted &&
+                typeof (this.#storage as EncryptedDocumentStorage)
+                  .handleEncryptedUpdate === "function"
+                  ? (this.#storage as EncryptedDocumentStorage)
+                  : null;
+
+              if (encryptedStorage) {
+                const storedUpdate =
+                  await encryptedStorage.handleEncryptedUpdate(
+                    this.namespacedDocumentId,
+                    message.payload.update,
+                  );
+                if (!storedUpdate) {
+                  return;
+                }
+                this.call("document-write", {
+                  documentId: this.documentId,
+                  namespacedDocumentId: this.namespacedDocumentId,
+                  sessionId: this.id,
+                  encrypted: this.encrypted,
+                  context: message.context,
+                });
+                const broadcastMessage = new DocMessage(
+                  this.documentId,
+                  {
+                    type: "update",
+                    update: storedUpdate,
+                  },
+                  message.context,
+                  this.encrypted,
+                );
+
+                await Promise.all([
+                  this.broadcast(broadcastMessage),
+                  this.#pubSub.publish(
+                    `document/${this.namespacedDocumentId}` as const,
+                    broadcastMessage.encoded,
+                    this.#nodeId,
+                  ),
+                ]);
+
+                await this.#updateDocumentSizeMetrics(message.context);
+
+                log
+                  .with({
+                    messageId: broadcastMessage.id,
+                    documentId: this.documentId,
+                    clientId: client?.id,
+                  })
+                  .trace("Encrypted update processed and replicated");
+
+                this.#emitDocumentMessage(
+                  broadcastMessage,
+                  client,
+                  replicationMeta?.sourceNodeId ? "replication" : "client",
+                  replicationMeta?.sourceNodeId,
+                  replicationMeta?.deduped,
+                );
+
+                return;
+              }
+
               await this.write(message.payload.update, message.context);
 
               await Promise.all([
@@ -623,6 +690,90 @@ export class Session<Context extends ServerContext> extends Observable<
                   documentId: this.documentId,
                 })
                 .trace("Processing sync-step-2");
+              const encryptedStorage =
+                this.encrypted &&
+                typeof (this.#storage as EncryptedDocumentStorage)
+                  .handleEncryptedSyncStep2 === "function"
+                  ? (this.#storage as EncryptedDocumentStorage)
+                  : null;
+
+              if (encryptedStorage) {
+                const payloads =
+                  await encryptedStorage.handleEncryptedSyncStep2(
+                    this.namespacedDocumentId,
+                    message.payload.update,
+                  );
+                if (payloads.length > 0) {
+                  this.call("document-write", {
+                    documentId: this.documentId,
+                    namespacedDocumentId: this.namespacedDocumentId,
+                    sessionId: this.id,
+                    encrypted: this.encrypted,
+                    context: message.context,
+                  });
+                  await Promise.all(
+                    payloads.map(async (payload) => {
+                      const broadcastMessage = new DocMessage(
+                        this.documentId,
+                        {
+                          type: "update",
+                          update: payload,
+                        },
+                        message.context,
+                        this.encrypted,
+                      );
+                      await Promise.all([
+                        this.broadcast(broadcastMessage),
+                        this.#pubSub.publish(
+                          `document/${this.namespacedDocumentId}` as const,
+                          broadcastMessage.encoded,
+                          this.#nodeId,
+                        ),
+                      ]);
+
+                      this.#emitDocumentMessage(
+                        broadcastMessage,
+                        client,
+                        replicationMeta?.sourceNodeId
+                          ? "replication"
+                          : "client",
+                        replicationMeta?.sourceNodeId,
+                        replicationMeta?.deduped,
+                      );
+                    }),
+                  );
+                }
+
+                await this.#updateDocumentSizeMetrics(message.context);
+
+                if (!client) {
+                  log
+                    .with({ messageId: message.id })
+                    .warn(
+                      "sync-step-2 received without client, cannot send sync-done",
+                    );
+                  return;
+                }
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    { type: "sync-done" },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                log
+                  .with({
+                    messageId: message.id,
+                    documentId: this.documentId,
+                    clientId: client.id,
+                  })
+                  .trace("Encrypted sync-step-2 completed");
+
+                return;
+              }
 
               await Promise.all([
                 this.broadcast(message, client?.id),
