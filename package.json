@@ -27,89 +27,28 @@
     "access": "public"
   },
   "exports": {
-    ".": {
-      "types": "./dist/lib/index.d.mts",
-      "default": "./dist/lib/index.mjs"
-    },
-    "./storage": {
-      "types": "./dist/storage/index.d.mts",
-      "default": "./dist/storage/index.mjs"
-    },
-    "./http": {
-      "types": "./dist/http/index.d.mts",
-      "default": "./dist/http/index.mjs"
-    },
-    "./protocol": {
-      "types": "./dist/lib/protocol/index.d.mts",
-      "default": "./dist/lib/protocol/index.mjs"
-    },
-    "./protocols/milestone": {
-      "types": "./dist/protocols/milestone/index.d.mts",
-      "default": "./dist/protocols/milestone/index.mjs"
-    },
-    "./protocols/file": {
-      "types": "./dist/protocols/file/index.d.mts",
-      "default": "./dist/protocols/file/index.mjs"
-    },
-    "./protocol/encryption": {
-      "types": "./dist/lib/protocol/encryption/index.d.mts",
-      "default": "./dist/lib/protocol/encryption/index.mjs"
-    },
-    "./providers": {
-      "types": "./dist/providers/index.d.mts",
-      "default": "./dist/providers/index.mjs"
-    },
-    "./transports/redis": {
-      "types": "./dist/transports/redis/index.d.mts",
-      "default": "./dist/transports/redis/index.mjs"
-    },
-    "./transports/nats": {
-      "types": "./dist/transports/nats/index.d.mts",
-      "default": "./dist/transports/nats/index.mjs"
-    },
-    "./transports/rate-limiter": {
-      "types": "./dist/transports/rate-limiter/index.d.mts",
-      "default": "./dist/transports/rate-limiter/index.mjs"
-    },
-    "./transports": {
-      "types": "./dist/transports/index.d.mts",
-      "default": "./dist/transports/index.mjs"
-    },
-    "./websocket-server": {
-      "types": "./dist/websocket-server/index.d.mts",
-      "default": "./dist/websocket-server/index.mjs"
-    },
-    "./server": {
-      "types": "./dist/server/index.d.mts",
-      "default": "./dist/server/index.mjs"
-    },
-    "./monitoring": {
-      "types": "./dist/monitoring/index.d.mts",
-      "default": "./dist/monitoring/index.mjs"
-    },
-    "./encryption-key": {
-      "types": "./dist/encryption-key/index.d.mts",
-      "default": "./dist/encryption-key/index.mjs"
-    },
-    "./token": {
-      "types": "./dist/token/index.d.mts",
-      "default": "./dist/token/index.mjs"
-    },
-    "./merkle-tree": {
-      "types": "./dist/merkle-tree/index.d.mts",
-      "default": "./dist/merkle-tree/index.mjs"
-    },
-    "./devtools": {
-      "types": "./dist/devtools/index.d.mts",
-      "default": "./dist/devtools/index.mjs"
-    },
-    "./agent": {
-      "types": "./dist/agent/index.d.mts",
-      "default": "./dist/agent/index.mjs"
-    }
+    ".": "./dist/lib/index.mjs",
+    "./storage": "./dist/storage/index.mjs",
+    "./http": "./dist/http/index.mjs",
+    "./protocol": "./dist/lib/protocol/index.mjs",
+    "./protocols/milestone": "./dist/protocols/milestone/index.mjs",
+    "./protocols/file": "./dist/protocols/file/index.mjs",
+    "./protocol/encryption": "./dist/lib/protocol/encryption/index.mjs",
+    "./providers": "./dist/providers/index.mjs",
+    "./transports/redis": "./dist/transports/redis/index.mjs",
+    "./transports/nats": "./dist/transports/nats/index.mjs",
+    "./transports/rate-limiter": "./dist/transports/rate-limiter/index.mjs",
+    "./transports": "./dist/transports/index.mjs",
+    "./websocket-server": "./dist/websocket-server/index.mjs",
+    "./server": "./dist/server/index.mjs",
+    "./monitoring": "./dist/monitoring/index.mjs",
+    "./encryption-key": "./dist/encryption-key/index.mjs",
+    "./token": "./dist/token/index.mjs",
+    "./merkle-tree": "./dist/merkle-tree/index.mjs",
+    "./devtools": "./dist/devtools/index.mjs",
+    "./agent": "./dist/agent/index.mjs"
   },
   "main": "./dist/lib/index.mjs",
-  "module": "./dist/lib/index.mjs",
   "types": "./dist/lib/index.d.mts",
   "files": [
     "dist",
@@ -117,7 +56,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "unbuild",
+    "build": "obuild",
     "build:demo": "cd ./playground && bun run build",
     "lint": "eslint . && prettier -c src playground",
     "lint:fix": "automd && eslint . --fix && prettier -w src playground",
@@ -147,16 +86,16 @@
     "bun-plugin-tailwind": "0.1.2",
     "changelogen": "^0.6.2",
     "crossws": "^0.4.3",
-    "eslint-config-unjs": "^0.5.0",
     "eslint": "^9.39.1",
+    "eslint-config-unjs": "^0.5.0",
     "eventsource": "^4.1.0",
     "ioredis": "^5.8.2",
     "msw": "2.12.1",
+    "obuild": "^0.4.27",
     "prettier": "^3.6.2",
     "srvx": "^0.10.1",
     "typescript": "5.9.3",
-    "unstorage": "^1.17.2",
-    "unbuild": "^3.6.1"
+    "unstorage": "^1.17.2"
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",
