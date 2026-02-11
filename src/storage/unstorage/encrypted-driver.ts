@@ -19,7 +19,7 @@ export function createEncryptedDriver(
         await encryptUpdate(
           typeof getKey === "function" ? await getKey(key) : await getKey,
           encoding.encode((encoder) => {
-            encoding.writeAny(encoder, value);
+            encoding.writeAny(encoder, value as encoding.AnyEncodable);
           }),
         ),
       );
