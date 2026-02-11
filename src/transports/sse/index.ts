@@ -31,18 +31,23 @@ export function getSSESink<Context extends ClientContext>({
   }
 > {
   let interval: ReturnType<typeof setInterval>;
-  const transform = new TransformStream<Message<any>, string>({
+  const encoder = new TextEncoder();
+  const transform = new TransformStream<Message<any>, Uint8Array>({
     start(controller) {
       if (context.clientId) {
         controller.enqueue(
-          `event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`,
+          encoder.encode(
+            `event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`,
+          ),
         );
       }
 
       interval = setInterval(() => {
         try {
           controller.enqueue(
-            `event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`,
+            encoder.encode(
+              `event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`,
+            ),
           );
         } catch {
           clearInterval(interval);
@@ -52,7 +57,7 @@ export function getSSESink<Context extends ClientContext>({
     transform(chunk, controller) {
       const payload = toBase64(chunk.encoded);
       const message = `event:message\nid:${chunk.id}\ndata: ${payload}\n\n`;
-      controller.enqueue(message);
+      controller.enqueue(encoder.encode(message));
     },
     flush() {
       clearInterval(interval);

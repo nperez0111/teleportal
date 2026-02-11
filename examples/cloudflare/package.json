@@ -1,0 +1,18 @@
+{
+  "name": "teleportal-cloudflare-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "crossws": "^0.4.3",
+    "unstorage": "^1.17.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260115.0",
+    "wrangler": "4.61.1"
+  }
+}
