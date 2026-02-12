@@ -79,6 +79,9 @@ describe("Automatic Milestones via Handler Factory", () => {
 
     await session.write(createYjsUpdate("update 2"));
 
+    // Wait for async milestone creation (createAutomaticMilestone is fire-and-forget)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
     milestones = await milestoneStorage.getMilestones("test-doc");
     expect(milestones.length).toBe(1);
     expect(milestones[0].name).toBe("Auto Milestone");
