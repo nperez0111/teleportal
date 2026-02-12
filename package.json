@@ -68,7 +68,7 @@
     "test:types": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
-    "@logtape/logtape": "^1.2.0",
+    "@logtape/logtape": "^2",
     "@tanstack/devtools-event-client": "^0.4.0",
     "hookable": "^6",
     "jose": "^6",

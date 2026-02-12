@@ -5,6 +5,7 @@ import {
   RpcError,
 } from "teleportal/protocol";
 import type { MilestoneStorage, MilestoneTrigger } from "teleportal/storage";
+import { emitWideEvent } from "../../server/logger";
 import type { Server } from "../../server/server";
 import type { Session } from "../../server/session";
 import type { ServerContext } from "teleportal";
@@ -88,7 +89,14 @@ async function createAutomaticMilestone(
 
     onMilestoneCreated?.(milestoneId, documentId);
   } catch (error) {
-    console.error("Failed to create automatic milestone:", error);
+    emitWideEvent("error", {
+      event_type: "milestone_auto_create_failed",
+      timestamp: new Date().toISOString(),
+      document_id: documentId,
+      trigger_type: trigger.type,
+      trigger_id: trigger.id,
+      error,
+    });
   }
 }
 
@@ -522,7 +530,14 @@ export function getMilestoneRpcHandlers(
                   options?.onMilestoneCreated,
                 );
               } catch (error) {
-                console.error("Failed to process event-based trigger:", error);
+                emitWideEvent("error", {
+                  event_type: "milestone_event_trigger_failed",
+                  timestamp: new Date().toISOString(),
+                  document_id: documentId,
+                  trigger_type: trigger.type,
+                  trigger_id: trigger.id,
+                  error,
+                });
               }
             };
             session.on(trigger.config.event as any, handler);

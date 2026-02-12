@@ -19,9 +19,8 @@ import {
   toMessageArrayStream,
   withAckTrackingSink,
 } from "teleportal/transports";
+import { emitWideEvent } from "teleportal/server";
 import { getDocumentsFromQueryParams } from "./utils";
-import { getLogger } from "@logtape/logtape";
-import { toErrorDetails } from "../logging";
 
 /**
  * Creates an SSE endpoint that can be used to stream {@link Message}s to the client.
@@ -61,94 +60,81 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
     },
   ) => { document: string; encrypted?: boolean }[];
 }) {
-  const baseLogger = getLogger(["teleportal", "http", "sse-reader-endpoint"]);
-
-  return async (req: Request): Promise<Response> => {
+  async function handleSSEReader(req: Request): Promise<Response> {
+    const startTime = Date.now();
     const clientId =
       req.headers.get("x-teleportal-client-id") ??
       new URL(req.url).searchParams.get("client-id") ??
       uuidv4();
-    const logger = baseLogger.with({
-      clientId,
+    const wideEvent: Record<string, unknown> = {
+      event_type: "http_sse_reader",
+      timestamp: new Date().toISOString(),
+      client_id: clientId,
       url: req.url,
-    });
-    const context = {
-      clientId,
-      ...(await getContext(req)),
-    } as Context;
+      method: req.method,
+    };
+    try {
+      const context = {
+        clientId,
+        ...(await getContext(req)),
+      } as Context;
 
-    logger.trace("sse request");
+      const sseSink = getSSESink({ context });
 
-    const sseSink = getSSESink({ context });
+      const sseTransport = compose(
+        getPubSubSource({
+          getContext: () => context,
+          pubSub: server.pubSub,
+          sourceId: "sse-" + context.clientId,
+        }),
+        sseSink,
+      );
 
-    const sseTransport = compose(
-      getPubSubSource({
-        getContext: () => context,
-        pubSub: server.pubSub,
-        sourceId: "sse-" + context.clientId,
-      }),
-      sseSink,
-    );
-
-    logger.trace("creating client");
-    const client = await server.createClient({
-      transport: sseTransport,
-      id: context.clientId,
-      abortSignal: req.signal,
-    });
-
-    logger
-      .with({
-        clientId: context.clientId,
-      })
-      .trace("created client");
-
-    // When the request is aborted, unsub from listening to pubSub messages
-    req.signal.addEventListener("abort", async () => {
-      logger.info("aborting");
-      await sseTransport.unsubscribe();
-    });
-
-    await sseTransport.subscribe(`client/${context.clientId}`);
-    logger
-      .with({
-        topic: `client/${context.clientId}`,
-      })
-      .trace("sseTransport subscribed to client");
-
-    logger.trace("getting initial documents");
-    const initialDocuments =
-      getInitialDocuments?.(req, {
-        clientId: context.clientId,
+      const client = await server.createClient({
         transport: sseTransport,
-        client,
-      }) ?? [];
-    if (initialDocuments.length > 0) {
-      await Promise.all(
-        initialDocuments.map(({ document, encrypted = false }) =>
-          server
-            .getOrOpenSession(document, {
+        id: context.clientId,
+        abortSignal: req.signal,
+      });
+
+      req.signal.addEventListener("abort", async () => {
+        await sseTransport.unsubscribe();
+      });
+
+      await sseTransport.subscribe(`client/${context.clientId}`);
+      const initialDocuments =
+        getInitialDocuments?.(req, {
+          clientId: context.clientId,
+          transport: sseTransport,
+          client,
+        }) ?? [];
+      if (initialDocuments.length > 0) {
+        await Promise.all(
+          initialDocuments.map(({ document, encrypted = false }) =>
+            server.getOrOpenSession(document, {
               encrypted,
               client,
               context,
-            })
-            .then((session) => {
-              logger
-                .with({
-                  sessionId: session.id,
-                  documentId: session.documentId,
-                })
-                .info("subscribed to document");
-
-              return session;
             }),
-        ),
+          ),
+        );
+      }
+      wideEvent.outcome = "success";
+      wideEvent.status_code = 200;
+      return sseTransport.sseResponse;
+    } catch (error) {
+      wideEvent.outcome = "error";
+      wideEvent.status_code = 500;
+      wideEvent.error = error;
+      throw error;
+    } finally {
+      wideEvent.duration_ms = Date.now() - startTime;
+      emitWideEvent(
+        (wideEvent.outcome as string) === "error" ? "error" : "info",
+        wideEvent,
       );
     }
-
-    logger.trace("returning sse response");
-    return sseTransport.sseResponse;
-  };
+  }
+  return handleSSEReader;
 }
 
 /**
@@ -170,105 +156,103 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
    */
   ackTimeout?: number;
 }) {
-  const baseLogger = getLogger(["teleportal", "http", "sse-writer-endpoint"]);
-
   return async (req: Request): Promise<Response> => {
+    const startTime = Date.now();
     const clientId =
       req.headers.get("x-teleportal-client-id") ??
       new URL(req.url).searchParams.get("client-id");
-    const logger = baseLogger.with({
-      clientId,
+    const wideEvent: Record<string, unknown> = {
+      event_type: "http_sse_writer",
+      timestamp: new Date().toISOString(),
+      client_id: clientId,
       url: req.url,
-    });
-    logger.trace("http request");
-    const context = {
-      clientId,
-      ...(await getContext(req)),
-    } as Context;
-
-    if (!context.clientId) {
-      logger.warn("no client id provided");
-      return Response.json(
-        { error: "No client ID provided" },
-        {
-          status: 400,
-          headers: {
-            "x-powered-by": "teleportal",
-          },
-        },
-      );
-    }
-
-    const httpSource = getHTTPSource({ context });
-    const pubSubSink = getPubSubSink({
-      pubSub: server.pubSub,
-      topicResolver: (message) => {
-        logger
-          .with({
-            messageId: message.id,
-            payloadType: message.payload.type,
-          })
-          .trace("publishing");
-        return `client/${context.clientId}`;
-      },
-      sourceId: "http-writer-" + context.clientId,
-    });
-
-    // Wrap the sink to track messages and wait for ACKs
-    const trackedSink = withAckTrackingSink(pubSubSink, {
-      pubSub: server.pubSub,
-      ackTopic: `ack/${context.clientId}`,
-      sourceId: "http-writer-" + context.clientId,
-      ackTimeout,
-      abortSignal: req.signal,
-    });
-
-    logger.trace("starting to publish");
-    await Promise.all([
-      httpSource.handleHTTPRequest(req),
-      pipe(httpSource, trackedSink),
-    ]);
-
-    // Wait for all ACKs
-    logger.trace("waiting for ACKs");
+      method: req.method,
+    };
     try {
-      await trackedSink.waitForAcks();
-      logger.trace("all ACKs received");
-    } catch (error) {
-      logger
-        .with({ error: toErrorDetails(error) })
-        .warn("failed to receive ACK");
-      await trackedSink.unsubscribe();
+      const context = {
+        clientId,
+        ...(await getContext(req)),
+      } as Context;
 
+      if (!context.clientId) {
+        wideEvent.outcome = "error";
+        wideEvent.status_code = 400;
+        wideEvent.error = { message: "No client ID provided" };
+        return Response.json(
+          { error: "No client ID provided" },
+          {
+            status: 400,
+            headers: { "x-powered-by": "teleportal" },
+          },
+        );
+      }
+
+      const httpSource = getHTTPSource({ context });
+      const pubSubSink = getPubSubSink({
+        pubSub: server.pubSub,
+        topicResolver: () => `client/${context.clientId}`,
+        sourceId: "http-writer-" + context.clientId,
+      });
+
+      const trackedSink = withAckTrackingSink(pubSubSink, {
+        pubSub: server.pubSub,
+        ackTopic: `ack/${context.clientId}`,
+        sourceId: "http-writer-" + context.clientId,
+        ackTimeout,
+        abortSignal: req.signal,
+      });
+
+      await Promise.all([
+        httpSource.handleHTTPRequest(req),
+        pipe(httpSource, trackedSink),
+      ]);
+
+      try {
+        await trackedSink.waitForAcks();
+      } catch (error) {
+        await trackedSink.unsubscribe();
+        wideEvent.outcome = "error";
+        wideEvent.status_code = 504;
+        wideEvent.error = error;
+        return Response.json(
+          {
+            error: "Failed to receive acknowledgment",
+            message: (error as Error).message,
+          },
+          {
+            status: 504,
+            headers: {
+              "x-teleportal-client-id": context.clientId,
+              "x-powered-by": "teleportal",
+            },
+          },
+        );
+      }
+
+      await trackedSink.unsubscribe();
+      wideEvent.outcome = "success";
+      wideEvent.status_code = 200;
       return Response.json(
+        { message: "ok" },
         {
-          error: "Failed to receive acknowledgment",
-          message: (error as Error).message,
-        },
-        {
-          status: 504, // Gateway Timeout
           headers: {
             "x-teleportal-client-id": context.clientId,
             "x-powered-by": "teleportal",
           },
         },
       );
+    } catch (error) {
+      wideEvent.outcome = "error";
+      wideEvent.status_code = 500;
+      wideEvent.error = error;
+      throw error;
+    } finally {
+      wideEvent.duration_ms = Date.now() - startTime;
+      emitWideEvent(
+        wideEvent.outcome === "error" ? "error" : "info",
+        wideEvent,
+      );
     }
-
-    await trackedSink.unsubscribe();
-    logger.trace("finished publishing");
-
-    return Response.json(
-      {
-        message: "ok",
-      },
-      {
-        headers: {
-          "x-teleportal-client-id": context.clientId,
-          "x-powered-by": "teleportal",
-        },
-      },
-    );
   };
 }
 
@@ -285,60 +269,63 @@ export function getHTTPEndpoint<Context extends ServerContext>({
     request: Request,
   ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
 }) {
-  const baseLogger = getLogger(["teleportal", "http", "http-endpoint"]);
-
   return async (req: Request): Promise<Response> => {
+    const startTime = Date.now();
     const clientId = uuidv4();
-    const logger = baseLogger.with({
-      clientId,
+    const wideEvent: Record<string, unknown> = {
+      event_type: "http_endpoint",
+      timestamp: new Date().toISOString(),
+      client_id: clientId,
       url: req.url,
-    });
-    const context = {
-      clientId,
-      ...(await getContext(req)),
-    } as Context;
+      method: req.method,
+    };
+    try {
+      const context = {
+        clientId,
+        ...(await getContext(req)),
+      } as Context;
 
-    logger.trace("http request");
+      const transformStream = toMessageArrayStream();
 
-    const transformStream = toMessageArrayStream();
+      req.signal.addEventListener("abort", async (e) => {
+        await transformStream.writable.abort(e);
+      });
 
-    req.signal.addEventListener("abort", async (e) => {
-      logger.trace("aborting");
-      await transformStream.writable.abort(e);
-    });
+      const httpTransport = compose(getHTTPSource({ context }), {
+        writable: transformStream.writable,
+      });
 
-    const httpTransport = compose(getHTTPSource({ context }), {
-      writable: transformStream.writable,
-    });
+      await server.createClient({
+        transport: httpTransport,
+        id: context.clientId,
+        abortSignal: req.signal,
+      });
 
-    logger.trace("creating client");
-    const client = await server.createClient({
-      transport: httpTransport,
-      id: context.clientId,
-      abortSignal: req.signal,
-    });
-
-    logger
-      .with({
-        clientId: client.id,
-      })
-      .trace("client created");
-
-    logger.trace("handling http request");
-    await httpTransport.handleHTTPRequest(req);
-    logger.trace("http request handled");
-
-    logger.trace("returning response");
-    return new Response(
-      transformStream.readable as ReadableStream<Uint8Array>,
-      {
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "x-powered-by": "teleportal",
-          "x-teleportal-client-id": context.clientId,
+      await httpTransport.handleHTTPRequest(req);
+      wideEvent.outcome = "success";
+      wideEvent.status_code = 200;
+      return new Response(
+        transformStream.readable as ReadableStream<Uint8Array>,
+        {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "x-powered-by": "teleportal",
+            "x-teleportal-client-id": context.clientId,
+          },
         },
-      },
-    );
+      );
+    } catch (error) {
+      wideEvent.outcome = "error";
+      wideEvent.status_code = 500;
+      wideEvent.error = error;
+      throw error;
+    } finally {
+      wideEvent.duration_ms = Date.now() - startTime;
+      emitWideEvent(
+        wideEvent.outcome === "error" ? "error" : "info",
+        wideEvent,
+      );
+    }
   };
 }
 

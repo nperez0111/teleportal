@@ -1,5 +1,5 @@
-import { getLogger } from "@logtape/logtape";
 import type * as crossws from "crossws";
+import { emitWideEvent } from "teleportal/server";
 
 import {
   type BinaryMessage,
@@ -10,7 +10,6 @@ import {
 import type { Client, Server } from "teleportal/server";
 import type { TokenManager } from "teleportal/token";
 import { fromBinaryTransport } from "teleportal/transports";
-import { toErrorDetails } from "../logging";
 
 declare module "crossws" {
   interface PeerContext {
@@ -73,15 +72,18 @@ export function getWebsocketHandlers<T extends ServerContext>({
     peer: crossws.Peer;
   }) => void | Promise<void>;
 }): crossws.Hooks {
-  const logger = getLogger(["teleportal", "websocket-server"]);
   return {
     async upgrade(request) {
-      logger
-        .with({ requestUrl: request.url })
-        .info("upgrade websocket connection");
+      const startTime = Date.now();
+      const wideEvent: Record<string, unknown> = {
+        event_type: "websocket_upgrade",
+        timestamp: new Date().toISOString(),
+        request_url: request.url,
+      };
       try {
         const { context, headers } = await onUpgrade(request);
-
+        wideEvent.outcome = "success";
+        wideEvent.status_code = 101;
         return {
           context: {
             ...context,
@@ -96,10 +98,12 @@ export function getWebsocketHandlers<T extends ServerContext>({
           },
         };
       } catch (err) {
-        logger
-          .with(toErrorDetails(err))
-          .with({ requestUrl: request.url })
-          .error("rejected upgrade websocket connection");
+        wideEvent.outcome = "error";
+        wideEvent.status_code = err instanceof Response ? err.status : 401;
+        wideEvent.error = {
+          type: err instanceof Error ? err.name : "Error",
+          message: err instanceof Error ? err.message : String(err),
+        };
         if (err instanceof Response) {
           throw err;
         }
@@ -110,10 +114,20 @@ export function getWebsocketHandlers<T extends ServerContext>({
               'Basic realm="Websocket Authentication", charset="UTF-8"',
           },
         });
+      } finally {
+        wideEvent.duration_ms = Date.now() - startTime;
+        emitWideEvent(
+          wideEvent.outcome === "error" ? "error" : "info",
+          wideEvent,
+        );
       }
     },
     async open(peer) {
-      logger.with({ clientId: peer.id }).info("open websocket connection");
+      emitWideEvent("info", {
+        event_type: "websocket_open",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+      });
       const transform = new TransformStream<BinaryMessage, BinaryMessage>();
 
       peer.context.clientId = peer.id;
@@ -142,15 +156,19 @@ export function getWebsocketHandlers<T extends ServerContext>({
           peer,
         });
       } catch (err) {
-        logger
-          .with(toErrorDetails(err))
-          .with({ clientId: peer.id })
-          .error("failed to connect");
+        emitWideEvent("error", {
+          event_type: "websocket_connect_failed",
+          timestamp: new Date().toISOString(),
+          client_id: peer.id,
+          error: {
+            type: err instanceof Error ? err.name : "Error",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
         peer.close();
       }
     },
     async message(peer, msg) {
-      logger.with({ clientId: peer.id, messageId: msg.id }).trace("message");
       const message = msg.uint8Array();
       if (!isBinaryMessage(message)) {
         throw new Error("Invalid message");
@@ -164,14 +182,24 @@ export function getWebsocketHandlers<T extends ServerContext>({
         await peer.context.writer.ready;
         await peer.context.writer.write(message);
       } catch (err) {
-        logger
-          .with(toErrorDetails(err))
-          .with({ clientId: peer.id, messageId: msg.id })
-          .error("failed to write message");
+        emitWideEvent("error", {
+          event_type: "websocket_write_failed",
+          timestamp: new Date().toISOString(),
+          client_id: peer.id,
+          message_id: msg.id,
+          error: {
+            type: err instanceof Error ? err.name : "Error",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
     },
     async close(peer) {
-      logger.with({ clientId: peer.id }).info("close websocket connection");
+      emitWideEvent("info", {
+        event_type: "websocket_close",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+      });
 
       try {
         await onDisconnect?.({
@@ -194,9 +222,12 @@ export function getWebsocketHandlers<T extends ServerContext>({
       }
     },
     async error(peer, error) {
-      logger
-        .with({ error: toErrorDetails(error), clientId: peer.id })
-        .error("error");
+      emitWideEvent("error", {
+        event_type: "websocket_error",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+        error,
+      });
       await peer.context.writer.abort(error);
       await peer.context.transport.writable.abort(error);
     },

@@ -1,4 +1,4 @@
-import { getLogger, Logger } from "@logtape/logtape";
+import { emitWideEvent } from "./logger";
 import {
   decodeMessage,
   DocMessage,
@@ -18,7 +18,6 @@ import {
 } from "teleportal/protocol";
 import type { DocumentStorage } from "teleportal/storage";
 import { Observable } from "../lib/utils";
-import { toErrorDetails } from "../logging";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
 import type { DocumentMessageSource, SessionEvents } from "./events";
@@ -47,7 +46,6 @@ export class Session<Context extends ServerContext> extends Observable<
   #storage: DocumentStorage;
   #pubSub: PubSub;
   #nodeId: string;
-  #logger: Logger;
   #dedupe: TtlDedupe;
   #metrics: MetricsCollector | undefined;
   #documentSizeConfig:
@@ -92,26 +90,8 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#documentSizeConfig = args.documentSizeConfig;
     this.#rpcHandlers = args.rpcHandlers ?? {};
     this.#server = args.server;
-    this.#logger = getLogger(["teleportal", "server", "session"]).with({
-      name: "session",
-      documentId: this.documentId,
-      namespacedDocumentId: this.namespacedDocumentId,
-      sessionId: this.id,
-    });
     this.#dedupe = args.dedupe ?? new TtlDedupe();
     this.#onCleanupScheduled = args.onCleanupScheduled;
-
-    this.#logger
-      .with({
-        documentId: this.documentId,
-        namespacedDocumentId: this.namespacedDocumentId,
-        sessionId: this.id,
-        encrypted: this.encrypted,
-        nodeId: this.#nodeId,
-        hasCustomDedupe: !!args.dedupe,
-        hasRpcHandlers: args.rpcHandlers !== undefined,
-      })
-      .debug("Session instance created");
   }
 
   public get storage(): DocumentStorage {
@@ -123,13 +103,8 @@ export class Session<Context extends ServerContext> extends Observable<
    */
   async load() {
     if (this.#loaded) {
-      this.#logger.debug("Session already loaded, skipping");
       return;
     }
-
-    this.#logger
-      .with({ documentId: this.documentId, sessionId: this.id })
-      .info("Loading session");
 
     this.#loaded = true;
 
@@ -137,10 +112,6 @@ export class Session<Context extends ServerContext> extends Observable<
       this.#unsubscribe = this.#pubSub.subscribe(
         `document/${this.namespacedDocumentId}` as const,
         async (binary, sourceId) => {
-          const replicationLogger = this.#logger.with({
-            sourceNodeId: sourceId,
-          });
-
           if (sourceId === this.#nodeId) {
             return;
           }
@@ -156,32 +127,20 @@ export class Session<Context extends ServerContext> extends Observable<
               return undefined;
             });
           } catch (error) {
-            replicationLogger
-              .with({ error: toErrorDetails(error as Error) })
-              .with({ sourceNodeId: sourceId })
-              .error("Failed to decode replicated message");
+            emitWideEvent("error", {
+              event_type: "replication_decode_failed",
+              timestamp: new Date().toISOString(),
+              document_id: this.documentId,
+              session_id: this.id,
+              source_node_id: sourceId,
+              error,
+            });
             return;
           }
 
           if (message.document !== this.documentId) {
-            replicationLogger
-              .with({
-                messageDocumentId: message.document,
-                sessionDocumentId: this.documentId,
-                sourceNodeId: sourceId,
-              })
-              .warn("Replicated message document ID mismatch, ignoring");
             return;
           }
-
-          replicationLogger
-            .with({
-              messageId: message.id,
-              documentId: message.document,
-              messageType: message.type,
-              sourceNodeId: sourceId,
-            })
-            .debug("Received replicated message from other node");
 
           try {
             const shouldAccept = this.#dedupe.shouldAccept(
@@ -190,14 +149,6 @@ export class Session<Context extends ServerContext> extends Observable<
             );
 
             if (!shouldAccept) {
-              replicationLogger
-                .with({
-                  messageId: message.id,
-                  documentId: message.document,
-                  sourceNodeId: sourceId,
-                })
-                .debug("Replicated message rejected by dedupe");
-
               this.#emitDocumentMessage(
                 message,
                 undefined,
@@ -205,7 +156,6 @@ export class Session<Context extends ServerContext> extends Observable<
                 sourceId,
                 true,
               );
-
               return;
             }
 
@@ -213,38 +163,30 @@ export class Session<Context extends ServerContext> extends Observable<
               sourceNodeId: sourceId,
               deduped: false,
             });
-
-            replicationLogger
-              .with({
-                messageId: message.id,
-                documentId: message.document,
-                sourceNodeId: sourceId,
-              })
-              .debug("Replicated message applied successfully");
           } catch (err) {
-            replicationLogger
-              .with({
-                error: toErrorDetails(err as Error),
-                messageId: message.id,
-                documentId: message.document,
-                sourceNodeId: sourceId,
-              })
-              .error("Failed to apply replicated message");
+            emitWideEvent("error", {
+              event_type: "replication_apply_failed",
+              timestamp: new Date().toISOString(),
+              document_id: this.documentId,
+              session_id: this.id,
+              message_id: message.id,
+              source_node_id: sourceId,
+              error: {
+                type: err instanceof Error ? err.name : "Error",
+                message: err instanceof Error ? err.message : String(err),
+              },
+            });
           }
         },
       );
-
-      this.#logger
-        .with({ documentId: this.documentId, sessionId: this.id })
-        .trace("Session loaded and pubSub subscription active");
     } catch (error) {
-      this.#logger
-        .with({
-          error: toErrorDetails(error as Error),
-          documentId: this.documentId,
-          sessionId: this.id,
-        })
-        .error("Failed to load session");
+      emitWideEvent("error", {
+        event_type: "session_load_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        error,
+      });
       throw error;
     }
   }
@@ -269,18 +211,6 @@ export class Session<Context extends ServerContext> extends Observable<
         sessionId: this.id,
       });
     }
-
-    this.#logger
-      .with({
-        clientId: client.id,
-        documentId: this.documentId,
-        sessionId: this.id,
-        totalClients: this.#clients.size,
-        wasNewClient: !hadClient,
-      })
-      .debug(
-        hadClient ? "Client re-added to session" : "Client added to session",
-      );
   }
 
   /**
@@ -299,15 +229,6 @@ export class Session<Context extends ServerContext> extends Observable<
         sessionId: this.id,
       });
 
-      this.#logger
-        .with({
-          clientId: id,
-          documentId: this.documentId,
-          sessionId: this.id,
-          totalClients: this.#clients.size,
-        })
-        .debug("Client removed from session");
-
       // Schedule cleanup if no clients remain
       if (this.#clients.size === 0) {
         this.#scheduleCleanup();
@@ -321,66 +242,31 @@ export class Session<Context extends ServerContext> extends Observable<
    * Broadcast a message to all clients in the session.
    */
   async broadcast(message: Message<Context>, excludeClientId?: string) {
-    const broadcastLogger = this.#logger.with({
-      messageId: message.id,
-    });
-
     const clientsToBroadcast = [...this.#clients.entries()].filter(
       ([id]) => id !== excludeClientId,
     );
 
-    broadcastLogger
-      .with({
-        messageId: message.id,
-        documentId: this.documentId,
-        totalClients: this.#clients.size,
-        clientsToBroadcast: clientsToBroadcast.length,
-        excludeClientId,
-      })
-      .debug("Broadcasting message to clients");
-
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const [id, client] of clientsToBroadcast) {
+    for (const [clientId, client] of clientsToBroadcast) {
       try {
         await client.send(message);
-        successCount++;
       } catch (error) {
-        errorCount++;
-        broadcastLogger
-          .with({
-            error: toErrorDetails(error as Error),
-            messageId: message.id,
-            clientId: id,
-            documentId: this.documentId,
-          })
-          .warn("Failed to send message to client during broadcast");
+        emitWideEvent("error", {
+          event_type: "broadcast_send_failed",
+          timestamp: new Date().toISOString(),
+          document_id: this.documentId,
+          session_id: this.id,
+          message_id: message.id,
+          client_id: clientId,
+          error,
+        });
       }
     }
-
-    broadcastLogger
-      .with({
-        messageId: message.id,
-        documentId: this.documentId,
-        successCount,
-        errorCount,
-        totalClients: clientsToBroadcast.length,
-      })
-      .debug("Broadcast completed");
   }
 
   /**
    * Write an update to the storage.
    */
   async write(update: Update, context?: Context) {
-    const writeLogger = this.#logger.with({
-      documentId: this.documentId,
-      namespacedDocumentId: this.namespacedDocumentId,
-    });
-
-    writeLogger.debug("Writing update to storage");
-
     try {
       await this.#storage.handleUpdate(this.namespacedDocumentId, update);
 
@@ -438,14 +324,14 @@ export class Session<Context extends ServerContext> extends Observable<
       } else {
         this.#sizeLimitEmitted = false;
       }
-
-      writeLogger.debug("Update written to storage successfully");
     } catch (error) {
-      writeLogger
-        .with({
-          error: toErrorDetails(error as Error),
-        })
-        .error("Failed to write update to storage");
+      emitWideEvent("error", {
+        event_type: "storage_write_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        error,
+      });
       throw error;
     }
   }
@@ -484,37 +370,20 @@ export class Session<Context extends ServerContext> extends Observable<
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
     replicationMeta?: { sourceNodeId: string; deduped: boolean },
   ) {
-    const log = this.#logger.with({
-      messageId: message.id,
-      payloadType: (message as any).payload?.type,
-      clientId: client?.id,
-    });
-
-    log
-      .with({
-        messageId: message.id,
-        documentId: this.documentId,
-
-        messageType: message.type,
-        payloadType: (message as any).payload?.type,
-        encrypted: message.encrypted,
-        hasClient: !!client,
-        clientId: client?.id,
-      })
-      .debug("Applying message to session");
-
     if (message.encrypted !== this.encrypted) {
       const error = new Error(
         "Message encryption and document encryption are mismatched",
       );
-      log
-        .with({
-          error: toErrorDetails(error),
-          messageId: message.id,
-          messageEncrypted: message.encrypted,
-          documentEncrypted: this.encrypted,
-        })
-        .error("Encryption mismatch detected");
+      emitWideEvent("error", {
+        event_type: "encryption_mismatch",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        message_id: message.id,
+        message_encrypted: message.encrypted,
+        document_encrypted: this.encrypted,
+        error,
+      });
       throw error;
     }
 
@@ -523,29 +392,12 @@ export class Session<Context extends ServerContext> extends Observable<
         case "doc": {
           switch (message.payload.type) {
             case "sync-step-1": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                })
-                .trace("Processing sync-step-1");
-
               const doc = await this.#storage.handleSyncStep1(
                 this.namespacedDocumentId,
                 message.payload.sv,
               );
 
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                })
-                .debug("Sync-step-1 handled, sending responses");
-
               if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn("sync-step-1 received without client, cannot respond");
                 return;
               }
 
@@ -569,24 +421,9 @@ export class Session<Context extends ServerContext> extends Observable<
                 ),
               );
 
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  clientId: client.id,
-                })
-                .trace("Sync-step-1 completed, responses sent");
-
               return;
             }
             case "update": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                })
-                .trace("Processing update message");
-
               await this.write(message.payload.update, message.context);
 
               await Promise.all([
@@ -597,14 +434,6 @@ export class Session<Context extends ServerContext> extends Observable<
                   this.#nodeId,
                 ),
               ]);
-
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  clientId: client?.id,
-                })
-                .trace("Update message processed and replicated");
 
               this.#emitDocumentMessage(
                 message,
@@ -617,13 +446,6 @@ export class Session<Context extends ServerContext> extends Observable<
               return;
             }
             case "sync-step-2": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                })
-                .trace("Processing sync-step-2");
-
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#storage.handleSyncStep2(
@@ -646,11 +468,6 @@ export class Session<Context extends ServerContext> extends Observable<
               );
 
               if (!client) {
-                log
-                  .with({ messageId: message.id })
-                  .warn(
-                    "sync-step-2 received without client, cannot send sync-done",
-                  );
                 return;
               }
 
@@ -663,52 +480,30 @@ export class Session<Context extends ServerContext> extends Observable<
                 ),
               );
 
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  clientId: client.id,
-                })
-                .trace("Sync-step-2 completed");
-
               return;
             }
             case "sync-done": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                })
-                .debug("Received sync-done message");
               return;
             }
             case "auth-message": {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  permission: (message.payload as any).permission,
-                })
-                .debug("Received auth-message");
               return;
             }
             default: {
-              log
-                .with({
-                  messageId: message.id,
-                  documentId: this.documentId,
-                  unknownPayloadType: (message.payload as any).type,
-                })
-                .error("Unknown doc payload type");
+              emitWideEvent("error", {
+                event_type: "unknown_doc_payload_type",
+                timestamp: new Date().toISOString(),
+                document_id: this.documentId,
+                session_id: this.id,
+                message_id: message.id,
+                unknown_payload_type: (message.payload as { type?: string })
+                  .type,
+              });
               return;
             }
           }
         }
         case "rpc": {
           if (!client) {
-            log
-              .with({ messageId: message.id })
-              .warn("RPC message received without client, cannot respond");
             return;
           }
 
@@ -719,13 +514,6 @@ export class Session<Context extends ServerContext> extends Observable<
             const method = rpcMessage.rpcMethod;
 
             if (rpcMessage.payload.type !== "success") {
-              log
-                .with({
-                  messageId: rpcMessage.id,
-                  documentId: this.documentId,
-                  method,
-                })
-                .warn("RPC request with error payload, ignoring");
               return;
             }
 
@@ -733,23 +521,8 @@ export class Session<Context extends ServerContext> extends Observable<
               [key: string]: unknown;
             };
 
-            log
-              .with({
-                messageId: rpcMessage.id,
-                documentId: this.documentId,
-                method,
-              })
-              .trace("Processing RPC request");
-
             const handler = this.#rpcHandlers[method];
             if (!handler) {
-              log
-                .with({
-                  messageId: rpcMessage.id,
-                  method,
-                })
-                .warn("No handler found for RPC method");
-
               const errorMessage = new RpcMessage(
                 this.documentId,
                 {
@@ -850,23 +623,16 @@ export class Session<Context extends ServerContext> extends Observable<
               );
 
               await client.send(responseMessage);
-
-              log
-                .with({
-                  messageId: rpcMessage.id,
-                  documentId: this.documentId,
-                  method,
-                  responseType: result.response.type,
-                })
-                .trace("RPC request processed");
             } catch (error) {
-              log
-                .with({
-                  error: toErrorDetails(error as Error),
-                  messageId: rpcMessage.id,
-                  method,
-                })
-                .error("RPC handler failed");
+              emitWideEvent("error", {
+                event_type: "rpc_handler_failed",
+                timestamp: new Date().toISOString(),
+                document_id: this.documentId,
+                session_id: this.id,
+                message_id: rpcMessage.id,
+                method,
+                error,
+              });
 
               const errorMessage = new RpcMessage(
                 this.documentId,
@@ -887,16 +653,6 @@ export class Session<Context extends ServerContext> extends Observable<
           } else if (requestType === "stream") {
             const method = rpcMessage.rpcMethod;
             const handler = this.#rpcHandlers[method];
-
-            log
-              .with({
-                messageId: rpcMessage.id,
-                documentId: this.documentId,
-                originalRequestId,
-                method,
-                hasStreamHandler: !!handler?.streamHandler,
-              })
-              .trace("Processing RPC stream message");
 
             if (
               handler?.streamHandler &&
@@ -923,13 +679,15 @@ export class Session<Context extends ServerContext> extends Observable<
                   },
                 );
               } catch (error) {
-                log
-                  .with({
-                    error: toErrorDetails(error as Error),
-                    messageId: rpcMessage.id,
-                    method,
-                  })
-                  .error("Stream handler failed");
+                emitWideEvent("error", {
+                  event_type: "rpc_stream_handler_failed",
+                  timestamp: new Date().toISOString(),
+                  document_id: this.documentId,
+                  session_id: this.id,
+                  message_id: rpcMessage.id,
+                  method,
+                  error,
+                });
 
                 if (client) {
                   const errorMessage = new RpcMessage(
@@ -953,26 +711,11 @@ export class Session<Context extends ServerContext> extends Observable<
               }
             }
           } else if (requestType === "response") {
-            log
-              .with({
-                messageId: rpcMessage.id,
-                documentId: this.documentId,
-                originalRequestId,
-              })
-              .trace("Processing RPC response message");
           }
 
           return;
         }
         default: {
-          log
-            .with({
-              messageId: message.id,
-              documentId: this.documentId,
-              messageType: message.type,
-            })
-            .debug("Processing non-doc message, broadcasting and replicating");
-
           await Promise.all([
             this.broadcast(message, client?.id),
             this.#pubSub.publish(
@@ -981,14 +724,6 @@ export class Session<Context extends ServerContext> extends Observable<
               this.#nodeId,
             ),
           ]);
-
-          log
-            .with({
-              messageId: message.id,
-              documentId: this.documentId,
-              messageType: message.type,
-            })
-            .debug("Non-doc message processed");
 
           this.#emitDocumentMessage(
             message,
@@ -1002,27 +737,27 @@ export class Session<Context extends ServerContext> extends Observable<
         }
       }
     } catch (error) {
-      log
-        .with({
-          error: toErrorDetails(error),
-          messageId: message.id,
-          documentId: this.documentId,
-          messageType: message.type,
-          payloadType: (message as any).payload?.type,
-        })
-        .error("Failed to apply message");
+      emitWideEvent("error", {
+        event_type: "apply_message_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        message_id: message.id,
+        message_type: message.type,
+        error,
+      });
       throw error;
     }
   }
 
   async [Symbol.asyncDispose]() {
-    this.#logger
-      .with({
-        documentId: this.documentId,
-        sessionId: this.id,
-        activeClients: this.#clients.size,
-      })
-      .info("Disposing session");
+    emitWideEvent("info", {
+      event_type: "session_dispose_start",
+      timestamp: new Date().toISOString(),
+      document_id: this.documentId,
+      session_id: this.id,
+      active_clients: this.#clients.size,
+    });
 
     this.#cancelCleanup();
 
@@ -1030,21 +765,17 @@ export class Session<Context extends ServerContext> extends Observable<
       if (this.#unsubscribe) {
         const unsubscribeFn = await this.#unsubscribe;
         await unsubscribeFn();
-        this.#logger
-          .with({ documentId: this.documentId, sessionId: this.id })
-          .debug("Pubsub subscription unsubscribed");
       }
     } catch (error) {
-      this.#logger
-        .with({
-          error: toErrorDetails(error as Error),
-          documentId: this.documentId,
-          sessionId: this.id,
-        })
-        .error("Error unsubscribing from pubSub");
+      emitWideEvent("error", {
+        event_type: "session_pubsub_unsubscribe_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        error,
+      });
     }
 
-    // Emit dispose event to allow handlers to clean up resources
     await this.call("dispose", {
       documentId: this.documentId,
       namespacedDocumentId: this.namespacedDocumentId,
@@ -1053,24 +784,16 @@ export class Session<Context extends ServerContext> extends Observable<
 
     this.destroy();
 
-    this.#logger
-      .with({
-        documentId: this.documentId,
-        sessionId: this.id,
-      })
-      .info("Session disposed");
+    emitWideEvent("info", {
+      event_type: "session_disposed",
+      timestamp: new Date().toISOString(),
+      document_id: this.documentId,
+      session_id: this.id,
+    });
   }
 
   #scheduleCleanup() {
     this.#cancelCleanup();
-
-    this.#logger
-      .with({
-        documentId: this.documentId,
-        sessionId: this.id,
-        delayMs: this.#CLEANUP_DELAY_MS,
-      })
-      .debug("Scheduling session cleanup");
 
     this.#cleanupTimeoutId = setTimeout(() => {
       this.#cleanupTimeoutId = undefined;
@@ -1082,12 +805,6 @@ export class Session<Context extends ServerContext> extends Observable<
     if (this.#cleanupTimeoutId !== undefined) {
       clearTimeout(this.#cleanupTimeoutId);
       this.#cleanupTimeoutId = undefined;
-      this.#logger
-        .with({
-          documentId: this.documentId,
-          sessionId: this.id,
-        })
-        .debug("Cancelled scheduled session cleanup");
     }
   }
 
