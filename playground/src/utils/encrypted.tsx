@@ -103,6 +103,8 @@ export function getEncryptedTransport(key: CryptoKey) {
     if (snapshot || updates.length > 0) {
       client.loadState({ snapshot, updates }).catch((err) => {
         console.error("Failed to load encrypted state from storage", err);
+        localStorage.removeItem(snapshotKey);
+        localStorage.removeItem(updatesKey);
       });
     }
 
@@ -115,6 +117,10 @@ export function getEncryptedTransport(key: CryptoKey) {
           payload: toBase64(snapshot.payload),
         }),
       );
+      // New snapshot supersedes all previous updates; clear them so we don't
+      // reload obsolete updates on next startup (which would be queued as
+      // mismatched and grow memory/storage).
+      writeUpdates([]);
     });
 
     const toStoredUpdate = (update: {

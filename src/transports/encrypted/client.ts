@@ -379,8 +379,11 @@ export class EncryptionClient
         await this.applyUpdates(updates);
       }
     })();
-    await this.loadingPromise;
-    this.loadingPromise = null;
+    try {
+      await this.loadingPromise;
+    } finally {
+      this.loadingPromise = null;
+    }
   }
 
   public async start(): Promise<Message> {
