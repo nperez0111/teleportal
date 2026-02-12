@@ -1,4 +1,5 @@
 import { fromBase64, toBase64 } from "lib0/buffer";
+import { createMutex } from "lib0/mutex";
 import { useEffect, useState } from "react";
 import {
   createEncryptionKey,
@@ -31,36 +32,44 @@ export function getEncryptedTransport(key: CryptoKey) {
     const readSnapshot = () => {
       const raw = localStorage.getItem(snapshotKey);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as {
-        id: string;
-        parentSnapshotId?: string | null;
-        payload: string;
-      };
-      return {
-        id: parsed.id,
-        parentSnapshotId: parsed.parentSnapshotId ?? null,
-        payload: fromBase64(parsed.payload),
-      };
+      try {
+        const parsed = JSON.parse(raw) as {
+          id: string;
+          parentSnapshotId?: string | null;
+          payload: string;
+        };
+        return {
+          id: parsed.id,
+          parentSnapshotId: parsed.parentSnapshotId ?? null,
+          payload: fromBase64(parsed.payload),
+        };
+      } catch {
+        return null;
+      }
     };
 
     const readUpdates = () => {
       const raw = localStorage.getItem(updatesKey);
       if (!raw) return [];
-      const parsed = JSON.parse(raw) as Array<{
-        id: string;
-        snapshotId: string;
-        clientId: number;
-        counter: number;
-        payload: string;
-        serverVersion?: number;
-      }>;
-      return parsed.map((update) => ({
-        id: update.id,
-        snapshotId: update.snapshotId,
-        timestamp: [update.clientId, update.counter] as [number, number],
-        payload: fromBase64(update.payload),
-        serverVersion: update.serverVersion,
-      }));
+      try {
+        const parsed = JSON.parse(raw) as Array<{
+          id: string;
+          snapshotId: string;
+          clientId: number;
+          counter: number;
+          payload: string;
+          serverVersion?: number;
+        }>;
+        return parsed.map((update) => ({
+          id: update.id,
+          snapshotId: update.snapshotId,
+          timestamp: [update.clientId, update.counter] as [number, number],
+          payload: fromBase64(update.payload),
+          serverVersion: update.serverVersion,
+        }));
+      } catch {
+        return [];
+      }
     };
 
     const writeUpdates = (
@@ -92,7 +101,9 @@ export function getEncryptedTransport(key: CryptoKey) {
     const snapshot = readSnapshot();
     const updates = readUpdates();
     if (snapshot || updates.length > 0) {
-      void client.loadState({ snapshot, updates });
+      client.loadState({ snapshot, updates }).catch((err) => {
+        console.error("Failed to load encrypted state from storage", err);
+      });
     }
 
     client.on("snapshot-stored", (snapshot) => {
@@ -120,39 +131,34 @@ export function getEncryptedTransport(key: CryptoKey) {
       serverVersion: update.serverVersion,
     });
 
-    client.on("update-stored", (update) => {
-      const current = readUpdates();
-      const index = current.findIndex((item) => item.id === update.id);
-      if (index >= 0) {
-        current[index] = toStoredUpdate({
-          ...current[index],
-          ...update,
-          serverVersion: update.serverVersion ?? current[index].serverVersion,
-        });
-      } else {
-        current.push(
-          toStoredUpdate({ ...update, serverVersion: update.serverVersion }),
-        );
-      }
-      writeUpdates(current);
-    });
+    const updatesMutex = createMutex();
+    const upsertUpdate = (update: {
+      id: string;
+      snapshotId: string;
+      timestamp: [number, number];
+      payload: Uint8Array;
+      serverVersion?: number;
+    }) => {
+      updatesMutex(() => {
+        const current = readUpdates();
+        const index = current.findIndex((item) => item.id === update.id);
+        if (index >= 0) {
+          current[index] = toStoredUpdate({
+            ...current[index],
+            ...update,
+            serverVersion: update.serverVersion ?? current[index].serverVersion,
+          });
+        } else {
+          current.push(
+            toStoredUpdate({ ...update, serverVersion: update.serverVersion }),
+          );
+        }
+        writeUpdates(current);
+      });
+    };
 
-    client.on("update-acknowledged", (update) => {
-      const current = readUpdates();
-      const index = current.findIndex((item) => item.id === update.id);
-      if (index >= 0) {
-        current[index] = toStoredUpdate({
-          ...current[index],
-          ...update,
-          serverVersion: update.serverVersion ?? current[index].serverVersion,
-        });
-      } else {
-        current.push(
-          toStoredUpdate({ ...update, serverVersion: update.serverVersion }),
-        );
-      }
-      writeUpdates(current);
-    });
+    client.on("update-stored", upsertUpdate);
+    client.on("update-acknowledged", upsertUpdate);
 
     return getEncryptedTransportBase(client);
   };

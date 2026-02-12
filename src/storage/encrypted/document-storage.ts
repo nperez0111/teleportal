@@ -20,6 +20,18 @@ import {
   type Document,
 } from "../types";
 
+/**
+ * Encrypted storage returns sync-step-2 and state-vector binary; the shared
+ * Document type uses Update and StateVector. Single cast point for compatibility.
+ */
+function toDocument(
+  id: string,
+  metadata: EncryptedDocumentMetadata,
+  content: { update: EncryptedSyncStep2; stateVector: EncryptedStateVector },
+): Document {
+  return { id, metadata, content } as unknown as Document;
+}
+
 export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
   activeSnapshotId?: string;
   activeSnapshotVersion?: number;
@@ -125,22 +137,22 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     );
     const activeSnapshotId = metadata.activeSnapshotId ?? "";
     if (!activeSnapshotId) {
-      return {
-        id: key,
-        metadata: {
+      return toDocument(
+        key,
+        {
           ...metadata,
           updatedAt: now,
           activeSnapshotId: undefined,
           activeSnapshotVersion: 0,
         },
-        content: {
-          update: encodeToSyncStep2({ updates: [] }) as unknown as any,
+        {
+          update: encodeToSyncStep2({ updates: [] }),
           stateVector: encodeToStateVector({
             snapshotId: "",
             serverVersion: 0,
-          }) as unknown as any,
+          }),
         },
-      };
+      );
     }
 
     const snapshotMeta = normalizeSnapshotMetadata(
@@ -166,26 +178,22 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       );
     }
 
-    const encodedUpdate = encodeToSyncStep2({
-      snapshot: snapshot ?? undefined,
-      updates,
-    }) as unknown as any;
-    return {
-      id: key,
-      metadata: {
+    return toDocument(
+      key,
+      {
         ...metadata,
         updatedAt: now,
         activeSnapshotId,
         activeSnapshotVersion: serverVersion,
       },
-      content: {
-        update: encodedUpdate,
+      {
+        update: encodeToSyncStep2({ snapshot: snapshot ?? undefined, updates }),
         stateVector: encodeToStateVector({
           snapshotId: activeSnapshotId,
           serverVersion,
-        }) as unknown as any,
+        }),
       },
-    };
+    );
   }
 
   async handleSyncStep2(
@@ -225,6 +233,9 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       ) {
         return null;
       }
+      if (!activeSnapshotIdForUpdate) {
+        return null;
+      }
       const storedUpdates = await this.storeUpdates(key, decoded.updates);
       return storedUpdates.length > 0
         ? encodeEncryptedUpdateMessages(storedUpdates)
@@ -256,6 +267,17 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         }
       }
       if (decoded.updates.length > 0) {
+        const metadataForUpdate = normalizeDocumentMetadata(
+          await this.getDocumentMetadata(key),
+          Date.now(),
+        );
+        const activeSnapshotId = metadataForUpdate.activeSnapshotId ?? "";
+        if (!activeSnapshotId) {
+          return payloads;
+        }
+        if (decoded.updates.some((u) => u.snapshotId !== activeSnapshotId)) {
+          return payloads;
+        }
         const storedUpdates = await this.storeUpdates(key, decoded.updates);
         if (storedUpdates.length > 0) {
           payloads.push(encodeEncryptedUpdateMessages(storedUpdates));
@@ -424,25 +446,22 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       this.fetchSnapshot(key, activeSnapshotId),
       this.fetchUpdates(key, activeSnapshotId, 0),
     ]);
-    return {
-      id: key,
-      metadata: {
+    return toDocument(
+      key,
+      {
         ...metadata,
         updatedAt: now,
         activeSnapshotId,
         activeSnapshotVersion: serverVersion,
       },
-      content: {
-        update: encodeToSyncStep2({
-          snapshot: snapshot ?? undefined,
-          updates,
-        }) as unknown as any,
+      {
+        update: encodeToSyncStep2({ snapshot: snapshot ?? undefined, updates }),
         stateVector: encodeToStateVector({
           snapshotId: activeSnapshotId,
           serverVersion,
-        }) as unknown as any,
+        }),
       },
-    };
+    );
   }
 
   abstract deleteDocument(key: string): Promise<void>;
