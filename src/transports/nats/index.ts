@@ -6,6 +6,7 @@ import {
   type PubSub,
   type PubSubTopic,
 } from "teleportal";
+import { emitWideEvent } from "teleportal/server";
 
 export class NatsPubSub implements PubSub {
   private nc: Promise<NatsConnection>;
@@ -38,7 +39,12 @@ export class NatsPubSub implements PubSub {
 
           callback(decoded.message, decoded.sourceId);
         } catch (error) {
-          console.error("Error decoding NATS message:", error);
+          emitWideEvent("error", {
+            event_type: "nats_decode_error",
+            timestamp: new Date().toISOString(),
+            topic,
+            error,
+          });
         }
       },
     });

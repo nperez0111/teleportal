@@ -106,20 +106,33 @@ export function getEncryptedTransport(key: CryptoKey) {
       );
     });
 
+    const toStoredUpdate = (update: {
+      id: string;
+      snapshotId: string;
+      timestamp: [number, number];
+      payload: Uint8Array;
+      serverVersion?: number;
+    }) => ({
+      id: update.id,
+      snapshotId: update.snapshotId,
+      timestamp: update.timestamp,
+      payload: new Uint8Array(update.payload),
+      serverVersion: update.serverVersion,
+    });
+
     client.on("update-stored", (update) => {
       const current = readUpdates();
       const index = current.findIndex((item) => item.id === update.id);
       if (index >= 0) {
-        current[index] = {
+        current[index] = toStoredUpdate({
           ...current[index],
           ...update,
           serverVersion: update.serverVersion ?? current[index].serverVersion,
-        };
-      } else {
-        current.push({
-          ...update,
-          serverVersion: update.serverVersion,
         });
+      } else {
+        current.push(
+          toStoredUpdate({ ...update, serverVersion: update.serverVersion }),
+        );
       }
       writeUpdates(current);
     });
@@ -128,16 +141,15 @@ export function getEncryptedTransport(key: CryptoKey) {
       const current = readUpdates();
       const index = current.findIndex((item) => item.id === update.id);
       if (index >= 0) {
-        current[index] = {
+        current[index] = toStoredUpdate({
           ...current[index],
           ...update,
           serverVersion: update.serverVersion ?? current[index].serverVersion,
-        };
-      } else {
-        current.push({
-          ...update,
-          serverVersion: update.serverVersion,
         });
+      } else {
+        current.push(
+          toStoredUpdate({ ...update, serverVersion: update.serverVersion }),
+        );
       }
       writeUpdates(current);
     });

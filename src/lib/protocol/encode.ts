@@ -200,7 +200,6 @@ export function encodeMessage(
 
     return encoding.toUint8Array(encoder) as BinaryMessage;
   } catch (err) {
-    console.error(err);
     throw new Error("Failed to encode message", {
       cause: { update: message, err },
     });

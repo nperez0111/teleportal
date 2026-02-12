@@ -14,19 +14,19 @@
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
     "bun-plugin-tailwind": "latest",
-    "crossws": "^0.4.3",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "crossws": "^0.4.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "tailwindcss": "^4",
     "y-excalidraw": "^2.0.12",
-    "yjs": "^13.6.27"
+    "yjs": "^13.6.29"
   },
   "private": true,
   "publishConfig": {
     "access": "restricted"
   },
   "devDependencies": {
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2"
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3"
   }
 }

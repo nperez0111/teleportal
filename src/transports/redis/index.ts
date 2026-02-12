@@ -10,6 +10,7 @@ import {
   ServerContext,
   Transport,
 } from "teleportal";
+import { emitWideEvent } from "teleportal/server";
 import { getPubSubTransport } from "../pubSub";
 
 export { RedisRateLimitStorage } from "./rate-limit-storage";
@@ -65,7 +66,12 @@ export class RedisPubSub implements PubSub {
 
           callback(decoded.message, decoded.sourceId);
         } catch (error) {
-          console.error("Error decoding Redis message:", error);
+          emitWideEvent("error", {
+            event_type: "redis_decode_error",
+            timestamp: new Date().toISOString(),
+            topic: channelStr,
+            error,
+          });
         }
       }
     };

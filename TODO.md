@@ -1,12 +1,13 @@
-
-- Could the client do the compaction? Is there a way to guarantee that the client's compaction did not add any additional state?
-- For an encrypted document, the client should probably compact the document updates on connection (sync-step-2). This would cause latency on the first sync, but it would be better than picking arbitrary points to compact at. Better to have a "loading" state which is a bit slower, but more predictable.
-  - The server would probably still store the full document update, but only ever send the "milestone" updates to a client for efficiency.
-- implement sync-step-1 for encrypted documents
-  - Since each message has a hash, we can send an array of hashes and the server can send the messages that are missing. But, that could be a lot of messages, so maybe we should send the hashes of the last 100 messages and if none match, we ask the client to compact or we send the full document.
+- Could the client do the compaction? Is there a way to guarantee that the client's compaction did not add any additional state? Does it require playing back the entire document update log?
 - refactor the background sync to be based on the server's pubsub instance instead of being separately provided.
-- key management, & rotation. Possibly store a crypto key in indexeddb like: <https://cfu288.github.io/web-crypto-indexed-db/>
+- key management, & rotation. Possibly store a crypto key in indexeddb like: [https://cfu288.github.io/web-crypto-indexed-db/](https://cfu288.github.io/web-crypto-indexed-db/)
   - Multiple keys per user, for multiple devices.
   - Key rotation.
 - Use NATS as the main server, clients will directly connect to NATS over websockets, changes get published by them, and there will be a worker which is listening for any messages that the client has sent. This worker can then either handle the message itself or forward to another consumer.
   - Using NATS jetstream, we can have a stream per document, which actually stores the document content in the queue
+- The client should do more book-keeping on what document updates it has seen & what it has sent to the server
+- ACKs sent to the server are just dropped right now, but we should probably use them to track re-sending of messages from the server to the client for more reliable delivery.
+  - Ideally this would be implemented in a way that is transparent to the client, and on the transport layer
+- The client side provider API should be re-worked to have a better DX as well as better reconnection logic, I've noticed sometimes a websocket connection will die and the provider fails to reconnect when it should, or maybe the connection is timing out & fails to surface an error.
+- durable streams seems like a nice alternative to SSE for reading updates from the server, unsure about them being replayed whether that is actually necessary or not.
+- 
