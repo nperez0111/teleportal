@@ -8,9 +8,8 @@ import {
 } from "teleportal/protocol";
 import type { ServerContext } from "teleportal";
 import type { FileStorage, TemporaryUploadStorage } from "teleportal/storage";
-import { getLogger, Logger } from "@logtape/logtape";
+import { emitWideEvent } from "teleportal/server";
 import { buildMerkleTree, generateMerkleProof } from "teleportal/merkle-tree";
-import { toErrorDetails } from "../../logging";
 import {
   FileUploadRequest,
   FileDownloadRequest,
@@ -71,12 +70,10 @@ export interface FilePermissionOptions {
 export class FileHandler {
   #fileStorage: FileStorage;
   #temporaryUploadStorage: TemporaryUploadStorage | undefined;
-  #logger: Logger;
 
   constructor(fileStorage: FileStorage) {
     this.#fileStorage = fileStorage;
     this.#temporaryUploadStorage = fileStorage.temporaryUploadStorage;
-    this.#logger = getLogger(["teleportal", "protocols", "file", "handler"]);
   }
 
   /**
@@ -89,14 +86,16 @@ export class FileHandler {
     sendResponse: (message: Message<ServerContext>) => Promise<void>,
     context: RpcServerContext,
   ): Promise<void> {
-    const log = this.#logger.with({
-      fileId: payload.fileId,
-      chunkIndex: payload.chunkIndex,
-      totalChunks: payload.totalChunks,
-      bytesUploaded: payload.bytesUploaded,
-    });
-
-    log.debug("Handling file progress");
+    const startTime = Date.now();
+    const wideEvent: Record<string, unknown> = {
+      event_type: "file_part",
+      timestamp: new Date().toISOString(),
+      file_id: payload.fileId,
+      chunk_index: payload.chunkIndex,
+      total_chunks: payload.totalChunks,
+      bytes_uploaded: payload.bytesUploaded,
+      document_id: context.documentId,
+    };
 
     if (!this.#temporaryUploadStorage) {
       throw new Error(
@@ -109,8 +108,10 @@ export class FileHandler {
     );
     if (!upload) {
       const error = new Error(`Upload session ${payload.fileId} not found`);
-      log.error("Upload session not found", {
-        error: toErrorDetails(error),
+      emitWideEvent("error", {
+        ...wideEvent,
+        outcome: "error",
+        error,
       });
       throw error;
     }
@@ -143,17 +144,9 @@ export class FileHandler {
           const result = await this.#temporaryUploadStorage.completeUpload(
             payload.fileId,
           );
-          log.debug("Upload completed successfully", {
-            uploadId: payload.fileId,
-            fileId: result.fileId,
-          });
 
           await this.#fileStorage.storeFileFromUpload(result);
-          log.debug("File moved to durable storage", {
-            fileId: result.fileId,
-          });
 
-          // Update document metadata to include the new file
           await context.session.storage.transaction(
             context.documentId,
             async () => {
@@ -173,25 +166,31 @@ export class FileHandler {
               );
             },
           );
-          log.debug("Document metadata updated with file", {
-            fileId: result.fileId,
-            documentId: context.documentId,
-          });
+          wideEvent.event_type = "file_upload_completed";
+          wideEvent.outcome = "success";
+          wideEvent.durable_file_id = result.fileId;
         } catch (error) {
-          log.error("Failed to complete upload", {
-            fileId: payload.fileId,
-            error: toErrorDetails(error),
+          wideEvent.event_type = "file_upload_complete_failed";
+          wideEvent.outcome = "error";
+          wideEvent.error = error;
+          emitWideEvent("error", {
+            ...wideEvent,
+            duration_ms: Date.now() - startTime,
           });
           throw error;
         }
+      } else {
+        wideEvent.outcome = "success";
       }
 
-      log.debug("Chunk stored successfully");
+      wideEvent.duration_ms = Date.now() - startTime;
+      emitWideEvent("info", wideEvent);
     } catch (error) {
-      log.error("Failed to store chunk", {
-        fileId: payload.fileId,
-        chunkIndex: payload.chunkIndex,
-        error: toErrorDetails(error),
+      wideEvent.outcome = "error";
+      wideEvent.error = error;
+      emitWideEvent("error", {
+        ...wideEvent,
+        duration_ms: Date.now() - startTime,
       });
       throw error;
     }
@@ -202,17 +201,24 @@ export class FileHandler {
    * Returns an async generator that yields file parts.
    */
   async *streamFileParts(fileId: string): AsyncGenerator<FilePartStream> {
-    const log = this.#logger.with({ fileId, direction: "download" });
-
+    const startTime = Date.now();
     const file = await this.#fileStorage.getFile(fileId);
     if (!file) {
-      log.info("File not found for download", { fileId });
+      emitWideEvent("info", {
+        event_type: "file_download_not_found",
+        timestamp: new Date().toISOString(),
+        file_id: fileId,
+        outcome: "not_found",
+      });
       throw new Error("File not found");
     }
 
-    log.debug("File found for download", {
-      fileId,
+    emitWideEvent("info", {
+      event_type: "file_download_start",
+      timestamp: new Date().toISOString(),
+      file_id: fileId,
       filename: file.metadata.filename,
+      chunk_count: file.chunks.length,
     });
 
     const chunks = file.chunks;
@@ -270,7 +276,14 @@ export class FileHandler {
       documentId: document,
     });
 
-    this.#logger.with({ uploadId: fileId }).debug("Upload session initiated");
+    emitWideEvent("info", {
+      event_type: "file_upload_initiated",
+      timestamp: new Date().toISOString(),
+      file_id: fileId,
+      document_id: document,
+      filename: metadata.filename,
+      size: metadata.size,
+    });
   }
 
   /**
@@ -503,32 +516,29 @@ export function getFileRpcHandlers(
   options?: FilePermissionOptions,
 ): RpcHandlerRegistry {
   const fileHandler = new FileHandler(fileStorage);
-  const logger = getLogger(["teleportal", "protocols", "file"]);
 
   return {
     fileUpload: {
       handler: createUploadHandler(fileHandler, options),
       streamHandler: createUploadStreamHandler(fileHandler),
-      init: (server) => {
-        logger.debug("File upload handler initialized");
-
-        // Set up periodic cleanup of expired uploads
+      init: () => {
         const cleanupInterval = setInterval(
           async () => {
             try {
               await fileHandler.cleanupExpiredUploads();
             } catch (error) {
-              logger.error("Failed to cleanup expired uploads", {
-                error: toErrorDetails(error),
+              emitWideEvent("error", {
+                event_type: "file_cleanup_expired_failed",
+                timestamp: new Date().toISOString(),
+                error,
               });
             }
           },
           5 * 60 * 1000,
-        ); // Every 5 minutes
+        );
 
         return () => {
           clearInterval(cleanupInterval);
-          logger.debug("File upload handler cleanup");
         };
       },
     } as RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,

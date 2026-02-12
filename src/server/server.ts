@@ -1,5 +1,5 @@
-import { getLogger } from "@logtape/logtape";
 import { uuidv4 } from "lib0/random";
+import { emitWideEvent, type WideEvent } from "./logger";
 import {
   AckMessage,
   DocMessage,
@@ -27,7 +27,6 @@ import {
   withRateLimit,
 } from "teleportal/transports/rate-limiter";
 import { Observable } from "../lib/utils";
-import { toErrorDetails } from "../logging";
 import { register } from "../monitoring/metrics";
 import { Client } from "./client";
 import type { ClientDisconnectReason, ServerEvents } from "./events";
@@ -202,7 +201,6 @@ export class Server<Context extends ServerContext> extends Observable<
   constructor(options: ServerOptions<Context>) {
     super();
     this.#options = options;
-    const logger = getLogger(["teleportal", "server"]);
 
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
@@ -220,10 +218,12 @@ export class Server<Context extends ServerContext> extends Observable<
       }
     }
 
-    logger.info("Server initialized", {
-      nodeId: this.#nodeId,
-      hasCustomPubSub: !!options.pubSub,
-      hasPermissionChecker: !!options.checkPermission,
+    emitWideEvent("info", {
+      event_type: "server_initialized",
+      timestamp: new Date().toISOString(),
+      node_id: this.#nodeId,
+      has_custom_pub_sub: !!options.pubSub,
+      has_permission_checker: !!options.checkPermission,
     });
   }
 
@@ -264,7 +264,6 @@ export class Server<Context extends ServerContext> extends Observable<
       throw new Error("Document ID is required");
     }
 
-    const logger = getLogger(["teleportal", "server"]);
     const compositeDocumentId = this.#getCompositeDocumentId(
       documentId,
       context,
@@ -278,21 +277,17 @@ export class Server<Context extends ServerContext> extends Observable<
         const error = new Error(
           `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
         );
-        logger.error("Encryption state mismatch detected", {
-          documentId: compositeDocumentId,
-          sessionId: existing.id,
-          existingEncrypted: existing.encrypted,
-          requestedEncrypted: encrypted,
-          error: toErrorDetails(error),
+        emitWideEvent("error", {
+          event_type: "encryption_mismatch",
+          timestamp: new Date().toISOString(),
+          document_id: compositeDocumentId,
+          session_id: existing.id,
+          existing_encrypted: existing.encrypted,
+          requested_encrypted: encrypted,
+          error,
         });
         throw error;
       }
-
-      logger.debug("Retrieved existing session", {
-        documentId: compositeDocumentId,
-        sessionId: existing.id,
-        encrypted,
-      });
 
       if (client) {
         existing.addClient(client);
@@ -304,10 +299,6 @@ export class Server<Context extends ServerContext> extends Observable<
     // Check if there's a pending session creation for this document
     const pending = this.#pendingSessions.get(compositeDocumentId);
     if (pending) {
-      logger.debug("Waiting for pending session creation", {
-        documentId: compositeDocumentId,
-      });
-
       const session = await pending;
 
       // Validate encryption state matches
@@ -315,12 +306,14 @@ export class Server<Context extends ServerContext> extends Observable<
         const error = new Error(
           `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
         );
-        logger.error("Encryption state mismatch detected", {
-          documentId: compositeDocumentId,
-          sessionId: session.id,
-          existingEncrypted: session.encrypted,
-          requestedEncrypted: encrypted,
-          error: toErrorDetails(error),
+        emitWideEvent("error", {
+          event_type: "encryption_mismatch",
+          timestamp: new Date().toISOString(),
+          document_id: compositeDocumentId,
+          session_id: session.id,
+          existing_encrypted: session.encrypted,
+          requested_encrypted: encrypted,
+          error,
         });
         throw error;
       }
@@ -333,18 +326,6 @@ export class Server<Context extends ServerContext> extends Observable<
     }
 
     // Create a new session - wrap in a promise to prevent race conditions
-    const sessionLogger = logger.with({
-      documentId: compositeDocumentId,
-      sessionId: id,
-      encrypted,
-    });
-
-    sessionLogger.info("Creating new session", {
-      documentId: compositeDocumentId,
-      sessionId: id,
-      encrypted,
-    });
-
     const sessionPromise = (async (): Promise<Session<Context>> => {
       try {
         const storage = await (typeof this.#options.storage === "function"
@@ -354,8 +335,6 @@ export class Server<Context extends ServerContext> extends Observable<
               encrypted,
             })
           : this.#options.storage);
-
-        sessionLogger.debug("Storage retrieved for session");
 
         const session = new Session<Context>({
           documentId,
@@ -390,19 +369,24 @@ export class Server<Context extends ServerContext> extends Observable<
             );
           }
         } catch (error) {
-          sessionLogger.warn("Failed to record initial document size metric", {
-            error: toErrorDetails(error as Error),
+          emitWideEvent("info", {
+            event_type: "document_size_metric_failed",
+            timestamp: new Date().toISOString(),
+            document_id: compositeDocumentId,
+            session_id: id,
+            encrypted,
+            error,
           });
         }
 
-        sessionLogger
-          .with({
-            documentId: compositeDocumentId,
-            sessionId: id,
-            encrypted,
-            totalSessions: this.#sessions.size,
-          })
-          .info("Session created and loaded");
+        emitWideEvent("info", {
+          event_type: "session_created",
+          timestamp: new Date().toISOString(),
+          document_id: compositeDocumentId,
+          session_id: id,
+          encrypted,
+          total_sessions: this.#sessions.size,
+        });
 
         await this.call("document-load", {
           documentId,
@@ -422,14 +406,14 @@ export class Server<Context extends ServerContext> extends Observable<
 
         return session;
       } catch (error) {
-        sessionLogger
-          .with({
-            error: toErrorDetails(error as Error),
-            documentId: compositeDocumentId,
-            sessionId: id,
-            encrypted,
-          })
-          .error("Failed to create session");
+        emitWideEvent("error", {
+          event_type: "session_creation_failed",
+          timestamp: new Date().toISOString(),
+          document_id: compositeDocumentId,
+          session_id: id,
+          encrypted,
+          error,
+        });
         throw error;
       } finally {
         // Always remove from pending map, even on error
@@ -459,18 +443,17 @@ export class Server<Context extends ServerContext> extends Observable<
     context: Context,
     encrypted: boolean,
   ): Promise<void> {
-    const logger = getLogger(["teleportal", "server"]);
     const compositeDocumentId = this.#getCompositeDocumentId(
       documentId,
       context,
     );
 
-    logger
-      .with({
-        documentId: compositeDocumentId,
-        encrypted,
-      })
-      .info("Deleting document");
+    emitWideEvent("info", {
+      event_type: "document_delete_start",
+      timestamp: new Date().toISOString(),
+      document_id: compositeDocumentId,
+      encrypted,
+    });
 
     // Close existing session if any
     const session = this.#sessions.get(compositeDocumentId);
@@ -531,11 +514,11 @@ export class Server<Context extends ServerContext> extends Observable<
       context,
     });
 
-    logger
-      .with({
-        documentId: compositeDocumentId,
-      })
-      .info("Document deleted");
+    emitWideEvent("info", {
+      event_type: "document_deleted",
+      timestamp: new Date().toISOString(),
+      document_id: compositeDocumentId,
+    });
   }
 
   /**
@@ -555,9 +538,11 @@ export class Server<Context extends ServerContext> extends Observable<
     id?: string;
     abortSignal?: AbortSignal;
   }) {
-    const logger = getLogger(["teleportal", "server"]).with({ clientId: id });
-
-    logger.info("Creating new client");
+    emitWideEvent("info", {
+      event_type: "client_connect",
+      timestamp: new Date().toISOString(),
+      client_id: id,
+    });
 
     // Apply rate limiting if configured
     let rateLimitedTransport = transport;
@@ -596,11 +581,6 @@ export class Server<Context extends ServerContext> extends Observable<
         metricsCollector: this.#metrics,
         eventEmitter: this as any,
       });
-
-      logger.debug("Rate limiting applied to transport", {
-        ruleCount: rules.length,
-        hasStorage: !!config.rateLimitStorage,
-      });
     }
 
     const client = new Client<Context>({
@@ -615,22 +595,11 @@ export class Server<Context extends ServerContext> extends Observable<
     withMessageValidator(rateLimitedTransport, {
       isAuthorized: async (message, type) => {
         if (!this.#options.checkPermission) {
-          logger
-            .with({
-              messageId: message.id,
-              documentId: message.document,
-              messageType: message.type,
-              permissionType: type,
-            })
-            .debug("No permission checker configured, allowing message");
           return true;
         }
 
-        const msgLogger = logger.with({ messageId: message.id });
-
         // Skip permission check for ACK messages (they're acknowledgments, not requests)
         if (message.type === "ack") {
-          msgLogger.debug("Skipping permission check for ACK message");
           return true;
         }
 
@@ -641,18 +610,6 @@ export class Server<Context extends ServerContext> extends Observable<
           (message as RpcMessage<Context>).payload.type === "success"
             ? ((message as RpcMessage<Context>).payload.payload as any)?.fileId
             : undefined;
-
-        msgLogger
-          .with({
-            messageId: message.id,
-            documentId: message.document,
-            fileId,
-            messageType: message.type,
-            permissionType: type,
-            userId: message.context.userId,
-            clientId: message.context.clientId,
-          })
-          .debug("Checking permission");
 
         try {
           // Ensure at least one of documentId or fileId is provided
@@ -670,24 +627,11 @@ export class Server<Context extends ServerContext> extends Observable<
             type,
           });
 
-          msgLogger
-            .with({
-              messageId: message.id,
-              documentId: message.document,
-              fileId,
-              permissionType: type,
-              authorized: ok,
-            })
-            .trace(ok ? "Message authorized" : "Message denied");
-
           if (!ok) {
             if (
               message.type === "doc" &&
               message.payload.type === "sync-step-2"
             ) {
-              msgLogger.debug(
-                "Client tried to send sync-step-2 message but doesn't have write permissions, dropping message",
-              );
               // Tell the client that they've successfully synced their state vector
               await client.send(
                 new DocMessage(
@@ -741,15 +685,14 @@ export class Server<Context extends ServerContext> extends Observable<
           }
           return true;
         } catch (error) {
-          console.log(error);
-          msgLogger
-            .with({
-              error: toErrorDetails(error as Error),
-              messageId: message.id,
-              documentId: message.document,
-              permissionType: type,
-            })
-            .error("Permission check failed");
+          emitWideEvent("error", {
+            event_type: "permission_check_failed",
+            timestamp: new Date().toISOString(),
+            message_id: message.id,
+            document_id: message.document,
+            permission_type: type,
+            error,
+          });
           return false;
         }
       },
@@ -758,26 +701,23 @@ export class Server<Context extends ServerContext> extends Observable<
         new WritableStream<Message<Context>>({
           write: async (message) => {
             if (message.type === "ack") {
-              // client ack'd, we don't care about it for processing
-              // but still track it in metrics
               this.#metrics.incrementMessage(message.type);
               return;
             }
 
-            const msgLogger = logger.with({
-              messageId: message.id,
-              documentId: message.document,
-            });
-
-            msgLogger
-              .with({
-                messageId: message.id,
-                documentId: message.document,
-                messageType: message.type,
-                encrypted: message.encrypted,
-                payloadType: (message as any).payload?.type,
-              })
-              .debug("Processing incoming message");
+            const startTime = Date.now();
+            const wideEvent: WideEvent = {
+              event_type: "message",
+              timestamp: new Date().toISOString(),
+              message_id: message.id,
+              client_id: client.id,
+              document_id: message.document,
+              message_type: message.type,
+              payload_type: (message as { payload?: { type?: string } }).payload
+                ?.type,
+              encrypted: message.encrypted,
+              user_id: message.context?.userId,
+            };
 
             try {
               const session = await this.getOrOpenSession(message.document, {
@@ -785,35 +725,22 @@ export class Server<Context extends ServerContext> extends Observable<
                 client,
                 context: message.context,
               });
+              wideEvent.session_id = session.id;
 
-              msgLogger.debug("Client added to session, applying message");
-
-              const startTime = Date.now();
               await session.apply(message, client);
-              const duration = (Date.now() - startTime) / 1000;
 
-              // Record message metrics
               this.#metrics.incrementMessage(message.type);
+              const durationSec = (Date.now() - startTime) / 1000;
               this.#metrics.messageDuration.observe(
                 { type: message.type },
-                duration,
+                durationSec,
               );
 
-              msgLogger
-                .with({
-                  messageId: message.id,
-                  documentId: message.document,
-                })
-                .debug("Message applied successfully");
-
-              // Emit client-message event for metrics/webhooks
               this.call("client-message", {
                 clientId: client.id,
                 message,
                 direction: "in",
               });
-
-              // Send ACK for all non-ACK messages after successful processing
 
               const ackMessage = new AckMessage(
                 {
@@ -822,48 +749,41 @@ export class Server<Context extends ServerContext> extends Observable<
                 },
                 message.context,
               );
-
               await client.send(ackMessage);
-              // Publish ACK to pubsub topic if it's not a client-to-client message
               await this.pubSub.publish(
                 `ack/${client.id}` as const,
                 ackMessage.encoded,
                 `server-${client.id}`,
               );
 
-              msgLogger
-                .with({
-                  messageId: message.id,
-                  ackMessageId: ackMessage.id,
-                })
-                .trace("Sent ACK for message");
+              wideEvent.outcome = "success";
+              wideEvent.status_code = 200;
             } catch (error) {
-              msgLogger
-                .with({
-                  error: toErrorDetails(error as Error),
-                  messageId: message.id,
-                  documentId: message.document,
-                  messageType: message.type,
-                })
-                .error("Failed to process message");
+              wideEvent.outcome = "error";
+              wideEvent.status_code = 500;
+              wideEvent.error = error;
               throw error;
+            } finally {
+              wideEvent.duration_ms = Date.now() - startTime;
+              emitWideEvent(
+                wideEvent.outcome === "error" ? "error" : "info",
+                wideEvent,
+              );
             }
           },
         }),
       )
       .catch((err) => {
-        logger
-          .with({ error: toErrorDetails(err), clientId: id })
-          .error("Client stream errored");
+        emitWideEvent("error", {
+          event_type: "client_stream_error",
+          timestamp: new Date().toISOString(),
+          client_id: id,
+          error: err,
+        });
       })
       .finally(() => {
-        logger
-          .with({ clientId: id })
-          .info("Client stream ended, disconnecting client");
         this.disconnectClient(client.id, "stream-ended");
       });
-
-    logger.with({ clientId: id }).info("Client created and connected");
 
     // Record client connect metric
     this.#metrics.clientsActive.inc();
@@ -889,23 +809,18 @@ export class Server<Context extends ServerContext> extends Observable<
     reason: ClientDisconnectReason = "manual",
   ) {
     const clientId = typeof client === "string" ? client : client.id;
-    const logger = getLogger(["teleportal", "server"]).with({ clientId });
-
-    logger
-      .with({ clientId, reason })
-      .info("Disconnecting client from all sessions");
 
     for (const s of this.#sessions.values()) {
       s.removeClient(client);
     }
 
-    logger
-      .with({
-        clientId,
-        reason,
-        totalSessions: this.#sessions.size,
-      })
-      .info("Client disconnected from sessions");
+    emitWideEvent("info", {
+      event_type: "client_disconnect",
+      timestamp: new Date().toISOString(),
+      client_id: clientId,
+      reason,
+      total_sessions: this.#sessions.size,
+    });
 
     // Record client disconnect metric
     this.#metrics.clientsActive.dec();
@@ -917,23 +832,19 @@ export class Server<Context extends ServerContext> extends Observable<
    * Handle cleanup of a session that was scheduled for disposal.
    */
   #handleSessionCleanup(session: Session<Context>) {
-    const logger = getLogger(["teleportal", "server"]);
-    // Check if session still exists in our map (using namespacedDocumentId as key)
     const existingSession = this.#sessions.get(session.namespacedDocumentId);
     if (!existingSession || existingSession !== session) {
-      // Session was already removed or replaced
       return;
     }
 
-    // Verify session should still be disposed (has no clients)
     if (session.shouldDispose) {
-      logger
-        .with({
-          documentId: session.documentId,
-          namespacedDocumentId: session.namespacedDocumentId,
-          sessionId: session.id,
-        })
-        .info("Cleaning up session with no clients");
+      emitWideEvent("info", {
+        event_type: "session_cleanup",
+        timestamp: new Date().toISOString(),
+        document_id: session.documentId,
+        namespaced_document_id: session.namespacedDocumentId,
+        session_id: session.id,
+      });
 
       this.call("document-unload", {
         documentId: session.documentId,
@@ -944,19 +855,16 @@ export class Server<Context extends ServerContext> extends Observable<
       });
 
       this.#sessions.delete(session.namespacedDocumentId);
-
-      // Record session cleanup metric
       this.#metrics.sessionsActive.dec();
 
       session[Symbol.asyncDispose]().catch((error) => {
-        logger
-          .with({
-            error: toErrorDetails(error as Error),
-            documentId: session.documentId,
-            namespacedDocumentId: session.namespacedDocumentId,
-            sessionId: session.id,
-          })
-          .error("Error disposing session during cleanup");
+        emitWideEvent("error", {
+          event_type: "session_dispose_error",
+          timestamp: new Date().toISOString(),
+          document_id: session.documentId,
+          session_id: session.id,
+          error,
+        });
       });
     }
   }
@@ -965,14 +873,13 @@ export class Server<Context extends ServerContext> extends Observable<
    * Async dispose the server.
    */
   async [Symbol.asyncDispose](): Promise<void> {
-    const logger = getLogger(["teleportal", "server"]);
-    logger
-      .with({
-        nodeId: this.#nodeId,
-        activeSessions: this.#sessions.size,
-        pendingSessions: this.#pendingSessions.size,
-      })
-      .info("Disposing server");
+    emitWideEvent("info", {
+      event_type: "server_dispose_start",
+      timestamp: new Date().toISOString(),
+      node_id: this.#nodeId,
+      active_sessions: this.#sessions.size,
+      pending_sessions: this.#pendingSessions.size,
+    });
 
     this.call("before-server-shutdown", {
       nodeId: this.#nodeId,
@@ -989,12 +896,6 @@ export class Server<Context extends ServerContext> extends Observable<
     // Wait for any pending session creations to complete (or fail)
     // This prevents dangling promises and ensures we don't dispose while sessions are being created
     if (this.#pendingSessions.size > 0) {
-      logger
-        .with({
-          pendingCount: this.#pendingSessions.size,
-        })
-        .debug("Waiting for pending session creations to complete");
-
       await Promise.allSettled(
         [...this.#pendingSessions.values()].map(async (promise) => {
           try {
@@ -1020,33 +921,36 @@ export class Server<Context extends ServerContext> extends Observable<
       try {
         await s[Symbol.asyncDispose]();
       } catch (error) {
-        logger
-          .with({
-            error: toErrorDetails(error as Error),
-            sessionId: s.id,
-            documentId: s.documentId,
-          })
-          .error("Error disposing session");
+        emitWideEvent("error", {
+          event_type: "session_dispose_error",
+          timestamp: new Date().toISOString(),
+          session_id: s.id,
+          document_id: s.documentId,
+          error,
+        });
       }
     }
 
     try {
       await this.pubSub[Symbol.asyncDispose]?.();
     } catch (error) {
-      logger
-        .with({ error: toErrorDetails(error as Error) })
-        .error("Error disposing pubSub");
+      emitWideEvent("error", {
+        event_type: "pubsub_dispose_error",
+        timestamp: new Date().toISOString(),
+        node_id: this.#nodeId,
+        error,
+      });
     }
 
     this.call("after-server-shutdown", {
       nodeId: this.#nodeId,
     });
 
-    logger
-      .with({
-        nodeId: this.#nodeId,
-      })
-      .info("Server disposed");
+    emitWideEvent("info", {
+      event_type: "server_disposed",
+      timestamp: new Date().toISOString(),
+      node_id: this.#nodeId,
+    });
   }
 
   /**

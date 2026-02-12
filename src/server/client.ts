@@ -1,6 +1,5 @@
 import type { ServerContext, Message } from "teleportal";
-import { toErrorDetails } from "../logging";
-import { getLogger } from "@logtape/logtape";
+import { emitWideEvent } from "./logger";
 import { Observable } from "../lib/utils";
 
 type QueuedSend<Context extends ServerContext> = {
@@ -31,12 +30,6 @@ export class Client<Context extends ServerContext> extends Observable<{
     super();
     this.id = args.id;
     this.#writable = args.writable;
-
-    const logger = getLogger(["teleportal", "server", "client"]).with({
-      name: "client",
-      clientId: this.id,
-    });
-    logger.debug("Client instance created", { clientId: this.id });
   }
 
   /**
@@ -87,37 +80,19 @@ export class Client<Context extends ServerContext> extends Observable<{
    * This method handles getting and releasing the writer.
    */
   async #sendMessage(message: Message<Context>): Promise<void> {
-    const logger = getLogger(["teleportal", "server", "client"]).with({
-      name: "client",
-      clientId: this.id,
-    });
-    const msgLogger = logger.with({
-      messageId: message.id,
-      documentId: message.document,
-    });
-
-    msgLogger.trace("Sending message to client", {
-      messageId: message.id,
-      documentId: message.document,
-      messageType: message.type,
-      payloadType: message.payload?.type,
-    });
-
     const writer = this.#writable.getWriter();
     try {
       await writer.ready;
       await writer.write(message);
-
-      msgLogger.debug("Message sent successfully", {
-        messageId: message.id,
-        documentId: message.document,
-      });
     } catch (error) {
-      msgLogger.error("Failed to send message to client", {
-        messageId: message.id,
-        documentId: message.document,
-        messageType: message.type,
-        error: toErrorDetails(error),
+      emitWideEvent("error", {
+        event_type: "client_send_failed",
+        timestamp: new Date().toISOString(),
+        client_id: this.id,
+        message_id: message.id,
+        document_id: message.document,
+        message_type: message.type,
+        error,
       });
       throw error;
     } finally {
