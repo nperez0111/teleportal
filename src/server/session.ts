@@ -444,6 +444,23 @@ export class Session<Context extends ServerContext> extends Observable<
                     message.payload.update,
                   );
                 if (!storedUpdate) {
+                  // Storage rejected (e.g. snapshotId mismatch). Still broadcast the
+                  // original update so other clients on the matching snapshot can apply it.
+                  await Promise.all([
+                    this.broadcast(message, client?.id),
+                    this.#pubSub.publish(
+                      `document/${this.namespacedDocumentId}` as const,
+                      message.encoded,
+                      this.#nodeId,
+                    ),
+                  ]);
+                  this.#emitDocumentMessage(
+                    message,
+                    client,
+                    replicationMeta?.sourceNodeId ? "replication" : "client",
+                    replicationMeta?.sourceNodeId,
+                    replicationMeta?.deduped,
+                  );
                   return;
                 }
                 this.call("document-write", {
