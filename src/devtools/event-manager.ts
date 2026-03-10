@@ -44,7 +44,7 @@ export class EventManager {
   private setupEventListeners() {
     // Listen to received messages
     const unsubReceived = teleportalEventClient.on(
-      "received-message",
+      "teleportal-provider:received-message",
       (event) => {
         const { message, provider, connection } = event.payload;
 
@@ -157,7 +157,7 @@ export class EventManager {
 
     // Listen to sent messages
     const unsubSent = teleportalEventClient.on(
-      "sent-message",
+      "teleportal-provider:sent-message",
       (event) => {
         const { message, provider, connection } = event.payload;
 
@@ -263,7 +263,7 @@ export class EventManager {
     // Listen to subdoc load (may not be emitted to teleportalEventClient, but try anyway)
     try {
       const unsubLoadSubdoc = teleportalEventClient.on(
-        "load-subdoc",
+        "teleportal-provider:load-subdoc",
         (event: any) => {
           const { document, provider } = event.payload;
           this.tracker.addDocument(document, provider, document);
@@ -280,7 +280,7 @@ export class EventManager {
     // Listen to subdoc unload (may not be emitted to teleportalEventClient, but try anyway)
     try {
       const unsubUnloadSubdoc = teleportalEventClient.on(
-        "unload-subdoc",
+        "teleportal-provider:unload-subdoc",
         (event: any) => {
           const { document } = event.payload;
           this.tracker.removeDocument(document);
@@ -296,7 +296,7 @@ export class EventManager {
 
     // Listen to connection events
     const unsubConnected = teleportalEventClient.on(
-      "connected",
+      "teleportal-provider:connected",
       (event) => {
         const newState = {
           type: "connected" as const,
@@ -312,7 +312,7 @@ export class EventManager {
     this.unsubscribers.push(unsubConnected);
 
     const unsubDisconnected = teleportalEventClient.on(
-      "disconnected",
+      "teleportal-provider:disconnected",
       (event) => {
         const newState = {
           type: "disconnected" as const,
@@ -328,7 +328,7 @@ export class EventManager {
     this.unsubscribers.push(unsubDisconnected);
 
     const unsubUpdate = teleportalEventClient.on(
-      "update",
+      "teleportal-provider:update",
       (event) => {
         const { state } = event.payload;
         const newState: ConnectionStateInfo = {

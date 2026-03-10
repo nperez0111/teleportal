@@ -120,46 +120,43 @@ export type ProviderOptions<
   }) => T;
 };
 
-export const teleportalEventClient = new EventClient<
-  {
-    "teleportal-provider:load-subdoc": {
-      subdoc: Y.Doc;
-      provider: Provider;
-      document: string;
-      parentDoc: Y.Doc;
-    };
-    "teleportal-provider:unload-subdoc": {
-      subdoc: Y.Doc;
-      provider: Provider;
-      document: string;
-      parentDoc: Y.Doc;
-    };
-    "teleportal-provider:received-message": {
-      message: RawReceivedMessage;
-      provider: Provider;
-      connection: Connection<any>;
-    };
-    "teleportal-provider:sent-message": {
-      message: Message;
-      provider: Provider;
-      connection: Connection<any>;
-    };
-    "teleportal-provider:connected": {
-      provider: Provider;
-      connection: Connection<any>;
-    };
-    "teleportal-provider:disconnected": {
-      provider: Provider;
-      connection: Connection<any>;
-    };
-    "teleportal-provider:update": {
-      state: ConnectionState<ConnectionContext>;
-      provider: Provider;
-      connection: Connection<any>;
-    };
-  },
-  "teleportal-provider"
->({
+export const teleportalEventClient = new EventClient<{
+  "teleportal-provider:load-subdoc": {
+    subdoc: Y.Doc;
+    provider: Provider;
+    document: string;
+    parentDoc: Y.Doc;
+  };
+  "teleportal-provider:unload-subdoc": {
+    subdoc: Y.Doc;
+    provider: Provider;
+    document: string;
+    parentDoc: Y.Doc;
+  };
+  "teleportal-provider:received-message": {
+    message: RawReceivedMessage;
+    provider: Provider;
+    connection: Connection<any>;
+  };
+  "teleportal-provider:sent-message": {
+    message: Message;
+    provider: Provider;
+    connection: Connection<any>;
+  };
+  "teleportal-provider:connected": {
+    provider: Provider;
+    connection: Connection<any>;
+  };
+  "teleportal-provider:disconnected": {
+    provider: Provider;
+    connection: Connection<any>;
+  };
+  "teleportal-provider:update": {
+    state: ConnectionState<ConnectionContext>;
+    provider: Provider;
+    connection: Connection<any>;
+  };
+}>({
   pluginId: "teleportal-provider",
 });
 
@@ -272,7 +269,7 @@ export class Provider<
       "abort",
       connection.on("connected", () => {
         this.call("connected");
-        teleportalEventClient.emit("connected", {
+        teleportalEventClient.emit("teleportal-provider:connected", {
           provider: this,
           connection,
         });
@@ -282,7 +279,7 @@ export class Provider<
       "abort",
       connection.on("disconnected", () => {
         this.call("disconnected");
-        teleportalEventClient.emit("disconnected", {
+        teleportalEventClient.emit("teleportal-provider:disconnected", {
           provider: this,
           connection,
         });
@@ -292,7 +289,7 @@ export class Provider<
       "abort",
       connection.on("received-message", (message) => {
         this.call("received-message", message);
-        teleportalEventClient.emit("received-message", {
+        teleportalEventClient.emit("teleportal-provider:received-message", {
           message,
           provider: this,
           connection,
@@ -304,7 +301,7 @@ export class Provider<
       "abort",
       connection.on("sent-message", (message) => {
         this.call("sent-message", message);
-        teleportalEventClient.emit("sent-message", {
+        teleportalEventClient.emit("teleportal-provider:sent-message", {
           message,
           provider: this,
           connection,
@@ -315,7 +312,7 @@ export class Provider<
       "abort",
       connection.on("update", (state) => {
         this.call("update", state);
-        teleportalEventClient.emit("update", {
+        teleportalEventClient.emit("teleportal-provider:update", {
           state,
           provider: this,
           connection,

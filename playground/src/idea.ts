@@ -91,13 +91,13 @@ async function addDevtoolsObservability() {
   server.on("client-message", ({ clientId, message, direction }) => {
     if (clientId !== "abc-123") return;
     if (direction === "out") {
-      teleportalEventClient.emit("received-message", {
+      teleportalEventClient.emit("teleportal-provider:received-message", {
         message,
         provider,
         connection,
       });
     } else {
-      teleportalEventClient.emit("sent-message", {
+      teleportalEventClient.emit("teleportal-provider:sent-message", {
         message,
         provider,
         connection,
