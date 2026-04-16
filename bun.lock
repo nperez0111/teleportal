@@ -5,34 +5,34 @@
     "": {
       "name": "teleportal",
       "dependencies": {
-        "@logtape/logtape": "^2",
-        "@tanstack/devtools-event-client": "^0.4.0",
-        "hookable": "^6",
-        "jose": "^6",
-        "lib0": "^0.2.117",
-        "y-indexeddb": "^9",
-        "y-protocols": "^1",
-        "yjs": "^13",
+        "@logtape/logtape": "2.0.5",
+        "@tanstack/devtools-event-client": "0.4.3",
+        "hookable": "6.1.1",
+        "jose": "6.2.1",
+        "lib0": "0.2.117",
+        "y-indexeddb": "9.0.12",
+        "y-protocols": "1.0.7",
+        "yjs": "13.6.29",
       },
       "devDependencies": {
-        "@nats-io/transport-node": "^3.2.0",
-        "@types/bun": "^1.3.9",
-        "@typescript-eslint/eslint-plugin": "^8.55.0",
-        "@typescript-eslint/parser": "^8.55.0",
-        "automd": "^0.4.3",
+        "@nats-io/transport-node": "3.3.1",
+        "@types/bun": "1.3.10",
+        "@typescript-eslint/eslint-plugin": "8.57.0",
+        "@typescript-eslint/parser": "8.57.0",
+        "automd": "0.4.3",
         "bun-plugin-tailwind": "0.1.2",
-        "changelogen": "^0.6.2",
-        "crossws": "^0.4.4",
-        "eslint": "^9.39.2",
-        "eslint-config-unjs": "^0.6.2",
-        "eventsource": "^4.1.0",
-        "ioredis": "^5.9.2",
+        "changelogen": "0.6.2",
+        "crossws": "0.4.4",
+        "eslint": "9.39.4",
+        "eslint-config-unjs": "0.6.2",
+        "eventsource": "4.1.0",
+        "ioredis": "5.10.0",
         "msw": "2.12.10",
-        "obuild": "^0.4.27",
-        "prettier": "^3.8.1",
-        "srvx": "^0.11.4",
+        "obuild": "0.4.32",
+        "prettier": "3.8.1",
+        "srvx": "0.11.9",
         "typescript": "5.9.3",
-        "unstorage": "^1.17.2",
+        "unstorage": "1.17.4",
       },
       "peerDependencies": {
         "@nats-io/transport-node": "^3.2.0",
@@ -93,7 +93,7 @@
         "@blocknote/mantine": "0.46.2",
         "@blocknote/react": "0.46.2",
         "@logtape/adaptor-pino": "^2",
-        "@logtape/logtape": "^2",
+        "@logtape/logtape": "2.0.5",
         "@logtape/pretty": "^2",
         "@tanstack/react-devtools": "0.9.5",
         "@types/react": "^19.2.14",
@@ -393,7 +393,7 @@
 
     "@logtape/adaptor-pino": ["@logtape/adaptor-pino@2.0.2", "", { "peerDependencies": { "@logtape/logtape": "^2.0.2", "pino": "^9.7.0" } }, "sha512-JU7ddi+9tgX15BreisydMrjtLBTPCYsWfWnM1Lm5EUK0loGZ1+BhlH5u7F++vp4aWZ2M40cu/rCdAo5/A1gpwA=="],
 
-    "@logtape/logtape": ["@logtape/logtape@2.0.4", "", {}, "sha512-Z4COeAMdedcBFuFkXaPFvDPOVuHoEom1hwNnPCIkSyojyikuNguplwPoSG+kZthWrS7GiOJo1USQyjWwIFfTKA=="],
+    "@logtape/logtape": ["@logtape/logtape@2.0.5", "", {}, "sha512-UizDkh20ZPJVOddRxG1F77WhHdlNl/sbQgoO8T534R7XvUBMAJ9En9f35u+meW2tRsNLvjz6R87Zanwf53tspQ=="],
 
     "@logtape/pretty": ["@logtape/pretty@2.0.2", "", { "peerDependencies": { "@logtape/logtape": "^2.0.2" } }, "sha512-WMKoHuaEZvJgDeciIM/OL+joDDlheuoSpkfJOuKncdim7eV6GfIh0BUxLt0Td4JJsljzt5dAttxaX0kXqE0N9Q=="],
 
@@ -657,7 +657,7 @@
 
     "@tanstack/devtools-event-bus": ["@tanstack/devtools-event-bus@0.4.1", "", { "dependencies": { "ws": "^8.18.3" } }, "sha512-cNnJ89Q021Zf883rlbBTfsaxTfi2r73/qejGtyTa7ksErF3hyDyAq1aTbo5crK9dAL7zSHh9viKY1BtMls1QOA=="],
 
-    "@tanstack/devtools-event-client": ["@tanstack/devtools-event-client@0.4.1", "", {}, "sha512-GRxmPw4OHZ2oZeIEUkEwt/NDvuEqzEYRAjzUVMs+I0pd4C7k1ySOiuJK2CqF+K/yEAR3YZNkW3ExrpDarh9Vwg=="],
+    "@tanstack/devtools-event-client": ["@tanstack/devtools-event-client@0.4.3", "", { "bin": { "intent": "bin/intent.js" } }, "sha512-OZI6QyULw0FI0wjgmeYzCIfbgPsOEzwJtCpa69XrfLMtNXLGnz3d/dIabk7frg0TmHo+Ah49w5I4KC7Tufwsvw=="],
 
     "@tanstack/devtools-ui": ["@tanstack/devtools-ui@0.4.4", "", { "dependencies": { "clsx": "^2.1.1", "goober": "^2.1.16", "solid-js": "^1.9.9" } }, "sha512-5xHXFyX3nom0UaNfiOM92o6ziaHjGo3mcSGe2HD5Xs8dWRZNpdZ0Smd0B9ddEhy0oB+gXyMzZgUJb9DmrZV0Mg=="],
 
@@ -1353,7 +1353,7 @@
 
     "headers-polyfill": ["headers-polyfill@4.0.3", "", {}, "sha512-IScLbePpkvO846sIwOtOTDjutRMWdXdJmXdMvk6gCBHxFO8d+QKOQedyZSxFTTFYRSmlgSTDtXqqq4pcenBXLQ=="],
 
-    "hookable": ["hookable@6.0.1", "", {}, "sha512-uKGyY8BuzN/a5gvzvA+3FVWo0+wUjgtfSdnmjtrOVwQCZPHpHDH2WRO3VZSOeluYrHoDCiXFffZXs8Dj1ULWtw=="],
+    "hookable": ["hookable@6.1.1", "", {}, "sha512-U9LYDy1CwhMCnprUfeAZWZGByVbhd54hwepegYTK7Pi5NvqEj63ifz5z+xukznehT7i6NIZRu89Ay1AZmRsLEQ=="],
 
     "html-escaper": ["html-escaper@3.0.3", "", {}, "sha512-RuMffC89BOWQoY0WKGpIhn5gX3iI54O6nRA0yC124NYVtzjmFWBIiFd8M0x+ZdX0P9R4lADg1mgP8C7PxGOWuQ=="],
 
