@@ -25,6 +25,12 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 <!-- /automd -->
 
+[![Open on npmx.dev](https://npmx.dev/api/registry/badge/version/teleportal)](https://npmx.dev/package/teleportal)
+[![Open on npmx.dev](https://npmx.dev/api/registry/badge/license/teleportal)](https://npmx.dev/package/teleportal)
+[![Open on npmx.dev](https://npmx.dev/api/registry/badge/size/teleportal)](https://npmx.dev/package/teleportal)
+[![Open on npmx.dev](https://npmx.dev/api/registry/badge/downloads-month/teleportal)](https://npmx.dev/package/teleportal)
+[![Open on npmx.dev](https://npmx.dev/api/registry/badge/dependencies/teleportal)](https://npmx.dev/package/teleportal)
+
 ## Features
 
 ### Core Features
