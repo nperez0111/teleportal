@@ -1,9 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import * as encoding from "lib0/encoding";
+import { toBase64 } from "lib0/buffer";
+import { digest } from "lib0/hash/sha256";
 import { EncryptedBinary } from "../../../encryption-key";
 import type {
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
   DecodedEncryptedUpdatePayload,
+  EncryptedSnapshot,
   EncryptedStateVector,
   EncryptedSyncStep2,
   EncryptedUpdatePayload,
@@ -12,6 +16,7 @@ import {
   decodeEncryptedUpdate,
   decodeFromStateVector,
   decodeFromSyncStep2,
+  encodeEncryptedSnapshot,
   encodeEncryptedUpdate,
   encodeEncryptedUpdateMessages,
   encodeToStateVector,
@@ -20,32 +25,32 @@ import {
   getEmptyEncryptedStateVector,
   getEmptyEncryptedSyncStep2,
 } from "./encoding";
-import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
+import type { LamportClockValue } from "./lamport-clock";
 
 describe("protocol encryption encoding", () => {
   describe("state vector encoding/decoding", () => {
     it("should encode and decode empty state vector", () => {
-      const emptyState: DecodedEncryptedStateVector = { clocks: new Map() };
+      const emptyState: DecodedEncryptedStateVector = {
+        snapshotId: "",
+        serverVersion: 0,
+      };
       const encoded = encodeToStateVector(emptyState);
       const decoded = decodeFromStateVector(encoded);
 
-      expect(decoded.clocks.size).toBe(0);
+      expect(decoded.snapshotId).toBe("");
+      expect(decoded.serverVersion).toBe(0);
     });
 
-    it("should encode and decode state vector with clocks", () => {
-      const clocks = new Map<ClientId, Counter>([
-        [1, 5],
-        [2, 10],
-        [3, 15],
-      ]);
-      const state: DecodedEncryptedStateVector = { clocks };
+    it("should encode and decode state vector with snapshot info", () => {
+      const state: DecodedEncryptedStateVector = {
+        snapshotId: "snapshot-1",
+        serverVersion: 42,
+      };
       const encoded = encodeToStateVector(state);
       const decoded = decodeFromStateVector(encoded);
 
-      expect(decoded.clocks.size).toBe(3);
-      expect(decoded.clocks.get(1)).toBe(5);
-      expect(decoded.clocks.get(2)).toBe(10);
-      expect(decoded.clocks.get(3)).toBe(15);
+      expect(decoded.snapshotId).toBe("snapshot-1");
+      expect(decoded.serverVersion).toBe(42);
     });
 
     it("should throw error for invalid version", () => {
@@ -58,7 +63,8 @@ describe("protocol encryption encoding", () => {
     it("should return empty state vector", () => {
       const empty = getEmptyEncryptedStateVector();
       const decoded = decodeFromStateVector(empty);
-      expect(decoded.clocks.size).toBe(0);
+      expect(decoded.snapshotId).toBe("");
+      expect(decoded.serverVersion).toBe(0);
     });
   });
 
@@ -68,14 +74,16 @@ describe("protocol encryption encoding", () => {
       const encoded = encodeEncryptedUpdateMessages(emptyMessages);
       const decoded = decodeEncryptedUpdate(encoded);
 
-      expect(decoded.length).toBe(0);
+      expect(decoded.type).toBe("update");
+      if (decoded.type === "update") expect(decoded.updates.length).toBe(0);
     });
 
     it("should encode and decode single update message", () => {
       const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedBinary;
       const timestamp: LamportClockValue = [1, 5];
       const message: DecodedEncryptedUpdatePayload = {
-        id: "dGVzdC1tZXNzYWdlLWlk", // base64 encoded "test-message-id"
+        id: toBase64(digest(testUpdate)),
+        snapshotId: "snapshot-1",
         timestamp,
         payload: testUpdate,
       };
@@ -83,44 +91,77 @@ describe("protocol encryption encoding", () => {
       const encoded = encodeEncryptedUpdateMessages([message]);
       const decoded = decodeEncryptedUpdate(encoded);
 
-      expect(decoded.length).toBe(1);
-      expect(decoded[0].id).toBe("dGVzdC1tZXNzYWdlLWlk");
-      expect(decoded[0].timestamp).toEqual(timestamp);
-      expect(decoded[0].payload).toEqual(testUpdate);
+      expect(decoded.type).toBe("update");
+      if (decoded.type === "update") {
+        expect(decoded.updates.length).toBe(1);
+        expect(decoded.updates[0].snapshotId).toBe("snapshot-1");
+        expect(decoded.updates[0].timestamp).toEqual(timestamp);
+        expect(decoded.updates[0].payload).toEqual(testUpdate);
+      }
     });
 
     it("should encode and decode multiple update messages", () => {
       const messages: DecodedEncryptedUpdatePayload[] = [
         {
-          id: "bXNnMQ==", // base64 encoded "msg1"
+          id: "msg1",
+          snapshotId: "snapshot-1",
           timestamp: [1, 5],
           payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
+          serverVersion: 1,
         },
         {
-          id: "bXNnMg==", // base64 encoded "msg2"
+          id: "msg2",
+          snapshotId: "snapshot-1",
           timestamp: [2, 10],
           payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
+          serverVersion: 2,
         },
       ];
 
       const encoded = encodeEncryptedUpdateMessages(messages);
       const decoded = decodeEncryptedUpdate(encoded);
 
-      expect(decoded.length).toBe(2);
-      expect(decoded[0].id).toBe("bXNnMQ==");
-      expect(decoded[1].id).toBe("bXNnMg==");
+      expect(decoded.type).toBe("update");
+      if (decoded.type === "update") {
+        expect(decoded.updates.length).toBe(2);
+        expect(decoded.updates[0].serverVersion).toBe(1);
+        expect(decoded.updates[1].serverVersion).toBe(2);
+      }
     });
 
     it("should encode single encrypted update", () => {
       const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedBinary;
       const timestamp: LamportClockValue = [1, 5];
 
-      const encoded = encodeEncryptedUpdate(testUpdate, timestamp);
+      const encoded = encodeEncryptedUpdate(
+        testUpdate,
+        "snapshot-1",
+        timestamp,
+      );
       const decoded = decodeEncryptedUpdate(encoded);
 
-      expect(decoded.length).toBe(1);
-      expect(decoded[0].timestamp).toEqual(timestamp);
-      expect(decoded[0].payload).toEqual(testUpdate);
+      expect(decoded.type).toBe("update");
+      if (decoded.type === "update") {
+        expect(decoded.updates.length).toBe(1);
+        expect(decoded.updates[0].timestamp).toEqual(timestamp);
+        expect(decoded.updates[0].payload).toEqual(testUpdate);
+      }
+    });
+
+    it("should encode and decode snapshot messages", () => {
+      const snapshot: EncryptedSnapshot = {
+        id: "snapshot-1",
+        parentSnapshotId: null,
+        payload: new Uint8Array([9, 9, 9]) as EncryptedBinary,
+      };
+      const encoded = encodeEncryptedSnapshot(snapshot);
+      const decoded = decodeEncryptedUpdate(encoded);
+
+      expect(decoded.type).toBe("snapshot");
+      if (decoded.type === "snapshot") {
+        expect(decoded.snapshot.id).toBe("snapshot-1");
+        expect(decoded.snapshot.payload).toEqual(snapshot.payload);
+      }
     });
 
     it("should throw error for invalid update version", () => {
@@ -133,63 +174,116 @@ describe("protocol encryption encoding", () => {
     it("should return empty encrypted update", () => {
       const empty = getEmptyEncryptedUpdate();
       const decoded = decodeEncryptedUpdate(empty);
-      expect(decoded.length).toBe(0);
+      expect(decoded.type).toBe("update");
+      if (decoded.type === "update") expect(decoded.updates.length).toBe(0);
+    });
+
+    it("should encode and decode update without serverVersion", () => {
+      const message: DecodedEncryptedUpdatePayload = {
+        id: "msg1",
+        snapshotId: "snapshot-1",
+        timestamp: [1, 1],
+        payload: new Uint8Array([1, 2]) as EncryptedBinary,
+      };
+      const encoded = encodeEncryptedUpdateMessages([message]);
+      const decoded = decodeEncryptedUpdate(encoded);
+      expect(decoded.type).toBe("update");
+      if (decoded.type === "update") {
+        expect(decoded.updates.length).toBe(1);
+        expect(decoded.updates[0].serverVersion).toBeUndefined();
+        expect(decoded.updates[0].snapshotId).toBe("snapshot-1");
+      }
+    });
+
+    it("should throw when encoding update missing snapshotId", () => {
+      const message = {
+        id: "msg1",
+        timestamp: [1, 1] as LamportClockValue,
+        payload: new Uint8Array([1]) as EncryptedBinary,
+      } as DecodedEncryptedUpdatePayload;
+      expect(() => encodeEncryptedUpdateMessages([message])).toThrow(
+        "Encrypted update is missing snapshotId",
+      );
+    });
+
+    it("should throw error for invalid encrypted update kind", () => {
+      const invalidKind = encoding.encode((encoder) => {
+        encoding.writeVarUint(encoder, 0);
+        encoding.writeUint8(encoder, 2);
+      });
+      expect(() =>
+        decodeEncryptedUpdate(invalidKind as EncryptedUpdatePayload),
+      ).toThrow("Failed to decode encrypted update");
+    });
+
+    it("should encode and decode snapshot with parentSnapshotId", () => {
+      const snapshot: EncryptedSnapshot = {
+        id: "snapshot-2",
+        parentSnapshotId: "snapshot-1",
+        payload: new Uint8Array([8, 8]) as EncryptedBinary,
+      };
+      const encoded = encodeEncryptedSnapshot(snapshot);
+      const decoded = decodeEncryptedUpdate(encoded);
+      expect(decoded.type).toBe("snapshot");
+      if (decoded.type === "snapshot") {
+        expect(decoded.snapshot.id).toBe("snapshot-2");
+        expect(decoded.snapshot.parentSnapshotId).toBe("snapshot-1");
+      }
     });
   });
 
   describe("sync step 2 encoding/decoding", () => {
     it("should encode and decode empty sync step 2", () => {
-      const emptySync: DecodedEncryptedSyncStep2 = { messages: [] };
+      const emptySync: DecodedEncryptedSyncStep2 = { updates: [] };
       const encoded = encodeToSyncStep2(emptySync);
       const decoded = decodeFromSyncStep2(encoded);
 
-      expect(decoded.messages.length).toBe(0);
+      expect(decoded.updates.length).toBe(0);
+      expect(decoded.snapshot).toBeNull();
     });
 
-    it("should encode and decode sync step 2 with messages", () => {
-      const messages: DecodedEncryptedUpdatePayload[] = [
+    it("should encode and decode sync step 2 with snapshot and updates", () => {
+      const snapshot: EncryptedSnapshot = {
+        id: "snapshot-1",
+        parentSnapshotId: null,
+        payload: new Uint8Array([1, 1, 1]) as EncryptedBinary,
+      };
+      const updates: DecodedEncryptedUpdatePayload[] = [
         {
           id: "msg1",
+          snapshotId: "snapshot-1",
           timestamp: [1, 5],
           payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
-        },
-        {
-          id: "msg2",
-          timestamp: [2, 10],
-          payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
+          serverVersion: 1,
         },
       ];
-      const sync: DecodedEncryptedSyncStep2 = { messages };
+      const sync: DecodedEncryptedSyncStep2 = { snapshot, updates };
 
       const encoded = encodeToSyncStep2(sync);
       const decoded = decodeFromSyncStep2(encoded);
 
-      expect(decoded.messages.length).toBe(2);
-      expect(decoded.messages[0].id).toBe("msg1");
-      expect(decoded.messages[1].id).toBe("msg2");
+      expect(decoded.snapshot?.id).toBe("snapshot-1");
+      expect(decoded.updates.length).toBe(1);
+      expect(decoded.updates[0].serverVersion).toBe(1);
     });
 
-    it("should handle client id mapping correctly", () => {
-      const messages: DecodedEncryptedUpdatePayload[] = [
+    it("should encode and decode sync step 2 with updates only (no snapshot)", () => {
+      const updates: DecodedEncryptedUpdatePayload[] = [
         {
           id: "msg1",
-          timestamp: [100, 5],
-          payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
-        },
-        {
-          id: "msg2",
-          timestamp: [100, 10], // Same client id
-          payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
+          snapshotId: "snapshot-1",
+          timestamp: [1, 1],
+          payload: new Uint8Array([1, 2]) as EncryptedBinary,
+          serverVersion: 1,
         },
       ];
-      const sync: DecodedEncryptedSyncStep2 = { messages };
-
+      const sync: DecodedEncryptedSyncStep2 = { updates };
       const encoded = encodeToSyncStep2(sync);
       const decoded = decodeFromSyncStep2(encoded);
-
-      expect(decoded.messages.length).toBe(2);
-      expect(decoded.messages[0].timestamp[0]).toBe(100);
-      expect(decoded.messages[1].timestamp[0]).toBe(100);
+      expect(decoded.snapshot).toBeNull();
+      expect(decoded.updates.length).toBe(1);
+      expect(decoded.updates[0].snapshotId).toBe("snapshot-1");
+      expect(decoded.updates[0].serverVersion).toBe(1);
     });
 
     it("should throw error for invalid sync step 2 version", () => {
@@ -197,12 +291,6 @@ describe("protocol encryption encoding", () => {
       expect(() =>
         decodeFromSyncStep2(invalidData as EncryptedSyncStep2),
       ).toThrow("Failed to decode encrypted sync step 2 message");
-    });
-
-    it("should return empty sync step 2", () => {
-      const empty = getEmptyEncryptedSyncStep2();
-      const decoded = decodeFromSyncStep2(empty);
-      expect(decoded.messages.length).toBe(0);
     });
   });
 });

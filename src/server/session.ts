@@ -1,4 +1,3 @@
-import { emitWideEvent } from "./logger";
 import {
   decodeMessage,
   DocMessage,
@@ -16,11 +15,15 @@ import {
   type RpcServerContext,
   type RpcSuccess,
 } from "teleportal/protocol";
-import type { DocumentStorage } from "teleportal/storage";
+import type {
+  DocumentStorage,
+  EncryptedDocumentStorage,
+} from "teleportal/storage";
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
 import type { DocumentMessageSource, SessionEvents } from "./events";
+import { emitWideEvent } from "./logger";
 import type { Server } from "./server";
 
 export class Session<Context extends ServerContext> extends Observable<
@@ -277,53 +280,7 @@ export class Session<Context extends ServerContext> extends Observable<
         encrypted: this.encrypted,
         context,
       });
-
-      const meta = await this.#storage.getDocumentMetadata(
-        this.namespacedDocumentId,
-      );
-
-      const sizeBytes = meta.sizeBytes ?? 0;
-      const warningThreshold =
-        meta.sizeWarningThreshold ?? this.#documentSizeConfig?.warningThreshold;
-      const sizeLimit = meta.sizeLimit ?? this.#documentSizeConfig?.limit;
-
-      this.#metrics?.recordDocumentSize(
-        this.namespacedDocumentId,
-        sizeBytes,
-        this.encrypted,
-      );
-
-      if (warningThreshold !== undefined && sizeBytes >= warningThreshold) {
-        if (!this.#sizeWarningEmitted) {
-          this.call("document-size-warning", {
-            documentId: this.documentId,
-            namespacedDocumentId: this.namespacedDocumentId,
-            sizeBytes,
-            warningThreshold,
-            context: context ?? ({} as Context),
-          });
-          this.#metrics?.incrementSizeWarning(this.namespacedDocumentId);
-          this.#sizeWarningEmitted = true;
-        }
-      } else {
-        this.#sizeWarningEmitted = false;
-      }
-
-      if (sizeLimit !== undefined && sizeBytes > sizeLimit) {
-        if (!this.#sizeLimitEmitted) {
-          this.call("document-size-limit-exceeded", {
-            documentId: this.documentId,
-            namespacedDocumentId: this.namespacedDocumentId,
-            sizeBytes,
-            sizeLimit,
-            context: context ?? ({} as Context),
-          });
-          this.#metrics?.incrementSizeLimitExceeded(this.namespacedDocumentId);
-          this.#sizeLimitEmitted = true;
-        }
-      } else {
-        this.#sizeLimitEmitted = false;
-      }
+      void this.#updateDocumentSizeMetrics(context);
     } catch (error) {
       emitWideEvent("error", {
         event_type: "storage_write_failed",
@@ -333,6 +290,55 @@ export class Session<Context extends ServerContext> extends Observable<
         error,
       });
       throw error;
+    }
+  }
+
+  async #updateDocumentSizeMetrics(context?: Context) {
+    const meta = await this.#storage.getDocumentMetadata(
+      this.namespacedDocumentId,
+    );
+
+    const sizeBytes = meta.sizeBytes ?? 0;
+    const warningThreshold =
+      meta.sizeWarningThreshold ?? this.#documentSizeConfig?.warningThreshold;
+    const sizeLimit = meta.sizeLimit ?? this.#documentSizeConfig?.limit;
+
+    this.#metrics?.recordDocumentSize(
+      this.namespacedDocumentId,
+      sizeBytes,
+      this.encrypted,
+    );
+
+    if (warningThreshold !== undefined && sizeBytes >= warningThreshold) {
+      if (!this.#sizeWarningEmitted) {
+        this.call("document-size-warning", {
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sizeBytes,
+          warningThreshold,
+          context: context ?? ({} as Context),
+        });
+        this.#metrics?.incrementSizeWarning(this.namespacedDocumentId);
+        this.#sizeWarningEmitted = true;
+      }
+    } else {
+      this.#sizeWarningEmitted = false;
+    }
+
+    if (sizeLimit !== undefined && sizeBytes > sizeLimit) {
+      if (!this.#sizeLimitEmitted) {
+        this.call("document-size-limit-exceeded", {
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sizeBytes,
+          sizeLimit,
+          context: context ?? ({} as Context),
+        });
+        this.#metrics?.incrementSizeLimitExceeded(this.namespacedDocumentId);
+        this.#sizeLimitEmitted = true;
+      }
+    } else {
+      this.#sizeLimitEmitted = false;
     }
   }
 
@@ -424,6 +430,78 @@ export class Session<Context extends ServerContext> extends Observable<
               return;
             }
             case "update": {
+              const encryptedStorage =
+                this.encrypted &&
+                typeof (this.#storage as EncryptedDocumentStorage)
+                  .handleEncryptedUpdate === "function"
+                  ? (this.#storage as EncryptedDocumentStorage)
+                  : null;
+
+              if (encryptedStorage) {
+                const storedUpdate =
+                  await encryptedStorage.handleEncryptedUpdate(
+                    this.namespacedDocumentId,
+                    message.payload.update,
+                  );
+                if (!storedUpdate) {
+                  // Storage rejected (e.g. snapshotId mismatch). Still broadcast the
+                  // original update so other clients on the matching snapshot can apply it.
+                  await Promise.all([
+                    this.broadcast(message, client?.id),
+                    this.#pubSub.publish(
+                      `document/${this.namespacedDocumentId}` as const,
+                      message.encoded,
+                      this.#nodeId,
+                    ),
+                  ]);
+                  this.#emitDocumentMessage(
+                    message,
+                    client,
+                    replicationMeta?.sourceNodeId ? "replication" : "client",
+                    replicationMeta?.sourceNodeId,
+                    replicationMeta?.deduped,
+                  );
+                  return;
+                }
+                this.call("document-write", {
+                  documentId: this.documentId,
+                  namespacedDocumentId: this.namespacedDocumentId,
+                  sessionId: this.id,
+                  encrypted: this.encrypted,
+                  context: message.context,
+                });
+                const broadcastMessage = new DocMessage(
+                  this.documentId,
+                  {
+                    type: "update",
+                    update: storedUpdate,
+                  },
+                  message.context,
+                  this.encrypted,
+                );
+
+                await Promise.all([
+                  this.broadcast(broadcastMessage),
+                  this.#pubSub.publish(
+                    `document/${this.namespacedDocumentId}` as const,
+                    broadcastMessage.encoded,
+                    this.#nodeId,
+                  ),
+                ]);
+
+                void this.#updateDocumentSizeMetrics(message.context);
+
+                this.#emitDocumentMessage(
+                  broadcastMessage,
+                  client,
+                  replicationMeta?.sourceNodeId ? "replication" : "client",
+                  replicationMeta?.sourceNodeId,
+                  replicationMeta?.deduped,
+                );
+
+                return;
+              }
+
               await this.write(message.payload.update, message.context);
 
               await Promise.all([
@@ -446,6 +524,85 @@ export class Session<Context extends ServerContext> extends Observable<
               return;
             }
             case "sync-step-2": {
+              const encryptedStorage =
+                this.encrypted &&
+                typeof (this.#storage as EncryptedDocumentStorage)
+                  .handleEncryptedSyncStep2 === "function"
+                  ? (this.#storage as EncryptedDocumentStorage)
+                  : null;
+
+              if (encryptedStorage) {
+                const payloads =
+                  await encryptedStorage.handleEncryptedSyncStep2(
+                    this.namespacedDocumentId,
+                    message.payload.update,
+                  );
+                if (payloads.length > 0) {
+                  this.call("document-write", {
+                    documentId: this.documentId,
+                    namespacedDocumentId: this.namespacedDocumentId,
+                    sessionId: this.id,
+                    encrypted: this.encrypted,
+                    context: message.context,
+                  });
+                  await Promise.all(
+                    payloads.map(async (payload: Update) => {
+                      const broadcastMessage = new DocMessage(
+                        this.documentId,
+                        {
+                          type: "update",
+                          update: payload,
+                        },
+                        message.context,
+                        this.encrypted,
+                      );
+                      await Promise.all([
+                        this.broadcast(broadcastMessage),
+                        this.#pubSub.publish(
+                          `document/${this.namespacedDocumentId}` as const,
+                          broadcastMessage.encoded,
+                          this.#nodeId,
+                        ),
+                      ]);
+
+                      this.#emitDocumentMessage(
+                        broadcastMessage,
+                        client,
+                        replicationMeta?.sourceNodeId
+                          ? "replication"
+                          : "client",
+                        replicationMeta?.sourceNodeId,
+                        replicationMeta?.deduped,
+                      );
+                    }),
+                  );
+                }
+
+                void this.#updateDocumentSizeMetrics(message.context);
+
+                if (!client) {
+                  emitWideEvent("info", {
+                    event_type: "sync_step2_no_client",
+                    timestamp: new Date().toISOString(),
+                    message_id: message.id,
+                    document_id: this.documentId,
+                    namespaced_document_id: this.namespacedDocumentId,
+                  });
+                  return;
+                }
+
+                await client.send(
+                  new DocMessage(
+                    this.documentId,
+                    { type: "sync-done" },
+                    message.context,
+                    this.encrypted,
+                  ),
+                );
+
+                return;
+              }
+
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#storage.handleSyncStep2(

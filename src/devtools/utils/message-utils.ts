@@ -17,6 +17,10 @@ import * as Y from "yjs";
 
 export type MessageType = Message | RawReceivedMessage;
 
+function getDocId(message: { document?: string | null }): string {
+  return message.document ?? "";
+}
+
 export function getMessageTypeLabel(message: MessageType): string {
   if (message.type === "doc") {
     return message.payload.type;
@@ -150,37 +154,55 @@ export async function formatMessagePayload(
           let stateVector = message.payload.sv;
           if (message.encrypted) {
             const decodedStateVector = decodeFromStateVector(stateVector);
-            return JSON.stringify(
-              {
-                ...decodedStateVector,
-                clocks: mapToJSON(decodedStateVector.clocks),
-              },
-              null,
-              2,
-            );
+            return JSON.stringify(decodedStateVector, null, 2);
           }
           return JSON.stringify(Y.decodeStateVector(stateVector), null, 2);
         }
         case "sync-step-2": {
           if (message.encrypted) {
             const decoded = decodeFromSyncStep2(message.payload.update);
+            const items: string[] = [];
+            if (decoded.snapshot) {
+              if (!provider.encryptionKey) {
+                items.push(toBase64(decoded.snapshot.payload));
+              } else {
+                const decrypted = await decryptUpdate(
+                  provider.encryptionKey,
+                  decoded.snapshot.payload,
+                );
+                const docMsg = new DocMessage(
+                  getDocId(message),
+                  {
+                    type: "sync-step-2",
+                    update: decrypted as SyncStep2Update,
+                  },
+                  message.context,
+                  false,
+                );
+                const formatted = await formatMessagePayload(
+                  docMsg as MessageType,
+                  provider,
+                );
+                if (formatted != null) items.push(formatted);
+              }
+            }
             return Promise.all(
-              decoded.messages.map(async (val) => {
+              decoded.updates.map(async (val) => {
                 if (!provider.encryptionKey) {
                   // bail, content is encrypted & we have no key
                   return toBase64(val.payload);
                 }
-                val.payload = await decryptUpdate(
+                const decrypted = await decryptUpdate(
                   provider.encryptionKey,
                   val.payload,
                 );
 
                 return formatMessagePayload(
                   new DocMessage(
-                    message.document,
+                    getDocId(message),
                     {
                       type: "sync-step-2",
-                      update: val.payload as SyncStep2Update,
+                      update: decrypted as SyncStep2Update,
                     },
                     message.context,
                     false,
@@ -189,33 +211,61 @@ export async function formatMessagePayload(
                 );
               }),
             ).then((res) => {
-              if (res.length === 0) {
+              const combined = items.concat(
+                res.filter((s): s is string => s != null),
+              );
+              if (combined.length === 0) {
                 return `[]`;
               }
-              return res.join("\n");
+              return combined.join("\n");
             });
           }
         }
         case "update": {
           if (message.encrypted && message.payload.type === "update") {
             const decoded = decodeEncryptedUpdate(message.payload.update);
+            if (decoded.type === "snapshot") {
+              if (!provider.encryptionKey) {
+                return `snapshot:${decoded.snapshot.id} ${toBase64(
+                  decoded.snapshot.payload,
+                )}`;
+              }
+              const decrypted = await decryptUpdate(
+                provider.encryptionKey,
+                decoded.snapshot.payload,
+              );
+              const formatted = await formatMessagePayload(
+                new DocMessage(
+                  getDocId(message),
+                  {
+                    type: "sync-step-2",
+                    update: decrypted as SyncStep2Update,
+                  },
+                  message.context,
+                  false,
+                ),
+                provider,
+              );
+              return `snapshot:${decoded.snapshot.id}\n${formatted}`;
+            }
+
             return Promise.all(
-              decoded.map(async (val) => {
+              decoded.updates.map(async (val) => {
                 if (!provider.encryptionKey) {
                   // bail, content is encrypted & we have no key
                   return toBase64(val.payload);
                 }
-                val.payload = await decryptUpdate(
+                const decrypted = await decryptUpdate(
                   provider.encryptionKey,
                   val.payload,
                 );
 
                 return formatMessagePayload(
                   new DocMessage(
-                    message.document,
+                    getDocId(message),
                     {
                       type: "sync-step-2",
-                      update: val.payload as SyncStep2Update,
+                      update: decrypted as SyncStep2Update,
                     },
                     message.context,
                     false,

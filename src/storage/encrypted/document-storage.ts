@@ -1,45 +1,86 @@
 import type {
   DecodedEncryptedUpdatePayload,
-  EncryptedMessageId,
   EncryptedStateVector,
   EncryptedSyncStep2,
   EncryptedUpdatePayload,
-  SeenMessageMapping,
+  EncryptedSnapshot,
 } from "teleportal/protocol/encryption";
 import {
   decodeEncryptedUpdate,
   decodeFromStateVector,
   decodeFromSyncStep2,
+  encodeEncryptedSnapshot,
   encodeEncryptedUpdateMessages,
-  getEncryptedStateVector,
-  getEncryptedSyncStep2,
+  encodeToStateVector,
+  encodeToSyncStep2,
 } from "teleportal/protocol/encryption";
 import {
   type DocumentMetadata as BaseDocumentMetadata,
   type DocumentStorage,
   type Document,
 } from "../types";
-import { EncryptedBinary } from "teleportal/encryption-key";
-
-export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
-  seenMessages: SeenMessageMapping;
-}
 
 /**
- * This can definitely be optimized, I see 3 ways of improving on this:
- * 1. Introduce a "milestone" which is a snapshot of all of the seen messages compressed into a single update
- *  - These milestones can be created when:
- *    - The client is first connected to the server
- *    - The client is idle for a while
- *    - The client is reconnecting to the server
- *  - The client can then use these milestones as a starting point for the next sync
- * 2. Introduce a "compact" operation which can be used to compact the seen messages, but initiated by the server
- * 3. Move to a different storage format, like a merkle tree which could express the seen messages in a more efficient way
- *
- * One thing to do would be to have a merkle tree represent all of the seen messages, and also have a "milestone" which is a compacted version of the merkle tree.
- * If a client is paranoid, they can validate from the merkle tree, and if not they can use the milestone as a starting point. The client could even be smart
- * and implement a "trust-but-verify" strategy, where they use the milestone, but verify against the merkle tree afterwards in the background. This might prove to be a good compromise of initial sync speed and security.
+ * Encrypted storage returns sync-step-2 and state-vector binary; the shared
+ * Document type uses Update and StateVector. Single cast point for compatibility.
  */
+function toDocument(
+  id: string,
+  metadata: EncryptedDocumentMetadata,
+  content: { update: EncryptedSyncStep2; stateVector: EncryptedStateVector },
+): Document {
+  return { id, metadata, content } as unknown as Document;
+}
+
+export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
+  activeSnapshotId?: string;
+  activeSnapshotVersion?: number;
+  snapshots?: string[];
+}
+
+export interface EncryptedSnapshotMetadata {
+  id: string;
+  parentSnapshotId?: string | null;
+  createdAt: number;
+  updateVersion: number;
+  clientCounters: Record<number, number>;
+}
+
+export type StoredEncryptedUpdate = DecodedEncryptedUpdatePayload & {
+  serverVersion: number;
+};
+
+function normalizeDocumentMetadata(
+  metadata: EncryptedDocumentMetadata | null,
+  now: number,
+): EncryptedDocumentMetadata {
+  const base = metadata ?? ({} as EncryptedDocumentMetadata);
+  return {
+    ...base,
+    createdAt: typeof base.createdAt === "number" ? base.createdAt : now,
+    updatedAt: typeof base.updatedAt === "number" ? base.updatedAt : now,
+    encrypted: true,
+  };
+}
+
+function normalizeSnapshotMetadata(
+  metadata: EncryptedSnapshotMetadata | null,
+  snapshotId: string,
+  now: number,
+): EncryptedSnapshotMetadata | null {
+  if (!metadata) {
+    return null;
+  }
+  return {
+    id: snapshotId,
+    parentSnapshotId: metadata.parentSnapshotId ?? null,
+    createdAt:
+      typeof metadata.createdAt === "number" ? metadata.createdAt : now,
+    updateVersion:
+      typeof metadata.updateVersion === "number" ? metadata.updateVersion : 0,
+    clientCounters: metadata.clientCounters ?? {},
+  };
+}
 
 export abstract class EncryptedDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
@@ -52,157 +93,375 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
 
   abstract getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata>;
 
-  abstract storeEncryptedMessage(
+  abstract storeSnapshot(
     key: string,
-    messageId: EncryptedMessageId,
-    payload: EncryptedBinary,
+    snapshot: EncryptedSnapshot,
+    metadata: EncryptedSnapshotMetadata,
   ): Promise<void>;
 
-  abstract fetchEncryptedMessage(
+  abstract fetchSnapshot(
     key: string,
-    messageId: EncryptedMessageId,
-  ): Promise<EncryptedBinary | null>;
+    snapshotId: string,
+  ): Promise<EncryptedSnapshot | null>;
+
+  abstract writeSnapshotMetadata(
+    key: string,
+    metadata: EncryptedSnapshotMetadata,
+  ): Promise<void>;
+
+  abstract getSnapshotMetadata(
+    key: string,
+    snapshotId: string,
+  ): Promise<EncryptedSnapshotMetadata | null>;
+
+  abstract storeUpdate(
+    key: string,
+    update: StoredEncryptedUpdate,
+  ): Promise<void>;
+
+  abstract fetchUpdates(
+    key: string,
+    snapshotId: string,
+    afterVersion: number,
+  ): Promise<StoredEncryptedUpdate[]>;
 
   async handleSyncStep1(
     key: string,
     syncStep1: EncryptedStateVector,
   ): Promise<Document> {
+    const now = Date.now();
     const decodedStateVector = decodeFromStateVector(syncStep1);
-    const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
-
-    const encryptedSyncStep2 = await getEncryptedSyncStep2(
-      seenMessages,
-      (messageId) => this.fetchEncryptedMessage(key, messageId),
-      decodedStateVector,
+    const metadata = normalizeDocumentMetadata(
+      await this.getDocumentMetadata(key),
+      now,
     );
-    const encryptedStateVector = getEncryptedStateVector(seenMessages);
-
-    return {
-      id: key,
-      metadata: {
-        // Spread first to preserve any stored values, then override with sanitized defaults
-        ...(rest as any),
-        createdAt:
-          typeof (rest as any).createdAt === "number"
-            ? (rest as any).createdAt
-            : Date.now(),
-        updatedAt: Date.now(),
-        encrypted: true,
-        seenMessages,
-      },
-      content: {
-        update: encryptedSyncStep2 as unknown as any,
-        stateVector: encryptedStateVector as unknown as any,
-      },
-    } satisfies Document;
-  }
-
-  private updateSeenMessages(
-    seenMessages: SeenMessageMapping,
-    message: DecodedEncryptedUpdatePayload,
-  ): void {
-    const [clientId, counter] = message.timestamp;
-    if (!seenMessages[clientId]) {
-      seenMessages[clientId] = {};
+    const activeSnapshotId = metadata.activeSnapshotId ?? "";
+    if (!activeSnapshotId) {
+      return toDocument(
+        key,
+        {
+          ...metadata,
+          updatedAt: now,
+          activeSnapshotId: undefined,
+          activeSnapshotVersion: 0,
+        },
+        {
+          update: encodeToSyncStep2({ updates: [] }),
+          stateVector: encodeToStateVector({
+            snapshotId: "",
+            serverVersion: 0,
+          }),
+        },
+      );
     }
-    seenMessages[clientId][counter] = message.id;
+
+    const snapshotMeta = normalizeSnapshotMetadata(
+      await this.getSnapshotMetadata(key, activeSnapshotId),
+      activeSnapshotId,
+      now,
+    );
+    const serverVersion = snapshotMeta?.updateVersion ?? 0;
+
+    let snapshot: EncryptedSnapshot | null = null;
+    let updates: StoredEncryptedUpdate[] = [];
+
+    if (decodedStateVector.snapshotId !== activeSnapshotId) {
+      [snapshot, updates] = await Promise.all([
+        this.fetchSnapshot(key, activeSnapshotId),
+        this.fetchUpdates(key, activeSnapshotId, 0),
+      ]);
+    } else if (decodedStateVector.serverVersion < serverVersion) {
+      updates = await this.fetchUpdates(
+        key,
+        activeSnapshotId,
+        decodedStateVector.serverVersion,
+      );
+    }
+
+    return toDocument(
+      key,
+      {
+        ...metadata,
+        updatedAt: now,
+        activeSnapshotId,
+        activeSnapshotVersion: serverVersion,
+      },
+      {
+        update: encodeToSyncStep2({ snapshot: snapshot ?? undefined, updates }),
+        stateVector: encodeToStateVector({
+          snapshotId: activeSnapshotId,
+          serverVersion,
+        }),
+      },
+    );
   }
 
   async handleSyncStep2(
     key: string,
     syncStep2: EncryptedSyncStep2,
   ): Promise<void> {
-    await this.transaction(key, async () => {
-      const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
-      const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
-      let sizeBytes = rest.sizeBytes ?? 0;
-
-      for (const message of decodedSyncStep2.messages) {
-        this.updateSeenMessages(seenMessages, message);
-        await this.storeEncryptedMessage(key, message.id, message.payload);
-        sizeBytes += message.payload.length;
-      }
-      await this.writeDocumentMetadata(key, {
-        ...rest,
-        updatedAt: Date.now(),
-        seenMessages,
-        sizeBytes,
-      } as EncryptedDocumentMetadata);
-    });
+    await this.handleEncryptedSyncStep2(key, syncStep2);
   }
 
   async handleUpdate(
     key: string,
     update: EncryptedUpdatePayload,
   ): Promise<void> {
-    await this.transaction(key, async () => {
-      const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
-      let sizeBytes = rest.sizeBytes ?? 0;
+    await this.handleEncryptedUpdate(key, update);
+  }
 
-      const encryptedUpdates = decodeEncryptedUpdate(update);
-      for (const encryptedUpdate of encryptedUpdates) {
-        this.updateSeenMessages(seenMessages, encryptedUpdate);
-
-        await this.storeEncryptedMessage(
-          key,
-          encryptedUpdate.id,
-          encryptedUpdate.payload,
-        );
-        sizeBytes += encryptedUpdate.payload.length;
+  async handleEncryptedUpdate(
+    key: string,
+    update: EncryptedUpdatePayload,
+  ): Promise<EncryptedUpdatePayload | null> {
+    return this.transaction(key, async () => {
+      const decoded = decodeEncryptedUpdate(update);
+      if (decoded.type === "snapshot") {
+        const stored = await this.storeSnapshotMessage(key, decoded.snapshot);
+        return stored ? encodeEncryptedSnapshot(stored) : null;
       }
-      await this.writeDocumentMetadata(key, {
-        ...rest,
-        updatedAt: Date.now(),
-        seenMessages,
-        sizeBytes,
-      } as EncryptedDocumentMetadata);
+      // Skip updates that reference a different snapshot (client behind or competing chain).
+      const metadataForUpdate = normalizeDocumentMetadata(
+        await this.getDocumentMetadata(key),
+        Date.now(),
+      );
+      const activeSnapshotIdForUpdate =
+        metadataForUpdate.activeSnapshotId ?? "";
+      if (
+        activeSnapshotIdForUpdate &&
+        decoded.updates.some((u) => u.snapshotId !== activeSnapshotIdForUpdate)
+      ) {
+        return null;
+      }
+      if (!activeSnapshotIdForUpdate) {
+        return null;
+      }
+      const storedUpdates = await this.storeUpdates(key, decoded.updates);
+      return storedUpdates.length > 0
+        ? encodeEncryptedUpdateMessages(storedUpdates)
+        : null;
     });
   }
 
-  async getDocument(key: string): Promise<Document> {
-    // TODO maybe a more efficient way to do this?
-    const metadata = await this.getDocumentMetadata(key);
-    const { seenMessages } = metadata;
-    const updates: DecodedEncryptedUpdatePayload[] = [];
-    for (const clientId of Object.keys(seenMessages)) {
-      for (const counter of Object.keys(
-        seenMessages[Number.parseInt(clientId)],
-      )) {
-        const messageId =
-          seenMessages[Number.parseInt(clientId)][Number.parseInt(counter)];
-        const message = await this.fetchEncryptedMessage(key, messageId);
-        if (message) {
-          updates.push({
-            id: messageId,
-            payload: message,
-            timestamp: [Number.parseInt(clientId), Number.parseInt(counter)],
-          });
+  async handleEncryptedSyncStep2(
+    key: string,
+    syncStep2: EncryptedSyncStep2,
+  ): Promise<EncryptedUpdatePayload[]> {
+    return this.transaction(key, async () => {
+      const decoded = decodeFromSyncStep2(syncStep2);
+      const payloads: EncryptedUpdatePayload[] = [];
+      let snapshotStored = false;
+      if (decoded.snapshot) {
+        const storedSnapshot = await this.storeSnapshotMessage(
+          key,
+          decoded.snapshot,
+        );
+        if (storedSnapshot) {
+          payloads.push(encodeEncryptedSnapshot(storedSnapshot));
+          snapshotStored = true;
         }
+        // If we skipped the snapshot (e.g. client sent root but we have state),
+        // skip updates too — they reference the client's snapshot chain.
+        if (!snapshotStored) {
+          return payloads;
+        }
+      }
+      if (decoded.updates.length > 0) {
+        const metadataForUpdate = normalizeDocumentMetadata(
+          await this.getDocumentMetadata(key),
+          Date.now(),
+        );
+        const activeSnapshotId = metadataForUpdate.activeSnapshotId ?? "";
+        if (!activeSnapshotId) {
+          return payloads;
+        }
+        if (decoded.updates.some((u) => u.snapshotId !== activeSnapshotId)) {
+          return payloads;
+        }
+        const storedUpdates = await this.storeUpdates(key, decoded.updates);
+        if (storedUpdates.length > 0) {
+          payloads.push(encodeEncryptedUpdateMessages(storedUpdates));
+        }
+      }
+      return payloads;
+    });
+  }
+
+  private async storeSnapshotMessage(
+    key: string,
+    snapshot: EncryptedSnapshot,
+  ): Promise<EncryptedSnapshot | null> {
+    const now = Date.now();
+    const metadata = normalizeDocumentMetadata(
+      await this.getDocumentMetadata(key),
+      now,
+    );
+    const activeSnapshotId = metadata.activeSnapshotId ?? null;
+
+    if (activeSnapshotId === snapshot.id) {
+      return snapshot;
+    }
+
+    if (activeSnapshotId) {
+      const parentId = snapshot.parentSnapshotId ?? null;
+      if (!parentId) {
+        // Client sent a root snapshot but we already have state (e.g. second
+        // client responding before applying our sync-step-2). Skip storing;
+        // caller should not apply updates from this sync-step-2 either.
+        return null;
+      }
+      if (parentId !== activeSnapshotId) {
+        throw new Error("Snapshot parent does not match active snapshot");
       }
     }
 
-    const encryptedStateVector = getEncryptedStateVector(seenMessages);
+    const snapshotMetadata: EncryptedSnapshotMetadata = {
+      id: snapshot.id,
+      parentSnapshotId: snapshot.parentSnapshotId ?? null,
+      createdAt: now,
+      updateVersion: 0,
+      clientCounters: {},
+    };
 
-    return {
-      id: key,
-      metadata: {
-        // Spread first to preserve any stored values, then override with sanitized defaults
-        ...(metadata as any),
-        createdAt:
-          typeof (metadata as any).createdAt === "number"
-            ? (metadata as any).createdAt
-            : Date.now(),
-        updatedAt:
-          typeof (metadata as any).updatedAt === "number"
-            ? (metadata as any).updatedAt
-            : Date.now(),
-        encrypted: true,
+    await this.storeSnapshot(key, snapshot, snapshotMetadata);
+
+    const snapshots = Array.isArray(metadata.snapshots)
+      ? metadata.snapshots
+      : [];
+    const nextSnapshots = snapshots.includes(snapshot.id)
+      ? snapshots
+      : [...snapshots, snapshot.id];
+
+    await this.writeDocumentMetadata(key, {
+      ...metadata,
+      updatedAt: now,
+      activeSnapshotId: snapshot.id,
+      activeSnapshotVersion: 0,
+      snapshots: nextSnapshots,
+      sizeBytes: snapshot.payload.length,
+    });
+
+    return snapshot;
+  }
+
+  private async storeUpdates(
+    key: string,
+    updates: DecodedEncryptedUpdatePayload[],
+  ): Promise<StoredEncryptedUpdate[]> {
+    const now = Date.now();
+    const metadata = normalizeDocumentMetadata(
+      await this.getDocumentMetadata(key),
+      now,
+    );
+    const activeSnapshotId = metadata.activeSnapshotId;
+    if (!activeSnapshotId) {
+      throw new Error("Cannot store updates without an active snapshot");
+    }
+
+    const snapshotMeta = normalizeSnapshotMetadata(
+      await this.getSnapshotMetadata(key, activeSnapshotId),
+      activeSnapshotId,
+      now,
+    );
+    if (!snapshotMeta) {
+      throw new Error("Active snapshot metadata not found");
+    }
+
+    const storedUpdates: StoredEncryptedUpdate[] = [];
+    let sizeBytes = metadata.sizeBytes ?? 0;
+
+    for (const update of updates) {
+      if (update.snapshotId !== activeSnapshotId) {
+        throw new Error("Update snapshot does not match active snapshot");
+      }
+      const [clientId, counter] = update.timestamp;
+      const lastCounter = snapshotMeta.clientCounters[clientId] ?? 0;
+
+      if (counter <= lastCounter) {
+        continue;
+      }
+      if (counter !== lastCounter + 1) {
+        throw new Error(
+          `Update counter out of order for client ${clientId}: expected ${
+            lastCounter + 1
+          }, got ${counter}`,
+        );
+      }
+
+      const nextVersion = snapshotMeta.updateVersion + 1;
+      const assignedVersion =
+        typeof update.serverVersion === "number"
+          ? update.serverVersion
+          : nextVersion;
+      if (assignedVersion !== nextVersion) {
+        throw new Error(
+          `Update version out of order for snapshot ${activeSnapshotId}: expected ${nextVersion}, got ${assignedVersion}`,
+        );
+      }
+
+      snapshotMeta.updateVersion = assignedVersion;
+      snapshotMeta.clientCounters[clientId] = counter;
+
+      const storedUpdate: StoredEncryptedUpdate = {
+        ...update,
+        serverVersion: assignedVersion,
+      };
+      storedUpdates.push(storedUpdate);
+      sizeBytes += update.payload.length;
+    }
+
+    for (const update of storedUpdates) {
+      await this.storeUpdate(key, update);
+    }
+
+    await this.writeSnapshotMetadata(key, snapshotMeta);
+    await this.writeDocumentMetadata(key, {
+      ...metadata,
+      updatedAt: now,
+      activeSnapshotId,
+      activeSnapshotVersion: snapshotMeta.updateVersion,
+      sizeBytes,
+    });
+
+    return storedUpdates;
+  }
+
+  async getDocument(key: string): Promise<Document | null> {
+    const now = Date.now();
+    const metadata = normalizeDocumentMetadata(
+      await this.getDocumentMetadata(key),
+      now,
+    );
+    const activeSnapshotId = metadata.activeSnapshotId ?? "";
+    if (!activeSnapshotId) {
+      return null;
+    }
+    const snapshotMeta = normalizeSnapshotMetadata(
+      await this.getSnapshotMetadata(key, activeSnapshotId),
+      activeSnapshotId,
+      now,
+    );
+    const serverVersion = snapshotMeta?.updateVersion ?? 0;
+    const [snapshot, updates] = await Promise.all([
+      this.fetchSnapshot(key, activeSnapshotId),
+      this.fetchUpdates(key, activeSnapshotId, 0),
+    ]);
+    return toDocument(
+      key,
+      {
+        ...metadata,
+        updatedAt: now,
+        activeSnapshotId,
+        activeSnapshotVersion: serverVersion,
       },
-      content: {
-        update: encodeEncryptedUpdateMessages(updates) as unknown as any,
-        stateVector: encryptedStateVector as unknown as any,
+      {
+        update: encodeToSyncStep2({ snapshot: snapshot ?? undefined, updates }),
+        stateVector: encodeToStateVector({
+          snapshotId: activeSnapshotId,
+          serverVersion,
+        }),
       },
-    } satisfies Document;
+    );
   }
 
   abstract deleteDocument(key: string): Promise<void>;

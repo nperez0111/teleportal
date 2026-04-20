@@ -34,7 +34,9 @@ export interface YDocSourceHandler {
 
 export interface YDocSinkHandler {
   handleSyncStep1(stateVector: StateVector): Promise<DocMessage<ClientContext>>;
-  handleSyncStep2(syncStep2: SyncStep2Update): Promise<void>;
+  handleSyncStep2(
+    syncStep2: SyncStep2Update,
+  ): Promise<void | Message<ClientContext>>;
   handleUpdate(update: Update): Promise<void>;
   handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void>;
   handleAwarenessRequest(
@@ -312,7 +314,12 @@ export function getYDocSink<Context extends ClientContext>({
                   break;
                 }
                 case "sync-step-2": {
-                  await handler.handleSyncStep2(chunk.payload.update);
+                  const compaction = await handler.handleSyncStep2(
+                    chunk.payload.update,
+                  );
+                  if (compaction) {
+                    observer.call("message", compaction);
+                  }
                   break;
                 }
                 case "update": {
