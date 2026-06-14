@@ -46,7 +46,8 @@
     "./token": "./dist/token/index.mjs",
     "./merkle-tree": "./dist/merkle-tree/index.mjs",
     "./devtools": "./dist/devtools/index.mjs",
-    "./agent": "./dist/agent/index.mjs"
+    "./agent": "./dist/agent/index.mjs",
+    "./attribution": "./dist/lib/attribution/index.mjs"
   },
   "main": "./dist/lib/index.mjs",
   "types": "./dist/lib/index.d.mts",

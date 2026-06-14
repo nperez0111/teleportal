@@ -2,17 +2,25 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import type { StateVector, Update } from "teleportal";
 import { getEmptyStateVector, getEmptyUpdate } from "../../lib/protocol/utils";
+import {
+  createContentAttribute,
+  createContentIdsFromUpdate,
+  createContentMapFromContentIds,
+  decodeContentMap,
+  encodeContentMap,
+  resolveItemAttribution,
+} from "teleportal/attribution";
 import { YDocStorage } from "./ydoc";
-import type { FileStorage } from "../types";
+import type { EncodedContentMap, FileStorage } from "../types";
 
 describe("YDocStorage", () => {
   let storage: YDocStorage;
   let mockFileStorage: FileStorage;
 
   beforeEach(() => {
-    // Clear static maps before each test
     YDocStorage.docs.clear();
     YDocStorage.metadata.clear();
+    YDocStorage.attributionMaps.clear();
     storage = new YDocStorage();
   });
 
@@ -277,6 +285,86 @@ describe("YDocStorage", () => {
       });
 
       expect(result).toBe("test-result");
+    });
+  });
+
+  describe("attribution", () => {
+    function makeAttribution(update: Update, userId: string): EncodedContentMap {
+      const contentIds = createContentIdsFromUpdate(update);
+      return encodeContentMap(
+        createContentMapFromContentIds(contentIds, [
+          createContentAttribute("insert", userId),
+          createContentAttribute("insertAt", Date.now()),
+        ], [
+          createContentAttribute("delete", userId),
+          createContentAttribute("deleteAt", Date.now()),
+        ]),
+      );
+    }
+
+    it("should store and retrieve attribution via handleUpdate", async () => {
+      const key = "attr-doc-1";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "Hello");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+      const attribution = makeAttribution(update, "user-1");
+
+      await storage.handleUpdate(key, update, attribution);
+
+      const retrieved = await storage.retrieveAttribution(key);
+      expect(retrieved).not.toBeNull();
+      const map = decodeContentMap(retrieved!);
+      expect(map.inserts.clients.size).toBeGreaterThan(0);
+    });
+
+    it("should return null when no attribution exists", async () => {
+      const result = await storage.retrieveAttribution("nonexistent");
+      expect(result).toBeNull();
+    });
+
+    it("should not store attribution when param is undefined", async () => {
+      const key = "attr-doc-2";
+      const doc = new Y.Doc();
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, update);
+
+      const result = await storage.retrieveAttribution(key);
+      expect(result).toBeNull();
+    });
+
+    it("should merge multiple attributions on retrieve", async () => {
+      const key = "attr-doc-3";
+      const doc1 = new Y.Doc();
+      doc1.getText("content").insert(0, "Hello");
+      const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
+
+      await storage.handleUpdate(key, update1, makeAttribution(update1, "user-1"));
+
+      const doc2 = new Y.Doc();
+      Y.applyUpdateV2(doc2, update1);
+      doc2.getText("content").insert(5, " World");
+      const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
+
+      await storage.handleUpdate(key, update2, makeAttribution(update2, "user-2"));
+
+      const retrieved = await storage.retrieveAttribution(key);
+      expect(retrieved).not.toBeNull();
+      const map = decodeContentMap(retrieved!);
+      expect(map.inserts.clients.size).toBeGreaterThan(0);
+    });
+
+    it("should clean up attribution on deleteDocument", async () => {
+      const key = "attr-doc-4";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "Hello");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, update, makeAttribution(update, "user-1"));
+      expect(await storage.retrieveAttribution(key)).not.toBeNull();
+
+      await storage.deleteDocument(key);
+      expect(await storage.retrieveAttribution(key)).toBeNull();
     });
   });
 });

@@ -6,7 +6,12 @@ import {
   mergeUpdates,
   type Update,
 } from "teleportal";
-import type { Document, DocumentMetadata } from "../types";
+import {
+  decodeContentMap,
+  encodeContentMap,
+  mergeContentMaps,
+} from "teleportal/attribution";
+import type { Document, DocumentMetadata, EncodedContentMap } from "../types";
 import { UnencryptedDocumentStorage } from "../unencrypted";
 import { calculateDocumentSize } from "../utils";
 import { withTransaction } from "./transaction";
@@ -55,6 +60,14 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     return this.#getKey(key) + ":meta";
   }
 
+  #getAttributionKeyPrefix(key: string): string {
+    return this.#getKey(key) + ":attribution";
+  }
+
+  #getAttributionKey(key: string): string {
+    return this.#getAttributionKeyPrefix(key) + ":" + uuidv4();
+  }
+
   /**
    * Lock a key for 5 seconds
    * @param key - The key to lock
@@ -74,11 +87,16 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
   async handleUpdate(
     key: string,
     update: Update,
+    attribution?: EncodedContentMap,
     overwriteKeys?: boolean,
   ): Promise<void> {
     const prefixedKey = this.#getKey(key);
     const updateKey = this.#getUpdateKeyPrefix(key) + uuidv4();
     await this.storage.setItemRaw(updateKey, update);
+
+    if (attribution) {
+      await this.storage.setItemRaw(this.#getAttributionKey(key), attribution);
+    }
     if (this.options.scanKeys) {
       return;
     }
@@ -153,7 +171,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     ) as Update;
 
     // asynchronously store the update and delete the keys
-    const promise = this.handleUpdate(key, update, true).then(() => {
+    const promise = this.handleUpdate(key, update, undefined, true).then(() => {
       return Promise.all([...keys].map((key) => this.storage.removeItem(key)));
     });
 
@@ -200,6 +218,27 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     };
   }
 
+  async retrieveAttribution(
+    key: string,
+  ): Promise<EncodedContentMap | null> {
+    const attrKeys = await this.storage.getKeys(
+      this.#getAttributionKeyPrefix(key),
+    );
+    if (attrKeys.length === 0) return null;
+    if (attrKeys.length === 1) {
+      return await this.storage.getItemRaw(attrKeys[0]);
+    }
+    const maps = (
+      await Promise.all(
+        attrKeys.map((k) => this.storage.getItemRaw<EncodedContentMap>(k)),
+      )
+    ).filter(Boolean) as EncodedContentMap[];
+    if (maps.length === 0) return null;
+    if (maps.length === 1) return maps[0];
+    const merged = mergeContentMaps(maps.map((m) => decodeContentMap(m)));
+    return encodeContentMap(merged) as EncodedContentMap;
+  }
+
   async deleteDocument(key: string): Promise<void> {
     const prefixedKey = this.#getKey(key);
     // Delete metadata
@@ -213,6 +252,14 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
     if (keys.size > 0) {
       await Promise.all([...keys].map((k) => this.storage.removeItem(k)));
+    }
+
+    // Delete attribution data
+    const attrKeys = await this.storage.getKeys(
+      this.#getAttributionKeyPrefix(key),
+    );
+    if (attrKeys.length > 0) {
+      await Promise.all(attrKeys.map((k) => this.storage.removeItem(k)));
     }
 
     await this.storage.removeItem(prefixedKey);

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as Y from "yjs";
 import type {
   Message,
   ServerContext,
@@ -16,6 +17,12 @@ import type {
 import { InMemoryPubSub } from "teleportal";
 import { Session } from "./session";
 import { Server } from "./server";
+
+function createTestUpdate(content = "test"): Update {
+  const doc = new Y.Doc();
+  doc.getText("content").insert(0, content);
+  return Y.encodeStateAsUpdateV2(doc) as Update;
+}
 
 class MockClient<Context extends ServerContext> {
   public id: string;
@@ -48,7 +55,7 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        update: createTestUpdate("sync"),
         stateVector: syncStep1,
       },
     };
@@ -59,7 +66,7 @@ class MockDocumentStorage implements DocumentStorage {
     _syncStep2: SyncStep2Update,
   ): Promise<void> {}
 
-  async handleUpdate(_documentId: string, update: Update): Promise<void> {
+  async handleUpdate(_documentId: string, update: Update, _attribution?: import("teleportal/storage").EncodedContentMap): Promise<void> {
     this.storedUpdate = update;
   }
 

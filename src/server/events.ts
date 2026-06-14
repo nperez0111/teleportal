@@ -1,4 +1,5 @@
 import type { Message, ServerContext } from "teleportal";
+import type { EncodedContentMap } from "teleportal/storage";
 import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
@@ -109,6 +110,19 @@ export type SessionEvents<Context extends ServerContext = ServerContext> = {
     namespacedDocumentId: string;
     milestoneId: string;
     context: Context;
+  }) => void;
+
+  /**
+   * Emitted when attribution is recorded for a document update.
+   * Fires for both encrypted and unencrypted documents when attribution is computed.
+   */
+  "document-attribution": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+    userId: string;
+    timestamp: number;
+    contentMap: EncodedContentMap;
   }) => void;
 
   /**

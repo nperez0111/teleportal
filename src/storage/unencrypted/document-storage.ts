@@ -12,6 +12,7 @@ import type {
   Document,
   DocumentMetadata,
   DocumentStorage,
+  EncodedContentMap,
 } from "../types";
 
 function defaultMetadata(now: number, encrypted: boolean): DocumentMetadata {
@@ -34,6 +35,7 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
   abstract handleUpdate(
     documentId: Document["id"],
     update: Update,
+    attribution?: EncodedContentMap,
   ): Promise<void>;
   abstract getDocument(documentId: Document["id"]): Promise<Document | null>;
   abstract writeDocumentMetadata(
@@ -80,4 +82,5 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
     // when unencrypted, there is no difference between the sync step 2 and the update message type
     await this.handleUpdate(documentId, syncStep2 as unknown as Update);
   }
+
 }

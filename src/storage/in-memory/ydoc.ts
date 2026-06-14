@@ -5,28 +5,44 @@ import {
   getUpdateFromDoc,
   type Update,
 } from "teleportal";
+import {
+  decodeContentMap,
+  encodeContentMap,
+  mergeContentMaps,
+} from "teleportal/attribution";
 import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
-import type { Document, DocumentMetadata } from "../types";
+import type { Document, DocumentMetadata, EncodedContentMap } from "../types";
 
 export class YDocStorage extends UnencryptedDocumentStorage {
   public static docs = new Map<string, Y.Doc>();
   public static metadata = new Map<string, DocumentMetadata>();
+  public static attributionMaps = new Map<string, EncodedContentMap[]>();
 
   constructor() {
     super();
   }
 
-  /**
-   * Persist a Y.js update to storage
-   */
-  async handleUpdate(key: string, update: Update): Promise<void> {
+  async handleUpdate(
+    key: string,
+    update: Update,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
     if (!YDocStorage.docs.has(key)) {
       YDocStorage.docs.set(key, new Y.Doc());
     }
     const doc = YDocStorage.docs.get(key)!;
 
     Y.applyUpdateV2(doc, update);
+
+    if (attribution) {
+      let list = YDocStorage.attributionMaps.get(key);
+      if (!list) {
+        list = [];
+        YDocStorage.attributionMaps.set(key, list);
+      }
+      list.push(attribution);
+    }
 
     await this.transaction(key, async () => {
       const meta = await this.getDocumentMetadata(key);
@@ -87,5 +103,16 @@ export class YDocStorage extends UnencryptedDocumentStorage {
   async deleteDocument(key: string): Promise<void> {
     YDocStorage.docs.delete(key);
     YDocStorage.metadata.delete(key);
+    YDocStorage.attributionMaps.delete(key);
+  }
+
+  async retrieveAttribution(
+    documentId: string,
+  ): Promise<EncodedContentMap | null> {
+    const list = YDocStorage.attributionMaps.get(documentId);
+    if (!list || list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    const merged = mergeContentMaps(list.map((m) => decodeContentMap(m)));
+    return encodeContentMap(merged) as EncodedContentMap;
   }
 }

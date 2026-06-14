@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import * as Y from "yjs";
 
 import { Server } from "./server";
 import { checkPermissionWithTokenManager } from "./check-permission";
@@ -19,6 +20,12 @@ import type {
   DocumentStorage,
 } from "teleportal/storage";
 
+function createTestUpdate(content = "test"): Update {
+  const doc = new Y.Doc();
+  doc.getText("content").insert(0, content);
+  return Y.encodeStateAsUpdateV2(doc) as Update;
+}
+
 // Mock DocumentStorage for testing
 class MockDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
@@ -36,7 +43,7 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        update: createTestUpdate("sync"),
         stateVector: syncStep1,
       },
     };
@@ -49,7 +56,7 @@ class MockDocumentStorage implements DocumentStorage {
     return;
   }
 
-  async handleUpdate(_documentId: string, update: Update): Promise<void> {
+  async handleUpdate(_documentId: string, update: Update, _attribution?: import("teleportal/storage").EncodedContentMap): Promise<void> {
     this.mockHandleUpdate = true;
     this.storedUpdate = update;
   }
@@ -729,7 +736,7 @@ describe("Server", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+          update: createTestUpdate() as unknown as SyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
         false,
@@ -1125,7 +1132,7 @@ describe("Server", () => {
       // Send update from client1
       const update = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         { clientId: "client-1", userId: "user-1", room: "room" },
         false,
       );
@@ -1619,7 +1626,7 @@ describe("Server", () => {
 
       const message = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         {
           clientId: "client-1",
           userId: payload.payload.userId,
@@ -1682,7 +1689,7 @@ describe("Server", () => {
 
       const message = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         {
           clientId: "client-1",
           ...payload.payload,
@@ -1767,7 +1774,7 @@ describe("Server", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+          update: createTestUpdate() as unknown as SyncStep2Update,
         },
         {
           clientId: "client-1",
@@ -1859,7 +1866,7 @@ describe("Server", () => {
       // Test write operation
       const writeMessage = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         {
           clientId: "client-1",
           userId: payload.payload.userId,

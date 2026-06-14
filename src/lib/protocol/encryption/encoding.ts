@@ -5,6 +5,10 @@ import { digest } from "lib0/hash/sha256";
 
 import type { StateVector, SyncStep2Update, Update } from "teleportal";
 import { EncryptedBinary } from "teleportal/encryption-key";
+import {
+  type EncodedContentIds,
+  getEmptyEncodedContentIds,
+} from "teleportal/attribution";
 import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
 
 /**
@@ -95,6 +99,7 @@ export type DecodedEncryptedUpdatePayload = {
   id: EncryptedMessageId;
   timestamp: LamportClockValue;
   payload: EncryptedBinary;
+  contentIds: EncodedContentIds;
 };
 
 /**
@@ -124,6 +129,8 @@ export function encodeEncryptedUpdateMessages(
       encoding.writeVarUint(encoder, update.timestamp[1]);
       // payload
       encoding.writeVarUint8Array(encoder, update.payload);
+      // contentIds
+      encoding.writeVarUint8Array(encoder, update.contentIds);
     }
   }) as EncryptedUpdatePayload;
 }
@@ -134,9 +141,10 @@ export function encodeEncryptedUpdateMessages(
 export function encodeEncryptedUpdate(
   update: EncryptedBinary,
   timestamp: LamportClockValue,
+  contentIds: EncodedContentIds = getEmptyEncodedContentIds(),
 ): EncryptedUpdatePayload {
   return encodeEncryptedUpdateMessages([
-    { id: toBase64(digest(update)), timestamp, payload: update },
+    { id: toBase64(digest(update)), timestamp, payload: update, contentIds },
   ]);
 }
 
@@ -164,9 +172,13 @@ export function decodeEncryptedUpdate(
       const counter = decoding.readVarUint(decoder);
       // payload
       const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
+      // contentIds
+      const contentIds = decoding.readVarUint8Array(
+        decoder,
+      ) as EncodedContentIds;
 
       // create message instance
-      messages.push({ id, timestamp: [clientId, counter], payload });
+      messages.push({ id, timestamp: [clientId, counter], payload, contentIds });
     }
     return messages;
   } catch (err) {
@@ -287,6 +299,7 @@ export function decodeFromSyncStep2(
         id,
         timestamp: [clientId, lamportClock],
         payload,
+        contentIds: getEmptyEncodedContentIds(),
       });
     }
     return { messages };

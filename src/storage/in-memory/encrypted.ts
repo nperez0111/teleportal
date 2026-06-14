@@ -3,11 +3,18 @@ import type {
   EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
 import {
+  decodeContentMap,
+  encodeContentMap,
+  mergeContentMaps,
+} from "teleportal/attribution";
+import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
+import type { EncodedContentMap } from "../types";
 
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
+  public static attributionMaps = new Map<string, EncodedContentMap[]>();
   constructor(
     private options: {
       write: (
@@ -111,7 +118,34 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     return update;
   }
 
+  override async handleUpdate(
+    key: string,
+    update: EncryptedUpdatePayload,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
+    await super.handleUpdate(key, update);
+    if (attribution) {
+      let list = EncryptedMemoryStorage.attributionMaps.get(key);
+      if (!list) {
+        list = [];
+        EncryptedMemoryStorage.attributionMaps.set(key, list);
+      }
+      list.push(attribution);
+    }
+  }
+
   async deleteDocument(key: string): Promise<void> {
     EncryptedMemoryStorage.docs.delete(key);
+    EncryptedMemoryStorage.attributionMaps.delete(key);
+  }
+
+  async retrieveAttribution(
+    documentId: string,
+  ): Promise<EncodedContentMap | null> {
+    const list = EncryptedMemoryStorage.attributionMaps.get(documentId);
+    if (!list || list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    const merged = mergeContentMaps(list.map((m) => decodeContentMap(m)));
+    return encodeContentMap(merged) as EncodedContentMap;
   }
 }

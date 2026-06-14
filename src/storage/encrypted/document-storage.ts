@@ -18,8 +18,10 @@ import {
   type DocumentMetadata as BaseDocumentMetadata,
   type DocumentStorage,
   type Document,
+  type EncodedContentMap,
 } from "../types";
 import { EncryptedBinary } from "teleportal/encryption-key";
+import { getEmptyEncodedContentIds } from "teleportal/attribution";
 
 export interface EncryptedDocumentMetadata extends BaseDocumentMetadata {
   seenMessages: SeenMessageMapping;
@@ -134,6 +136,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
   async handleUpdate(
     key: string,
     update: EncryptedUpdatePayload,
+    _attribution?: EncodedContentMap,
   ): Promise<void> {
     await this.transaction(key, async () => {
       const { seenMessages, ...rest } = await this.getDocumentMetadata(key);
@@ -176,6 +179,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
             id: messageId,
             payload: message,
             timestamp: [Number.parseInt(clientId), Number.parseInt(counter)],
+            contentIds: getEmptyEncodedContentIds(),
           });
         }
       }
@@ -210,4 +214,5 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
   transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     return cb();
   }
+
 }
