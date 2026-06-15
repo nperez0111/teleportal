@@ -77,32 +77,61 @@ export class AttrRanges {
   }
 
   getIds(): AttrRange[] {
-    if (!this._sorted) {
-      this._ids.sort((a, b) => a.clock - b.clock);
-      const merged: AttrRange[] = [];
-      for (const range of this._ids) {
-        if (merged.length > 0) {
-          const last = merged.at(-1)!;
-          const lastEnd = last.clock + last.len;
-          if (lastEnd >= range.clock && attrsEqual(last.attrs, range.attrs)) {
-            last.len = Math.max(
-              last.len,
-              range.clock + range.len - last.clock,
-            );
-            continue;
-          }
-          if (lastEnd > range.clock && !attrsEqual(last.attrs, range.attrs)) {
-            last.len = range.clock - last.clock;
-            if (last.len <= 0) {
-              merged.pop();
-            }
-          }
-        }
-        merged.push(new AttrRange(range.clock, range.len, range.attrs));
-      }
-      this._ids = merged;
-      this._sorted = true;
+    if (this._sorted) {
+      return this._ids;
     }
+
+    // Flatten the (possibly overlapping) input ranges into a sorted,
+    // non-overlapping sequence. Where ranges overlap with differing attrs the
+    // most-recently-added range (highest input index) wins the contested span;
+    // every non-contested span keeps its own attrs. Spans of every covering
+    // range — including the tail of a range that fully contains a later one —
+    // are preserved, then adjacent equal-attr spans are coalesced.
+    const input = this._ids;
+    const boundaries = new Set<number>();
+    for (const range of input) {
+      boundaries.add(range.clock);
+      boundaries.add(range.clock + range.len);
+    }
+    const points = [...boundaries].sort((a, b) => a - b);
+
+    const merged: AttrRange[] = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      const start = points[i];
+      const end = points[i + 1];
+
+      // Every range boundary is a point, so each range either fully covers this
+      // elementary span or does not intersect it. Pick the latest-added cover.
+      let winner: AttrRange | undefined;
+      let winnerIdx = -1;
+      for (const [j, range] of input.entries()) {
+        if (
+          range.clock <= start &&
+          range.clock + range.len >= end &&
+          j > winnerIdx
+        ) {
+          winner = range;
+          winnerIdx = j;
+        }
+      }
+      if (!winner) {
+        continue;
+      }
+
+      const last = merged.at(-1);
+      if (
+        last &&
+        last.clock + last.len === start &&
+        attrsEqual(last.attrs, winner.attrs)
+      ) {
+        last.len = end - last.clock;
+      } else {
+        merged.push(new AttrRange(start, end - start, winner.attrs));
+      }
+    }
+
+    this._ids = merged;
+    this._sorted = true;
     return this._ids;
   }
 
