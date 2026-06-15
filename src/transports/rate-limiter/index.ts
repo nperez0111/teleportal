@@ -365,13 +365,18 @@ export class RateLimitedTransport<
             resetAt: currentState.lastRefill + currentState.windowMs,
             message,
           };
-          this.onRateLimitExceeded?.(exceededData);
-          this.metricsCollector?.recordRateLimitExceeded(
-            exceededData.userId ?? "unknown",
-            exceededData.documentId,
-            exceededData.trackBy,
-          );
-          this.eventEmitter?.call("rate-limit-exceeded", exceededData);
+          try {
+            this.onRateLimitExceeded?.(exceededData);
+            this.metricsCollector?.recordRateLimitExceeded(
+              exceededData.userId ?? "unknown",
+              exceededData.documentId,
+              exceededData.trackBy,
+            );
+            this.eventEmitter?.call("rate-limit-exceeded", exceededData);
+          } catch (err) {
+            // Observability hooks must not break the non-fatal drop guarantee.
+            console.warn("Rate limit observability hook threw:", err);
+          }
           return exceededData;
         }
 
@@ -406,9 +411,14 @@ export class RateLimitedTransport<
           resetAt: bucket.lastRefill + currentWindowMs,
           message,
         };
-        this.onRateLimitExceeded?.(exceededData);
-        this.metricsCollector?.recordRateLimitExceeded("unknown", undefined, "transport");
-        this.eventEmitter?.call("rate-limit-exceeded", exceededData);
+        try {
+          this.onRateLimitExceeded?.(exceededData);
+          this.metricsCollector?.recordRateLimitExceeded("unknown", undefined, "transport");
+          this.eventEmitter?.call("rate-limit-exceeded", exceededData);
+        } catch (err) {
+          // Observability hooks must not break the non-fatal drop guarantee.
+          console.warn("Rate limit observability hook threw:", err);
+        }
         return exceededData;
       }
 

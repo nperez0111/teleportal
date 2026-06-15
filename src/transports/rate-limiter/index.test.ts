@@ -328,14 +328,13 @@ describe("RateLimitedTransport", () => {
     sourceController.ctrl.enqueue({ type: "ping" } as any);
     sourceController.ctrl.enqueue({ type: "ping" } as any);
 
-    // Wait a tick for processing
-    await new Promise((r) => setTimeout(r, 50));
+    // Close the source and wait for the read loop to drain deterministically
+    // (avoids a flaky fixed-delay wait on slower CI).
+    sourceController.ctrl.close();
+    await readLoop;
 
     // Only the first should have passed through
     expect(received.length).toBe(1);
     expect(onRateLimitExceeded).toHaveBeenCalledTimes(2);
-
-    sourceController.ctrl.close();
-    await readLoop;
   });
 });
