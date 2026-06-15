@@ -6,7 +6,9 @@ import {
   Message,
   type ClientContext,
   type StateVector,
+  type Update,
 } from "teleportal";
+import * as Y from "yjs";
 import { RpcMessage } from "teleportal/protocol";
 import { Connection, type ConnectionState } from "./connection";
 import { Timer } from "./utils";
@@ -46,6 +48,8 @@ class MockConnection extends Connection<{
     timer?: Timer;
     isOnline?: boolean;
     eventTarget?: EventTarget;
+    batchIntervalMs?: number;
+    maxBatchIntervalMs?: number;
   }) {
     super({ connect: false, batchIntervalMs: 0, ...options });
     // Initialize state to disconnected
@@ -347,6 +351,80 @@ describe("Connection", () => {
       await connection.send(message);
       // Message should not be sent or buffered when manually disconnected
       expect(connection.sentMessages.length).toBe(0);
+    });
+  });
+
+  describe("Update Batching", () => {
+    // Build a real Y.js V2 update so mergeUpdates can merge it.
+    const makeUpdate = (doc: string, mutate: (d: Y.Doc) => void): DocMessage<any> => {
+      const d = new Y.Doc();
+      mutate(d);
+      return new DocMessage(doc, { type: "update", update: Y.encodeStateAsUpdateV2(d) as Update }, {
+        clientId: "test-client",
+      } as ClientContext);
+    };
+
+    it("merges multiple updates for the same doc into one valid DocMessage", async () => {
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 30 });
+      await batched.connect();
+
+      await batched.send(makeUpdate("doc-a", (d) => d.getMap("m").set("a", 1)));
+      await batched.send(makeUpdate("doc-a", (d) => d.getMap("m").set("b", 2)));
+
+      // Nothing sent yet (still within the batch interval)
+      expect(batched.sentMessages.length).toBe(0);
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      // The two updates collapse into a single message
+      expect(batched.sentMessages.length).toBe(1);
+      const sent = batched.sentMessages[0]!;
+      // The flushed message must remain a real DocMessage instance: the transport
+      // relies on the `id`/`encoded` prototype getters, which a plain-object spread
+      // would have dropped.
+      expect(sent).toBeInstanceOf(DocMessage);
+      expect(typeof sent.id).toBe("string");
+      expect(sent.encoded).toBeInstanceOf(Uint8Array);
+      expect((sent.payload as { type: string }).type).toBe("update");
+
+      await batched.destroy();
+    });
+
+    it("sends a single update as-is, preserving message identity", async () => {
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 30 });
+      await batched.connect();
+
+      const message = makeUpdate("doc-b", (d) => d.getMap("m").set("a", 1));
+      await batched.send(message);
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      expect(batched.sentMessages.length).toBe(1);
+      expect(batched.sentMessages[0]).toBe(message);
+
+      await batched.destroy();
+    });
+
+    it("keeps batching enabled after repeated ACKs (AIMD floor)", async () => {
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 30 });
+      // Echo an ACK for every sent message to drive the AIMD speed-up.
+      batched.responseHandler = (message) =>
+        new AckMessage({ type: "ack", messageId: message.id }, undefined);
+      await batched.connect();
+
+      // Flush many batches; each ACK decrements the interval by 10.
+      for (let i = 0; i < 20; i++) {
+        await batched.send(makeUpdate("doc-c", (d) => d.getMap("m").set(`k${i}`, i)));
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+
+      // Batching must still be active: a fresh update is held, not flushed
+      // immediately (which is what a 0 interval would do).
+      const before = batched.sentMessages.length;
+      await batched.send(makeUpdate("doc-c", (d) => d.getMap("m").set("final", 1)));
+      expect(batched.sentMessages.length).toBe(before);
+
+      await batched.destroy();
     });
   });
 

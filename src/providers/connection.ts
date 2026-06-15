@@ -1,11 +1,13 @@
 import {
   AckMessage,
+  DocMessage,
+  type Update,
   Message,
+  mergeUpdates,
   Observable,
   RawReceivedMessage,
 } from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
-import { mergeUpdatesV2 } from "yjs";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
 /**
@@ -178,6 +180,11 @@ const DEFAULT_RECONNECT_DELAY_JITTER = 0;
 const DEFAULT_MAX_BUFFERED_MESSAGES = Number.POSITIVE_INFINITY;
 const DEFAULT_RECONNECT_BACKOFF_FACTOR = 1.3;
 const DEFAULT_IN_FLIGHT_MESSAGE_TIMEOUT = 30_000;
+// Floor for the AIMD batch interval while batching is enabled. The interval is
+// only ever 0 when batching is explicitly disabled (batchIntervalMs: 0); the
+// speed-up step must not drive an enabled interval down to 0, which would
+// silently disable batching for the rest of the connection's life.
+const MIN_BATCH_INTERVAL_MS = 10;
 
 export abstract class Connection<Context extends ConnectionContext = any> extends Observable<{
   update: (state: ConnectionState<Context>) => void;
@@ -226,7 +233,7 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
   // Update batching (AIMD congestion control)
   #batchIntervalMs: number;
   #maxBatchIntervalMs: number;
-  #pendingUpdates = new Map<string, { updates: Uint8Array[]; message: Message }>();
+  #pendingUpdates = new Map<string, { updates: Update[]; message: DocMessage<any> }>();
   #batchFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Heartbeat and connection check state
@@ -342,9 +349,10 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
           if (entry.timer) this.timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(messageId);
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
-          // AIMD: speed up on successful ACK
+          // AIMD: speed up on successful ACK (never below the floor, so batching
+          // stays enabled once turned on)
           if (this.#batchIntervalMs > 0) {
-            this.#batchIntervalMs = Math.max(0, this.#batchIntervalMs - 10);
+            this.#batchIntervalMs = Math.max(MIN_BATCH_INTERVAL_MS, this.#batchIntervalMs - 10);
           }
         }
       } else {
@@ -662,11 +670,19 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
 
     this.#flushing = true;
     for (const [, { updates, message }] of this.#pendingUpdates) {
-      const merged = updates.length === 1 ? updates[0]! : mergeUpdatesV2(updates);
-      const batched = {
-        ...message,
-        payload: { type: "update" as const, update: merged },
-      } as Message;
+      // Single update: the original message is unchanged, so send it as-is to
+      // preserve its identity (id/encoded cache). Multiple updates: build a new
+      // DocMessage instance — spreading the message would yield a plain object
+      // that loses the prototype getters (id/encoded) the transport relies on.
+      const batched =
+        updates.length === 1
+          ? message
+          : new DocMessage(
+              message.document,
+              { type: "update", update: mergeUpdates(updates) },
+              message.context,
+              message.encrypted,
+            );
       this.sendOrBuffer(batched);
     }
     this.#pendingUpdates.clear();
@@ -687,13 +703,14 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
 
     // Batch doc update messages when batching is enabled
     if (this.#batchIntervalMs > 0 && !this.#flushing && this.isDocUpdate(message)) {
-      const doc = message.document!;
-      const update = (message.payload as { update: Uint8Array }).update;
+      const docMessage = message as DocMessage<any>;
+      const doc = docMessage.document;
+      const update = (docMessage.payload as { update: Update }).update;
       const existing = this.#pendingUpdates.get(doc);
       if (existing) {
         existing.updates.push(update);
       } else {
-        this.#pendingUpdates.set(doc, { updates: [update], message });
+        this.#pendingUpdates.set(doc, { updates: [update], message: docMessage });
       }
       this.#scheduleBatchFlush();
       return;
@@ -702,11 +719,7 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     if (this.state.type === "connected") {
       // Track in-flight messages that expect an ack. Ack, awareness, and presence
       // messages are fire-and-forget and are never acked.
-      if (
-        message.type !== "ack" &&
-        message.type !== "awareness" &&
-        message.type !== "presence"
-      ) {
+      if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
         const wasEmpty = this.#inFlightMessages.size === 0;
         const timer =
           this.#inFlightMessageTimeoutMs > 0
@@ -730,11 +743,7 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
 
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails
-        if (
-          message.type !== "ack" &&
-          message.type !== "awareness" &&
-          message.type !== "presence"
-        ) {
+        if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
           const entry = this.#inFlightMessages.get(message.id);
           if (entry?.timer) this.timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(message.id);
