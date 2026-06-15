@@ -566,6 +566,12 @@ pre.devtools-bg-gray-50 {
   letter-spacing: 0.02em;
 }
 
+.devtools-inspector-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .devtools-inspector-copy-btn {
   display: inline-flex;
   align-items: center;

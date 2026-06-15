@@ -458,6 +458,35 @@ export function formatTimestamp(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString();
 }
 
+export function formatLogEntry(msg: {
+  message: MessageType;
+  direction: "sent" | "received";
+  timestamp: number;
+  document: string | undefined;
+  ackedBy?: { timestamp: number } | undefined;
+}): string {
+  const time = new Date(msg.timestamp).toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+  });
+  const arrow =
+    msg.direction === "sent" ? "CLIENT → SERVER" : "SERVER → CLIENT";
+  const type = getMessageTypeLabel(msg.message);
+  const doc = msg.document ? `doc: "${msg.document}"` : "doc: (none)";
+  const encrypted = msg.message.encrypted ? "encrypted" : "plaintext";
+
+  let ack = "";
+  if (msg.ackedBy) {
+    const latency = msg.ackedBy.timestamp - msg.timestamp;
+    ack = ` | acked (${latency}ms)`;
+  }
+
+  return `[${time}] ${arrow} | ${type} | ${doc} | ${encrypted}${ack}`;
+}
+
 export function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp;

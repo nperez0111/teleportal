@@ -1025,7 +1025,7 @@ export class Session<Context extends ServerContext> extends Observable<
                         this.encrypted,
                       );
                       await Promise.all([
-                        this.broadcast(broadcastMessage),
+                        this.broadcast(broadcastMessage, client?.id),
                         this.#pubSub.publish(
                           `document/${this.namespacedDocumentId}` as const,
                           broadcastMessage.encoded,

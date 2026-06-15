@@ -72,7 +72,6 @@ export class EncryptionClient
   private serverVersion = 0;
   private pendingUpdates = new Map<string, DecodedEncryptedUpdatePayload>();
   private seenUpdates = new Map<string, Set<string>>();
-  private queuedUpdates = new Map<string, DecodedEncryptedUpdatePayload[]>();
   private loadingPromise: Promise<void> | null = null;
   #snapshotIntervalMs: number;
   #snapshotTimer: ReturnType<typeof setInterval> | null = null;
@@ -209,12 +208,6 @@ export class EncryptionClient
     return this.seenUpdates.get(snapshotId)?.has(key) ?? false;
   }
 
-  private queueUpdate(update: DecodedEncryptedUpdatePayload) {
-    const list = this.queuedUpdates.get(update.snapshotId) ?? [];
-    list.push(update);
-    this.queuedUpdates.set(update.snapshotId, list);
-  }
-
   private async applyUpdatesToDoc(updates: DecryptedBinary[]): Promise<void> {
     if (updates.length === 0) {
       return;
@@ -256,20 +249,20 @@ export class EncryptionClient
   ): Promise<void> {
     const toDecrypt: DecodedEncryptedUpdatePayload[] = [];
     for (const update of updates) {
-      if (update.snapshotId !== this.activeSnapshotId) {
-        this.queueUpdate(update);
+      if (this.hasSeen(update)) {
+        this.handleAcknowledgement(update);
         continue;
       }
 
-      if (!this.hasSeen(update)) {
-        toDecrypt.push(update);
-        this.markSeen(update);
-        if (!update.id) {
-          update.id = toBase64(digest(update.payload));
-        }
-        this.call("update-stored", update);
+      toDecrypt.push(update);
+      this.markSeen(update);
+      if (!update.id) {
+        update.id = toBase64(digest(update.payload));
       }
-      this.handleAcknowledgement(update);
+      this.call("update-stored", update);
+      if (update.snapshotId === this.activeSnapshotId) {
+        this.handleAcknowledgement(update);
+      }
     }
 
     const batchSize = EncryptionClient.DECRYPT_BATCH_SIZE;
@@ -285,16 +278,6 @@ export class EncryptionClient
     }
   }
 
-  private async applyQueuedUpdates(snapshotId: string): Promise<void> {
-    const queued = this.queuedUpdates.get(snapshotId);
-    if (!queued || queued.length === 0) {
-      return;
-    }
-    queued.sort((a, b) => (a.serverVersion ?? 0) - (b.serverVersion ?? 0));
-    this.queuedUpdates.delete(snapshotId);
-    await this.applyUpdates(queued);
-  }
-
   private async applySnapshot(snapshot: EncryptedSnapshot): Promise<void> {
     if (this.activeSnapshot?.id === snapshot.id) {
       return;
@@ -307,7 +290,6 @@ export class EncryptionClient
     this.clock = new LamportClock(this.awareness.clientID);
     this.pendingUpdates.clear();
     this.seenUpdates.clear();
-    this.queuedUpdates.clear();
 
     this.call("snapshot-stored", snapshot);
     this.call("state-updated", {
@@ -332,7 +314,6 @@ export class EncryptionClient
     this.clock = new LamportClock(this.awareness.clientID);
     this.pendingUpdates.clear();
     this.seenUpdates.clear();
-    this.queuedUpdates.clear();
 
     this.call("snapshot-stored", snapshot);
     this.call("state-updated", {
@@ -460,7 +441,6 @@ export class EncryptionClient
     const hadUpdates = decodedSyncStep2.updates.length > 0;
     if (decodedSyncStep2.snapshot) {
       await this.applySnapshot(decodedSyncStep2.snapshot);
-      await this.applyQueuedUpdates(decodedSyncStep2.snapshot.id);
     }
     await this.applyUpdates(decodedSyncStep2.updates);
 
@@ -476,7 +456,6 @@ export class EncryptionClient
     const decoded = decodeEncryptedUpdate(payload);
     if (decoded.type === "snapshot") {
       await this.applySnapshot(decoded.snapshot);
-      await this.applyQueuedUpdates(decoded.snapshot.id);
       return;
     }
     await this.applyUpdates(decoded.updates);
