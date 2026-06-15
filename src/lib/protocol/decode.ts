@@ -259,13 +259,18 @@ function decodePresenceMessageWithDecoder(
     const awarenessId = decoding.readVarUint(decoder);
     const clientId = decoding.readVarString(decoder);
     const userId = decoding.readVarString(decoder);
-    const data = decoding.readAny(decoder) as Record<string, unknown>;
+    const data: unknown = decoding.readAny(decoder);
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      throw new Error("Invalid presence data: expected an object", {
+        cause: { data },
+      });
+    }
     return {
       type: subType === 1 ? "presence-join" : "presence-leave",
       awarenessId,
       clientId,
       userId,
-      data,
+      data: data as Record<string, unknown>,
     };
   }
   if (subType === 3) {
@@ -275,8 +280,13 @@ function decodePresenceMessageWithDecoder(
       const awarenessId = decoding.readVarUint(decoder);
       const clientId = decoding.readVarString(decoder);
       const userId = decoding.readVarString(decoder);
-      const data = decoding.readAny(decoder) as Record<string, unknown>;
-      clients.push({ awarenessId, clientId, userId, data });
+      const data: unknown = decoding.readAny(decoder);
+      if (typeof data !== "object" || data === null || Array.isArray(data)) {
+        throw new Error("Invalid presence data: expected an object", {
+          cause: { data },
+        });
+      }
+      clients.push({ awarenessId, clientId, userId, data: data as Record<string, unknown> });
     }
     return { type: "presence-heartbeat", clients };
   }
