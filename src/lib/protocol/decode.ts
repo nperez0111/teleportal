@@ -5,6 +5,7 @@ import {
   AwarenessMessage,
   type BinaryMessage,
   DocMessage,
+  PresenceMessage,
   RpcMessage,
   type RawReceivedMessage,
 } from "./message-types";
@@ -17,6 +18,8 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  PresenceMessageBinary,
+  PresenceStep,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -85,6 +88,14 @@ export function decodeMessage(
       }
       case 0x02: {
         return new AckMessage(decodeAckMessageWithDecoder(decoder), undefined);
+      }
+      case 0x03: {
+        return new PresenceMessage(
+          documentName,
+          decodePresenceMessageWithDecoder(decoder),
+          undefined,
+          update as PresenceMessageBinary,
+        );
       }
       case 0x04: {
         return decodeRpcMessageWithDecoder(
@@ -232,6 +243,44 @@ function decodeAckMessageWithDecoder(
     type: "ack",
     messageId: toBase64(decoding.readVarUint8Array(decoder)),
   };
+}
+
+function decodePresenceMessageWithDecoder(
+  decoder: decoding.Decoder,
+): PresenceStep {
+  const subType = decoding.readUint8(decoder);
+  if (subType === 0) {
+    return {
+      type: "presence-announce",
+      awarenessId: decoding.readVarUint(decoder),
+    };
+  }
+  if (subType === 1 || subType === 2) {
+    const awarenessId = decoding.readVarUint(decoder);
+    const clientId = decoding.readVarString(decoder);
+    const userId = decoding.readVarString(decoder);
+    const data = decoding.readAny(decoder) as Record<string, unknown>;
+    return {
+      type: subType === 1 ? "presence-join" : "presence-leave",
+      awarenessId,
+      clientId,
+      userId,
+      data,
+    };
+  }
+  if (subType === 3) {
+    const count = decoding.readVarUint(decoder);
+    const clients = [];
+    for (let i = 0; i < count; i++) {
+      const awarenessId = decoding.readVarUint(decoder);
+      const clientId = decoding.readVarString(decoder);
+      const userId = decoding.readVarString(decoder);
+      const data = decoding.readAny(decoder) as Record<string, unknown>;
+      clients.push({ awarenessId, clientId, userId, data });
+    }
+    return { type: "presence-heartbeat", clients };
+  }
+  throw new Error("Invalid presence sub-type", { cause: { subType } });
 }
 
 function decodeRpcMessageWithDecoder(

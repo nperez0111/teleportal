@@ -1,8 +1,12 @@
 import { emitWideEvent } from "./logger";
 import {
   decodeMessage,
+  type DecodedPresenceHeartbeat,
+  type DecodedPresenceJoin,
+  type DecodedPresenceLeave,
   DocMessage,
   type Message,
+  PresenceMessage,
   type PubSub,
   type ServerContext,
   type SyncStep2Update,
@@ -31,7 +35,11 @@ import {
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
-import type { DocumentMessageSource, SessionEvents } from "./events";
+import type {
+  DocumentMessageSource,
+  PresenceConfig,
+  SessionEvents,
+} from "./events";
 import type { Server } from "./server";
 
 export class Session<Context extends ServerContext> extends Observable<
@@ -73,6 +81,39 @@ export class Session<Context extends ServerContext> extends Observable<
   readonly #CLEANUP_DELAY_MS = 60_000;
   #rpcHandlers: RpcHandlerRegistry;
   #server: Server<Context>;
+  #presenceConfig: PresenceConfig<Context> | undefined;
+  /**
+   * The presence of each connected (local) client, keyed by session client id.
+   * Records the numeric awareness clientID a client announced (cleartext, so it
+   * works for encrypted documents), its server context, and the resolved
+   * presence `data` (computed once at announce), so the session can tell peers
+   * which awareness state to clear when the client leaves and can advertise the
+   * client in heartbeats without re-running `getPresenceData`.
+   */
+  #clientPresence = new Map<
+    string,
+    { awarenessId: number; context: Context; data: Record<string, unknown> }
+  >();
+  /**
+   * Presence of clients connected to *other* nodes, keyed by node id, then by
+   * client id. Built from pub/sub presence join/leave and heartbeat snapshots,
+   * so a newcomer learns about cross-node peers. Each node carries a `lastSeen`
+   * timestamp; a node whose heartbeats stop is TTL-expired and its clients are
+   * cleared from local peers (self-healing across node crashes).
+   */
+  #remotePresence = new Map<
+    string,
+    {
+      lastSeen: number;
+      clients: Map<
+        string,
+        { awarenessId: number; userId: string; data: Record<string, unknown> }
+      >;
+    }
+  >();
+  #heartbeatIntervalMs: number;
+  #presenceTtlMs: number;
+  #presenceTimerId: ReturnType<typeof setInterval> | undefined;
 
   constructor(args: {
     documentId: string;
@@ -86,6 +127,7 @@ export class Session<Context extends ServerContext> extends Observable<
     onCleanupScheduled: (session: Session<Context>) => void;
     metricsCollector?: MetricsCollector;
     documentSizeConfig?: { warningThreshold?: number; limit?: number };
+    presenceConfig?: PresenceConfig<Context>;
     rpcHandlers?: RpcHandlerRegistry;
     server: Server<Context>;
   }) {
@@ -99,6 +141,10 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#nodeId = args.nodeId;
     this.#metrics = args.metricsCollector;
     this.#documentSizeConfig = args.documentSizeConfig;
+    this.#presenceConfig = args.presenceConfig;
+    this.#heartbeatIntervalMs =
+      args.presenceConfig?.heartbeatIntervalMs ?? 30_000;
+    this.#presenceTtlMs = args.presenceConfig?.presenceTtlMs ?? 90_000;
     this.#rpcHandlers = args.rpcHandlers ?? {};
     this.#server = args.server;
     this.#dedupe = args.dedupe ?? new TtlDedupe();
@@ -154,20 +200,27 @@ export class Session<Context extends ServerContext> extends Observable<
           }
 
           try {
-            const shouldAccept = this.#dedupe.shouldAccept(
-              this.namespacedDocumentId,
-              message.id,
-            );
-
-            if (!shouldAccept) {
-              this.#emitDocumentMessage(
-                message,
-                undefined,
-                "replication",
-                sourceId,
-                true,
+            // Presence messages skip dedup: heartbeats are periodic and
+            // content-hashed, so identical snapshots would collide inside the
+            // dedup TTL window and be dropped. Presence handlers are idempotent
+            // (join upserts, leave removes, heartbeat replaces), so re-applying
+            // is safe.
+            if (message.type !== "presence") {
+              const shouldAccept = this.#dedupe.shouldAccept(
+                this.namespacedDocumentId,
+                message.id,
               );
-              return;
+
+              if (!shouldAccept) {
+                this.#emitDocumentMessage(
+                  message,
+                  undefined,
+                  "replication",
+                  sourceId,
+                  true,
+                );
+                return;
+              }
             }
 
             await this.apply(message, undefined, {
@@ -200,6 +253,23 @@ export class Session<Context extends ServerContext> extends Observable<
       });
       throw error;
     }
+
+    this.#startPresenceMaintenance();
+  }
+
+  /**
+   * Periodically (a) advertise this node's local clients to other nodes and
+   * (b) expire remote nodes that have gone silent. Idempotent.
+   */
+  #startPresenceMaintenance() {
+    if (this.#presenceTimerId !== undefined || this.#heartbeatIntervalMs <= 0) {
+      return;
+    }
+    this.#presenceTimerId = setInterval(() => {
+      void this.runPresenceMaintenance();
+    }, this.#heartbeatIntervalMs);
+    // Don't keep the process alive solely for presence heartbeats.
+    (this.#presenceTimerId as { unref?: () => void }).unref?.();
   }
 
   /**
@@ -233,6 +303,8 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#clients.delete(id);
 
     if (client) {
+      this.#broadcastClientLeave(id);
+
       this.call("client-leave", {
         clientId: id,
         documentId: this.documentId,
@@ -247,6 +319,320 @@ export class Session<Context extends ServerContext> extends Observable<
 
       client.destroy();
     }
+  }
+
+  /**
+   * Resolve the integrator-configured presence `data` for a client context,
+   * tolerating a throwing or rejecting projection.
+   */
+  async #getPresenceData(context: Context): Promise<Record<string, unknown>> {
+    if (!this.#presenceConfig?.getPresenceData) {
+      return {};
+    }
+    try {
+      return await this.#presenceConfig.getPresenceData(context);
+    } catch (error) {
+      emitWideEvent("error", {
+        event_type: "presence_data_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        client_id: context.clientId,
+        error,
+      });
+      return {};
+    }
+  }
+
+  /**
+   * Record a client's announced awareness clientID and tell peers it joined.
+   *
+   * The announce is the only cleartext channel carrying the numeric awareness
+   * clientID, so this is what makes presence (and awareness clearing) work for
+   * end-to-end encrypted documents. The announcing client is also sent the
+   * current same-node roster so it learns existing peers' presence data.
+   */
+  async #handlePresenceAnnounce(
+    client: { id: string; send: (m: Message<Context>) => Promise<void> },
+    awarenessId: number,
+    context: Context,
+  ) {
+    // Resolve the presence data once and cache it, so heartbeats and the leave
+    // broadcast don't re-run the (possibly async/DB-backed) projection.
+    const data = await this.#getPresenceData(context);
+    this.#clientPresence.set(client.id, { awarenessId, context, data });
+
+    // Tell the newcomer about everyone already present (same node)...
+    for (const [otherId, other] of this.#clientPresence) {
+      if (otherId === client.id) {
+        continue;
+      }
+      const message = new PresenceMessage<Context>(this.documentId, {
+        type: "presence-join",
+        awarenessId: other.awarenessId,
+        clientId: otherId,
+        userId: other.context.userId,
+        data: other.data,
+      });
+      await client.send(message).catch(() => {});
+    }
+
+    // ...and about peers on other nodes (learned via pub/sub join/heartbeat).
+    for (const node of this.#remotePresence.values()) {
+      for (const [otherId, other] of node.clients) {
+        const message = new PresenceMessage<Context>(this.documentId, {
+          type: "presence-join",
+          awarenessId: other.awarenessId,
+          clientId: otherId,
+          userId: other.userId,
+          data: other.data,
+        });
+        await client.send(message).catch(() => {});
+      }
+    }
+
+    // Tell already-announced peers that the newcomer joined. Peers that have
+    // not announced yet are skipped — they will receive the newcomer in their
+    // own roster when they announce, which avoids a duplicate join. Other nodes
+    // get the join via pub/sub.
+    const joinMessage = new PresenceMessage<Context>(this.documentId, {
+      type: "presence-join",
+      awarenessId,
+      clientId: client.id,
+      userId: context.userId,
+      data,
+    });
+    const sends: Promise<unknown>[] = [];
+    for (const otherId of this.#clientPresence.keys()) {
+      if (otherId === client.id) {
+        continue;
+      }
+      const peer = this.#clients.get(otherId);
+      if (peer) {
+        sends.push(peer.send(joinMessage));
+      }
+    }
+    sends.push(
+      this.#pubSub.publish(
+        `document/${this.namespacedDocumentId}` as const,
+        joinMessage.encoded,
+        this.#nodeId,
+      ),
+    );
+    await Promise.all(sends).catch((error) => {
+      emitWideEvent("error", {
+        event_type: "presence_join_broadcast_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        client_id: client.id,
+        error,
+      });
+    });
+  }
+
+  /**
+   * Tell peers a client left so they clear its awareness locally. Works for
+   * encrypted documents because the awareness clientID travels in cleartext.
+   */
+  #broadcastClientLeave(clientId: string) {
+    const presence = this.#clientPresence.get(clientId);
+    this.#clientPresence.delete(clientId);
+    if (!presence) {
+      return;
+    }
+    const message = new PresenceMessage<Context>(this.documentId, {
+      type: "presence-leave",
+      awarenessId: presence.awarenessId,
+      clientId,
+      userId: presence.context.userId,
+      data: presence.data,
+    });
+    void Promise.all([
+      this.broadcast(message, clientId),
+      this.#pubSub.publish(
+        `document/${this.namespacedDocumentId}` as const,
+        message.encoded,
+        this.#nodeId,
+      ),
+    ]).catch((error) => {
+      emitWideEvent("error", {
+        event_type: "presence_leave_broadcast_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        client_id: clientId,
+        error,
+      });
+    });
+  }
+
+  /**
+   * Locally fan out a server-authored presence-join/leave (clearing the peer's
+   * awareness on leave is done client-side from this message).
+   */
+  #broadcastPresence(
+    payload: DecodedPresenceJoin | DecodedPresenceLeave,
+  ): Promise<void> {
+    return this.broadcast(new PresenceMessage<Context>(this.documentId, payload));
+  }
+
+  /**
+   * Record/refresh a single remote client (from a pub/sub presence-join), so the
+   * cross-node roster stays current between heartbeats.
+   */
+  #upsertRemoteClient(
+    nodeId: string,
+    payload: DecodedPresenceJoin,
+  ) {
+    const node = this.#remotePresence.get(nodeId) ?? {
+      lastSeen: Date.now(),
+      clients: new Map<
+        string,
+        { awarenessId: number; userId: string; data: Record<string, unknown> }
+      >(),
+    };
+    node.lastSeen = Date.now();
+    node.clients.set(payload.clientId, {
+      awarenessId: payload.awarenessId,
+      userId: payload.userId,
+      data: payload.data,
+    });
+    this.#remotePresence.set(nodeId, node);
+  }
+
+  /**
+   * Forget a single remote client (from a pub/sub presence-leave).
+   */
+  #removeRemoteClient(nodeId: string, clientId: string) {
+    const node = this.#remotePresence.get(nodeId);
+    if (!node) {
+      return;
+    }
+    node.lastSeen = Date.now();
+    node.clients.delete(clientId);
+    if (node.clients.size === 0) {
+      this.#remotePresence.delete(nodeId);
+    }
+  }
+
+  /**
+   * Reconcile a node's full roster snapshot (from a pub/sub presence-heartbeat)
+   * against what we last knew for it: fan out joins for newly-seen clients,
+   * leaves for clients that disappeared, then store the snapshot and refresh the
+   * node's liveness. Self-heals any join/leave message that was lost.
+   */
+  async #reconcileRemoteSnapshot(
+    nodeId: string,
+    clients: DecodedPresenceHeartbeat["clients"],
+  ) {
+    const previous = this.#remotePresence.get(nodeId)?.clients ?? new Map();
+    const next = new Map<
+      string,
+      { awarenessId: number; userId: string; data: Record<string, unknown> }
+    >();
+    const sends: Promise<void>[] = [];
+
+    for (const peer of clients) {
+      next.set(peer.clientId, {
+        awarenessId: peer.awarenessId,
+        userId: peer.userId,
+        data: peer.data,
+      });
+      if (!previous.has(peer.clientId)) {
+        sends.push(
+          this.#broadcastPresence({
+            type: "presence-join",
+            awarenessId: peer.awarenessId,
+            clientId: peer.clientId,
+            userId: peer.userId,
+            data: peer.data,
+          }),
+        );
+      }
+    }
+
+    for (const [clientId, peer] of previous) {
+      if (!next.has(clientId)) {
+        sends.push(
+          this.#broadcastPresence({
+            type: "presence-leave",
+            awarenessId: peer.awarenessId,
+            clientId,
+            userId: peer.userId,
+            data: peer.data,
+          }),
+        );
+      }
+    }
+
+    this.#remotePresence.set(nodeId, { lastSeen: Date.now(), clients: next });
+    await Promise.all(sends);
+  }
+
+  /**
+   * Build a heartbeat snapshot of this node's local clients.
+   */
+  #localPresenceSnapshot(): DecodedPresenceHeartbeat["clients"] {
+    return [...this.#clientPresence.entries()].map(([clientId, presence]) => ({
+      awarenessId: presence.awarenessId,
+      clientId,
+      userId: presence.context.userId,
+      data: presence.data,
+    }));
+  }
+
+  /**
+   * One presence-maintenance tick (driven by the interval): advertise this
+   * node's local clients to other nodes, then expire any remote node that has
+   * stopped sending heartbeats (e.g. crashed) and clear its clients locally.
+   * Public so it can be driven deterministically in tests.
+   */
+  async runPresenceMaintenance() {
+    const sends: Promise<unknown>[] = [];
+
+    if (this.#clientPresence.size > 0) {
+      const heartbeat = new PresenceMessage<Context>(this.documentId, {
+        type: "presence-heartbeat",
+        clients: this.#localPresenceSnapshot(),
+      });
+      sends.push(
+        this.#pubSub.publish(
+          `document/${this.namespacedDocumentId}` as const,
+          heartbeat.encoded,
+          this.#nodeId,
+        ),
+      );
+    }
+
+    const now = Date.now();
+    for (const [nodeId, node] of this.#remotePresence) {
+      if (now - node.lastSeen <= this.#presenceTtlMs) {
+        continue;
+      }
+      this.#remotePresence.delete(nodeId);
+      for (const [clientId, peer] of node.clients) {
+        sends.push(
+          this.#broadcastPresence({
+            type: "presence-leave",
+            awarenessId: peer.awarenessId,
+            clientId,
+            userId: peer.userId,
+            data: peer.data,
+          }),
+        );
+      }
+    }
+
+    await Promise.all(sends).catch((error) => {
+      emitWideEvent("error", {
+        event_type: "presence_maintenance_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        error,
+      });
+    });
   }
 
   /**
@@ -440,7 +826,9 @@ export class Session<Context extends ServerContext> extends Observable<
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
     replicationMeta?: { sourceNodeId: string; deduped: boolean },
   ) {
-    if (message.encrypted !== this.encrypted) {
+    // Presence messages are always cleartext metadata (they carry no document
+    // content), so they are exempt from the document's encryption requirement.
+    if (message.type !== "presence" && message.encrypted !== this.encrypted) {
       const error = new Error(
         "Message encryption and document encryption are mismatched",
       );
@@ -800,6 +1188,47 @@ export class Session<Context extends ServerContext> extends Observable<
 
           return;
         }
+        case "presence": {
+          if (message.payload.type === "presence-announce") {
+            // A client announcing its awareness clientID (cleartext). Record it
+            // and notify peers; never relay the announce itself.
+            if (client) {
+              await this.#handlePresenceAnnounce(
+                client,
+                message.payload.awarenessId,
+                message.context,
+              );
+            }
+            return;
+          }
+
+          // presence-join / presence-leave / presence-heartbeat are
+          // server-authored. They only reach apply via pub/sub replication from
+          // another node (client undefined). Update our cross-node roster for
+          // that node and fan join/leave out to this node's clients.
+          if (client) {
+            return;
+          }
+          const sourceNodeId = replicationMeta?.sourceNodeId;
+          if (message.payload.type === "presence-heartbeat") {
+            if (sourceNodeId) {
+              await this.#reconcileRemoteSnapshot(
+                sourceNodeId,
+                message.payload.clients,
+              );
+            }
+            return;
+          }
+          if (sourceNodeId) {
+            if (message.payload.type === "presence-join") {
+              this.#upsertRemoteClient(sourceNodeId, message.payload);
+            } else {
+              this.#removeRemoteClient(sourceNodeId, message.payload.clientId);
+            }
+          }
+          await this.broadcast(message);
+          return;
+        }
         default: {
           await Promise.all([
             this.broadcast(message, client?.id),
@@ -845,6 +1274,7 @@ export class Session<Context extends ServerContext> extends Observable<
     });
 
     this.#cancelCleanup();
+    this.#stopPresenceMaintenance();
 
     try {
       if (this.#unsubscribe) {
@@ -866,6 +1296,9 @@ export class Session<Context extends ServerContext> extends Observable<
       namespacedDocumentId: this.namespacedDocumentId,
       sessionId: this.id,
     });
+
+    this.#clientPresence.clear();
+    this.#remotePresence.clear();
 
     this.destroy();
 
@@ -890,6 +1323,13 @@ export class Session<Context extends ServerContext> extends Observable<
     if (this.#cleanupTimeoutId !== undefined) {
       clearTimeout(this.#cleanupTimeoutId);
       this.#cleanupTimeoutId = undefined;
+    }
+  }
+
+  #stopPresenceMaintenance() {
+    if (this.#presenceTimerId !== undefined) {
+      clearInterval(this.#presenceTimerId);
+      this.#presenceTimerId = undefined;
     }
   }
 

@@ -14,6 +14,36 @@ export type ClientMessageDirection = "in" | "out";
 
 export type DocumentMessageSource = "client" | "replication";
 
+/**
+ * Configuration for client presence (join/leave) notifications broadcast to a
+ * session's peers.
+ */
+export type PresenceConfig<Context extends ServerContext = ServerContext> = {
+  /**
+   * Project a client's server context into the `data` bag broadcast to peers on
+   * join/leave. Return only what is safe to share (e.g. a display name). May be
+   * async (e.g. to look up a profile). Defaults to `() => ({})`.
+   */
+  getPresenceData?: (
+    context: Context,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+  /**
+   * How often (ms) each node re-broadcasts a snapshot of its own local clients
+   * over pub/sub so other nodes can keep a fresh, crash-safe roster. Defaults to
+   * 30_000 (30s).
+   */
+  heartbeatIntervalMs?: number;
+
+  /**
+   * How long (ms) a remote node's presence is trusted without a heartbeat.
+   * When exceeded, the node is presumed gone and its clients are cleared from
+   * peers. Should be a small multiple of `heartbeatIntervalMs`. Defaults to
+   * 90_000 (90s, ~2 missed heartbeats).
+   */
+  presenceTtlMs?: number;
+};
+
 export type SessionEvents<Context extends ServerContext = ServerContext> = {
   /**
    * Emitted when a client joins this session.

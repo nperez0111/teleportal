@@ -29,7 +29,11 @@ import {
 import { Observable } from "../lib/utils";
 import { register } from "../monitoring/metrics";
 import { Client } from "./client";
-import type { ClientDisconnectReason, ServerEvents } from "./events";
+import type {
+  ClientDisconnectReason,
+  PresenceConfig,
+  ServerEvents,
+} from "./events";
 import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -82,6 +86,12 @@ export type ServerOptions<Context extends ServerContext> = {
   milestoneTriggerConfig?: {
     defaultTriggers?: MilestoneTrigger[];
   };
+
+  /**
+   * Configuration for client presence (join/leave) notifications broadcast to
+   * a session's peers.
+   */
+  presenceConfig?: PresenceConfig<NoInfer<Context>>;
 
   /**
    * RPC handlers for the server.
@@ -253,11 +263,18 @@ export class Server<Context extends ServerContext> extends Observable<
       id = "session-" + uuidv4(),
       client,
       context,
+      ignoreEncryptionMismatch = false,
     }: {
       encrypted: boolean;
       id?: string;
       client?: Client<Context>;
       context: Context;
+      /**
+       * Skip the encryption-state validation against an existing/pending
+       * session. Used for cleartext presence metadata, which must attach to the
+       * existing session regardless of its encryption mode and never defines it.
+       */
+      ignoreEncryptionMismatch?: boolean;
     },
   ) {
     if (!documentId) {
@@ -273,7 +290,7 @@ export class Server<Context extends ServerContext> extends Observable<
     const existing = this.#sessions.get(compositeDocumentId);
     if (existing) {
       // Validate that the encryption state matches the existing session
-      if (existing.encrypted !== encrypted) {
+      if (existing.encrypted !== encrypted && !ignoreEncryptionMismatch) {
         const error = new Error(
           `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
         );
@@ -302,7 +319,7 @@ export class Server<Context extends ServerContext> extends Observable<
       const session = await pending;
 
       // Validate encryption state matches
-      if (session.encrypted !== encrypted) {
+      if (session.encrypted !== encrypted && !ignoreEncryptionMismatch) {
         const error = new Error(
           `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
         );
@@ -347,6 +364,7 @@ export class Server<Context extends ServerContext> extends Observable<
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
           metricsCollector: this.#metrics,
           documentSizeConfig: this.#options.documentSizeConfig,
+          presenceConfig: this.#options.presenceConfig,
           rpcHandlers: this.#options.rpcHandlers,
           server: this,
         });
@@ -724,6 +742,9 @@ export class Server<Context extends ServerContext> extends Observable<
                 encrypted: message.encrypted,
                 client,
                 context: message.context,
+                // Presence is always cleartext metadata; it must attach to the
+                // existing session regardless of the document's encryption mode.
+                ignoreEncryptionMismatch: message.type === "presence",
               });
               wideEvent.session_id = session.id;
 

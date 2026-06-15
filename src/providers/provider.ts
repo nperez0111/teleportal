@@ -1,12 +1,13 @@
 import { EventClient } from "@tanstack/devtools-event-client";
 import { IndexeddbPersistence } from "y-indexeddb";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness, removeAwarenessStates } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
   Message,
   Milestone,
   Observable,
+  PresenceMessage,
   RawReceivedMessage,
   RpcMessage,
   type ClientContext,
@@ -110,6 +111,21 @@ export class FileOperationError extends Error {
   }
 }
 
+/**
+ * A peer join/leave notification surfaced to integrators. `data` is whatever the
+ * server's `presenceConfig.getPresenceData` chose to share (e.g. a display name).
+ */
+export type PresenceEvent = {
+  /** The peer's y-awareness clientID. */
+  awarenessId: number;
+  /** The peer's server-assigned session/connection clientId. */
+  clientId: string;
+  /** The user the peer is authenticated as. */
+  userId: string;
+  /** Integrator-supplied context shared by the server. */
+  data: Record<string, unknown>;
+};
+
 export type DefaultTransportProperties = {
   synced: Promise<void>;
   handler: {
@@ -206,6 +222,13 @@ export class Provider<
   connected: () => void;
   disconnected: () => void;
   update: (state: ConnectionState<ConnectionContext>) => void;
+  /** Emitted when a peer joins the session (after it announces its presence). */
+  "peer-join": (peer: PresenceEvent) => void;
+  /**
+   * Emitted when a peer leaves the session. Its awareness state has already been
+   * cleared locally by the time this fires.
+   */
+  "peer-leave": (peer: PresenceEvent) => void;
 }> {
   public doc: Y.Doc;
   public awareness: Awareness;
@@ -320,6 +343,9 @@ export class Provider<
           connection,
         });
         // RPC messages and ACKs are routed in #initRpcHandlers()
+        if (message.type === "presence") {
+          this.#handlePresenceMessage(message as PresenceMessage<any>);
+        }
       }),
     );
     this.abortController.signal.addEventListener(
@@ -344,6 +370,35 @@ export class Provider<
         });
       }),
     );
+  }
+
+  /**
+   * Handle a server presence notification: a leaving peer's awareness is cleared
+   * locally (no key needed, so this works for encrypted documents), then the
+   * join/leave is surfaced to integrators.
+   */
+  #handlePresenceMessage(message: PresenceMessage<any>) {
+    const payload = message.payload;
+    if (payload.type === "presence-announce") {
+      // Announces are client -> server only; ignore if echoed back.
+      return;
+    }
+    if (payload.type === "presence-heartbeat") {
+      // Heartbeats are node-to-node only and never reach clients; ignore.
+      return;
+    }
+    const peer: PresenceEvent = {
+      awarenessId: payload.awarenessId,
+      clientId: payload.clientId,
+      userId: payload.userId,
+      data: payload.data,
+    };
+    if (payload.type === "presence-leave") {
+      removeAwarenessStates(this.awareness, [payload.awarenessId], "presence");
+      this.call("peer-leave", peer);
+    } else {
+      this.call("peer-join", peer);
+    }
   }
 
   private initOfflinePersistence() {
@@ -377,6 +432,16 @@ export class Provider<
     this.#initInProgress = true;
     try {
       this.#underlyingConnection.send(await this.transport.handler.start());
+
+      // Announce the awareness clientID we operate under (cleartext), so the
+      // server can tell peers to clear our awareness when we leave — this is the
+      // only such channel for end-to-end encrypted documents.
+      this.#underlyingConnection.send(
+        new PresenceMessage(this.document, {
+          type: "presence-announce",
+          awarenessId: this.awareness.clientID,
+        }),
+      );
 
       this.abortController.signal.addEventListener(
         "abort",

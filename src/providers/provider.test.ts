@@ -2,12 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   DocMessage,
   Message,
+  PresenceMessage,
   RpcMessage,
   type ClientContext,
   type MilestoneSnapshot,
   type StateVector,
   type Transport,
 } from "teleportal";
+import {
+  Awareness,
+  applyAwarenessUpdate,
+  encodeAwarenessUpdate,
+} from "y-protocols/awareness";
 import * as Y from "yjs";
 import {
   type MilestoneCreateResponse,
@@ -1221,5 +1227,126 @@ describe("Provider events", () => {
       expect(eventLog.some((e) => e.type === "update")).toBe(true);
       expect(eventLog.some((e) => e.type === "received-message")).toBe(true);
     });
+  });
+});
+
+describe("Provider presence", () => {
+  let provider: Provider<MockTransport>;
+  let mockConnection: MockConnection;
+  let mockTransport: MockTransport;
+  let ydoc: Y.Doc;
+
+  beforeEach(() => {
+    ydoc = new Y.Doc();
+    mockConnection = new MockConnection();
+    mockTransport = new MockTransport();
+  });
+
+  afterEach(() => {
+    provider?.destroy();
+    mockConnection?.destroy();
+    ydoc?.destroy();
+  });
+
+  const createProvider = async () => {
+    mockConnection.triggerConnect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    provider = await Provider.create({
+      connection: mockConnection,
+      document: "test-doc",
+      ydoc,
+      getTransport: () => mockTransport,
+      enableOfflinePersistence: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return provider;
+  };
+
+  it("announces its awareness clientID on connect", async () => {
+    await createProvider();
+
+    const announce = mockConnection.sentMessages.find(
+      (m): m is PresenceMessage<ClientContext> =>
+        m.type === "presence" &&
+        (m as any).payload?.type === "presence-announce",
+    );
+    expect(announce).toBeDefined();
+    expect(announce!.payload).toEqual({
+      type: "presence-announce",
+      awarenessId: provider.awareness.clientID,
+    });
+  });
+
+  it("clears a peer's awareness and emits peer-leave on presence-leave", async () => {
+    await createProvider();
+
+    // Inject a remote peer's awareness state into the local Awareness.
+    const peerDoc = new Y.Doc();
+    const peerAwareness = new Awareness(peerDoc);
+    peerAwareness.setLocalState({ name: "bob" });
+    applyAwarenessUpdate(
+      provider.awareness,
+      encodeAwarenessUpdate(peerAwareness, [peerAwareness.clientID]),
+      "remote",
+    );
+    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(
+      true,
+    );
+
+    const leaves: any[] = [];
+    provider.on("peer-leave", (peer) => leaves.push(peer));
+
+    mockConnection.simulateMessage(
+      new PresenceMessage("test-doc", {
+        type: "presence-leave",
+        awarenessId: peerAwareness.clientID,
+        clientId: "conn-bob",
+        userId: "user-bob",
+        data: { userName: "Bob" },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Awareness cleared locally (no key required).
+    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(
+      false,
+    );
+    expect(leaves).toHaveLength(1);
+    expect(leaves[0]).toEqual({
+      awarenessId: peerAwareness.clientID,
+      clientId: "conn-bob",
+      userId: "user-bob",
+      data: { userName: "Bob" },
+    });
+
+    peerAwareness.destroy();
+    peerDoc.destroy();
+  });
+
+  it("emits peer-join on presence-join", async () => {
+    await createProvider();
+
+    const joins: any[] = [];
+    provider.on("peer-join", (peer) => joins.push(peer));
+
+    mockConnection.simulateMessage(
+      new PresenceMessage("test-doc", {
+        type: "presence-join",
+        awarenessId: 4242,
+        clientId: "conn-carol",
+        userId: "user-carol",
+        data: { userName: "Carol" },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(joins).toEqual([
+      {
+        awarenessId: 4242,
+        clientId: "conn-carol",
+        userId: "user-carol",
+        data: { userName: "Carol" },
+      },
+    ]);
   });
 });

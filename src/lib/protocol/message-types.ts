@@ -8,6 +8,11 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
+  DecodedPresenceAnnounce,
+  DecodedPresenceHeartbeat,
+  DecodedPresenceJoin,
+  DecodedPresenceLeave,
+  PresenceMessageBinary,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -29,6 +34,7 @@ export type BinaryMessage =
   | AwarenessUpdateMessage
   | AwarenessRequestMessage
   | EncodedAckMessage
+  | PresenceMessageBinary
   | EncodedRpcMessage;
 
 /**
@@ -39,6 +45,7 @@ export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>
   | AckMessage<Context>
+  | PresenceMessage<Context>
   | RpcMessage<Context>;
 
 /**
@@ -176,6 +183,35 @@ export class AckMessage<
     context?: Context,
   ) {
     super();
+    this.context = context ?? ({} as Context);
+  }
+}
+
+/**
+ * A presence message announcing that a client joined or left a session.
+ *
+ * Presence is always cleartext (it carries no document content), so it conveys a
+ * client's awareness clientID to the server even for end-to-end encrypted
+ * documents — where the awareness payload itself is opaque to the server.
+ */
+export class PresenceMessage<
+  Context extends Record<string, unknown>,
+> extends CustomMessage<Context, PresenceMessageBinary> {
+  public type = "presence" as const;
+  public context: Context;
+  public encrypted: boolean = false;
+
+  constructor(
+    public document: string,
+    public payload:
+      | DecodedPresenceAnnounce
+      | DecodedPresenceJoin
+      | DecodedPresenceLeave
+      | DecodedPresenceHeartbeat,
+    context?: Context,
+    encoded?: PresenceMessageBinary,
+  ) {
+    super(encoded);
     this.context = context ?? ({} as Context);
   }
 }
