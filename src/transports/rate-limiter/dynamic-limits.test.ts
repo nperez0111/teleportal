@@ -52,6 +52,7 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
   });
 
   it("should support dynamic maxMessages based on user", async () => {
+    const onRateLimitExceeded = mock();
     const rateLimited = new RateLimitedTransport<any, any>(transport as any, {
       rules: [
         {
@@ -64,6 +65,7 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
         },
       ],
       rateLimitStorage: mockStorage,
+      onRateLimitExceeded,
     });
 
     const writer = rateLimited.writable.getWriter();
@@ -91,18 +93,12 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
     // Due to token bucket refill, tokens might be slightly > 0, but should be < 1
     expect(stateNormal?.tokens).toBeLessThan(1); // 2 - 2 = 0 (with possible tiny refill)
 
-    // Now send 3rd message for Normal - should fail
-    let errorNormal;
-    try {
-      await writer.write({
-        type: "ping",
-        context: { userId: "normal" },
-      } as any);
-    } catch (e: any) {
-      errorNormal = e;
-    }
-    expect(errorNormal).toBeDefined();
-    expect(errorNormal.message).toBe("Rate limit exceeded");
+    // Now send 3rd message for Normal - should be silently dropped
+    await writer.write({
+      type: "ping",
+      context: { userId: "normal" },
+    } as any);
+    expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
   it("should support dynamic windowMs", async () => {

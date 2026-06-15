@@ -1,5 +1,11 @@
-import { AckMessage, Message, Observable, RawReceivedMessage } from "teleportal";
+import {
+  AckMessage,
+  Message,
+  Observable,
+  RawReceivedMessage,
+} from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
+import { mergeUpdatesV2 } from "yjs";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
 /**
@@ -130,11 +136,37 @@ export type ConnectionOptions = {
    */
   reconnectBackoffFactor?: number;
   /**
+   * Per-message ACK timeout in milliseconds (0 to disable).
+   * If a message is not ACKed within this time, it is evicted from in-flight
+   * tracking. This prevents the `synced` promise from blocking forever when
+   * the server drops a message (e.g. due to rate limiting or permission denial).
+   *
+   * @default 30000
+   */
+  inFlightMessageTimeout?: number;
+  /**
    * Timer implementation for dependency injection (testing)
    *
    * @default defaultTimer
    */
   timer?: Timer;
+
+  /**
+   * Batch outbound doc-update messages over this interval (ms) and merge them
+   * into a single message before sending. Reduces message rate and avoids
+   * tripping server-side rate limits. 0 = no batching.
+   *
+   * @default 100
+   */
+  batchIntervalMs?: number;
+
+  /**
+   * Maximum batch interval in milliseconds. The interval grows toward this
+   * value when ACKs are slow or missing (multiplicative increase).
+   *
+   * @default 5000
+   */
+  maxBatchIntervalMs?: number;
 };
 
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
@@ -145,6 +177,7 @@ const DEFAULT_MIN_UPTIME = 0;
 const DEFAULT_RECONNECT_DELAY_JITTER = 0;
 const DEFAULT_MAX_BUFFERED_MESSAGES = Number.POSITIVE_INFINITY;
 const DEFAULT_RECONNECT_BACKOFF_FACTOR = 1.3;
+const DEFAULT_IN_FLIGHT_MESSAGE_TIMEOUT = 30_000;
 
 export abstract class Connection<Context extends ConnectionContext = any> extends Observable<{
   update: (state: ConnectionState<Context>) => void;
@@ -184,7 +217,17 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
   #messageBuffer: Message[] = [];
 
   // In-flight message tracking (messages sent but not yet acked, excluding awareness)
-  #inFlightMessages = new Map<string, Message>();
+  #inFlightMessages = new Map<
+    string,
+    { message: Message; timer: ReturnType<typeof setTimeout> | null }
+  >();
+  #inFlightMessageTimeoutMs: number;
+
+  // Update batching (AIMD congestion control)
+  #batchIntervalMs: number;
+  #maxBatchIntervalMs: number;
+  #pendingUpdates = new Map<string, { updates: Uint8Array[]; message: Message }>();
+  #batchFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Heartbeat and connection check state
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -219,7 +262,10 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     reconnectDelayJitter = DEFAULT_RECONNECT_DELAY_JITTER,
     maxBufferedMessages = DEFAULT_MAX_BUFFERED_MESSAGES,
     reconnectBackoffFactor = DEFAULT_RECONNECT_BACKOFF_FACTOR,
+    inFlightMessageTimeout = DEFAULT_IN_FLIGHT_MESSAGE_TIMEOUT,
     timer,
+    batchIntervalMs = 100,
+    maxBatchIntervalMs = 5000,
   }: ConnectionOptions = {}) {
     super();
 
@@ -242,6 +288,9 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     this.#heartbeatIntervalMs = heartbeatInterval;
     this.#messageReconnectTimeoutMs = messageReconnectTimeout;
     this.#minUptimeMs = minUptime;
+    this.#inFlightMessageTimeoutMs = inFlightMessageTimeout;
+    this.#batchIntervalMs = batchIntervalMs;
+    this.#maxBatchIntervalMs = maxBatchIntervalMs;
 
     // Set up event target and online state
     if (globalThis.window === undefined) {
@@ -288,10 +337,15 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     this.on("received-message", (message) => {
       if (message.type === "ack") {
         const messageId = message.payload.messageId;
-        if (this.#inFlightMessages.has(messageId)) {
+        const entry = this.#inFlightMessages.get(messageId);
+        if (entry) {
+          if (entry.timer) this.timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(messageId);
-          // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
+          // AIMD: speed up on successful ACK
+          if (this.#batchIntervalMs > 0) {
+            this.#batchIntervalMs = Math.max(0, this.#batchIntervalMs - 10);
+          }
         }
       } else {
         // Send ACK for all non-ACK messages received from the server
@@ -313,12 +367,6 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
         });
       }
     });
-  }
-
-  private getPayloadType(message: Message): string | undefined {
-    if (message.type !== "doc") return undefined;
-    const payload = message.payload as { type?: string } | undefined;
-    return payload?.type;
   }
 
   /**
@@ -395,8 +443,18 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
         if (previousState.type !== "disconnected") {
           this.call("disconnected");
         }
+        // Flush any pending batched updates before clearing state
+        if (this.#batchFlushTimer) {
+          this.timerManager.clearTimeout(this.#batchFlushTimer);
+          this.#batchFlushTimer = null;
+        }
+        this.#flushBatch();
+
         // Clear in-flight messages when disconnected (they'll need to be re-sent)
         const hadInFlightMessages = this.#inFlightMessages.size > 0;
+        for (const { timer } of this.#inFlightMessages.values()) {
+          if (timer) this.timerManager.clearTimeout(timer);
+        }
         this.#inFlightMessages.clear();
         if (hadInFlightMessages) {
           this.call("messages-in-flight", false);
@@ -574,6 +632,47 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     this.scheduleReconnect();
   }
 
+  private isDocUpdate(message: Message): boolean {
+    return (
+      message.type === "doc" &&
+      (message.payload as { type?: string })?.type === "update" &&
+      message.document != null
+    );
+  }
+
+  #scheduleBatchFlush(): void {
+    if (this.#batchFlushTimer || this.#pendingUpdates.size === 0) return;
+
+    const interval = this.#batchIntervalMs;
+    if (interval <= 0) {
+      this.#flushBatch();
+      return;
+    }
+
+    this.#batchFlushTimer = this.timerManager.setTimeout(() => {
+      this.#batchFlushTimer = null;
+      this.#flushBatch();
+    }, interval);
+  }
+
+  #flushing = false;
+
+  #flushBatch(): void {
+    if (this.#pendingUpdates.size === 0) return;
+
+    this.#flushing = true;
+    for (const [, { updates, message }] of this.#pendingUpdates) {
+      const merged = updates.length === 1 ? updates[0]! : mergeUpdatesV2(updates);
+      const batched = {
+        ...message,
+        payload: { type: "update" as const, update: merged },
+      } as Message;
+      this.sendOrBuffer(batched);
+    }
+    this.#pendingUpdates.clear();
+    this.#flushing = false;
+  }
+
   /**
    * Send a buffered message if connected, otherwise buffer it
    */
@@ -586,13 +685,44 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
       return; // Don't send if manually disconnected
     }
 
+    // Batch doc update messages when batching is enabled
+    if (this.#batchIntervalMs > 0 && !this.#flushing && this.isDocUpdate(message)) {
+      const doc = message.document!;
+      const update = (message.payload as { update: Uint8Array }).update;
+      const existing = this.#pendingUpdates.get(doc);
+      if (existing) {
+        existing.updates.push(update);
+      } else {
+        this.#pendingUpdates.set(doc, { updates: [update], message });
+      }
+      this.#scheduleBatchFlush();
+      return;
+    }
+
     if (this.state.type === "connected") {
-      // Track in-flight messages that expect an ack. Ack, awareness and presence
+      // Track in-flight messages that expect an ack. Ack, awareness, and presence
       // messages are fire-and-forget and are never acked.
-      if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
+      if (
+        message.type !== "ack" &&
+        message.type !== "awareness" &&
+        message.type !== "presence"
+      ) {
         const wasEmpty = this.#inFlightMessages.size === 0;
-        this.#inFlightMessages.set(message.id, message);
-        // Emit event when messages become in-flight
+        const timer =
+          this.#inFlightMessageTimeoutMs > 0
+            ? this.timerManager.setTimeout(() => {
+                if (this.#inFlightMessages.has(message.id)) {
+                  this.#inFlightMessages.delete(message.id);
+                  this.call("messages-in-flight", this.#inFlightMessages.size > 0);
+                  // AIMD: slow down when a message goes unACKed
+                  this.#batchIntervalMs = Math.min(
+                    this.#maxBatchIntervalMs,
+                    Math.max(50, this.#batchIntervalMs * 2),
+                  );
+                }
+              }, this.#inFlightMessageTimeoutMs)
+            : null;
+        this.#inFlightMessages.set(message.id, { message, timer });
         if (wasEmpty) {
           this.call("messages-in-flight", true);
         }
@@ -600,9 +730,14 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
 
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails
-        if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
+        if (
+          message.type !== "ack" &&
+          message.type !== "awareness" &&
+          message.type !== "presence"
+        ) {
+          const entry = this.#inFlightMessages.get(message.id);
+          if (entry?.timer) this.timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(message.id);
-          // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
         }
 
@@ -827,7 +962,15 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     // Clear message buffer
     this.#messageBuffer = [];
 
-    // Clear in-flight messages
+    // Flush pending batch and clear in-flight messages
+    if (this.#batchFlushTimer) {
+      this.timerManager.clearTimeout(this.#batchFlushTimer);
+      this.#batchFlushTimer = null;
+    }
+    this.#pendingUpdates.clear();
+    for (const { timer } of this.#inFlightMessages.values()) {
+      if (timer) this.timerManager.clearTimeout(timer);
+    }
     this.#inFlightMessages.clear();
 
     // Clear connected promise

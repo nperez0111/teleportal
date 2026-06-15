@@ -47,7 +47,7 @@ class MockConnection extends Connection<{
     isOnline?: boolean;
     eventTarget?: EventTarget;
   }) {
-    super({ connect: false, ...options });
+    super({ connect: false, batchIntervalMs: 0, ...options });
     // Initialize state to disconnected
     this.setState({
       type: "disconnected",

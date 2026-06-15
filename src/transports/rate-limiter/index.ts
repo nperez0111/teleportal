@@ -309,16 +309,17 @@ export class RateLimitedTransport<
   }
 
   /**
-   * Check a single rate limit rule
+   * Check a single rate limit rule.
+   * Returns null if the rule passes, or the exceeded data if violated.
    */
   private async checkRule(
     rule: RateLimitRule<Context>,
     message: Message<Context>,
-  ): Promise<boolean> {
+  ): Promise<RateLimitExceededData<Context> | null> {
     // Skip this rule if shouldSkipRule returns true
     if (rule.shouldSkipRule) {
       if (await rule.shouldSkipRule(message)) {
-        return true;
+        return null;
       }
     }
 
@@ -371,7 +372,7 @@ export class RateLimitedTransport<
             exceededData.trackBy,
           );
           this.eventEmitter?.call("rate-limit-exceeded", exceededData);
-          return false;
+          return exceededData;
         }
 
         // Consume token
@@ -386,7 +387,7 @@ export class RateLimitedTransport<
           trackBy: rule.trackBy,
         });
 
-        return true;
+        return null;
       });
     }
 
@@ -408,38 +409,41 @@ export class RateLimitedTransport<
         this.onRateLimitExceeded?.(exceededData);
         this.metricsCollector?.recordRateLimitExceeded("unknown", undefined, "transport");
         this.eventEmitter?.call("rate-limit-exceeded", exceededData);
-        return false;
+        return exceededData;
       }
 
       bucket.tokens--;
-      return true;
+      return null;
     }
 
     // If we don't have storage and it's not transport-level, we can't track it
     // This shouldn't happen in practice, but fail open for safety
-    return true;
+    return null;
   }
 
   /**
    * Check if a message can be sent based on all rate limit rules
-   * All rules must pass for the message to be allowed
+   * All rules must pass for the message to be allowed.
+   * Returns null if allowed, or the exceeded data if rejected.
    */
-  private async checkRateLimit(message: Message<Context>): Promise<boolean> {
+  private async checkRateLimit(
+    message: Message<Context>,
+  ): Promise<RateLimitExceededData<Context> | null> {
     // 1. Check global permissions first
     if (!(await this.shouldRateLimit(message))) {
-      return true;
+      return null;
     }
 
     // 2. Check all rules sequentially
     // If any rule fails, reject immediately
     for (const rule of this.rules) {
-      const passed = await this.checkRule(rule, message);
-      if (!passed) {
-        return false;
+      const exceeded = await this.checkRule(rule, message);
+      if (exceeded) {
+        return exceeded;
       }
     }
 
-    return true;
+    return null;
   }
 
   /**
@@ -459,7 +463,8 @@ export class RateLimitedTransport<
   }
 
   /**
-   * Create a rate-limited writable stream
+   * Create a rate-limited writable stream.
+   * Rate-limited messages are silently dropped (never thrown) to keep the stream alive.
    */
   private createRateLimitedWritable(
     writable: WritableStream<Message<Context>>,
@@ -472,8 +477,9 @@ export class RateLimitedTransport<
           throw new Error("Message size limit exceeded");
         }
 
-        if (!(await this.checkRateLimit(chunk))) {
-          throw new Error("Rate limit exceeded");
+        const exceeded = await this.checkRateLimit(chunk);
+        if (exceeded) {
+          return;
         }
 
         return writer.write(chunk);
@@ -484,7 +490,8 @@ export class RateLimitedTransport<
   }
 
   /**
-   * Create a rate-limited readable stream
+   * Create a rate-limited readable stream.
+   * Rate-limited messages are silently dropped (never thrown) to keep the stream alive.
    */
   private createRateLimitedReadable(
     readable: ReadableStream<Message<Context>>,
@@ -496,8 +503,9 @@ export class RateLimitedTransport<
             throw new Error("Message size limit exceeded");
           }
 
-          if (!(await this.checkRateLimit(chunk))) {
-            throw new Error("Rate limit exceeded");
+          const exceeded = await this.checkRateLimit(chunk);
+          if (exceeded) {
+            return;
           }
 
           controller.enqueue(chunk);

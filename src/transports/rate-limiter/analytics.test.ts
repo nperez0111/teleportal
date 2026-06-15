@@ -125,15 +125,8 @@ describe("Rate Limit Analytics", () => {
 
     const writer2 = rateLimitedTransport.writable.getWriter();
 
-    // First message consumed the token, so second should be rate limited
-    try {
-      await writer2.write(message2);
-      // If we get here without error, something is wrong
-      expect(false).toBe(true);
-    } catch (error: any) {
-      // Expected: rate limit exceeded
-      expect(error.message).toBe("Rate limit exceeded");
-    }
+    // First message consumed the token, so second should be silently dropped
+    await writer2.write(message2);
 
     writer2.releaseLock();
 

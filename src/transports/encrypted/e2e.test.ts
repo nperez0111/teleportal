@@ -479,6 +479,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       url: baseUrl,
       connect: opts?.connect ?? true,
       maxReconnectAttempts: 0,
+      batchIntervalMs: 0,
     });
     cleanups.push(() => conn.destroy());
     return conn;
@@ -664,6 +665,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       maxReconnectAttempts: 5,
       initialReconnectDelay: 100,
       maxBackoffTime: 500,
+      batchIntervalMs: 0,
     });
     cleanups.push(() => conn2.destroy());
     await conn2.connected;
@@ -860,6 +862,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       url: baseUrl,
       connect: false,
       maxReconnectAttempts: 0,
+      batchIntervalMs: 0,
     });
     cleanups.push(() => conn.destroy());
 
