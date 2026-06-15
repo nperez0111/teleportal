@@ -12,11 +12,7 @@ export class UnstorageRateLimitStorage implements RateLimitStorage {
     return (await this.storage.getItem<RateLimitState>(key)) || null;
   }
 
-  async setState(
-    key: string,
-    state: RateLimitState,
-    ttl: number,
-  ): Promise<void> {
+  async setState(key: string, state: RateLimitState, ttl: number): Promise<void> {
     // Convert TTL from milliseconds to seconds for unstorage
     const ttlSeconds = Math.ceil(ttl / 1000);
     await this.storage.setItem(key, state, { ttl: ttlSeconds });
@@ -36,11 +32,6 @@ export class UnstorageRateLimitStorage implements RateLimitStorage {
     const lockKey = `lock:${key}`;
 
     // wrapper to match withTransaction signature and ignore the passed key
-    return withTransaction(
-      this.storage,
-      lockKey,
-      () => cb(),
-      this.transactionOptions,
-    );
+    return withTransaction(this.storage, lockKey, () => cb(), this.transactionOptions);
   }
 }

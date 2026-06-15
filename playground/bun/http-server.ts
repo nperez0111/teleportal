@@ -2,10 +2,7 @@ import { createStorage } from "unstorage";
 
 import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 import { Server, checkPermissionWithTokenManager } from "teleportal/server";
-import {
-  UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
-} from "teleportal/storage";
+import { UnstorageDocumentStorage, UnstorageEncryptedDocumentStorage } from "teleportal/storage";
 
 import { createTokenManager } from "teleportal/token";
 import homepage from "../src/index.html";

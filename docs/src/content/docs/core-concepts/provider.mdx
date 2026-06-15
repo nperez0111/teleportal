@@ -2,7 +2,8 @@
 title: Provider
 description: The client-side API for connecting to Teleportal servers
 ---
-import { Aside } from '@astrojs/starlight/components';
+
+import { Aside } from "@astrojs/starlight/components";
 
 The `Provider` is the client-side API that manages Y.js document synchronization, awareness, offline persistence, and RPC operations. It wraps a `Connection` and handles the higher-level document synchronization protocol.
 
@@ -38,7 +39,6 @@ provider.on("update", (state) => {
 ```
 
 ## Connection Types
-
 
 ### Fallback Connection (Default)
 
@@ -87,7 +87,8 @@ const provider = new Provider({
 ```
 
 <Aside type="caution">
-This connection method has some slight overhead compared to WebSocket, in that, because it is run over HTTP, it does not support binary data & instead must use base64-encoded strings for all data.
+  This connection method has some slight overhead compared to WebSocket, in that, because it is run
+  over HTTP, it does not support binary data & instead must use base64-encoded strings for all data.
 </Aside>
 
 ## Document Operations

@@ -1,9 +1,4 @@
-import {
-  type Message,
-  type Sink,
-  type Source,
-  type Transport,
-} from "teleportal";
+import { type Message, type Sink, type Source, type Transport } from "teleportal";
 import { compose } from "teleportal/transports";
 
 /**
@@ -89,9 +84,7 @@ export function withPassthrough<
 /**
  * A transport that does nothing.
  */
-export function noopTransport<
-  Context extends Record<string, unknown>,
->(): Transport<Context> {
+export function noopTransport<Context extends Record<string, unknown>>(): Transport<Context> {
   return {
     readable: new ReadableStream(),
     writable: new WritableStream(),

@@ -1,13 +1,13 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
-import react from '@astrojs/react';
-import starlightLlmsTxt from 'starlight-llms-txt'
-import mermaid from 'astro-mermaid';
+import react from "@astrojs/react";
+import starlightLlmsTxt from "starlight-llms-txt";
+import mermaid from "astro-mermaid";
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://teleportal.tools/',
+  site: "https://teleportal.tools/",
   integrations: [
     react(),
     mermaid(),
@@ -15,73 +15,75 @@ export default defineConfig({
       title: "Teleportal",
       plugins: [starlightLlmsTxt()],
       logo: {
-        light: './src/assets/logo_light.svg',
-				dark: './src/assets/logo_dark.svg',
-        alt: 'Teleportal',
+        light: "./src/assets/logo_light.svg",
+        dark: "./src/assets/logo_dark.svg",
+        alt: "Teleportal",
         replacesTitle: true,
       },
       head: [
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            property: 'og:type',
-            content: 'website',
+            property: "og:type",
+            content: "website",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            property: 'og:title',
-            content: 'Teleportal - Real-time collaborative editing framework for Y.js',
+            property: "og:title",
+            content: "Teleportal - Real-time collaborative editing framework for Y.js",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            property: 'og:description',
-            content: 'Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.',
+            property: "og:description",
+            content:
+              "Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            property: 'og:image',
-            content: 'https://teleportal.tools/og-image.png',
+            property: "og:image",
+            content: "https://teleportal.tools/og-image.png",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            property: 'og:url',
-            content: 'https://teleportal.tools',
+            property: "og:url",
+            content: "https://teleportal.tools",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            name: 'twitter:card',
-            content: 'summary_large_image',
+            name: "twitter:card",
+            content: "summary_large_image",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            name: 'twitter:title',
-            content: 'Teleportal - Real-time collaborative editing framework for Y.js',
+            name: "twitter:title",
+            content: "Teleportal - Real-time collaborative editing framework for Y.js",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            name: 'twitter:description',
-            content: 'Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.',
+            name: "twitter:description",
+            content:
+              "Teleportal is a real-time collaborative editing framework built on Y.js. It supports any storage, JS runtime, and transport.",
           },
         },
         {
-          tag: 'meta',
+          tag: "meta",
           attrs: {
-            name: 'twitter:image',
-            content: 'https://teleportal.tools/og-image.png',
+            name: "twitter:image",
+            content: "https://teleportal.tools/og-image.png",
           },
         },
       ],
@@ -92,10 +94,10 @@ export default defineConfig({
           href: "https://github.com/nperez0111/teleportal",
         },
         {
-          icon: 'blueSky',
-          label: 'BlueSky',
-          href: 'https://bsky.app/profile/teleportal.tools',
-        }
+          icon: "blueSky",
+          label: "BlueSky",
+          href: "https://bsky.app/profile/teleportal.tools",
+        },
       ],
       sidebar: [
         {
@@ -145,9 +147,9 @@ export default defineConfig({
         },
       ],
       customCss: [
-				// Relative path to your custom CSS file
-				"./src/styles/index.css",
-			],
+        // Relative path to your custom CSS file
+        "./src/styles/index.css",
+      ],
     }),
   ],
 });

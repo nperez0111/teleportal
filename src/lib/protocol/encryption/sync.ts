@@ -5,11 +5,7 @@ import type {
   EncryptedSyncStep2,
   EncryptedSnapshot,
 } from "./encoding";
-import {
-  DecodedEncryptedUpdatePayload,
-  encodeToStateVector,
-  encodeToSyncStep2,
-} from "./encoding";
+import { DecodedEncryptedUpdatePayload, encodeToStateVector, encodeToSyncStep2 } from "./encoding";
 
 /**
  * Returns the {@link DecodedEncryptedStateVector} for a snapshot/version pair.

@@ -85,13 +85,7 @@ function Avatar({ userId, size = 24 }: { userId: string; size?: number }) {
   );
 }
 
-function CompositionBar({
-  slices,
-  total,
-}: {
-  slices: CompositionSlice[];
-  total: number;
-}) {
+function CompositionBar({ slices, total }: { slices: CompositionSlice[]; total: number }) {
   const attributed = slices.reduce((n, s) => n + s.chars, 0);
   const unattributed = Math.max(0, total - attributed);
   return (
@@ -117,17 +111,9 @@ function CompositionBar({
   );
 }
 
-function ContributorChips({
-  contributions,
-}: {
-  contributions: Contribution[];
-}) {
+function ContributorChips({ contributions }: { contributions: Contribution[] }) {
   if (contributions.length === 0) {
-    return (
-      <p className="text-xs text-gray-400 dark:text-gray-500">
-        No attributed edits yet.
-      </p>
-    );
+    return <p className="text-xs text-gray-400 dark:text-gray-500">No attributed edits yet.</p>;
   }
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -154,9 +140,7 @@ export function AttributionPanel({
   const [composition, setComposition] = useState<CompositionSlice[]>([]);
   const [totalChars, setTotalChars] = useState(0);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
-  const [milestoneContributors, setMilestoneContributors] = useState<
-    Contribution[] | null
-  >(null);
+  const [milestoneContributors, setMilestoneContributors] = useState<Contribution[] | null>(null);
   const [changeset, setChangeset] = useState<Contribution[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
@@ -188,9 +172,7 @@ export function AttributionPanel({
 
       setActivity([...timeline].sort((a, b) => b.from - a.from));
     } catch (error_) {
-      setError(
-        error_ instanceof Error ? error_.message : "Failed to load attribution",
-      );
+      setError(error_ instanceof Error ? error_.message : "Failed to load attribution");
     }
   }, [provider]);
 
@@ -205,24 +187,17 @@ export function AttributionPanel({
       setMilestoneContributors(toContributions(here));
 
       // Compare against the milestone created immediately before this one.
-      const all = (await provider.listMilestones()).sort(
-        (a, b) => a.createdAt - b.createdAt,
-      );
+      const all = (await provider.listMilestones()).sort((a, b) => a.createdAt - b.createdAt);
       const idx = all.findIndex((m) => m.id === selectedMilestone.id);
       const prev = idx > 0 ? all[idx - 1] : null;
       if (prev) {
-        const delta = await provider.getChangesetActivity(
-          prev.id,
-          selectedMilestone.id,
-        );
+        const delta = await provider.getChangesetActivity(prev.id, selectedMilestone.id);
         setChangeset(toContributions(delta));
       } else {
         setChangeset(null);
       }
     } catch (error_) {
-      setError(
-        error_ instanceof Error ? error_.message : "Failed to load milestone",
-      );
+      setError(error_ instanceof Error ? error_.message : "Failed to load milestone");
     }
   }, [provider, selectedMilestone]);
 
@@ -257,12 +232,7 @@ export function AttributionPanel({
           className="p-2 mr-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
           aria-label="Close authorship panel"
         >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -272,12 +242,8 @@ export function AttributionPanel({
           </svg>
         </button>
         <div className="flex-1">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Authorship
-          </h2>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Who wrote what
-          </p>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Authorship</h2>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Who wrote what</p>
         </div>
         <button
           onClick={refresh}
@@ -285,12 +251,7 @@ export function AttributionPanel({
           aria-label="Refresh"
           title="Refresh"
         >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -330,9 +291,7 @@ export function AttributionPanel({
           <div className="flex items-center gap-2">
             <Avatar userId={identity.name} size={28} />
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                You are
-              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">You are</p>
               <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
                 {identity.name}
               </p>
@@ -346,8 +305,7 @@ export function AttributionPanel({
           </div>
         )}
         <p className="mt-2 text-[11px] leading-snug text-gray-400 dark:text-gray-500">
-          Open a second tab and switch the name to collaborate as another
-          author.
+          Open a second tab and switch the name to collaborate as another author.
         </p>
       </div>
 
@@ -372,10 +330,7 @@ export function AttributionPanel({
               <CompositionBar slices={composition} total={totalChars} />
               <div className="mt-3 space-y-1.5">
                 {composition.map((s) => (
-                  <div
-                    key={s.userId}
-                    className="flex items-center gap-2 text-sm"
-                  >
+                  <div key={s.userId} className="flex items-center gap-2 text-sm">
                     <Avatar userId={s.userId} size={18} />
                     <span className="flex-1 truncate text-gray-700 dark:text-gray-300">
                       {s.userId}
@@ -417,9 +372,7 @@ export function AttributionPanel({
             Recent activity
           </h3>
           {activity.length === 0 ? (
-            <p className="text-xs text-gray-400 dark:text-gray-500">
-              No activity recorded yet.
-            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">No activity recorded yet.</p>
           ) : (
             <div className="space-y-2">
               {activity.slice(0, 40).map((entry, i) => (

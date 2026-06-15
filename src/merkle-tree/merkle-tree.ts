@@ -124,9 +124,7 @@ function buildMerkleStructure(leafCount: number): MerkleNode[] {
     return [];
   }
 
-  const nodes: MerkleNode[] = new Array(leafCount)
-    .fill(null)
-    .map(() => ({}) as MerkleNode);
+  const nodes: MerkleNode[] = new Array(leafCount).fill(null).map(() => ({}) as MerkleNode);
   let currentLevelStart = 0;
   let currentLevelEnd = nodes.length;
 
@@ -165,14 +163,9 @@ function buildMerkleStructure(leafCount: number): MerkleNode[] {
  * @param chunkIndex - Zero-based index of the chunk
  * @returns Array of hashes representing the proof path
  */
-export function generateMerkleProof(
-  tree: MerkleTree,
-  chunkIndex: number,
-): Uint8Array[] {
+export function generateMerkleProof(tree: MerkleTree, chunkIndex: number): Uint8Array[] {
   if (chunkIndex < 0 || chunkIndex >= tree.leafCount) {
-    throw new Error(
-      `Chunk index ${chunkIndex} out of range [0, ${tree.leafCount})`,
-    );
+    throw new Error(`Chunk index ${chunkIndex} out of range [0, ${tree.leafCount})`);
   }
 
   const proof: Uint8Array[] = [];
@@ -233,10 +226,7 @@ export function verifyMerkleProof(
   }
 
   // Compare final hash with root
-  return (
-    currentHash.length === root.length &&
-    currentHash.every((byte, i) => byte === root[i])
-  );
+  return currentHash.length === root.length && currentHash.every((byte, i) => byte === root[i]);
 }
 
 /**
@@ -285,10 +275,7 @@ export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
  * @param chunkCount - Number of chunks (leaf nodes)
  * @returns The reconstructed merkle tree
  */
-export function deserializeMerkleTree(
-  data: Uint8Array,
-  chunkCount: number,
-): MerkleTree {
+export function deserializeMerkleTree(data: Uint8Array, chunkCount: number): MerkleTree {
   const view = new DataView(data.buffer);
   const nodeSize = 32 + 4; // hash + parent index
 
@@ -443,8 +430,7 @@ class StableIncrementalMerkleTree {
       }
 
       const parent = this.nodes[parentIndex];
-      const siblingIndex =
-        parent.left === currentIndex ? parent.right : parent.left;
+      const siblingIndex = parent.left === currentIndex ? parent.right : parent.left;
       if (siblingIndex === undefined) {
         return false;
       }
@@ -474,8 +460,7 @@ class StableIncrementalMerkleTree {
       }
 
       const parent = this.nodes[parentIndex];
-      const siblingIndex =
-        parent.left === currentIndex ? parent.right : parent.left;
+      const siblingIndex = parent.left === currentIndex ? parent.right : parent.left;
 
       if (siblingIndex === undefined) {
         break;
@@ -538,9 +523,7 @@ export function createMerkleTreeTransformStream(
   ) => {
     const proof = tree.generateProof(index);
     const rootHash =
-      index === totalChunks - 1
-        ? (tree.getRootHash() ?? new Uint8Array(0))
-        : new Uint8Array(0);
+      index === totalChunks - 1 ? (tree.getRootHash() ?? new Uint8Array(0)) : new Uint8Array(0);
     bytesProcessed += data.length;
 
     controller.enqueue({
@@ -554,9 +537,7 @@ export function createMerkleTreeTransformStream(
     });
   };
 
-  const flushReadyChunks = (
-    controller: TransformStreamDefaultController<FilePart>,
-  ) => {
+  const flushReadyChunks = (controller: TransformStreamDefaultController<FilePart>) => {
     const readyIndexes: number[] = [];
     for (const [index] of pendingChunks) {
       if (tree.canGenerateProof(index)) {

@@ -1,6 +1,5 @@
 # Changelog
 
-
 ## v0.0.4
 
 [compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.3...v0.0.4)
@@ -22,7 +21,6 @@
 [compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.2...v0.0.3)
 
 ## v0.0.2
-
 
 ### 🚀 Enhancements
 
@@ -243,4 +241,3 @@
 
 - Nick The Sick ([@nperez0111](https://github.com/nperez0111))
 - Nick Perez ([@nperez0111](https://github.com/nperez0111))
-

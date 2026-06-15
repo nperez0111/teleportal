@@ -73,10 +73,7 @@ describe("snapshot-based encrypted sync integration", () => {
     ];
 
     for (const u of updates) {
-      const out = await storage.handleEncryptedUpdate(
-        key,
-        encodeEncryptedUpdateMessages([u]),
-      );
+      const out = await storage.handleEncryptedUpdate(key, encodeEncryptedUpdateMessages([u]));
       expect(out).not.toBeNull();
       const decoded = decodeEncryptedUpdate(out!);
       expect(decoded.type).toBe("update");
@@ -91,9 +88,7 @@ describe("snapshot-based encrypted sync integration", () => {
     expect(state.snapshotId).toBe(snapshot.id);
     expect(state.serverVersion).toBe(3);
 
-    const syncDecoded = decodeFromSyncStep2(
-      doc!.content.update as unknown as EncryptedSyncStep2,
-    );
+    const syncDecoded = decodeFromSyncStep2(doc!.content.update as unknown as EncryptedSyncStep2);
     expect(syncDecoded.snapshot?.id).toBe(snapshot.id);
     expect(syncDecoded.updates.length).toBe(3);
     expect(syncDecoded.updates.map((u) => u.serverVersion)).toEqual([1, 2, 3]);
@@ -126,13 +121,8 @@ describe("snapshot-based encrypted sync integration", () => {
       ]),
     );
 
-    const result = await storage.handleSyncStep1(
-      key,
-      getEmptyEncryptedStateVector(),
-    );
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const result = await storage.handleSyncStep1(key, getEmptyEncryptedStateVector());
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(2);
     expect(decoded.updates[0].serverVersion).toBe(1);
@@ -167,9 +157,7 @@ describe("snapshot-based encrypted sync integration", () => {
 
     const stateVectorAt2 = getEncryptedStateVector(snapshot.id, 2);
     const result = await storage.handleSyncStep1(key, stateVectorAt2);
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot).toBeNull();
     expect(decoded.updates.length).toBe(3);
     expect(decoded.updates.map((u) => u.serverVersion)).toEqual([3, 4, 5]);
@@ -200,9 +188,7 @@ describe("snapshot-based encrypted sync integration", () => {
       serverVersion: 10,
     });
     const result = await storage.handleSyncStep1(key, otherStateVector);
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.snapshot?.payload).toEqual(snapshot.payload);
     expect(decoded.updates.length).toBe(1);

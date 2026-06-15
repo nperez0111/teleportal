@@ -2,12 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crossws from "crossws/adapters/bun";
 import * as Y from "yjs";
 import { createEncryptionKey } from "teleportal/encryption-key";
-import {
-  InMemoryPubSub,
-  type Message,
-  type ServerContext,
-  type Update,
-} from "teleportal";
+import { InMemoryPubSub, type Message, type ServerContext, type Update } from "teleportal";
 import type {
   EncryptedStateVector,
   EncryptedSyncStep2,
@@ -24,10 +19,7 @@ import { Provider } from "../../providers/provider";
 
 type Ctx = ServerContext;
 
-function createServerClient(
-  id: string,
-  onMessage: (msg: Message<Ctx>) => void,
-): Client<Ctx> {
+function createServerClient(id: string, onMessage: (msg: Message<Ctx>) => void): Client<Ctx> {
   const writable = new WritableStream<Message<Ctx>>({
     async write(chunk) {
       onMessage(chunk);
@@ -102,16 +94,11 @@ describe("encrypted sync e2e: two clients via server", () => {
     await session.apply(msg as Message<Ctx>, serverClient);
   }
 
-  async function applyBroadcastedUpdates(
-    encClient: EncryptionClient,
-    inbox: Message<Ctx>[],
-  ) {
+  async function applyBroadcastedUpdates(encClient: EncryptionClient, inbox: Message<Ctx>[]) {
     for (const msg of inbox) {
       if (msg.type !== "doc") continue;
       if (msg.payload.type === "update") {
-        await encClient.handleUpdate(
-          msg.payload.update as unknown as EncryptedUpdatePayload,
-        );
+        await encClient.handleUpdate(msg.payload.update as unknown as EncryptedUpdatePayload);
       }
     }
   }
@@ -125,9 +112,7 @@ describe("encrypted sync e2e: two clients via server", () => {
       snapshotIntervalMs: 0,
     });
     const inboxA: Message<Ctx>[] = [];
-    const serverClientA = createServerClient("client-a", (msg) =>
-      inboxA.push(msg),
-    );
+    const serverClientA = createServerClient("client-a", (msg) => inboxA.push(msg));
 
     const session = await server.getOrOpenSession("doc-1", {
       encrypted: true,
@@ -149,9 +134,7 @@ describe("encrypted sync e2e: two clients via server", () => {
       snapshotIntervalMs: 0,
     });
     const inboxB: Message<Ctx>[] = [];
-    const serverClientB = createServerClient("client-b", (msg) =>
-      inboxB.push(msg),
-    );
+    const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
     session.addClient(serverClientB);
 
     await performSyncHandshake(clientB, session, serverClientB, inboxB);
@@ -180,12 +163,8 @@ describe("encrypted sync e2e: two clients via server", () => {
 
     const inboxA: Message<Ctx>[] = [];
     const inboxB: Message<Ctx>[] = [];
-    const serverClientA = createServerClient("client-a", (msg) =>
-      inboxA.push(msg),
-    );
-    const serverClientB = createServerClient("client-b", (msg) =>
-      inboxB.push(msg),
-    );
+    const serverClientA = createServerClient("client-a", (msg) => inboxA.push(msg));
+    const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
 
     const session = await server.getOrOpenSession("doc-1", {
       encrypted: true,
@@ -246,12 +225,8 @@ describe("encrypted sync e2e: two clients via server", () => {
 
     const inboxA: Message<Ctx>[] = [];
     const inboxB: Message<Ctx>[] = [];
-    const serverClientA = createServerClient("client-a", (msg) =>
-      inboxA.push(msg),
-    );
-    const serverClientB = createServerClient("client-b", (msg) =>
-      inboxB.push(msg),
-    );
+    const serverClientA = createServerClient("client-a", (msg) => inboxA.push(msg));
+    const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
 
     const session = await server.getOrOpenSession("doc-1", {
       encrypted: true,
@@ -286,9 +261,7 @@ describe("encrypted sync e2e: two clients via server", () => {
 
     await applyBroadcastedUpdates(clientA, inboxA);
 
-    expect(ydocA.getText("body").toString()).toBe(
-      ydocB.getText("body").toString(),
-    );
+    expect(ydocA.getText("body").toString()).toBe(ydocB.getText("body").toString());
     const text = ydocA.getText("body").toString();
     expect(text).toContain("A:");
     expect(text).toContain("base");
@@ -342,12 +315,8 @@ describe("encrypted sync: snapshot ID mismatch", () => {
 
     const inboxA: Message<Ctx>[] = [];
     const inboxB: Message<Ctx>[] = [];
-    const serverClientA = createServerClient("client-a", (msg) =>
-      inboxA.push(msg),
-    );
-    const serverClientB = createServerClient("client-b", (msg) =>
-      inboxB.push(msg),
-    );
+    const serverClientA = createServerClient("client-a", (msg) => inboxA.push(msg));
+    const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
 
     const session = await server.getOrOpenSession("doc-1", {
       encrypted: true,
@@ -417,9 +386,7 @@ describe("encrypted sync: snapshot ID mismatch", () => {
     // it by calling handleSyncStep2 with a snapshot to force a new snapshot chain.
     // Instead, we can just directly call the public loadState with a new snapshot
     // by encoding B's current state as a fresh snapshot.
-    const snapshotPayload = await clientB.encryptUpdate(
-      Y.encodeStateAsUpdateV2(ydocB) as Update,
-    );
+    const snapshotPayload = await clientB.encryptUpdate(Y.encodeStateAsUpdateV2(ydocB) as Update);
     await clientB.loadState({
       snapshot: {
         id: crypto.randomUUID(),
@@ -441,9 +408,7 @@ describe("encrypted sync: snapshot ID mismatch", () => {
     for (const msg of inboxB) {
       if (msg.type !== "doc") continue;
       if (msg.payload.type === "update") {
-        await clientB.handleUpdate(
-          msg.payload.update as unknown as EncryptedUpdatePayload,
-        );
+        await clientB.handleUpdate(msg.payload.update as unknown as EncryptedUpdatePayload);
       }
     }
 
@@ -565,9 +530,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       const timer = setTimeout(() => {
         cleanup();
         reject(
-          new Error(
-            `Timed out waiting for content. Current: "${ydoc.getText(field).toString()}"`,
-          ),
+          new Error(`Timed out waiting for content. Current: "${ydoc.getText(field).toString()}"`),
         );
       }, timeoutMs);
       const cleanup = () => {
@@ -627,19 +590,11 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const { provider: pB } = await createProvider(docId);
     await waitForSync(pB);
 
-    const text = await waitForContent(
-      pB.doc,
-      "body",
-      (t) => t === "hello from A",
-    );
+    const text = await waitForContent(pB.doc, "body", (t) => t === "hello from A");
     expect(text).toBe("hello from A");
 
     pB.doc.getText("body").insert(text.length, " and B");
-    const final = await waitForContent(
-      pA.doc,
-      "body",
-      (t) => t === "hello from A and B",
-    );
+    const final = await waitForContent(pA.doc, "body", (t) => t === "hello from A and B");
     expect(final).toBe("hello from A and B");
   });
 
@@ -661,11 +616,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     });
     await waitForSync(pB);
 
-    const text = await waitForContent(
-      pB.doc,
-      "body",
-      (t) => t === "encrypted hello",
-    );
+    const text = await waitForContent(pB.doc, "body", (t) => t === "encrypted hello");
     expect(text).toBe("encrypted hello");
   });
 
@@ -687,19 +638,11 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await waitForContent(pB.doc, "body", (t) => t === "hello");
 
     pB.doc.getText("body").insert(5, " world");
-    const textA = await waitForContent(
-      pA.doc,
-      "body",
-      (t) => t === "hello world",
-    );
+    const textA = await waitForContent(pA.doc, "body", (t) => t === "hello world");
     expect(textA).toBe("hello world");
 
     pA.doc.getText("body").insert(11, "!");
-    const textB = await waitForContent(
-      pB.doc,
-      "body",
-      (t) => t === "hello world!",
-    );
+    const textB = await waitForContent(pB.doc, "body", (t) => t === "hello world!");
     expect(textB).toBe("hello world!");
   });
 
@@ -732,11 +675,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     });
     cleanups.push(() => p2.destroy());
     await waitForSync(p2);
-    await waitForContent(
-      p2.doc,
-      "body",
-      (t) => t === "before disconnect",
-    );
+    await waitForContent(p2.doc, "body", (t) => t === "before disconnect");
 
     // Force disconnect the underlying WebSocket
     await conn2.disconnect();
@@ -853,12 +792,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     }
 
     const expected = Array.from({ length: 20 }, (_, i) => `${i} `).join("");
-    const text = await waitForContent(
-      pB.doc,
-      "body",
-      (t) => t === expected,
-      10_000,
-    );
+    const text = await waitForContent(pB.doc, "body", (t) => t === expected, 10_000);
     expect(text).toBe(expected);
   });
 
@@ -911,16 +845,8 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await waitForSync(p1b);
     await waitForSync(p2b);
 
-    const text1 = await waitForContent(
-      p1b.doc,
-      "body",
-      (t) => t === "doc one",
-    );
-    const text2 = await waitForContent(
-      p2b.doc,
-      "body",
-      (t) => t === "doc two",
-    );
+    const text1 = await waitForContent(p1b.doc, "body", (t) => t === "doc one");
+    const text2 = await waitForContent(p2b.doc, "body", (t) => t === "doc two");
 
     expect(text1).toBe("doc one");
     expect(text2).toBe("doc two");

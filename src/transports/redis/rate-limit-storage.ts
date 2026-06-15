@@ -33,11 +33,7 @@ export class RedisRateLimitStorage implements RateLimitStorage {
     };
   }
 
-  async setState(
-    key: string,
-    state: RateLimitState,
-    ttl: number,
-  ): Promise<void> {
+  async setState(key: string, state: RateLimitState, ttl: number): Promise<void> {
     const redisKey = this.getKey(key);
     // Convert TTL to seconds for Redis EXPIRE, ensure at least 1 second
     const ttlSeconds = Math.max(1, Math.ceil(ttl / 1000));
@@ -70,13 +66,7 @@ export class RedisRateLimitStorage implements RateLimitStorage {
 
     for (let i = 0; i < maxRetries; i++) {
       // Try to acquire lock
-      const acquired = await this.redis.set(
-        lockKey,
-        lockValue,
-        "PX",
-        this.lockTtl,
-        "NX",
-      );
+      const acquired = await this.redis.set(lockKey, lockValue, "PX", this.lockTtl, "NX");
 
       if (acquired === "OK") {
         try {
@@ -97,9 +87,7 @@ export class RedisRateLimitStorage implements RateLimitStorage {
       }
 
       // Wait before retrying
-      await new Promise((resolve) =>
-        setTimeout(resolve, retryDelay + Math.random() * 20),
-      );
+      await new Promise((resolve) => setTimeout(resolve, retryDelay + Math.random() * 20));
     }
 
     throw new Error(`Failed to acquire rate limit lock for key: ${key}`);

@@ -158,9 +158,7 @@ export function getEncryptedTransport(key: CryptoKey) {
             serverVersion: update.serverVersion ?? current[index].serverVersion,
           });
         } else {
-          current.push(
-            toStoredUpdate({ ...update, serverVersion: update.serverVersion }),
-          );
+          current.push(toStoredUpdate({ ...update, serverVersion: update.serverVersion }));
         }
         writeUpdates(current);
       });

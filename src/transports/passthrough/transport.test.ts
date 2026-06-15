@@ -12,9 +12,7 @@ import {
 } from "teleportal";
 import { noopTransport, withPassthrough } from ".";
 
-export function generateTestTransport(
-  type: "doc" | "awareness",
-): Transport<{ test: string }> {
+export function generateTestTransport(type: "doc" | "awareness"): Transport<{ test: string }> {
   if (type === "doc") {
     return {
       readable: new ReadableStream<Message<{ test: string }>>({
@@ -24,9 +22,7 @@ export function generateTestTransport(
               "test",
               {
                 type: "sync-step-1",
-                sv: new Uint8Array([
-                  0x00, 0x00, 0x01, 0x02, 0x03,
-                ]) as StateVector,
+                sv: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as StateVector,
               },
               { test: "id-1" },
             ),
@@ -39,9 +35,7 @@ export function generateTestTransport(
               "test",
               {
                 type: "sync-step-2",
-                update: new Uint8Array([
-                  0x01, 0x00, 0x01, 0x02, 0x03,
-                ]) as SyncStep2Update,
+                update: new Uint8Array([0x01, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
               },
               { test: "id-2" },
             ),
@@ -54,9 +48,7 @@ export function generateTestTransport(
               "test",
               {
                 type: "update",
-                update: new Uint8Array([
-                  0x02, 0x00, 0x01, 0x02, 0x03,
-                ]) as Update,
+                update: new Uint8Array([0x02, 0x00, 0x01, 0x02, 0x03]) as Update,
               },
               { test: "id-3" },
             ),
@@ -77,9 +69,7 @@ export function generateTestTransport(
               "test",
               {
                 type: "awareness-update",
-                update: new Uint8Array([
-                  0x00, 0x01, 0x02, 0x03,
-                ]) as AwarenessUpdateMessage,
+                update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
               },
               { test: "id-1" },
             ),
@@ -92,9 +82,7 @@ export function generateTestTransport(
               "test",
               {
                 type: "awareness-update",
-                update: new Uint8Array([
-                  0x00, 0x01, 0x02, 0x03,
-                ]) as AwarenessUpdateMessage,
+                update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
               },
               { test: "id-2" },
             ),
@@ -107,9 +95,7 @@ export function generateTestTransport(
               "test",
               {
                 type: "awareness-update",
-                update: new Uint8Array([
-                  0x00, 0x01, 0x02, 0x03,
-                ]) as AwarenessUpdateMessage,
+                update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
               },
               { test: "id-3" },
             ),
@@ -188,9 +174,7 @@ describe("transport", () => {
         "test",
         {
           type: "sync-step-2",
-          update: new Uint8Array([
-            0x00, 0x00, 0x01, 0x02, 0x03,
-          ]) as SyncStep2Update,
+          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
         },
         { test: "id-3" },
       ),
@@ -212,9 +196,7 @@ describe("transport", () => {
         "test",
         {
           type: "awareness-update",
-          update: new Uint8Array([
-            0x00, 0x00, 0x01, 0x02, 0x03,
-          ]) as AwarenessUpdateMessage,
+          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
         },
         { test: "id-1" },
       ),
@@ -227,9 +209,7 @@ describe("transport", () => {
         "test",
         {
           type: "awareness-update",
-          update: new Uint8Array([
-            0x00, 0x00, 0x01, 0x02, 0x03,
-          ]) as AwarenessUpdateMessage,
+          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
         },
         { test: "id-2" },
       ),
@@ -242,9 +222,7 @@ describe("transport", () => {
         "test",
         {
           type: "awareness-update",
-          update: new Uint8Array([
-            0x00, 0x00, 0x01, 0x02, 0x03,
-          ]) as AwarenessUpdateMessage,
+          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
         },
         { test: "id-3" },
       ),

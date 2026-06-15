@@ -52,10 +52,7 @@ export interface FilePermissionOptions {
   ): Promise<{
     allowed: boolean;
     reason?: string;
-    metadata?: Omit<
-      FileDownloadResponse,
-      "fileId" | "allowed" | "reason" | "statusCode"
-    >;
+    metadata?: Omit<FileDownloadResponse, "fileId" | "allowed" | "reason" | "statusCode">;
   }>;
 }
 
@@ -98,14 +95,10 @@ export class FileHandler {
     };
 
     if (!this.#temporaryUploadStorage) {
-      throw new Error(
-        "File uploads are not enabled: missing fileStorage.temporaryUploadStorage",
-      );
+      throw new Error("File uploads are not enabled: missing fileStorage.temporaryUploadStorage");
     }
 
-    const upload = await this.#temporaryUploadStorage.getUploadProgress(
-      payload.fileId,
-    );
+    const upload = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
     if (!upload) {
       const error = new Error(`Upload session ${payload.fileId} not found`);
       emitWideEvent("error", {
@@ -131,41 +124,25 @@ export class FileHandler {
         }),
       );
 
-      const updatedUpload =
-        await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
+      const updatedUpload = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
       if (!updatedUpload) {
-        throw new Error(
-          `Upload session ${payload.fileId} not found after storing chunk`,
-        );
+        throw new Error(`Upload session ${payload.fileId} not found after storing chunk`);
       }
 
       if (updatedUpload.chunks.size >= payload.totalChunks) {
         try {
-          const result = await this.#temporaryUploadStorage.completeUpload(
-            payload.fileId,
-          );
+          const result = await this.#temporaryUploadStorage.completeUpload(payload.fileId);
 
           await this.#fileStorage.storeFileFromUpload(result);
 
-          await context.session.storage.transaction(
-            context.documentId,
-            async () => {
-              const metadata =
-                await context.session.storage.getDocumentMetadata(
-                  context.documentId,
-                );
-              await context.session.storage.writeDocumentMetadata(
-                context.documentId,
-                {
-                  ...metadata,
-                  files: [
-                    ...new Set([...(metadata.files ?? []), result.fileId]),
-                  ],
-                  updatedAt: Date.now(),
-                },
-              );
-            },
-          );
+          await context.session.storage.transaction(context.documentId, async () => {
+            const metadata = await context.session.storage.getDocumentMetadata(context.documentId);
+            await context.session.storage.writeDocumentMetadata(context.documentId, {
+              ...metadata,
+              files: [...new Set([...(metadata.files ?? []), result.fileId])],
+              updatedAt: Date.now(),
+            });
+          });
           wideEvent.event_type = "file_upload_completed";
           wideEvent.outcome = "success";
           wideEvent.durable_file_id = result.fileId;
@@ -256,15 +233,11 @@ export class FileHandler {
     document: string,
   ): Promise<void> {
     if (!this.#temporaryUploadStorage) {
-      throw new Error(
-        "File uploads are not enabled: missing fileStorage.temporaryUploadStorage",
-      );
+      throw new Error("File uploads are not enabled: missing fileStorage.temporaryUploadStorage");
     }
 
     if (metadata.size > MAX_FILE_SIZE) {
-      throw new Error(
-        `File size ${metadata.size} exceeds maximum ${MAX_FILE_SIZE} bytes`,
-      );
+      throw new Error(`File size ${metadata.size} exceeds maximum ${MAX_FILE_SIZE} bytes`);
     }
 
     await this.#temporaryUploadStorage.beginUpload(fileId, {
@@ -325,10 +298,7 @@ export class FileHandler {
 /**
  * Create the upload request handler.
  */
-function createUploadHandler(
-  fileHandler: FileHandler,
-  options?: FilePermissionOptions,
-) {
+function createUploadHandler(fileHandler: FileHandler, options?: FilePermissionOptions) {
   return async (
     payload: FileUploadRequest,
     context: RpcServerContext,
@@ -371,10 +341,7 @@ function createUploadHandler(
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to initiate upload",
+          details: error instanceof Error ? error.message : "Failed to initiate upload",
         },
       };
     }
@@ -399,10 +366,7 @@ function createUploadStreamHandler(fileHandler: FileHandler) {
  * Create the download request handler.
  * Returns file metadata and a stream of file parts.
  */
-function createDownloadHandler(
-  fileHandler: FileHandler,
-  options?: FilePermissionOptions,
-) {
+function createDownloadHandler(fileHandler: FileHandler, options?: FilePermissionOptions) {
   return async (
     payload: FileDownloadRequest,
     context: RpcServerContext,
@@ -473,10 +437,7 @@ function createDownloadHandler(
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to get file metadata",
+          details: error instanceof Error ? error.message : "Failed to get file metadata",
         },
       };
     }

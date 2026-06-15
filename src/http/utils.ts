@@ -37,10 +37,7 @@ export function getDocumentsFromQueryParams(
   }
 
   // Remove duplicates based on document name (keep the one with encryption preference)
-  const uniqueDocuments = new Map<
-    string,
-    { document: string; encrypted?: boolean }
-  >();
+  const uniqueDocuments = new Map<string, { document: string; encrypted?: boolean }>();
   for (const doc of documents) {
     const existing = uniqueDocuments.get(doc.document);
     // If document already exists, prefer the encrypted version
@@ -56,9 +53,7 @@ export function getDocumentsFromQueryParams(
  * Decodes a {@link Response} containing a {@link ReadableStream} of {@link MessageArray}s
  * into a {@link ReadableStream} of {@link Message}s.
  */
-export function decodeHTTPRequest(
-  response: Response,
-): ReadableStream<Message<ClientContext>> {
+export function decodeHTTPRequest(response: Response): ReadableStream<Message<ClientContext>> {
   return response.body!.pipeThrough(
     fromMessageArrayStream({
       clientId: response.headers.get("x-teleportal-client-id")!,

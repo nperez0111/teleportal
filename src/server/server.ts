@@ -10,30 +10,15 @@ import {
   type ServerContext,
   Transport,
 } from "teleportal";
-import {
-  HealthStatus,
-  MetricsCollector,
-  StatusData,
-} from "teleportal/monitoring";
+import { HealthStatus, MetricsCollector, StatusData } from "teleportal/monitoring";
 import type { RpcHandlerRegistry } from "teleportal/protocol";
-import type {
-  DocumentStorage,
-  MilestoneTrigger,
-  RateLimitStorage,
-} from "teleportal/storage";
+import type { DocumentStorage, MilestoneTrigger, RateLimitStorage } from "teleportal/storage";
 import { withMessageValidator } from "teleportal/transports";
-import {
-  type RateLimitRule,
-  withRateLimit,
-} from "teleportal/transports/rate-limiter";
+import { type RateLimitRule, withRateLimit } from "teleportal/transports/rate-limiter";
 import { Observable } from "../lib/utils";
 import { register } from "../monitoring/metrics";
 import { Client } from "./client";
-import type {
-  ClientDisconnectReason,
-  PresenceConfig,
-  ServerEvents,
-} from "./events";
+import type { ClientDisconnectReason, PresenceConfig, ServerEvents } from "./events";
 import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -141,9 +126,7 @@ export type ServerOptions<Context extends ServerContext> = {
      * If returns true, all rate limit rules are skipped (message allowed) and no tokens are consumed.
      * Useful for admin users or allow-listed sources.
      */
-    shouldSkipRateLimit?: (
-      message: Message<NoInfer<Context>>,
-    ) => Promise<boolean> | boolean;
+    shouldSkipRateLimit?: (message: Message<NoInfer<Context>>) => Promise<boolean> | boolean;
 
     /**
      * Called when rate limit is exceeded
@@ -171,9 +154,7 @@ export type ServerOptions<Context extends ServerContext> = {
   };
 };
 
-export class Server<Context extends ServerContext> extends Observable<
-  ServerEvents<Context>
-> {
+export class Server<Context extends ServerContext> extends Observable<ServerEvents<Context>> {
   /**
    * The options for the server.
    */
@@ -281,10 +262,7 @@ export class Server<Context extends ServerContext> extends Observable<
       throw new Error("Document ID is required");
     }
 
-    const compositeDocumentId = this.#getCompositeDocumentId(
-      documentId,
-      context,
-    );
+    const compositeDocumentId = this.#getCompositeDocumentId(documentId, context);
 
     // Check if session already exists
     const existing = this.#sessions.get(compositeDocumentId);
@@ -380,11 +358,7 @@ export class Server<Context extends ServerContext> extends Observable<
         try {
           const meta = await storage.getDocumentMetadata(compositeDocumentId);
           if (meta.sizeBytes !== undefined) {
-            this.#metrics.recordDocumentSize(
-              compositeDocumentId,
-              meta.sizeBytes,
-              encrypted,
-            );
+            this.#metrics.recordDocumentSize(compositeDocumentId, meta.sizeBytes, encrypted);
           }
         } catch (error) {
           emitWideEvent("info", {
@@ -456,15 +430,8 @@ export class Server<Context extends ServerContext> extends Observable<
    * @param documentId - The ID of the document to delete.
    * @param context - Optional context for document ID resolution.
    */
-  async deleteDocument(
-    documentId: string,
-    context: Context,
-    encrypted: boolean,
-  ): Promise<void> {
-    const compositeDocumentId = this.#getCompositeDocumentId(
-      documentId,
-      context,
-    );
+  async deleteDocument(documentId: string, context: Context, encrypted: boolean): Promise<void> {
+    const compositeDocumentId = this.#getCompositeDocumentId(documentId, context);
 
     emitWideEvent("info", {
       event_type: "document_delete_start",
@@ -570,10 +537,8 @@ export class Server<Context extends ServerContext> extends Observable<
       // Build rules with default getUserId/getDocumentId if not provided
       const rules = config.rules.map((rule) => ({
         ...rule,
-        getUserId:
-          rule.getUserId ?? config.getUserId ?? ((msg) => msg.context?.userId),
-        getDocumentId:
-          rule.getDocumentId ?? config.getDocumentId ?? ((msg) => msg.document),
+        getUserId: rule.getUserId ?? config.getUserId ?? ((msg) => msg.context?.userId),
+        getDocumentId: rule.getDocumentId ?? config.getDocumentId ?? ((msg) => msg.document),
       }));
 
       rateLimitedTransport = withRateLimit(transport, {
@@ -632,9 +597,7 @@ export class Server<Context extends ServerContext> extends Observable<
         try {
           // Ensure at least one of documentId or fileId is provided
           if (!message.document && !fileId) {
-            throw new Error(
-              `Message ${message.id} must have either documentId or fileId`,
-            );
+            throw new Error(`Message ${message.id} must have either documentId or fileId`);
           }
 
           const ok = await this.#options.checkPermission({
@@ -646,10 +609,7 @@ export class Server<Context extends ServerContext> extends Observable<
           });
 
           if (!ok) {
-            if (
-              message.type === "doc" &&
-              message.payload.type === "sync-step-2"
-            ) {
+            if (message.type === "doc" && message.payload.type === "sync-step-2") {
               // Tell the client that they've successfully synced their state vector
               await client.send(
                 new DocMessage(
@@ -731,8 +691,7 @@ export class Server<Context extends ServerContext> extends Observable<
               client_id: client.id,
               document_id: message.document,
               message_type: message.type,
-              payload_type: (message as { payload?: { type?: string } }).payload
-                ?.type,
+              payload_type: (message as { payload?: { type?: string } }).payload?.type,
               encrypted: message.encrypted,
               user_id: message.context?.userId,
             };
@@ -752,10 +711,7 @@ export class Server<Context extends ServerContext> extends Observable<
 
               this.#metrics.incrementMessage(message.type);
               const durationSec = (Date.now() - startTime) / 1000;
-              this.#metrics.messageDuration.observe(
-                { type: message.type },
-                durationSec,
-              );
+              this.#metrics.messageDuration.observe({ type: message.type }, durationSec);
 
               this.call("client-message", {
                 clientId: client.id,
@@ -786,10 +742,7 @@ export class Server<Context extends ServerContext> extends Observable<
               throw error;
             } finally {
               wideEvent.duration_ms = Date.now() - startTime;
-              emitWideEvent(
-                wideEvent.outcome === "error" ? "error" : "info",
-                wideEvent,
-              );
+              emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
             }
           },
         }),
@@ -825,10 +778,7 @@ export class Server<Context extends ServerContext> extends Observable<
    * @param client - The client or client ID to disconnect.
    * @param reason - The reason for disconnection.
    */
-  disconnectClient(
-    client: string | Client<Context>,
-    reason: ClientDisconnectReason = "manual",
-  ) {
+  disconnectClient(client: string | Client<Context>, reason: ClientDisconnectReason = "manual") {
     const clientId = typeof client === "string" ? client : client.id;
 
     for (const s of this.#sessions.values()) {
@@ -1015,8 +965,7 @@ export class Server<Context extends ServerContext> extends Observable<
     );
 
     // Get total messages processed from metrics
-    const totalMessagesProcessed =
-      this.#metrics.totalMessagesProcessed.getValue();
+    const totalMessagesProcessed = this.#metrics.totalMessagesProcessed.getValue();
 
     // Calculate size statistics
     let totalDocumentSizeBytes = 0;

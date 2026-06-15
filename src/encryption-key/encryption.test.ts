@@ -83,13 +83,9 @@ describe("Encryption Functions", () => {
       createUpdate(new Uint8Array([7, 8, 9])),
     ];
 
-    const encrypted = await Promise.all(
-      updates.map((update) => encryptUpdate(key, update)),
-    );
+    const encrypted = await Promise.all(updates.map((update) => encryptUpdate(key, update)));
 
-    const decrypted = await Promise.all(
-      encrypted.map((enc) => decryptUpdate(key, enc)),
-    );
+    const decrypted = await Promise.all(encrypted.map((enc) => decryptUpdate(key, enc)));
 
     expect(decrypted).toEqual(updates);
   });

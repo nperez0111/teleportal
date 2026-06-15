@@ -51,12 +51,8 @@ function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70">
       <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         <div className="p-6 border-b border-gray-200 dark:border-gray-800">
-          <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-            {title}
-          </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            {description}
-          </p>
+          <h3 className="text-xl font-semibold text-gray-900 dark:text-white">{title}</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{description}</p>
         </div>
         <div className="p-6">
           <input
@@ -103,9 +99,7 @@ export function MilestonePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingSnapshot, setLoadingSnapshot] = useState<string | null>(null);
-  const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(
-    null,
-  );
+  const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
@@ -128,9 +122,7 @@ export function MilestonePanel({
       const list = await provider.listMilestones();
       setMilestones(list.sort((a, b) => b.createdAt - a.createdAt));
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load milestones",
-      );
+      setError(err instanceof Error ? err.message : "Failed to load milestones");
     } finally {
       setLoading(false);
     }
@@ -142,17 +134,11 @@ export function MilestonePanel({
     setCreateLoading(true);
     setError(null);
     try {
-      const milestone = await provider.createMilestone(
-        name.trim() || undefined,
-      );
-      setMilestones((prev) =>
-        [milestone, ...prev].sort((a, b) => b.createdAt - a.createdAt),
-      );
+      const milestone = await provider.createMilestone(name.trim() || undefined);
+      setMilestones((prev) => [milestone, ...prev].sort((a, b) => b.createdAt - a.createdAt));
       setShowCreateModal(false);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to create milestone",
-      );
+      setError(err instanceof Error ? err.message : "Failed to create milestone");
     } finally {
       setCreateLoading(false);
     }
@@ -176,19 +162,12 @@ export function MilestonePanel({
 
     setEditLoading(true);
     try {
-      const updated = await provider.updateMilestoneName(
-        milestone.id,
-        newName.trim(),
-      );
-      setMilestones((prev) =>
-        prev.map((m) => (m.id === milestone.id ? updated : m)),
-      );
+      const updated = await provider.updateMilestoneName(milestone.id, newName.trim());
+      setMilestones((prev) => prev.map((m) => (m.id === milestone.id ? updated : m)));
       setShowEditModal(false);
       setEditingMilestone(null);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to update milestone name",
-      );
+      setError(err instanceof Error ? err.message : "Failed to update milestone name");
     } finally {
       setEditLoading(false);
     }
@@ -236,12 +215,7 @@ export function MilestonePanel({
               className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
               aria-label="Close versions panel"
             >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -251,12 +225,8 @@ export function MilestonePanel({
               </svg>
             </button>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Versions
-              </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Document history
-              </p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Versions</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Document history</p>
             </div>
           </div>
         </div>
@@ -329,9 +299,7 @@ export function MilestonePanel({
                   ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
                   : "bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
               }`}
-              onClick={() =>
-                selectedMilestone !== null && handleBackToCurrent()
-              }
+              onClick={() => selectedMilestone !== null && handleBackToCurrent()}
             >
               <div className="flex items-center gap-3">
                 <div
@@ -341,12 +309,7 @@ export function MilestonePanel({
                       : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
                   }`}
                 >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -359,9 +322,7 @@ export function MilestonePanel({
                   <p className="text-sm font-medium text-gray-900 dark:text-white">
                     Current Version
                   </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Live editor content
-                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Live editor content</p>
                 </div>
                 {selectedMilestone === null && (
                   <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
@@ -380,11 +341,7 @@ export function MilestonePanel({
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <div className="text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                  <svg
-                    className="w-5 h-5 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle
                       className="opacity-25"
                       cx="12"
@@ -417,9 +374,7 @@ export function MilestonePanel({
                     d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-                  No snapshots yet
-                </p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">No snapshots yet</p>
                 <p className="text-xs text-gray-400 dark:text-gray-500">
                   Create a snapshot to save the current state
                 </p>
@@ -439,8 +394,7 @@ export function MilestonePanel({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                          {milestone.name ||
-                            `Version ${milestones.indexOf(milestone) + 1}`}
+                          {milestone.name || `Version ${milestones.indexOf(milestone) + 1}`}
                         </h3>
                         {selectedMilestone?.id === milestone.id && (
                           <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
@@ -487,12 +441,7 @@ export function MilestonePanel({
             onClick={() => setShowCreateModal(true)}
             className="w-full px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded-lg transition-colors flex items-center justify-center gap-2"
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"

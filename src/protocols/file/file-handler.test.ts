@@ -1,16 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { toBase64 } from "lib0/buffer";
-import {
-  AckMessage,
-  type Message,
-  type RpcServerContext,
-  type ServerContext,
-} from "teleportal";
-import {
-  buildMerkleTree,
-  CHUNK_SIZE,
-  generateMerkleProof,
-} from "teleportal/merkle-tree";
+import { AckMessage, type Message, type RpcServerContext, type ServerContext } from "teleportal";
+import { buildMerkleTree, CHUNK_SIZE, generateMerkleProof } from "teleportal/merkle-tree";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
 import { YDocStorage } from "../../storage/in-memory/ydoc";
@@ -18,10 +9,7 @@ import type { DocumentStorage } from "../../storage/types";
 import type { FilePartStream } from "./methods";
 import { FileHandler } from "./server-handlers";
 
-function createMockContext(
-  documentId: string,
-  storage: DocumentStorage,
-): RpcServerContext {
+function createMockContext(documentId: string, storage: DocumentStorage): RpcServerContext {
   return {
     documentId,
     session: {

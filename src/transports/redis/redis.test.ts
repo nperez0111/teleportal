@@ -26,10 +26,7 @@ async function isRedisAvailable(): Promise<boolean> {
     await redis.quit();
     return true;
   } catch (error) {
-    console.log(
-      "Redis not available:",
-      error instanceof Error ? error.message : "Unknown error",
-    );
+    console.log("Redis not available:", error instanceof Error ? error.message : "Unknown error");
     return false;
   }
 }
@@ -124,12 +121,9 @@ describe("Redis Transport", () => {
 
         try {
           // Subscribe to the topic
-          const unsubscribe = await subscriber.subscribe(
-            testTopic,
-            (message) => {
-              receivedMessage = message;
-            },
-          );
+          const unsubscribe = await subscriber.subscribe(testTopic, (message) => {
+            receivedMessage = message;
+          });
 
           // Wait a bit for subscription to be established
           await new Promise((resolve) => setTimeout(resolve, 0));
@@ -146,10 +140,8 @@ describe("Redis Transport", () => {
           // Cleanup
           if (unsubscribe) await unsubscribe();
         } finally {
-          if (publisher[Symbol.asyncDispose])
-            await publisher[Symbol.asyncDispose]();
-          if (subscriber[Symbol.asyncDispose])
-            await subscriber[Symbol.asyncDispose]();
+          if (publisher[Symbol.asyncDispose]) await publisher[Symbol.asyncDispose]();
+          if (subscriber[Symbol.asyncDispose]) await subscriber[Symbol.asyncDispose]();
         }
       },
       TEST_TIMEOUT,
@@ -199,12 +191,9 @@ describe("Redis Transport", () => {
           if (unsubscribe1) await unsubscribe1();
           if (unsubscribe2) await unsubscribe2();
         } finally {
-          if (pubSub1[Symbol.asyncDispose])
-            await pubSub1[Symbol.asyncDispose]();
-          if (pubSub2[Symbol.asyncDispose])
-            await pubSub2[Symbol.asyncDispose]();
-          if (publisher[Symbol.asyncDispose])
-            await publisher[Symbol.asyncDispose]();
+          if (pubSub1[Symbol.asyncDispose]) await pubSub1[Symbol.asyncDispose]();
+          if (pubSub2[Symbol.asyncDispose]) await pubSub2[Symbol.asyncDispose]();
+          if (publisher[Symbol.asyncDispose]) await publisher[Symbol.asyncDispose]();
         }
       },
       TEST_TIMEOUT,

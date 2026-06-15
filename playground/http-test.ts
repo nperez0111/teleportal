@@ -3,12 +3,7 @@ import { EventSource } from "eventsource";
 import { DocMessage, Message, Observable, StateVector } from "teleportal";
 import { decodeHTTPRequest } from "teleportal/http";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
-import {
-  compose,
-  getHTTPSink,
-  getSSESource,
-  getYTransportFromYDoc,
-} from "teleportal/transports";
+import { compose, getHTTPSink, getSSESource, getYTransportFromYDoc } from "teleportal/transports";
 
 import * as Y from "yjs";
 
@@ -49,10 +44,7 @@ const transport = compose(
           throw new Error("Failed to post to /sse");
         }
       } else {
-        const resp = await fetch(
-          url + `/message?token=${token}`,
-          requestOptions,
-        );
+        const resp = await fetch(url + `/message?token=${token}`, requestOptions);
         if (!resp.ok) {
           throw new Error("Failed to post to /message");
         }
@@ -101,9 +93,7 @@ const httpWriterStream = new TransformStream<Message, Message>({
 });
 
 transport.readable.pipeThrough(httpWriterStream).pipeTo(yTransport.writable);
-yTransport.readable
-  .pipeThrough(openWithMessageStream)
-  .pipeTo(transport.writable);
+yTransport.readable.pipeThrough(openWithMessageStream).pipeTo(transport.writable);
 
 console.log("before synced");
 await yTransport.synced;

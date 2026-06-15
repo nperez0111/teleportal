@@ -164,14 +164,8 @@ describe("ContentMap", () => {
 
     const map = createContentMapFromContentIds(
       ids,
-      [
-        createContentAttribute("insert", "user-1"),
-        createContentAttribute("insertAt", 1_000_000),
-      ],
-      [
-        createContentAttribute("delete", "user-1"),
-        createContentAttribute("deleteAt", 1_000_000),
-      ],
+      [createContentAttribute("insert", "user-1"), createContentAttribute("insertAt", 1_000_000)],
+      [createContentAttribute("delete", "user-1"), createContentAttribute("deleteAt", 1_000_000)],
     );
 
     expect(map.inserts.has(1, 0)).toBe(true);
@@ -188,15 +182,11 @@ describe("ContentMap", () => {
   it("merges multiple content maps", () => {
     const ids1 = createContentIds();
     ids1.inserts.add(1, 0, 5);
-    const map1 = createContentMapFromContentIds(ids1, [
-      createContentAttribute("insert", "user-1"),
-    ]);
+    const map1 = createContentMapFromContentIds(ids1, [createContentAttribute("insert", "user-1")]);
 
     const ids2 = createContentIds();
     ids2.inserts.add(1, 5, 5);
-    const map2 = createContentMapFromContentIds(ids2, [
-      createContentAttribute("insert", "user-2"),
-    ]);
+    const map2 = createContentMapFromContentIds(ids2, [createContentAttribute("insert", "user-2")]);
 
     const merged = mergeContentMaps([map1, map2]);
     expect(merged.inserts.has(1, 0)).toBe(true);
@@ -208,11 +198,25 @@ describe("ContentMap", () => {
     ids.inserts.add(1, 0, 5);
     ids.inserts.add(2, 0, 5);
     const map1 = createContentMapFromContentIds(
-      { inserts: (() => { const s = new IdSet(); s.add(1, 0, 5); return s; })(), deletes: new IdSet() },
+      {
+        inserts: (() => {
+          const s = new IdSet();
+          s.add(1, 0, 5);
+          return s;
+        })(),
+        deletes: new IdSet(),
+      },
       [createContentAttribute("insert", "user-1")],
     );
     const map2 = createContentMapFromContentIds(
-      { inserts: (() => { const s = new IdSet(); s.add(2, 0, 5); return s; })(), deletes: new IdSet() },
+      {
+        inserts: (() => {
+          const s = new IdSet();
+          s.add(2, 0, 5);
+          return s;
+        })(),
+        deletes: new IdSet(),
+      },
       [createContentAttribute("insert", "user-2")],
     );
 
@@ -228,9 +232,7 @@ describe("ContentMap", () => {
   it("excludes content map by content IDs", () => {
     const ids = createContentIds();
     ids.inserts.add(1, 0, 10);
-    const map = createContentMapFromContentIds(ids, [
-      createContentAttribute("insert", "user-1"),
-    ]);
+    const map = createContentMapFromContentIds(ids, [createContentAttribute("insert", "user-1")]);
 
     const exclude = createContentIds();
     exclude.inserts.add(1, 3, 4);

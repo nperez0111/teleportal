@@ -5,10 +5,7 @@ import { digest } from "lib0/hash/sha256";
 
 import type { StateVector, SyncStep2Update, Update } from "teleportal";
 import { EncryptedBinary } from "teleportal/encryption-key";
-import {
-  type EncodedContentIds,
-  getEmptyEncodedContentIds,
-} from "teleportal/attribution";
+import { type EncodedContentIds, getEmptyEncodedContentIds } from "teleportal/attribution";
 import type { LamportClockValue } from "./lamport-clock";
 
 /**
@@ -43,19 +40,14 @@ export type DecodedEncryptedStateVector = {
  *
  * Can be decoded with {@link decodeFromStateVector}
  */
-export function encodeToStateVector(
-  state: DecodedEncryptedStateVector,
-): EncryptedStateVector {
+export function encodeToStateVector(state: DecodedEncryptedStateVector): EncryptedStateVector {
   return encoding.encode((encoder) => {
     // version
     encoding.writeVarUint(encoder, 0);
     // snapshot id (empty string for none)
     encoding.writeVarString(encoder, state.snapshotId ?? "");
     // server version
-    encoding.writeVarUint(
-      encoder,
-      Number.isFinite(state.serverVersion) ? state.serverVersion : 0,
-    );
+    encoding.writeVarUint(encoder, Number.isFinite(state.serverVersion) ? state.serverVersion : 0);
   }) as EncryptedStateVector;
 }
 
@@ -174,9 +166,7 @@ export function encodeEncryptedUpdate(
   ]);
 }
 
-export function encodeEncryptedSnapshot(
-  snapshot: EncryptedSnapshot,
-): EncryptedUpdatePayload {
+export function encodeEncryptedSnapshot(snapshot: EncryptedSnapshot): EncryptedUpdatePayload {
   return encoding.encode((encoder) => {
     // version
     encoding.writeVarUint(encoder, 0);
@@ -229,15 +219,11 @@ export function decodeEncryptedUpdate(
       const clientId = decoding.readVarUint(decoder);
       const counter = decoding.readVarUint(decoder);
       const hasServerVersion = decoding.readUint8(decoder) === 1;
-      const serverVersion = hasServerVersion
-        ? decoding.readVarUint(decoder)
-        : undefined;
+      const serverVersion = hasServerVersion ? decoding.readVarUint(decoder) : undefined;
       // payload
       const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
       // contentIds
-      const contentIds = decoding.readVarUint8Array(
-        decoder,
-      ) as EncodedContentIds;
+      const contentIds = decoding.readVarUint8Array(decoder) as EncodedContentIds;
 
       messages.push({
         id: toBase64(digest(payload)),
@@ -287,9 +273,7 @@ export type DecodedEncryptedSyncStep2 = {
  *
  * Can be decoded with {@link decodeFromSyncStep2}
  */
-export function encodeToSyncStep2(
-  syncStep2: DecodedEncryptedSyncStep2,
-): EncryptedSyncStep2 {
+export function encodeToSyncStep2(syncStep2: DecodedEncryptedSyncStep2): EncryptedSyncStep2 {
   return encoding.encode((encoder) => {
     // version
     encoding.writeVarUint(encoder, 0);
@@ -320,9 +304,7 @@ export function encodeToSyncStep2(
 /**
  * Decodes a {@link EncryptedSyncStep2} to a {@link DecodedEncryptedSyncStep2} (originally created by {@link encodeToSyncStep2})
  */
-export function decodeFromSyncStep2(
-  syncStep2: EncryptedSyncStep2,
-): DecodedEncryptedSyncStep2 {
+export function decodeFromSyncStep2(syncStep2: EncryptedSyncStep2): DecodedEncryptedSyncStep2 {
   try {
     const decoder = decoding.createDecoder(syncStep2);
     const updates: DecodedEncryptedUpdatePayload[] = [];
@@ -349,9 +331,7 @@ export function decodeFromSyncStep2(
       const clientId = decoding.readVarUint(decoder);
       const lamportClock = decoding.readVarUint(decoder);
       const hasServerVersion = decoding.readUint8(decoder) === 1;
-      const serverVersion = hasServerVersion
-        ? decoding.readVarUint(decoder)
-        : undefined;
+      const serverVersion = hasServerVersion ? decoding.readVarUint(decoder) : undefined;
       const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
       updates.push({
         id: toBase64(digest(payload)),
@@ -385,23 +365,17 @@ export function getEmptyEncryptedUpdate(): EncryptedUpdatePayload {
   return encodeEncryptedUpdateMessages([]);
 }
 
-export function isEmptyEncryptedStateVector(
-  stateVector: EncryptedStateVector,
-): boolean {
+export function isEmptyEncryptedStateVector(stateVector: EncryptedStateVector): boolean {
   const empty = getEmptyEncryptedStateVector();
   return stateVector.every((value, index) => value === empty[index]);
 }
 
-export function isEmptyEncryptedSyncStep2(
-  syncStep2: EncryptedSyncStep2,
-): boolean {
+export function isEmptyEncryptedSyncStep2(syncStep2: EncryptedSyncStep2): boolean {
   const empty = getEmptyEncryptedSyncStep2();
   return syncStep2.every((value, index) => value === empty[index]);
 }
 
-export function isEmptyEncryptedUpdate(
-  update: EncryptedUpdatePayload,
-): boolean {
+export function isEmptyEncryptedUpdate(update: EncryptedUpdatePayload): boolean {
   const empty = getEmptyEncryptedUpdate();
   return update.every((value, index) => value === empty[index]);
 }

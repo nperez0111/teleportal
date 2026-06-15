@@ -1,16 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getLogger } from "@logtape/logtape";
-import {
-  InMemoryPubSub,
-  type ServerContext,
-  type StateVector,
-  type Update,
-} from "teleportal";
-import type {
-  Document,
-  DocumentMetadata,
-  DocumentStorage,
-} from "teleportal/storage";
+import { InMemoryPubSub, type ServerContext, type StateVector, type Update } from "teleportal";
+import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 import { Server } from "../server/server";
 import { getHTTPHandlers } from "./server";
 
@@ -24,10 +15,7 @@ class MockDocumentStorage implements DocumentStorage {
   storedUpdate: Update | null = null;
   metadata: Map<string, DocumentMetadata> = new Map();
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
     return {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
@@ -58,10 +46,7 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.metadata.set(documentId, metadata);
   }
 
@@ -97,10 +82,7 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
+  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
@@ -117,9 +99,7 @@ describe("getHTTPHandler", () => {
   let server: Server<ServerContext>;
   let mockGetStorage: any;
   let pubSub: InMemoryPubSub;
-  let mockGetContext: (
-    req: Request,
-  ) => Promise<Omit<ServerContext, "clientId">>;
+  let mockGetContext: (req: Request) => Promise<Omit<ServerContext, "clientId">>;
   let handler: (req: Request) => Response | Promise<Response>;
 
   beforeEach(() => {
@@ -183,9 +163,7 @@ describe("getHTTPHandler", () => {
       const response = await handler(request);
 
       expect(response.status).toBe(200);
-      expect(response.headers.get("Content-Type")).toBe(
-        "application/octet-stream",
-      );
+      expect(response.headers.get("Content-Type")).toBe("application/octet-stream");
     });
 
     it("should return 404 for unknown routes", async () => {
@@ -221,12 +199,9 @@ describe("getHTTPHandler", () => {
     });
 
     it("should handle query parameters in URL", async () => {
-      const request = new Request(
-        "http://example.com/sse?documents=doc-1&client-id=test-client",
-        {
-          method: "GET",
-        },
-      );
+      const request = new Request("http://example.com/sse?documents=doc-1&client-id=test-client", {
+        method: "GET",
+      });
 
       const response = await handler(request);
 
@@ -258,9 +233,7 @@ describe("getHTTPHandler", () => {
 
   describe("with getInitialDocuments", () => {
     it("should pass getInitialDocuments to SSE reader endpoint", async () => {
-      const customGetInitialDocuments = () => [
-        { document: "custom-doc", encrypted: false },
-      ];
+      const customGetInitialDocuments = () => [{ document: "custom-doc", encrypted: false }];
 
       const handlerWithInitialDocs = getHTTPHandlers({
         server,
@@ -336,12 +309,9 @@ describe("getHTTPHandler", () => {
   describe("integration", () => {
     it("should handle full request flow", async () => {
       // GET /sse to establish connection
-      const sseRequest = new Request(
-        "http://example.com/sse?documents=test-doc",
-        {
-          method: "GET",
-        },
-      );
+      const sseRequest = new Request("http://example.com/sse?documents=test-doc", {
+        method: "GET",
+      });
 
       const sseResponse = await handler(sseRequest);
       expect(sseResponse.status).toBe(200);

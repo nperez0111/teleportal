@@ -1,13 +1,6 @@
-export {
-  getAttributionRpcHandlers,
-  type AttributionRpcOptions,
-} from "./server-handlers";
+export { getAttributionRpcHandlers, type AttributionRpcOptions } from "./server-handlers";
 
-export {
-  collectRangeIds,
-  resolveRangeAttribution,
-  type RangeId,
-} from "./resolve";
+export { collectRangeIds, resolveRangeAttribution, type RangeId } from "./resolve";
 
 export type {
   AttributionFilter,

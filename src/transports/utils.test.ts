@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { BinaryMessage, Message } from "teleportal";
-import {
-  createFanInReader,
-  createFanOutWriter,
-  getBatchingTransform,
-} from "./utils";
+import { createFanInReader, createFanOutWriter, getBatchingTransform } from "./utils";
 
 // Helper function to create a test message
 function createTestMessage(data: number[]): BinaryMessage {
@@ -148,10 +144,7 @@ describe("FanOut Writer", () => {
       await writer.write(message2);
 
       // New readers should only receive messages written after they were added
-      const [received1, received2] = await Promise.all([
-        received1Promise,
-        received2Promise,
-      ]);
+      const [received1, received2] = await Promise.all([received1Promise, received2Promise]);
 
       expect(received1).toHaveLength(1);
       expect(received2).toHaveLength(1);
@@ -271,10 +264,7 @@ describe("FanIn Reader", () => {
 
       const receivedPromise = collectMessages(fanInReader.readable, 2, 300);
 
-      const messages = [
-        createTestMessage([1, 0, 0]),
-        createTestMessage([0, 1, 0]),
-      ];
+      const messages = [createTestMessage([1, 0, 0]), createTestMessage([0, 1, 0])];
 
       // Write messages from different writers
       const w1 = writer1.writable.getWriter();
@@ -476,14 +466,10 @@ describe("Integration tests", () => {
     const fanOutWriter = fanOut.writable.getWriter();
 
     // Basic operations should not throw
-    await expect(
-      fanOutWriter.write(createTestMessage([1, 2, 3])),
-    ).resolves.toBeUndefined();
+    await expect(fanOutWriter.write(createTestMessage([1, 2, 3]))).resolves.toBeUndefined();
 
     const w = writer.writable.getWriter();
-    await expect(
-      w.write(createTestMessage([4, 5, 6])),
-    ).resolves.toBeUndefined();
+    await expect(w.write(createTestMessage([4, 5, 6]))).resolves.toBeUndefined();
     w.releaseLock();
 
     // Cleanup should not throw
@@ -558,10 +544,7 @@ describe("Batching Transform", () => {
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
 
-      const messages = [
-        createTestMessage([1, 2, 3]),
-        createTestMessage([4, 5, 6]),
-      ];
+      const messages = [createTestMessage([1, 2, 3]), createTestMessage([4, 5, 6])];
 
       // Start reading before writing to prevent backpressure
       const readPromise = reader.read();
@@ -586,9 +569,7 @@ describe("Batching Transform", () => {
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
 
-      const messages = Array.from({ length: 10 }, (_, i) =>
-        createTestMessage([i]),
-      );
+      const messages = Array.from({ length: 10 }, (_, i) => createTestMessage([i]));
 
       // Start reading before writing to prevent backpressure
       const readPromise = reader.read();
@@ -617,10 +598,7 @@ describe("Batching Transform", () => {
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
 
-      const messages = [
-        createTestMessage([1, 2, 3]),
-        createTestMessage([4, 5, 6]),
-      ];
+      const messages = [createTestMessage([1, 2, 3]), createTestMessage([4, 5, 6])];
 
       const startTime = Date.now();
 
@@ -715,9 +693,7 @@ describe("Batching Transform", () => {
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
 
-      const messages = Array.from({ length: 3 }, (_, i) =>
-        createTestMessage([i]),
-      );
+      const messages = Array.from({ length: 3 }, (_, i) => createTestMessage([i]));
 
       // Start reading before writing to prevent backpressure
       const readPromise = reader.read();
@@ -746,10 +722,7 @@ describe("Batching Transform", () => {
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
 
-      const messages = [
-        createTestMessage([1, 2, 3]),
-        createTestMessage([4, 5, 6]),
-      ];
+      const messages = [createTestMessage([1, 2, 3]), createTestMessage([4, 5, 6])];
 
       // Start reading before writing to prevent backpressure
       const readPromise = reader.read();
@@ -897,9 +870,7 @@ describe("Batching Transform", () => {
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
 
-      const messages = Array.from({ length: 5 }, (_, i) =>
-        createTestMessage([i]),
-      );
+      const messages = Array.from({ length: 5 }, (_, i) => createTestMessage([i]));
 
       // Start reading before writing to prevent backpressure
       const readPromise = reader.read();

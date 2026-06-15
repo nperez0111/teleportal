@@ -43,10 +43,7 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     await myBackend.storeMetadata(documentId, metadata);
   }
 

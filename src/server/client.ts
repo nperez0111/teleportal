@@ -23,10 +23,7 @@ export class Client<Context extends ServerContext> extends Observable<{
   #sendQueue: QueuedSend<Context>[] = [];
   #processingQueue = false;
 
-  constructor(args: {
-    id: string;
-    writable: WritableStream<Message<Context>>;
-  }) {
+  constructor(args: { id: string; writable: WritableStream<Message<Context>> }) {
     super();
     this.id = args.id;
     this.#writable = args.writable;

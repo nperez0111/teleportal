@@ -120,9 +120,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
             // Send the message to the HTTP sink
             const resp = await this.#fetch(httpSink.toString(), requestOptions);
             if (!resp.ok) {
-              throw new Error(
-                `HTTP request failed with status ${resp.status}: ${resp.statusText}`,
-              );
+              throw new Error(`HTTP request failed with status ${resp.status}: ${resp.statusText}`);
             }
           },
         });
@@ -160,9 +158,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
           .catch((error) => {
             // Only handle errors if we're still active
             if (!this.destroyed && !signal.aborted) {
-              this.handleConnectionError(
-                error instanceof Error ? error : new Error(String(error)),
-              );
+              this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
             }
           })
           .finally(() => {
@@ -188,9 +184,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
       await this.#initInProgress;
     } catch (error) {
       if (!this.destroyed) {
-        this.handleConnectionError(
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
       }
     } finally {
       this.#initInProgress = null;

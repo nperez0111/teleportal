@@ -47,15 +47,11 @@ const storage = createStorage({
 
 const memoryStorage = createStorage();
 // In production, use the memory storage, I don't want your files
-const backingStorage =
-  Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
+const backingStorage = Bun.env.NODE_ENV === "production" ? memoryStorage : storage;
 
-const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(
-  memoryStorage,
-  {
-    keyPrefix: "file",
-  },
-);
+const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(memoryStorage, {
+  keyPrefix: "file",
+});
 
 const fileStorage = new UnstorageFileStorage(backingStorage, {
   keyPrefix: "file",

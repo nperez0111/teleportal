@@ -1,9 +1,5 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import {
-  createTokenManager,
-  type TokenPayload,
-  DocumentAccessBuilder,
-} from "./index";
+import { createTokenManager, type TokenPayload, DocumentAccessBuilder } from "./index";
 
 describe("TokenManager", () => {
   let tokenManager: ReturnType<typeof createTokenManager>;
@@ -47,13 +43,8 @@ describe("TokenManager", () => {
       expect(result.valid).toBe(true);
       expect(result.payload?.documentAccess).toHaveLength(2);
       expect(result.payload?.documentAccess![0].pattern).toBe("shared/*");
-      expect(result.payload?.documentAccess![0].permissions).toEqual([
-        "read",
-        "comment",
-      ]);
-      expect(result.payload?.documentAccess![1].pattern).toBe(
-        "projects/my-project/*",
-      );
+      expect(result.payload?.documentAccess![0].permissions).toEqual(["read", "comment"]);
+      expect(result.payload?.documentAccess![1].pattern).toBe("projects/my-project/*");
       expect(result.payload?.documentAccess![1].permissions).toEqual([
         "read",
         "write",
@@ -132,78 +123,36 @@ describe("TokenManager", () => {
     });
 
     it("should check exact pattern matches", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "shared/doc1", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "shared/doc1", "write"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "shared/doc1", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "shared/doc1", "write")).toBe(false);
     });
 
     it("should check prefix pattern matches", () => {
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "user-101/document1",
-          "read",
-        ),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "user-101/document1",
-          "write",
-        ),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "user-101/document1",
-          "admin",
-        ),
-      ).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user-101/document1", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user-101/document1", "write")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user-101/document1", "admin")).toBe(true);
     });
 
     it("should check nested prefix pattern matches", () => {
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "projects/my-project/doc1",
-          "read",
-        ),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "projects/my-project/doc1",
-          "write",
-        ),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "projects/my-project/doc1",
-          "admin",
-        ),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "projects/my-project/doc1", "read")).toBe(
+        true,
+      );
+      expect(tokenManager.hasDocumentPermission(payload, "projects/my-project/doc1", "write")).toBe(
+        true,
+      );
+      expect(tokenManager.hasDocumentPermission(payload, "projects/my-project/doc1", "admin")).toBe(
+        false,
+      );
     });
 
     it("should return false for non-matching patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "other/doc1", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user-102/doc1", "read"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "other/doc1", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "user-102/doc1", "read")).toBe(false);
     });
 
     it("should handle admin permission correctly", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user-101/doc1", "admin"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "shared/doc1", "admin"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "user-101/doc1", "admin")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "shared/doc1", "admin")).toBe(false);
     });
   });
 
@@ -227,30 +176,15 @@ describe("TokenManager", () => {
     });
 
     it("should return permissions for matching documents", () => {
-      const sharedPermissions = tokenManager.getDocumentPermissions(
-        payload,
-        "shared/doc1",
-      );
+      const sharedPermissions = tokenManager.getDocumentPermissions(payload, "shared/doc1");
       expect(sharedPermissions).toEqual(["read", "comment"]);
 
-      const userPermissions = tokenManager.getDocumentPermissions(
-        payload,
-        "user-101/doc1",
-      );
-      expect(userPermissions).toEqual([
-        "read",
-        "write",
-        "comment",
-        "suggest",
-        "admin",
-      ]);
+      const userPermissions = tokenManager.getDocumentPermissions(payload, "user-101/doc1");
+      expect(userPermissions).toEqual(["read", "write", "comment", "suggest", "admin"]);
     });
 
     it("should return empty array for non-matching documents", () => {
-      const permissions = tokenManager.getDocumentPermissions(
-        payload,
-        "other/doc1",
-      );
+      const permissions = tokenManager.getDocumentPermissions(payload, "other/doc1");
       expect(permissions).toEqual([]);
     });
   });
@@ -287,68 +221,34 @@ describe("TokenManager", () => {
     });
 
     it("should match exact patterns", () => {
-      expect(tokenManager.hasDocumentPermission(payload, "doc1", "read")).toBe(
-        true,
-      );
-      expect(tokenManager.hasDocumentPermission(payload, "doc2", "read")).toBe(
-        false,
-      );
+      expect(tokenManager.hasDocumentPermission(payload, "doc1", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "doc2", "read")).toBe(false);
     });
 
     it("should match prefix patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user/doc1", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user/doc2", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "user/project/doc3",
-          "read",
-        ),
-      ).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user/doc1", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user/doc2", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user/project/doc3", "read")).toBe(true);
     });
 
     it("should match nested prefix patterns", () => {
+      expect(tokenManager.hasDocumentPermission(payload, "org/project/doc1", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "org/project/doc2", "read")).toBe(true);
       expect(
-        tokenManager.hasDocumentPermission(payload, "org/project/doc1", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "org/project/doc2", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "org/project/subfolder/doc3",
-          "read",
-        ),
+        tokenManager.hasDocumentPermission(payload, "org/project/subfolder/doc3", "read"),
       ).toBe(true);
     });
 
     it("should match suffix patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "readme.md", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "document.md", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "document.txt", "read"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "readme.md", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "document.md", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "document.txt", "read")).toBe(false);
     });
 
     it("should match prefix with wildcard patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user123", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user456", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "other123", "read"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "user123", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user456", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "other123", "read")).toBe(false);
     });
   });
 
@@ -384,65 +284,35 @@ describe("TokenManager", () => {
     });
 
     it("should exclude exact document names", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "admin-doc", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "other-doc", "read"),
-      ).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "admin-doc", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "other-doc", "read")).toBe(true);
     });
 
     it("should exclude prefix patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "private/doc1", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "private/doc2", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "public/doc1", "read"),
-      ).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "private/doc1", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "private/doc2", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "public/doc1", "read")).toBe(true);
     });
 
     it("should exclude suffix patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "config.secret", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "config.public", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "readme.secret", "read"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "config.secret", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "config.public", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "readme.secret", "read")).toBe(false);
     });
 
     it("should exclude nested prefix patterns", () => {
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user/admin/doc1", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user/admin/doc2", "read"),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "user/public/doc1", "read"),
-      ).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "user/admin/doc1", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "user/admin/doc2", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "user/public/doc1", "read")).toBe(true);
     });
 
     it("should work with complex exclusion patterns", () => {
       // Test that exclusions work with wildcard base patterns
-      expect(
-        tokenManager.hasDocumentPermission(payload, "any-document", "read"),
-      ).toBe(true);
-      expect(
-        tokenManager.hasDocumentPermission(
-          payload,
-          "private/any-document",
-          "read",
-        ),
-      ).toBe(false);
-      expect(
-        tokenManager.hasDocumentPermission(payload, "document.secret", "read"),
-      ).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "any-document", "read")).toBe(true);
+      expect(tokenManager.hasDocumentPermission(payload, "private/any-document", "read")).toBe(
+        false,
+      );
+      expect(tokenManager.hasDocumentPermission(payload, "document.secret", "read")).toBe(false);
     });
   });
 
@@ -475,11 +345,9 @@ describe("TokenManager", () => {
         issuer: "custom-issuer",
       });
 
-      const token = await customTokenManager.generateToken(
-        "user-123",
-        "org-456",
-        [{ pattern: "*", permissions: ["read"] }],
-      );
+      const token = await customTokenManager.generateToken("user-123", "org-456", [
+        { pattern: "*", permissions: ["read"] },
+      ]);
 
       const result = await customTokenManager.verifyToken(token);
       expect(result.valid).toBe(true);
@@ -531,9 +399,7 @@ describe("TokenManager", () => {
     });
 
     it("should use domain-specific methods", () => {
-      const access = new DocumentAccessBuilder()
-        .ownDocuments("user-123")
-        .build();
+      const access = new DocumentAccessBuilder().ownDocuments("user-123").build();
 
       expect(access).toHaveLength(1);
       expect(access[0]).toEqual({
@@ -543,10 +409,7 @@ describe("TokenManager", () => {
     });
 
     it("should use denial convenience methods", () => {
-      const access = new DocumentAccessBuilder()
-        .allowAll()
-        .denyDocument("config.json")
-        .build();
+      const access = new DocumentAccessBuilder().allowAll().denyDocument("config.json").build();
 
       expect(access).toHaveLength(2);
       expect(access[0]).toEqual({
@@ -574,13 +437,7 @@ describe("TokenManager", () => {
     it("should create complex access patterns", () => {
       const access = new DocumentAccessBuilder()
         .allowAll(["read", "write"])
-        .ownDocuments("user-456", [
-          "read",
-          "write",
-          "comment",
-          "suggest",
-          "admin",
-        ])
+        .ownDocuments("user-456", ["read", "write", "comment", "suggest", "admin"])
         .admin("system/*")
         .build();
 

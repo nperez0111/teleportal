@@ -44,15 +44,13 @@ async function createAutomaticMilestone(
     const doc = await session.storage.getDocument(documentId);
     if (!doc) return;
 
-    const snapshot = doc.content
-      .update as unknown as import("teleportal").MilestoneSnapshot;
+    const snapshot = doc.content.update as unknown as import("teleportal").MilestoneSnapshot;
 
     let name: string;
     if (typeof trigger.autoName === "string") {
       name = trigger.autoName;
     } else {
-      const existingMilestones =
-        await milestoneStorage.getMilestones(documentId);
+      const existingMilestones = await milestoneStorage.getMilestones(documentId);
       name = `Milestone ${existingMilestones.length + 1}`;
     }
 
@@ -152,12 +150,9 @@ const listMilestoneHandler =
     context: RpcServerContext,
   ): Promise<{ response: ListResponse | RpcError }> => {
     try {
-      const milestones = await milestoneStorage.getMilestones(
-        context.documentId,
-        {
-          includeDeleted: payload.includeDeleted,
-        },
-      );
+      const milestones = await milestoneStorage.getMilestones(context.documentId, {
+        includeDeleted: payload.includeDeleted,
+      });
       return {
         response: {
           milestones: milestones.map((m) => ({
@@ -177,10 +172,7 @@ const listMilestoneHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to list milestones",
+          details: error instanceof Error ? error.message : "Failed to list milestones",
         },
       };
     }
@@ -221,8 +213,7 @@ const getMilestoneHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error ? error.message : "Failed to get milestone",
+          details: error instanceof Error ? error.message : "Failed to get milestone",
         },
       };
     }
@@ -235,8 +226,7 @@ const createMilestoneHandler =
     context: RpcServerContext,
   ): Promise<{ response: CreateResponse | RpcError }> => {
     try {
-      const userId =
-        typeof context.userId === "string" ? context.userId : undefined;
+      const userId = typeof context.userId === "string" ? context.userId : undefined;
       const milestoneId = await milestoneStorage.createMilestone({
         name:
           payload.name ??
@@ -248,10 +238,7 @@ const createMilestoneHandler =
           ? { type: "user" as const, id: userId }
           : { type: "system" as const, id: "system" },
       });
-      const milestone = await milestoneStorage.getMilestone(
-        context.documentId,
-        milestoneId,
-      );
+      const milestone = await milestoneStorage.getMilestone(context.documentId, milestoneId);
       if (!milestone) {
         return {
           response: {
@@ -262,24 +249,14 @@ const createMilestoneHandler =
         };
       }
 
-      await context.session.storage.transaction(
-        context.documentId,
-        async () => {
-          const metadata = await context.session.storage.getDocumentMetadata(
-            context.documentId,
-          );
-          await context.session.storage.writeDocumentMetadata(
-            context.documentId,
-            {
-              ...metadata,
-              milestones: [
-                ...new Set([...(metadata.milestones ?? []), milestoneId]),
-              ],
-              updatedAt: Date.now(),
-            },
-          );
-        },
-      );
+      await context.session.storage.transaction(context.documentId, async () => {
+        const metadata = await context.session.storage.getDocumentMetadata(context.documentId);
+        await context.session.storage.writeDocumentMetadata(context.documentId, {
+          ...metadata,
+          milestones: [...new Set([...(metadata.milestones ?? []), milestoneId])],
+          updatedAt: Date.now(),
+        });
+      });
 
       return {
         response: {
@@ -297,10 +274,7 @@ const createMilestoneHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to create milestone",
+          details: error instanceof Error ? error.message : "Failed to create milestone",
         },
       };
     }
@@ -347,10 +321,7 @@ const updateNameHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to update milestone name",
+          details: error instanceof Error ? error.message : "Failed to update milestone name",
         },
       };
     }
@@ -363,23 +334,15 @@ const deleteMilestoneHandler =
     context: RpcServerContext,
   ): Promise<{ response: DeleteResponse | RpcError }> => {
     try {
-      const userId =
-        typeof context.userId === "string" ? context.userId : undefined;
-      await milestoneStorage.deleteMilestone(
-        context.documentId,
-        payload.milestoneId,
-        userId,
-      );
+      const userId = typeof context.userId === "string" ? context.userId : undefined;
+      await milestoneStorage.deleteMilestone(context.documentId, payload.milestoneId, userId);
       return { response: { milestoneId: payload.milestoneId } };
     } catch (error) {
       return {
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to delete milestone",
+          details: error instanceof Error ? error.message : "Failed to delete milestone",
         },
       };
     }
@@ -392,12 +355,8 @@ const restoreMilestoneHandler =
     context: RpcServerContext,
   ): Promise<{ response: RestoreResponse | RpcError }> => {
     try {
-      const userId =
-        typeof context.userId === "string" ? context.userId : undefined;
-      await milestoneStorage.restoreMilestone(
-        context.documentId,
-        payload.milestoneId,
-      );
+      const userId = typeof context.userId === "string" ? context.userId : undefined;
+      await milestoneStorage.restoreMilestone(context.documentId, payload.milestoneId);
       const milestone = await milestoneStorage.getMilestone(
         context.documentId,
         payload.milestoneId,
@@ -430,10 +389,7 @@ const restoreMilestoneHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to restore milestone",
+          details: error instanceof Error ? error.message : "Failed to restore milestone",
         },
       };
     }
@@ -458,10 +414,7 @@ export function getMilestoneRpcHandlers(
   },
 ): RpcHandlerRegistry {
   const triggers = options?.triggers ?? [];
-  const sessionStates = new WeakMap<
-    Session<ServerContext>,
-    Map<string, MilestoneTriggerState>
-  >();
+  const sessionStates = new WeakMap<Session<ServerContext>, Map<string, MilestoneTriggerState>>();
   const trackedSessions = new Set<Session<ServerContext>>();
   const unsubscribers: (() => void)[] = [];
 
@@ -515,10 +468,7 @@ export function getMilestoneRpcHandlers(
           } else if (trigger.type === "event-based") {
             const handler = async (eventData: any) => {
               try {
-                if (
-                  trigger.config.condition &&
-                  !trigger.config.condition(eventData)
-                ) {
+                if (trigger.config.condition && !trigger.config.condition(eventData)) {
                   return;
                 }
                 await createAutomaticMilestone(
@@ -541,9 +491,7 @@ export function getMilestoneRpcHandlers(
               }
             };
             session.on(trigger.config.event as any, handler);
-            state!.unsubscribers.push(() =>
-              session.off(trigger.config.event as any, handler),
-            );
+            state!.unsubscribers.push(() => session.off(trigger.config.event as any, handler));
           }
         }
       }

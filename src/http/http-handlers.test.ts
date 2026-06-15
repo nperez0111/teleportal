@@ -1,9 +1,5 @@
 import { describe, expect, test, mock } from "bun:test";
-import {
-  getHealthHandler,
-  getMetricsHandler,
-  getStatusHandler,
-} from "./handlers";
+import { getHealthHandler, getMetricsHandler, getStatusHandler } from "./handlers";
 
 // Mock server implementation
 class MockServer {
@@ -52,9 +48,7 @@ describe("getHealthHandler", () => {
 
   test("handles errors gracefully", async () => {
     const server = {
-      getHealth: mock(() =>
-        Promise.reject(new Error("Database connection failed")),
-      ),
+      getHealth: mock(() => Promise.reject(new Error("Database connection failed"))),
     };
     const handler = getHealthHandler(server as any);
 
@@ -77,9 +71,7 @@ describe("getMetricsHandler", () => {
     const response = await handler(request);
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe(
-      "text/plain; charset=utf-8",
-    );
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
 
     const body = await response.text();
     expect(body).toContain("# HELP test_metric");
@@ -89,9 +81,7 @@ describe("getMetricsHandler", () => {
 
   test("handles errors gracefully", async () => {
     const server = {
-      getMetrics: mock(() =>
-        Promise.reject(new Error("Metrics collection failed")),
-      ),
+      getMetrics: mock(() => Promise.reject(new Error("Metrics collection failed"))),
     };
     const handler = getMetricsHandler(server as any);
 
@@ -123,9 +113,7 @@ describe("getStatusHandler", () => {
 
   test("handles errors gracefully", async () => {
     const server = {
-      getStatus: mock(() =>
-        Promise.reject(new Error("Status retrieval failed")),
-      ),
+      getStatus: mock(() => Promise.reject(new Error("Status retrieval failed"))),
     };
     const handler = getStatusHandler(server as any);
 

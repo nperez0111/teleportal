@@ -74,10 +74,7 @@ function parseArgs(): Partial<BuildConfig> {
     }
 
     // Handle --flag (boolean true)
-    if (
-      !arg.includes("=") &&
-      (i === args.length - 1 || args[i + 1].startsWith("--"))
-    ) {
+    if (!arg.includes("=") && (i === args.length - 1 || args[i + 1].startsWith("--"))) {
       const key = toCamelCase(arg.slice(2));
       config[key] = true;
       continue;
@@ -138,9 +135,7 @@ if (existsSync(outdir)) {
 const start = performance.now();
 
 // Scan for all HTML files in the project
-const entrypoints = [
-  ...new Bun.Glob("./src/**/*.html").scanSync(import.meta.dir),
-]
+const entrypoints = [...new Bun.Glob("./src/**/*.html").scanSync(import.meta.dir)]
   .map((a) => path.join(import.meta.dir, a))
   .filter((dir) => !dir.includes("node_modules"));
 console.info(

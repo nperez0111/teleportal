@@ -254,10 +254,7 @@ export interface MilestoneStorage {
     }>
   >;
 
-  getMilestoneSnapshot(
-    documentId: string,
-    milestoneId: string,
-  ): Promise<Uint8Array | null>;
+  getMilestoneSnapshot(documentId: string, milestoneId: string): Promise<Uint8Array | null>;
 
   createMilestone(
     documentId: string,

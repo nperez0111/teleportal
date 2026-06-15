@@ -4,10 +4,7 @@ import { createStorage } from "unstorage";
 import fsDriver from "unstorage/drivers/fs";
 
 import { Server } from "teleportal/server";
-import {
-  UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
-} from "teleportal/storage";
+import { UnstorageDocumentStorage, UnstorageEncryptedDocumentStorage } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 

@@ -61,15 +61,7 @@ describe("MetricsCollector Message Tracking", () => {
     const collector = new MetricsCollector(registry);
 
     // Simulate various message types
-    const messageTypes = [
-      "doc",
-      "awareness",
-      "file",
-      "ack",
-      "doc",
-      "awareness",
-      "doc",
-    ];
+    const messageTypes = ["doc", "awareness", "file", "ack", "doc", "awareness", "doc"];
 
     for (const type of messageTypes) collector.incrementMessage(type);
 
@@ -111,14 +103,10 @@ describe("MetricsCollector Message Tracking", () => {
       const collector = new MetricsCollector(registry);
 
       collector.incrementSizeWarning("doc1");
-      expect(
-        collector.documentSizeWarningTotal.getValue({ documentId: "doc1" }),
-      ).toBe(1);
+      expect(collector.documentSizeWarningTotal.getValue({ documentId: "doc1" })).toBe(1);
 
       collector.incrementSizeWarning("doc1");
-      expect(
-        collector.documentSizeWarningTotal.getValue({ documentId: "doc1" }),
-      ).toBe(2);
+      expect(collector.documentSizeWarningTotal.getValue({ documentId: "doc1" })).toBe(2);
     });
 
     test("incrementSizeLimitExceeded updates counter", () => {

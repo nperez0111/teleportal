@@ -56,9 +56,9 @@ describe("protocol encryption encoding", () => {
 
     it("should throw error for invalid version", () => {
       const invalidData = new Uint8Array([1, 0, 0]); // version 1 instead of 0
-      expect(() =>
-        decodeFromStateVector(invalidData as EncryptedStateVector),
-      ).toThrow("Failed to decode encrypted state vector");
+      expect(() => decodeFromStateVector(invalidData as EncryptedStateVector)).toThrow(
+        "Failed to decode encrypted state vector",
+      );
     });
 
     it("should return empty state vector", () => {
@@ -137,11 +137,7 @@ describe("protocol encryption encoding", () => {
       const testUpdate = new Uint8Array([1, 2, 3, 4, 5]) as EncryptedBinary;
       const timestamp: LamportClockValue = [1, 5];
 
-      const encoded = encodeEncryptedUpdate(
-        testUpdate,
-        "snapshot-1",
-        timestamp,
-      );
+      const encoded = encodeEncryptedUpdate(testUpdate, "snapshot-1", timestamp);
       const decoded = decodeEncryptedUpdate(encoded);
 
       expect(decoded.type).toBe("update");
@@ -170,9 +166,9 @@ describe("protocol encryption encoding", () => {
 
     it("should throw error for invalid update version", () => {
       const invalidData = new Uint8Array([1, 0, 0]); // version 1 instead of 0
-      expect(() =>
-        decodeEncryptedUpdate(invalidData as EncryptedUpdatePayload),
-      ).toThrow("Failed to decode encrypted update");
+      expect(() => decodeEncryptedUpdate(invalidData as EncryptedUpdatePayload)).toThrow(
+        "Failed to decode encrypted update",
+      );
     });
 
     it("should return empty encrypted update", () => {
@@ -216,9 +212,9 @@ describe("protocol encryption encoding", () => {
         encoding.writeVarUint(encoder, 0);
         encoding.writeUint8(encoder, 2);
       });
-      expect(() =>
-        decodeEncryptedUpdate(invalidKind as EncryptedUpdatePayload),
-      ).toThrow("Failed to decode encrypted update");
+      expect(() => decodeEncryptedUpdate(invalidKind as EncryptedUpdatePayload)).toThrow(
+        "Failed to decode encrypted update",
+      );
     });
 
     it("should encode and decode snapshot with parentSnapshotId", () => {
@@ -295,9 +291,9 @@ describe("protocol encryption encoding", () => {
 
     it("should throw error for invalid sync step 2 version", () => {
       const invalidData = new Uint8Array([1, 0, 0]); // version 1 instead of 0
-      expect(() =>
-        decodeFromSyncStep2(invalidData as EncryptedSyncStep2),
-      ).toThrow("Failed to decode encrypted sync step 2 message");
+      expect(() => decodeFromSyncStep2(invalidData as EncryptedSyncStep2)).toThrow(
+        "Failed to decode encrypted sync step 2 message",
+      );
     });
   });
 });

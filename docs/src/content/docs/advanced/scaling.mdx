@@ -153,11 +153,7 @@ const milestoneStorage = new RedisMilestoneStorage(redisClient);
 Replicate storage across regions for high availability:
 
 ```typescript
-const storage = new ReplicatedStorage([
-  primaryStorage,
-  replicaStorage1,
-  replicaStorage2,
-]);
+const storage = new ReplicatedStorage([primaryStorage, replicaStorage1, replicaStorage2]);
 ```
 
 ## Monitoring

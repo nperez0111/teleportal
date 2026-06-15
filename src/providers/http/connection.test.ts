@@ -1,12 +1,4 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeEach,
-  afterEach,
-  beforeAll,
-  afterAll,
-} from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "bun:test";
 import { HttpConnection } from "./connection";
 import { Connection, ConnectionState } from "../connection";
 
@@ -31,9 +23,7 @@ if (globalThis.EventTarget === undefined) {
 
     removeEventListener(type: string, listener: (event: any) => void) {
       if (this.listeners[type]) {
-        this.listeners[type] = this.listeners[type].filter(
-          (l) => l !== listener,
-        );
+        this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
       }
     }
 
@@ -594,12 +584,7 @@ describe("HttpConnection", () => {
     });
 
     // Start multiple connection attempts concurrently
-    const promises = [
-      client.connect(),
-      client.connect(),
-      client.connect(),
-      client.connect(),
-    ];
+    const promises = [client.connect(), client.connect(), client.connect(), client.connect()];
 
     await Promise.all(promises);
     expect(client.state.type).toBe("connected");

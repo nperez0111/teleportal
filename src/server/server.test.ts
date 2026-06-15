@@ -14,11 +14,7 @@ import type {
   SyncStep2Update,
   Update,
 } from "teleportal";
-import type {
-  Document,
-  DocumentMetadata,
-  DocumentStorage,
-} from "teleportal/storage";
+import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 
 function createTestUpdate(content = "test"): Update {
   const doc = new Y.Doc();
@@ -35,10 +31,7 @@ class MockDocumentStorage implements DocumentStorage {
   public storedUpdate: Update | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
     return {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
@@ -49,14 +42,15 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(
-    _key: string,
-    _syncStep2: SyncStep2Update,
-  ): Promise<void> {
+  async handleSyncStep2(_key: string, _syncStep2: SyncStep2Update): Promise<void> {
     return;
   }
 
-  async handleUpdate(_documentId: string, update: Update, _attribution?: import("teleportal/storage").EncodedContentMap): Promise<void> {
+  async handleUpdate(
+    _documentId: string,
+    update: Update,
+    _attribution?: import("teleportal/storage").EncodedContentMap,
+  ): Promise<void> {
     this.mockHandleUpdate = true;
     this.storedUpdate = update;
   }
@@ -73,10 +67,7 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.metadata.set(documentId, metadata);
   }
 
@@ -112,10 +103,7 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
+  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
@@ -129,14 +117,11 @@ class MockDocumentStorage implements DocumentStorage {
 }
 
 // Mock Transport for testing
-class MockTransport<Context extends ServerContext>
-  implements Transport<Context>
-{
+class MockTransport<Context extends ServerContext> implements Transport<Context> {
   public readable: ReadableStream<Message<Context>>;
   public writable: WritableStream<Message<Context>>;
   public mockDestroy = false;
-  private controller: ReadableStreamDefaultController<Message<Context>> | null =
-    null;
+  private controller: ReadableStreamDefaultController<Message<Context>> | null = null;
 
   constructor() {
     const { readable, writable } = new TransformStream<Message<Context>>();
@@ -715,11 +700,7 @@ describe("Server", () => {
         // Verify that either documentId or fileId is provided
         expect(documentId || fileId).toBeDefined();
         // Deny write operations (sync-step-2 requires write)
-        if (
-          message.type === "doc" &&
-          message.payload.type === "sync-step-2" &&
-          type === "write"
-        ) {
+        if (message.type === "doc" && message.payload.type === "sync-step-2" && type === "write") {
           return false;
         }
         // Allow read operations
@@ -890,13 +871,10 @@ describe("Server", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Verify session still exists (cleanup hasn't fired yet)
-      const existingSession = await server.getOrOpenSession(
-        "test-doc-cleanup",
-        {
-          encrypted: false,
-          context: { userId: "user-1", room: "room", clientId: "client-1" },
-        },
-      );
+      const existingSession = await server.getOrOpenSession("test-doc-cleanup", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
       expect(existingSession).toBeDefined();
 
       // Close transport to ensure cleanup
@@ -987,13 +965,10 @@ describe("Server", () => {
       });
 
       // Verify session exists
-      const existingSession = await server.getOrOpenSession(
-        "test-doc-handler",
-        {
-          encrypted: false,
-          context: { userId: "user-1", room: "room", clientId: "client-1" },
-        },
-      );
+      const existingSession = await server.getOrOpenSession("test-doc-handler", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
       expect(existingSession).toBeDefined();
       expect(existingSession.documentId).toBe("test-doc-handler");
 
@@ -1041,14 +1016,11 @@ describe("Server", () => {
         id: "client-cancel-2",
       });
 
-      const session2 = await server.getOrOpenSession(
-        "test-doc-cancel-timeout",
-        {
-          encrypted: false,
-          client: client2,
-          context: { userId: "user-1", room: "room", clientId: "client-1" },
-        },
-      );
+      const session2 = await server.getOrOpenSession("test-doc-cancel-timeout", {
+        encrypted: false,
+        client: client2,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
 
       // Session should no longer be marked for disposal
       expect(session2.shouldDispose).toBe(false);
@@ -1739,9 +1711,7 @@ describe("Server", () => {
       ) {
         expect(authMessage.payload.type).toBe("auth-message");
         expect(authMessage.payload.permission).toBe("denied");
-        expect(authMessage.payload.reason).toContain(
-          "Insufficient permissions",
-        );
+        expect(authMessage.payload.reason).toContain("Insufficient permissions");
         expect(authMessage.payload.reason).toContain("test-doc");
         expect(authMessage.document).toBe("test-doc");
       }

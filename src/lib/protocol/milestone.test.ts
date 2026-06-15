@@ -185,9 +185,7 @@ describe("Milestone", () => {
 
     it("throws error on invalid message prefix", () => {
       const invalidData = new Uint8Array([0x00, 0x00, 0x00]);
-      expect(() => Milestone.decodeMeta(invalidData)).toThrow(
-        "Invalid message prefix",
-      );
+      expect(() => Milestone.decodeMeta(invalidData)).toThrow("Invalid message prefix");
     });
 
     it("throws error on unsupported version", () => {
@@ -196,9 +194,7 @@ describe("Milestone", () => {
       // Modify version byte (byte 3, after YJS prefix)
       encoded[3] = 0x99; // Change version from 0x02 to 0x99
 
-      expect(() => Milestone.decodeMeta(encoded)).toThrow(
-        "Version not supported",
-      );
+      expect(() => Milestone.decodeMeta(encoded)).toThrow("Version not supported");
     });
 
     it("encodes and decodes createdBy field", () => {
@@ -254,10 +250,7 @@ describe("Milestone", () => {
         }),
       );
 
-      const getSnapshot = async (
-        documentId: string,
-        id: string,
-      ): Promise<MilestoneSnapshot> => {
+      const getSnapshot = async (documentId: string, id: string): Promise<MilestoneSnapshot> => {
         const snapshot = snapshotMap.get(id);
         if (!snapshot) {
           throw new Error(`Snapshot not found for id: ${id}`);
@@ -303,10 +296,7 @@ describe("Milestone", () => {
         }),
       );
 
-      const getSnapshot = async (
-        documentId: string,
-        id: string,
-      ): Promise<MilestoneSnapshot> => {
+      const getSnapshot = async (documentId: string, id: string): Promise<MilestoneSnapshot> => {
         const snapshot = snapshotMap.get(id);
         if (!snapshot) {
           throw new Error(`Snapshot not found for id: ${id}`);
@@ -325,10 +315,7 @@ describe("Milestone", () => {
   describe("lazy loading", () => {
     it("can create milestone with lazy loading", async () => {
       const snapshot = createTestSnapshot();
-      const getSnapshot = async (
-        documentId: string,
-        id: string,
-      ): Promise<MilestoneSnapshot> => {
+      const getSnapshot = async (documentId: string, id: string): Promise<MilestoneSnapshot> => {
         expect(documentId).toBe("doc-123");
         expect(id).toBe("lazy-id");
         return snapshot;

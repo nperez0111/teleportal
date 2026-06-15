@@ -1,16 +1,7 @@
 import { decoding } from "lib0";
 import { toBase64 } from "lib0/buffer.js";
-import {
-  DocMessage,
-  SyncStep2Update,
-  type Message,
-  type RawReceivedMessage,
-} from "teleportal";
-import {
-  type ContentMap,
-  type IdMap,
-  decodeContentMap,
-} from "teleportal/attribution";
+import { DocMessage, SyncStep2Update, type Message, type RawReceivedMessage } from "teleportal";
+import { type ContentMap, type IdMap, decodeContentMap } from "teleportal/attribution";
 import { decryptUpdate } from "teleportal/encryption-key";
 import {
   decodeEncryptedUpdate,
@@ -32,9 +23,7 @@ export function getMessageTypeLabel(message: MessageType): string {
     return message.payload.type;
   }
   if (message.type === "awareness") {
-    return message.payload.type === "awareness-update"
-      ? "awareness-update"
-      : "awareness-request";
+    return message.payload.type === "awareness-update" ? "awareness-update" : "awareness-request";
   }
   if (message.type === "ack") {
     return "ack";
@@ -137,17 +126,12 @@ function contentMapToJSON(contentMap: ContentMap) {
   };
 }
 
-function formatRpcPayload(
-  message: MessageType & { type: "rpc" },
-): unknown {
+function formatRpcPayload(message: MessageType & { type: "rpc" }): unknown {
   const { payload } = message;
 
   if (payload.type === "error") return payload;
 
-  if (
-    message.rpcMethod === "attributionGet" &&
-    message.requestType === "response"
-  ) {
+  if (message.rpcMethod === "attributionGet" && message.requestType === "response") {
     const data = payload.payload as { contentMap: EncodedContentMap | null };
     if (!data.contentMap) return { ...payload, payload: { contentMap: null } };
 
@@ -182,10 +166,7 @@ export async function formatMessagePayload(
               // bail, content is encrypted
               return toBase64(message.payload.update);
             }
-            update = (await decryptUpdate(
-              provider.encryptionKey,
-              update,
-            )) as any;
+            update = (await decryptUpdate(provider.encryptionKey, update)) as any;
           }
 
           const decoder = decoding.createDecoder(update);
@@ -236,10 +217,7 @@ export async function formatMessagePayload(
                   message.context,
                   false,
                 );
-                const formatted = await formatMessagePayload(
-                  docMsg as MessageType,
-                  provider,
-                );
+                const formatted = await formatMessagePayload(docMsg as MessageType, provider);
                 if (formatted != null) items.push(formatted);
               }
             }
@@ -249,10 +227,7 @@ export async function formatMessagePayload(
                   // bail, content is encrypted & we have no key
                   return toBase64(val.payload);
                 }
-                const decrypted = await decryptUpdate(
-                  provider.encryptionKey,
-                  val.payload,
-                );
+                const decrypted = await decryptUpdate(provider.encryptionKey, val.payload);
 
                 return formatMessagePayload(
                   new DocMessage(
@@ -268,9 +243,7 @@ export async function formatMessagePayload(
                 );
               }),
             ).then((res) => {
-              const combined = items.concat(
-                res.filter((s): s is string => s != null),
-              );
+              const combined = items.concat(res.filter((s): s is string => s != null));
               if (combined.length === 0) {
                 return `[]`;
               }
@@ -283,9 +256,7 @@ export async function formatMessagePayload(
             const decoded = decodeEncryptedUpdate(message.payload.update);
             if (decoded.type === "snapshot") {
               if (!provider.encryptionKey) {
-                return `snapshot:${decoded.snapshot.id} ${toBase64(
-                  decoded.snapshot.payload,
-                )}`;
+                return `snapshot:${decoded.snapshot.id} ${toBase64(decoded.snapshot.payload)}`;
               }
               const decrypted = await decryptUpdate(
                 provider.encryptionKey,
@@ -312,10 +283,7 @@ export async function formatMessagePayload(
                   // bail, content is encrypted & we have no key
                   return toBase64(val.payload);
                 }
-                const decrypted = await decryptUpdate(
-                  provider.encryptionKey,
-                  val.payload,
-                );
+                const decrypted = await decryptUpdate(provider.encryptionKey, val.payload);
 
                 return formatMessagePayload(
                   new DocMessage(
@@ -413,9 +381,7 @@ export async function formatMessagePayload(
                   clients: mapToJSON(decodedUpdate.ds.clients),
                 },
               },
-              stateVector: mapToJSON(
-                Y.decodeStateVector(Y.encodeStateVectorFromUpdateV2(update)),
-              ),
+              stateVector: mapToJSON(Y.decodeStateVector(Y.encodeStateVectorFromUpdateV2(update))),
               meta: {
                 from: mapToJSON(meta.from),
                 to: mapToJSON(meta.to),
@@ -437,11 +403,7 @@ export async function formatMessagePayload(
       }
     }
     case "rpc": {
-      return JSON.stringify(
-        formatRpcPayload(message),
-        null,
-        2,
-      );
+      return JSON.stringify(formatRpcPayload(message), null, 2);
     }
     default: {
       // @ts-expect-error - this should be unreachable due to type checking
@@ -472,8 +434,7 @@ export function formatLogEntry(msg: {
     second: "2-digit",
     fractionalSecondDigits: 3,
   });
-  const arrow =
-    msg.direction === "sent" ? "CLIENT → SERVER" : "SERVER → CLIENT";
+  const arrow = msg.direction === "sent" ? "CLIENT → SERVER" : "SERVER → CLIENT";
   const type = getMessageTypeLabel(msg.message);
   const doc = msg.document ? `doc: "${msg.document}"` : "doc: (none)";
   const encrypted = msg.message.encrypted ? "encrypted" : "plaintext";

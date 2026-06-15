@@ -30,9 +30,7 @@ class FileService extends Observable<{
     const documents = stored
       ? await Promise.all(
           JSON.parse(stored).map(
-            async (
-              doc: Omit<Document, "encryptedKey"> & { encryptedKey: string },
-            ) => ({
+            async (doc: Omit<Document, "encryptedKey"> & { encryptedKey: string }) => ({
               ...doc,
               encryptedKey: doc.encryptedKey
                 ? await importEncryptionKey(doc.encryptedKey)
@@ -41,9 +39,7 @@ class FileService extends Observable<{
           ),
         )
       : [];
-    return documents.filter(
-      (doc, i, arr) => arr.findIndex((d) => d.id === doc.id) === i,
-    );
+    return documents.filter((doc, i, arr) => arr.findIndex((d) => d.id === doc.id) === i);
   }
 
   private async saveDocuments(documents: Document[]): Promise<void> {
@@ -54,9 +50,7 @@ class FileService extends Observable<{
       JSON.stringify(
         await Promise.all(
           documents
-            .filter(
-              (doc, i, arr) => arr.findIndex((d) => d.id === doc.id) === i,
-            )
+            .filter((doc, i, arr) => arr.findIndex((d) => d.id === doc.id) === i)
             .map(async (doc) => ({
               ...doc,
               encryptedKey: doc.encryptedKey
@@ -96,8 +90,7 @@ class FileService extends Observable<{
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       encryptedKey:
-        options.encryptedKey ??
-        (options.encrypted ? await createEncryptionKey() : undefined),
+        options.encryptedKey ?? (options.encrypted ? await createEncryptionKey() : undefined),
     };
 
     documents.push(newDocument);
@@ -105,10 +98,7 @@ class FileService extends Observable<{
     return newDocument;
   }
 
-  async updateDocument(
-    id: string,
-    updates: Partial<Document>,
-  ): Promise<Document | null> {
+  async updateDocument(id: string, updates: Partial<Document>): Promise<Document | null> {
     const index = this.documents.findIndex((doc) => doc.id === id);
 
     if (index === -1) return null;

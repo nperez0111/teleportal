@@ -75,22 +75,17 @@ function normalizeSnapshotMetadata(
   return {
     id: snapshotId,
     parentSnapshotId: metadata.parentSnapshotId ?? null,
-    createdAt:
-      typeof metadata.createdAt === "number" ? metadata.createdAt : now,
-    updateVersion:
-      typeof metadata.updateVersion === "number" ? metadata.updateVersion : 0,
+    createdAt: typeof metadata.createdAt === "number" ? metadata.createdAt : now,
+    updateVersion: typeof metadata.updateVersion === "number" ? metadata.updateVersion : 0,
     clientCounters: metadata.clientCounters ?? {},
   };
 }
 
 export abstract class EncryptedDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
-  storageType: "encrypted" = "encrypted";
+  storageType = "encrypted" as const;
 
-  abstract writeDocumentMetadata(
-    key: string,
-    metadata: EncryptedDocumentMetadata,
-  ): Promise<void>;
+  abstract writeDocumentMetadata(key: string, metadata: EncryptedDocumentMetadata): Promise<void>;
 
   abstract getDocumentMetadata(key: string): Promise<EncryptedDocumentMetadata>;
 
@@ -100,25 +95,16 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     metadata: EncryptedSnapshotMetadata,
   ): Promise<void>;
 
-  abstract fetchSnapshot(
-    key: string,
-    snapshotId: string,
-  ): Promise<EncryptedSnapshot | null>;
+  abstract fetchSnapshot(key: string, snapshotId: string): Promise<EncryptedSnapshot | null>;
 
-  abstract writeSnapshotMetadata(
-    key: string,
-    metadata: EncryptedSnapshotMetadata,
-  ): Promise<void>;
+  abstract writeSnapshotMetadata(key: string, metadata: EncryptedSnapshotMetadata): Promise<void>;
 
   abstract getSnapshotMetadata(
     key: string,
     snapshotId: string,
   ): Promise<EncryptedSnapshotMetadata | null>;
 
-  abstract storeUpdate(
-    key: string,
-    update: StoredEncryptedUpdate,
-  ): Promise<void>;
+  abstract storeUpdate(key: string, update: StoredEncryptedUpdate): Promise<void>;
 
   abstract fetchUpdates(
     key: string,
@@ -126,16 +112,10 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     afterVersion: number,
   ): Promise<StoredEncryptedUpdate[]>;
 
-  async handleSyncStep1(
-    key: string,
-    syncStep1: EncryptedStateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(key: string, syncStep1: EncryptedStateVector): Promise<Document> {
     const now = Date.now();
     const decodedStateVector = decodeFromStateVector(syncStep1);
-    const metadata = normalizeDocumentMetadata(
-      await this.getDocumentMetadata(key),
-      now,
-    );
+    const metadata = normalizeDocumentMetadata(await this.getDocumentMetadata(key), now);
     const activeSnapshotId = metadata.activeSnapshotId ?? "";
     if (!activeSnapshotId) {
       return toDocument(
@@ -172,11 +152,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         this.fetchUpdates(key, activeSnapshotId, 0),
       ]);
     } else if (decodedStateVector.serverVersion < serverVersion) {
-      updates = await this.fetchUpdates(
-        key,
-        activeSnapshotId,
-        decodedStateVector.serverVersion,
-      );
+      updates = await this.fetchUpdates(key, activeSnapshotId, decodedStateVector.serverVersion);
     }
 
     return toDocument(
@@ -197,10 +173,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     );
   }
 
-  async handleSyncStep2(
-    key: string,
-    syncStep2: EncryptedSyncStep2,
-  ): Promise<void> {
+  async handleSyncStep2(key: string, syncStep2: EncryptedSyncStep2): Promise<void> {
     await this.handleEncryptedSyncStep2(key, syncStep2);
   }
 
@@ -227,8 +200,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         await this.getDocumentMetadata(key),
         Date.now(),
       );
-      const activeSnapshotIdForUpdate =
-        metadataForUpdate.activeSnapshotId ?? "";
+      const activeSnapshotIdForUpdate = metadataForUpdate.activeSnapshotId ?? "";
       if (
         activeSnapshotIdForUpdate &&
         decoded.updates.some((u) => u.snapshotId !== activeSnapshotIdForUpdate)
@@ -239,9 +211,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         return null;
       }
       const storedUpdates = await this.storeUpdates(key, decoded.updates);
-      return storedUpdates.length > 0
-        ? encodeEncryptedUpdateMessages(storedUpdates)
-        : null;
+      return storedUpdates.length > 0 ? encodeEncryptedUpdateMessages(storedUpdates) : null;
     });
   }
 
@@ -254,10 +224,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       const payloads: EncryptedUpdatePayload[] = [];
       let snapshotStored = false;
       if (decoded.snapshot) {
-        const storedSnapshot = await this.storeSnapshotMessage(
-          key,
-          decoded.snapshot,
-        );
+        const storedSnapshot = await this.storeSnapshotMessage(key, decoded.snapshot);
         if (storedSnapshot) {
           payloads.push(encodeEncryptedSnapshot(storedSnapshot));
           snapshotStored = true;
@@ -294,10 +261,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     snapshot: EncryptedSnapshot,
   ): Promise<EncryptedSnapshot | null> {
     const now = Date.now();
-    const metadata = normalizeDocumentMetadata(
-      await this.getDocumentMetadata(key),
-      now,
-    );
+    const metadata = normalizeDocumentMetadata(await this.getDocumentMetadata(key), now);
     const activeSnapshotId = metadata.activeSnapshotId ?? null;
 
     if (activeSnapshotId === snapshot.id) {
@@ -327,12 +291,8 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
 
     await this.storeSnapshot(key, snapshot, snapshotMetadata);
 
-    const snapshots = Array.isArray(metadata.snapshots)
-      ? metadata.snapshots
-      : [];
-    const nextSnapshots = snapshots.includes(snapshot.id)
-      ? snapshots
-      : [...snapshots, snapshot.id];
+    const snapshots = Array.isArray(metadata.snapshots) ? metadata.snapshots : [];
+    const nextSnapshots = snapshots.includes(snapshot.id) ? snapshots : [...snapshots, snapshot.id];
 
     await this.writeDocumentMetadata(key, {
       ...metadata,
@@ -351,10 +311,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     updates: DecodedEncryptedUpdatePayload[],
   ): Promise<StoredEncryptedUpdate[]> {
     const now = Date.now();
-    const metadata = normalizeDocumentMetadata(
-      await this.getDocumentMetadata(key),
-      now,
-    );
+    const metadata = normalizeDocumentMetadata(await this.getDocumentMetadata(key), now);
     const activeSnapshotId = metadata.activeSnapshotId;
     if (!activeSnapshotId) {
       throw new Error("Cannot store updates without an active snapshot");
@@ -392,9 +349,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
 
       const nextVersion = snapshotMeta.updateVersion + 1;
       const assignedVersion =
-        typeof update.serverVersion === "number"
-          ? update.serverVersion
-          : nextVersion;
+        typeof update.serverVersion === "number" ? update.serverVersion : nextVersion;
       if (assignedVersion !== nextVersion) {
         throw new Error(
           `Update version out of order for snapshot ${activeSnapshotId}: expected ${nextVersion}, got ${assignedVersion}`,
@@ -430,10 +385,7 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
 
   async getDocument(key: string): Promise<Document | null> {
     const now = Date.now();
-    const metadata = normalizeDocumentMetadata(
-      await this.getDocumentMetadata(key),
-      now,
-    );
+    const metadata = normalizeDocumentMetadata(await this.getDocumentMetadata(key), now);
     const activeSnapshotId = metadata.activeSnapshotId ?? "";
     if (!activeSnapshotId) {
       return null;
@@ -471,5 +423,4 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
   transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     return cb();
   }
-
 }

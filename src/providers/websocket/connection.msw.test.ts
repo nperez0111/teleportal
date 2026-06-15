@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { ws } from "msw";
 import { setupServer } from "msw/node";
 import {
@@ -19,10 +11,7 @@ import {
 } from "teleportal";
 import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
-import {
-  getFileClientHandlers,
-  getFileRpcHandlers,
-} from "../../protocols/file";
+import { getFileClientHandlers, getFileRpcHandlers } from "../../protocols/file";
 import type { FilePartStream } from "../../protocols/file/methods";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
@@ -144,10 +133,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
 
   afterEach(async () => {
     if (client) {
-      if (
-        client.state.type === "connected" ||
-        client.state.type === "connecting"
-      ) {
+      if (client.state.type === "connected" || client.state.type === "connecting") {
         await client.disconnect();
       }
       await client.destroy();
@@ -250,9 +236,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
-      expect(fileId).toMatchInlineSnapshot(
-        `"yEjhAT+fBKnWP6Q85/1K8DUVLHxmmkpAS2cQfO5fLk4="`,
-      );
+      expect(fileId).toMatchInlineSnapshot(`"yEjhAT+fBKnWP6Q85/1K8DUVLHxmmkpAS2cQfO5fLk4="`);
       await client.destroy();
     });
     test("should upload large file through WebSocket connection", async () => {
@@ -356,9 +340,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
-      expect(fileId).toMatchInlineSnapshot(
-        `"h3KLkpK8GaKRh4b5BUiHr1xcYQ2TGSjx7kDOgfNXmlM="`,
-      );
+      expect(fileId).toMatchInlineSnapshot(`"h3KLkpK8GaKRh4b5BUiHr1xcYQ2TGSjx7kDOgfNXmlM="`);
       await client.destroy();
     });
 
@@ -467,9 +449,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       expect(downloadedFile.type).toContain("text/plain");
 
       // Compare file contents
-      const downloadedContent = new Uint8Array(
-        await downloadedFile.arrayBuffer(),
-      );
+      const downloadedContent = new Uint8Array(await downloadedFile.arrayBuffer());
       expect(downloadedContent.length).toBe(fileContent.length);
       expect(downloadedContent).toEqual(fileContent);
 

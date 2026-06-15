@@ -21,9 +21,7 @@ describe("getDocumentsFromQueryParams", () => {
   });
 
   it("should extract multiple documents from comma-separated values", () => {
-    const request = new Request(
-      "http://example.com/sse?documents=doc-1,doc-2,doc-3",
-    );
+    const request = new Request("http://example.com/sse?documents=doc-1,doc-2,doc-3");
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
       { document: "doc-1", encrypted: false },
@@ -96,13 +94,9 @@ describe("getDocumentsFromQueryParams", () => {
 
   it("should handle special characters in document names", () => {
     const specialName = encodeURIComponent("doc-with-symbols!@#$%^&*()");
-    const request = new Request(
-      `http://example.com/sse?documents=${specialName}`,
-    );
+    const request = new Request(`http://example.com/sse?documents=${specialName}`);
     const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([
-      { document: "doc-with-symbols!@#$%^&*()", encrypted: false },
-    ]);
+    expect(result).toEqual([{ document: "doc-with-symbols!@#$%^&*()", encrypted: false }]);
   });
 
   it("should trim whitespace from document names", () => {
@@ -118,9 +112,7 @@ describe("getDocumentsFromQueryParams", () => {
   });
 
   it("should handle numeric document IDs", () => {
-    const request = new Request(
-      "http://example.com/sse?documents=123,456&documents=789",
-    );
+    const request = new Request("http://example.com/sse?documents=123,456&documents=789");
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
       { document: "123", encrypted: false },
@@ -132,9 +124,7 @@ describe("getDocumentsFromQueryParams", () => {
   it("should handle UUID-like document IDs", () => {
     const uuid1 = "550e8400-e29b-41d4-a716-446655440000";
     const uuid2 = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
-    const request = new Request(
-      `http://example.com/sse?documents=${uuid1}&documents=${uuid2}`,
-    );
+    const request = new Request(`http://example.com/sse?documents=${uuid1}&documents=${uuid2}`);
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
       { document: uuid1, encrypted: false },
@@ -168,18 +158,14 @@ describe("getDocumentsFromQueryParams", () => {
   });
 
   it("should prefer encrypted version when document appears both encrypted and unencrypted", () => {
-    const request = new Request(
-      "http://example.com/sse?documents=doc-1,doc-1:encrypted",
-    );
+    const request = new Request("http://example.com/sse?documents=doc-1,doc-1:encrypted");
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([{ document: "doc-1", encrypted: true }]);
   });
 
   it("should handle URL-encoded encrypted document names", () => {
     const encodedName = encodeURIComponent("doc with spaces");
-    const request = new Request(
-      `http://example.com/sse?documents=${encodedName}:encrypted`,
-    );
+    const request = new Request(`http://example.com/sse?documents=${encodedName}:encrypted`);
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([{ document: "doc with spaces", encrypted: true }]);
   });

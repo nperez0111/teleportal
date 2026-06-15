@@ -19,10 +19,7 @@ import {
   type RpcServerContext,
   type RpcSuccess,
 } from "teleportal/protocol";
-import type {
-  DocumentStorage,
-  EncryptedDocumentStorage,
-} from "teleportal/storage";
+import type { DocumentStorage, EncryptedDocumentStorage } from "teleportal/storage";
 import type { EncodedContentMap } from "teleportal/storage";
 import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
 import { decodeEncryptedUpdate } from "teleportal/protocol/encryption";
@@ -38,17 +35,11 @@ import {
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
-import type {
-  DocumentMessageSource,
-  PresenceConfig,
-  SessionEvents,
-} from "./events";
+import type { DocumentMessageSource, PresenceConfig, SessionEvents } from "./events";
 import { emitWideEvent } from "./logger";
 import type { Server } from "./server";
 
-export class Session<Context extends ServerContext> extends Observable<
-  SessionEvents<Context>
-> {
+export class Session<Context extends ServerContext> extends Observable<SessionEvents<Context>> {
   /**
    * The client-facing document ID (original document name from client).
    */
@@ -71,9 +62,7 @@ export class Session<Context extends ServerContext> extends Observable<
   #nodeId: string;
   #dedupe: TtlDedupe;
   #metrics: MetricsCollector | undefined;
-  #documentSizeConfig:
-    | { warningThreshold?: number; limit?: number }
-    | undefined;
+  #documentSizeConfig: { warningThreshold?: number; limit?: number } | undefined;
   #sizeWarningEmitted = false;
   #sizeLimitEmitted = false;
   #loaded = false;
@@ -109,10 +98,7 @@ export class Session<Context extends ServerContext> extends Observable<
     string,
     {
       lastSeen: number;
-      clients: Map<
-        string,
-        { awarenessId: number; userId: string; data: Record<string, unknown> }
-      >;
+      clients: Map<string, { awarenessId: number; userId: string; data: Record<string, unknown> }>;
     }
   >();
   #heartbeatIntervalMs: number;
@@ -146,8 +132,7 @@ export class Session<Context extends ServerContext> extends Observable<
     this.#metrics = args.metricsCollector;
     this.#documentSizeConfig = args.documentSizeConfig;
     this.#presenceConfig = args.presenceConfig;
-    this.#heartbeatIntervalMs =
-      args.presenceConfig?.heartbeatIntervalMs ?? 30_000;
+    this.#heartbeatIntervalMs = args.presenceConfig?.heartbeatIntervalMs ?? 30_000;
     this.#presenceTtlMs = args.presenceConfig?.presenceTtlMs ?? 90_000;
     this.#rpcHandlers = args.rpcHandlers ?? {};
     this.#server = args.server;
@@ -181,9 +166,7 @@ export class Session<Context extends ServerContext> extends Observable<
           try {
             message = decodeMessage(binary, (ctx) => {
               if (ctx.type === "rpc") {
-                return this.#rpcHandlers[ctx.method]?.[ctx.requestType]?.decode(
-                  ctx.payload,
-                );
+                return this.#rpcHandlers[ctx.method]?.[ctx.requestType]?.decode(ctx.payload);
               }
               return undefined;
             });
@@ -210,19 +193,10 @@ export class Session<Context extends ServerContext> extends Observable<
             // (join upserts, leave removes, heartbeat replaces), so re-applying
             // is safe.
             if (message.type !== "presence") {
-              const shouldAccept = this.#dedupe.shouldAccept(
-                this.namespacedDocumentId,
-                message.id,
-              );
+              const shouldAccept = this.#dedupe.shouldAccept(this.namespacedDocumentId, message.id);
 
               if (!shouldAccept) {
-                this.#emitDocumentMessage(
-                  message,
-                  undefined,
-                  "replication",
-                  sourceId,
-                  true,
-                );
+                this.#emitDocumentMessage(message, undefined, "replication", sourceId, true);
                 return;
               }
             }
@@ -475,9 +449,7 @@ export class Session<Context extends ServerContext> extends Observable<
    * Locally fan out a server-authored presence-join/leave (clearing the peer's
    * awareness on leave is done client-side from this message).
    */
-  #broadcastPresence(
-    payload: DecodedPresenceJoin | DecodedPresenceLeave,
-  ): Promise<void> {
+  #broadcastPresence(payload: DecodedPresenceJoin | DecodedPresenceLeave): Promise<void> {
     return this.broadcast(new PresenceMessage<Context>(this.documentId, payload));
   }
 
@@ -485,10 +457,7 @@ export class Session<Context extends ServerContext> extends Observable<
    * Record/refresh a single remote client (from a pub/sub presence-join), so the
    * cross-node roster stays current between heartbeats.
    */
-  #upsertRemoteClient(
-    nodeId: string,
-    payload: DecodedPresenceJoin,
-  ) {
+  #upsertRemoteClient(nodeId: string, payload: DecodedPresenceJoin) {
     const node = this.#remotePresence.get(nodeId) ?? {
       lastSeen: Date.now(),
       clients: new Map<
@@ -526,10 +495,7 @@ export class Session<Context extends ServerContext> extends Observable<
    * leaves for clients that disappeared, then store the snapshot and refresh the
    * node's liveness. Self-heals any join/leave message that was lost.
    */
-  async #reconcileRemoteSnapshot(
-    nodeId: string,
-    clients: DecodedPresenceHeartbeat["clients"],
-  ) {
+  async #reconcileRemoteSnapshot(nodeId: string, clients: DecodedPresenceHeartbeat["clients"]) {
     const previous = this.#remotePresence.get(nodeId)?.clients ?? new Map();
     const next = new Map<
       string,
@@ -667,11 +633,7 @@ export class Session<Context extends ServerContext> extends Observable<
   /**
    * Write an update to the storage.
    */
-  async write(
-    update: Update,
-    context?: Context,
-    source: DocumentMessageSource = "client",
-  ) {
+  async write(update: Update, context?: Context, source: DocumentMessageSource = "client") {
     try {
       let attribution: EncodedContentMap | undefined;
       if (source === "client" && context?.userId) {
@@ -688,11 +650,7 @@ export class Session<Context extends ServerContext> extends Observable<
         }
       }
 
-      await this.#storage.handleUpdate(
-        this.namespacedDocumentId,
-        update,
-        attribution,
-      );
+      await this.#storage.handleUpdate(this.namespacedDocumentId, update, attribution);
 
       if (attribution) {
         this.call("document-attribution", {
@@ -728,15 +686,12 @@ export class Session<Context extends ServerContext> extends Observable<
   #computeAttribution(update: Update, context: Context) {
     let contentIds: ContentIds;
     if (this.encrypted) {
-      const message = decodeEncryptedUpdate(
-        update as unknown as EncryptedUpdatePayload,
-      );
+      const message = decodeEncryptedUpdate(update as unknown as EncryptedUpdatePayload);
       if (message.type !== "update") {
         contentIds = createContentIdsFromUpdate(update);
       } else {
         const decoded = message.updates.map((m) => decodeContentIds(m.contentIds));
-        contentIds =
-          decoded.length === 1 ? decoded[0] : mergeContentIds(decoded);
+        contentIds = decoded.length === 1 ? decoded[0] : mergeContentIds(decoded);
       }
     } else {
       contentIds = createContentIdsFromUpdate(update);
@@ -744,31 +699,23 @@ export class Session<Context extends ServerContext> extends Observable<
     const now = Date.now();
     const userId = context.userId;
     return encodeContentMap(
-      createContentMapFromContentIds(contentIds, [
-        createContentAttribute("insert", userId),
-        createContentAttribute("insertAt", now),
-      ], [
-        createContentAttribute("delete", userId),
-        createContentAttribute("deleteAt", now),
-      ]),
+      createContentMapFromContentIds(
+        contentIds,
+        [createContentAttribute("insert", userId), createContentAttribute("insertAt", now)],
+        [createContentAttribute("delete", userId), createContentAttribute("deleteAt", now)],
+      ),
     );
   }
 
   async #updateDocumentSizeMetrics(context?: Context) {
-    const meta = await this.#storage.getDocumentMetadata(
-      this.namespacedDocumentId,
-    );
+    const meta = await this.#storage.getDocumentMetadata(this.namespacedDocumentId);
 
     const sizeBytes = meta.sizeBytes ?? 0;
     const warningThreshold =
       meta.sizeWarningThreshold ?? this.#documentSizeConfig?.warningThreshold;
     const sizeLimit = meta.sizeLimit ?? this.#documentSizeConfig?.limit;
 
-    this.#metrics?.recordDocumentSize(
-      this.namespacedDocumentId,
-      sizeBytes,
-      this.encrypted,
-    );
+    this.#metrics?.recordDocumentSize(this.namespacedDocumentId, sizeBytes, this.encrypted);
 
     if (warningThreshold !== undefined && sizeBytes >= warningThreshold) {
       if (!this.#sizeWarningEmitted) {
@@ -840,9 +787,7 @@ export class Session<Context extends ServerContext> extends Observable<
     // Presence messages are always cleartext metadata (they carry no document
     // content), so they are exempt from the document's encryption requirement.
     if (message.type !== "presence" && message.encrypted !== this.encrypted) {
-      const error = new Error(
-        "Message encryption and document encryption are mismatched",
-      );
+      const error = new Error("Message encryption and document encryption are mismatched");
       emitWideEvent("error", {
         event_type: "encryption_mismatch",
         timestamp: new Date().toISOString(),
@@ -893,22 +838,22 @@ export class Session<Context extends ServerContext> extends Observable<
               return;
             }
             case "update": {
-              const messageSource: DocumentMessageSource =
-                replicationMeta?.sourceNodeId ? "replication" : "client";
+              const messageSource: DocumentMessageSource = replicationMeta?.sourceNodeId
+                ? "replication"
+                : "client";
 
               const encryptedStorage =
                 this.encrypted &&
-                typeof (this.#storage as EncryptedDocumentStorage)
-                  .handleEncryptedUpdate === "function"
+                typeof (this.#storage as EncryptedDocumentStorage).handleEncryptedUpdate ===
+                  "function"
                   ? (this.#storage as EncryptedDocumentStorage)
                   : null;
 
               if (encryptedStorage) {
-                const storedUpdate =
-                  await encryptedStorage.handleEncryptedUpdate(
-                    this.namespacedDocumentId,
-                    message.payload.update,
-                  );
+                const storedUpdate = await encryptedStorage.handleEncryptedUpdate(
+                  this.namespacedDocumentId,
+                  message.payload.update,
+                );
                 if (!storedUpdate) {
                   await Promise.all([
                     this.broadcast(message, client?.id),
@@ -966,11 +911,7 @@ export class Session<Context extends ServerContext> extends Observable<
                 return;
               }
 
-              await this.write(
-                message.payload.update,
-                message.context,
-                messageSource,
-              );
+              await this.write(message.payload.update, message.context, messageSource);
 
               await Promise.all([
                 this.broadcast(message, client?.id),
@@ -994,17 +935,16 @@ export class Session<Context extends ServerContext> extends Observable<
             case "sync-step-2": {
               const encryptedStorage =
                 this.encrypted &&
-                typeof (this.#storage as EncryptedDocumentStorage)
-                  .handleEncryptedSyncStep2 === "function"
+                typeof (this.#storage as EncryptedDocumentStorage).handleEncryptedSyncStep2 ===
+                  "function"
                   ? (this.#storage as EncryptedDocumentStorage)
                   : null;
 
               if (encryptedStorage) {
-                const payloads =
-                  await encryptedStorage.handleEncryptedSyncStep2(
-                    this.namespacedDocumentId,
-                    message.payload.update,
-                  );
+                const payloads = await encryptedStorage.handleEncryptedSyncStep2(
+                  this.namespacedDocumentId,
+                  message.payload.update,
+                );
                 if (payloads.length > 0) {
                   this.call("document-write", {
                     documentId: this.documentId,
@@ -1036,9 +976,7 @@ export class Session<Context extends ServerContext> extends Observable<
                       this.#emitDocumentMessage(
                         broadcastMessage,
                         client,
-                        replicationMeta?.sourceNodeId
-                          ? "replication"
-                          : "client",
+                        replicationMeta?.sourceNodeId ? "replication" : "client",
                         replicationMeta?.sourceNodeId,
                         replicationMeta?.deduped,
                       );
@@ -1073,10 +1011,7 @@ export class Session<Context extends ServerContext> extends Observable<
 
               await Promise.all([
                 this.broadcast(message, client?.id),
-                this.#storage.handleSyncStep2(
-                  this.namespacedDocumentId,
-                  message.payload.update,
-                ),
+                this.#storage.handleSyncStep2(this.namespacedDocumentId, message.payload.update),
                 this.#pubSub.publish(
                   `document/${this.namespacedDocumentId}` as const,
                   message.encoded,
@@ -1120,8 +1055,7 @@ export class Session<Context extends ServerContext> extends Observable<
                 document_id: this.documentId,
                 session_id: this.id,
                 message_id: message.id,
-                unknown_payload_type: (message.payload as { type?: string })
-                  .type,
+                unknown_payload_type: (message.payload as { type?: string }).type,
               });
               return;
             }
@@ -1136,155 +1070,37 @@ export class Session<Context extends ServerContext> extends Observable<
           const { requestType, originalRequestId } = rpcMessage;
 
           switch (requestType) {
-          case "request": {
-            const method = rpcMessage.rpcMethod;
+            case "request": {
+              const method = rpcMessage.rpcMethod;
 
-            if (rpcMessage.payload.type !== "success") {
-              return;
-            }
-
-            const requestPayload = rpcMessage.payload.payload as {
-              [key: string]: unknown;
-            };
-
-            const handler = this.#rpcHandlers[method];
-            if (!handler) {
-              const errorMessage = new RpcMessage(
-                this.documentId,
-                {
-                  type: "error",
-                  statusCode: 501,
-                  details: `Unknown RPC method: ${method}`,
-                  payload: { method },
-                },
-                method,
-                "response",
-                rpcMessage.id,
-                rpcMessage.context,
-                rpcMessage.encrypted,
-              );
-              await client.send(errorMessage);
-              return;
-            }
-
-            try {
-              const enrichedContext: RpcServerContext = {
-                ...rpcMessage.context,
-                server: this.#server as any,
-                documentId: this.namespacedDocumentId,
-                session: this as any,
-                userId: rpcMessage.context?.userId,
-                clientId: rpcMessage.context?.clientId,
-              };
-              const result = (await handler.handler(
-                requestPayload,
-                enrichedContext,
-              )) as {
-                response: {
-                  type: string;
-                  payload?: unknown;
-                  statusCode?: number;
-                  details?: string;
-                };
-                stream?: AsyncIterable<unknown>;
-              };
-
-              if ("stream" in result && result.stream) {
-                for await (const chunk of result.stream) {
-                  const serializer = (ctx: any) => {
-                    if (ctx.type === "rpc" && ctx.requestType === "stream") {
-                      return handler.stream?.encode?.(chunk);
-                    }
-                    return undefined;
-                  };
-                  const streamMessage = new RpcMessage(
-                    this.documentId,
-                    { type: "success", payload: chunk },
-                    method,
-                    "stream",
-                    rpcMessage.id,
-                    rpcMessage.context,
-                    rpcMessage.encrypted,
-                    undefined,
-                    serializer,
-                  );
-                  await client.send(streamMessage);
-                }
+              if (rpcMessage.payload.type !== "success") {
+                return;
               }
 
-              const responsePayload: RpcSuccess | RpcError =
-                (result.response as { type?: string }).type === "error"
-                  ? {
-                      type: "error",
-                      statusCode:
-                        (result.response as RpcError).statusCode ?? 500,
-                      details:
-                        (result.response as RpcError).details ??
-                        "Unknown error",
-                      payload: (result.response as RpcError).payload,
-                    }
-                  : {
-                      type: "success",
-                      payload: result.response,
-                    };
-              const serializer = (ctx: any) => {
-                if (ctx.type === "rpc" && ctx.requestType === "response" && // Only serialize if it's a success response (not an error)
-                  ctx.message.payload.type === "success") {
-                    return handler.response?.encode?.(result.response);
-                  }
-                return undefined;
+              const requestPayload = rpcMessage.payload.payload as {
+                [key: string]: unknown;
               };
-              const responseMessage = new RpcMessage(
-                this.documentId,
-                responsePayload,
-                method,
-                "response",
-                rpcMessage.id,
-                rpcMessage.context,
-                rpcMessage.encrypted,
-                undefined,
-                serializer,
-              );
 
-              await client.send(responseMessage);
-            } catch (error) {
-              emitWideEvent("error", {
-                event_type: "rpc_handler_failed",
-                timestamp: new Date().toISOString(),
-                document_id: this.documentId,
-                session_id: this.id,
-                message_id: rpcMessage.id,
-                method,
-                error,
-              });
+              const handler = this.#rpcHandlers[method];
+              if (!handler) {
+                const errorMessage = new RpcMessage(
+                  this.documentId,
+                  {
+                    type: "error",
+                    statusCode: 501,
+                    details: `Unknown RPC method: ${method}`,
+                    payload: { method },
+                  },
+                  method,
+                  "response",
+                  rpcMessage.id,
+                  rpcMessage.context,
+                  rpcMessage.encrypted,
+                );
+                await client.send(errorMessage);
+                return;
+              }
 
-              const errorMessage = new RpcMessage(
-                this.documentId,
-                {
-                  type: "error",
-                  statusCode: 500,
-                  details:
-                    error instanceof Error ? error.message : "Internal error",
-                },
-                method,
-                "response",
-                rpcMessage.id,
-                rpcMessage.context,
-                rpcMessage.encrypted,
-              );
-              await client.send(errorMessage);
-            }
-          
-          break;
-          }
-          case "stream": {
-            const method = rpcMessage.rpcMethod;
-            const handler = this.#rpcHandlers[method];
-
-            if (
-              handler?.streamHandler &&
-              rpcMessage.payload.type === "success"
-            ) {
               try {
                 const enrichedContext: RpcServerContext = {
                   ...rpcMessage.context,
@@ -1294,20 +1110,77 @@ export class Session<Context extends ServerContext> extends Observable<
                   userId: rpcMessage.context?.userId,
                   clientId: rpcMessage.context?.clientId,
                 };
+                const result = (await handler.handler(requestPayload, enrichedContext)) as {
+                  response: {
+                    type: string;
+                    payload?: unknown;
+                    statusCode?: number;
+                    details?: string;
+                  };
+                  stream?: AsyncIterable<unknown>;
+                };
 
-                await handler.streamHandler(
-                  rpcMessage.payload.payload,
-                  enrichedContext,
+                if ("stream" in result && result.stream) {
+                  for await (const chunk of result.stream) {
+                    const serializer = (ctx: any) => {
+                      if (ctx.type === "rpc" && ctx.requestType === "stream") {
+                        return handler.stream?.encode?.(chunk);
+                      }
+                      return undefined;
+                    };
+                    const streamMessage = new RpcMessage(
+                      this.documentId,
+                      { type: "success", payload: chunk },
+                      method,
+                      "stream",
+                      rpcMessage.id,
+                      rpcMessage.context,
+                      rpcMessage.encrypted,
+                      undefined,
+                      serializer,
+                    );
+                    await client.send(streamMessage);
+                  }
+                }
+
+                const responsePayload: RpcSuccess | RpcError =
+                  (result.response as { type?: string }).type === "error"
+                    ? {
+                        type: "error",
+                        statusCode: (result.response as RpcError).statusCode ?? 500,
+                        details: (result.response as RpcError).details ?? "Unknown error",
+                        payload: (result.response as RpcError).payload,
+                      }
+                    : {
+                        type: "success",
+                        payload: result.response,
+                      };
+                const serializer = (ctx: any) => {
+                  if (
+                    ctx.type === "rpc" &&
+                    ctx.requestType === "response" && // Only serialize if it's a success response (not an error)
+                    ctx.message.payload.type === "success"
+                  ) {
+                    return handler.response?.encode?.(result.response);
+                  }
+                  return undefined;
+                };
+                const responseMessage = new RpcMessage(
+                  this.documentId,
+                  responsePayload,
+                  method,
+                  "response",
                   rpcMessage.id,
-                  async (msg) => {
-                    if (client) {
-                      await client.send(msg);
-                    }
-                  },
+                  rpcMessage.context,
+                  rpcMessage.encrypted,
+                  undefined,
+                  serializer,
                 );
+
+                await client.send(responseMessage);
               } catch (error) {
                 emitWideEvent("error", {
-                  event_type: "rpc_stream_handler_failed",
+                  event_type: "rpc_handler_failed",
                   timestamp: new Date().toISOString(),
                   document_id: this.documentId,
                   session_id: this.id,
@@ -1316,35 +1189,85 @@ export class Session<Context extends ServerContext> extends Observable<
                   error,
                 });
 
-                if (client) {
-                  const errorMessage = new RpcMessage(
-                    this.documentId,
-                    {
-                      type: "error",
-                      statusCode: 500,
-                      details:
-                        error instanceof Error
-                          ? error.message
-                          : "Stream processing error",
+                const errorMessage = new RpcMessage(
+                  this.documentId,
+                  {
+                    type: "error",
+                    statusCode: 500,
+                    details: error instanceof Error ? error.message : "Internal error",
+                  },
+                  method,
+                  "response",
+                  rpcMessage.id,
+                  rpcMessage.context,
+                  rpcMessage.encrypted,
+                );
+                await client.send(errorMessage);
+              }
+
+              break;
+            }
+            case "stream": {
+              const method = rpcMessage.rpcMethod;
+              const handler = this.#rpcHandlers[method];
+
+              if (handler?.streamHandler && rpcMessage.payload.type === "success") {
+                try {
+                  const enrichedContext: RpcServerContext = {
+                    ...rpcMessage.context,
+                    server: this.#server as any,
+                    documentId: this.namespacedDocumentId,
+                    session: this as any,
+                    userId: rpcMessage.context?.userId,
+                    clientId: rpcMessage.context?.clientId,
+                  };
+
+                  await handler.streamHandler(
+                    rpcMessage.payload.payload,
+                    enrichedContext,
+                    rpcMessage.id,
+                    async (msg) => {
+                      if (client) {
+                        await client.send(msg);
+                      }
                     },
-                    method,
-                    "response",
-                    originalRequestId ?? rpcMessage.id,
-                    rpcMessage.context,
-                    rpcMessage.encrypted,
                   );
-                  await client.send(errorMessage);
+                } catch (error) {
+                  emitWideEvent("error", {
+                    event_type: "rpc_stream_handler_failed",
+                    timestamp: new Date().toISOString(),
+                    document_id: this.documentId,
+                    session_id: this.id,
+                    message_id: rpcMessage.id,
+                    method,
+                    error,
+                  });
+
+                  if (client) {
+                    const errorMessage = new RpcMessage(
+                      this.documentId,
+                      {
+                        type: "error",
+                        statusCode: 500,
+                        details: error instanceof Error ? error.message : "Stream processing error",
+                      },
+                      method,
+                      "response",
+                      originalRequestId ?? rpcMessage.id,
+                      rpcMessage.context,
+                      rpcMessage.encrypted,
+                    );
+                    await client.send(errorMessage);
+                  }
                 }
               }
+
+              break;
             }
-          
-          break;
-          }
-          case "response": {
-          
-          break;
-          }
-          // No default
+            case "response": {
+              break;
+            }
+            // No default
           }
 
           return;
@@ -1373,10 +1296,7 @@ export class Session<Context extends ServerContext> extends Observable<
           const sourceNodeId = replicationMeta?.sourceNodeId;
           if (message.payload.type === "presence-heartbeat") {
             if (sourceNodeId) {
-              await this.#reconcileRemoteSnapshot(
-                sourceNodeId,
-                message.payload.clients,
-              );
+              await this.#reconcileRemoteSnapshot(sourceNodeId, message.payload.clients);
             }
             return;
           }

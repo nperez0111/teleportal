@@ -45,35 +45,35 @@ The token utility supports flexible document pattern matching:
 ### Exact Match
 
 ```typescript
-pattern: "document1"
+pattern: "document1";
 // Matches: "document1"
 ```
 
 ### Prefix Match
 
 ```typescript
-pattern: "user/*"
+pattern: "user/*";
 // Matches: "user/doc1", "user/doc2", "user/project/doc3"
 ```
 
 ### Wildcard Match
 
 ```typescript
-pattern: "*"
+pattern: "*";
 // Matches: any document name
 ```
 
 ### Suffix Match
 
 ```typescript
-pattern: "*.md"
+pattern: "*.md";
 // Matches: "readme.md", "document.md"
 ```
 
 ### Complex Patterns
 
 ```typescript
-pattern: "org/project/*"
+pattern: "org/project/*";
 // Matches: "org/project/doc1", "org/project/subfolder/doc2"
 ```
 
@@ -160,7 +160,10 @@ const access = new DocumentAccessBuilder()
 ```typescript
 // User owns all documents starting with their userId
 const userToken = await tokenManager.createUserToken("user-123", "org-456", [
-  "read", "write", "comment", "suggest"
+  "read",
+  "write",
+  "comment",
+  "suggest",
 ]);
 ```
 
@@ -177,16 +180,16 @@ const adminToken = await tokenManager.createAdminToken("admin-789", "org-456");
 const customToken = await tokenManager.createDocumentToken("user-101", "org-456", [
   {
     pattern: "shared/*",
-    permissions: ["read", "comment"]
+    permissions: ["read", "comment"],
   },
   {
     pattern: "projects/my-project/*",
-    permissions: ["read", "write", "comment", "suggest"]
+    permissions: ["read", "write", "comment", "suggest"],
   },
   {
     pattern: "user-101/*",
-    permissions: ["read", "write", "comment", "suggest", "admin"]
-  }
+    permissions: ["read", "write", "comment", "suggest", "admin"],
+  },
 ]);
 ```
 
@@ -197,23 +200,12 @@ const customToken = await tokenManager.createDocumentToken("user-101", "org-456"
 const result = await tokenManager.verifyToken(token);
 if (result.valid && result.payload) {
   // Check specific permissions
-  const canRead = tokenManager.hasDocumentPermission(
-    result.payload,
-    "user-123/document1",
-    "read"
-  );
+  const canRead = tokenManager.hasDocumentPermission(result.payload, "user-123/document1", "read");
 
-  const canWrite = tokenManager.hasDocumentPermission(
-    result.payload,
-    "shared/document1",
-    "write"
-  );
+  const canWrite = tokenManager.hasDocumentPermission(result.payload, "shared/document1", "write");
 
   // Get all permissions for a document
-  const permissions = tokenManager.getDocumentPermissions(
-    result.payload,
-    "user-123/document1"
-  );
+  const permissions = tokenManager.getDocumentPermissions(result.payload, "user-123/document1");
 }
 ```
 
@@ -271,8 +263,8 @@ const handlers = getWebsocketHandlers({
   onUpgrade: async (request) => {
     // Extract token from request
     const url = new URL(request.url);
-    const token = url.searchParams.get("token") ||
-                 request.headers.get("authorization")?.replace("Bearer ", "");
+    const token =
+      url.searchParams.get("token") || request.headers.get("authorization")?.replace("Bearer ", "");
 
     if (!token) {
       throw new Response("No token provided", { status: 401 });

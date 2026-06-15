@@ -3,10 +3,7 @@ interface BatchOptions {
   wait?: number;
 }
 
-export function batch<T>(
-  fn: (items: T[]) => void,
-  options: BatchOptions = {},
-): (item: T) => void {
+export function batch<T>(fn: (items: T[]) => void, options: BatchOptions = {}): (item: T) => void {
   const maxSize = options.maxSize ?? Infinity;
   const wait = options.wait ?? Infinity;
   const items: T[] = [];

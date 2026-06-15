@@ -14,19 +14,13 @@ interface DocumentEditorProps {
   closeSidebar?: () => void;
 }
 
-export function DocumentEditor({
-  documentId,
-  isSidebarOpen,
-  toggleSidebar,
-}: DocumentEditorProps) {
+export function DocumentEditor({ documentId, isSidebarOpen, toggleSidebar }: DocumentEditorProps) {
   const document = fileService.getDocument(documentId);
   const [, forceUpdate] = useState<number>(0);
   const { provider } = useProvider(document?.id, document?.encryptedKey);
   const [isMilestonePanelOpen, setIsMilestonePanelOpen] = useState(false);
   const [isAttributionPanelOpen, setIsAttributionPanelOpen] = useState(false);
-  const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(
-    null,
-  );
+  const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(null);
   const identity = getIdentity();
 
   useEffect(() => {
@@ -63,9 +57,7 @@ export function DocumentEditor({
             />
           </svg>
           <h3 className="text-lg font-medium mb-2">No document selected</h3>
-          <p className="text-sm">
-            Select a document from the sidebar to start editing
-          </p>
+          <p className="text-sm">Select a document from the sidebar to start editing</p>
         </div>
       </div>
     );
@@ -181,8 +173,8 @@ export function DocumentEditor({
           </div>
           {/* Bottom row: Date text */}
           <p className="hidden md:block text-sm text-gray-500 dark:text-gray-400">
-            Created {new Date(document.createdAt).toLocaleDateString()} • Last
-            updated {new Date(document.updatedAt).toLocaleDateString()}
+            Created {new Date(document.createdAt).toLocaleDateString()} • Last updated{" "}
+            {new Date(document.updatedAt).toLocaleDateString()}
           </p>
         </div>
       </div>
@@ -195,9 +187,7 @@ export function DocumentEditor({
               <Suspense
                 fallback={
                   <div className="flex items-center justify-center h-32">
-                    <div className="text-gray-500 dark:text-gray-400">
-                      Loading editor...
-                    </div>
+                    <div className="text-gray-500 dark:text-gray-400">Loading editor...</div>
                   </div>
                 }
               >

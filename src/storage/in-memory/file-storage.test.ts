@@ -184,9 +184,7 @@ describe("InMemoryFileStorage", () => {
     expect(chunk).toEqual(chunks[0]);
 
     // Second fetch should fail
-    await expect(result.getChunk(0)).rejects.toThrow(
-      "Chunk 0 has already been fetched",
-    );
+    await expect(result.getChunk(0)).rejects.toThrow("Chunk 0 has already been fetched");
   });
 
   it("should allow moving chunks from in-memory temp storage to unstorage file storage", async () => {

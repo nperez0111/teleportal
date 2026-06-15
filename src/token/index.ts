@@ -199,8 +199,7 @@ export class TokenManager {
 
         if (
           matches &&
-          (access.permissions.includes(requiredPermission) ||
-            access.permissions.includes("admin"))
+          (access.permissions.includes(requiredPermission) || access.permissions.includes("admin"))
         ) {
           inclusionMatched = true;
         }
@@ -215,10 +214,7 @@ export class TokenManager {
   /**
    * Get all permissions for a specific document
    */
-  getDocumentPermissions(
-    payload: TokenPayload,
-    documentName: string,
-  ): Permission[] {
+  getDocumentPermissions(payload: TokenPayload, documentName: string): Permission[] {
     if (!payload.documentAccess) {
       return [];
     }
@@ -304,12 +300,10 @@ export class TokenManager {
       audience?: string;
     },
   ): Promise<string> {
-    const documentAccess: DocumentAccess[] = documentPatterns.map(
-      ({ pattern, permissions }) => ({
-        pattern,
-        permissions,
-      }),
-    );
+    const documentAccess: DocumentAccess[] = documentPatterns.map(({ pattern, permissions }) => ({
+      pattern,
+      permissions,
+    }));
 
     return this.generateToken(userId, room, documentAccess, options);
   }
@@ -374,9 +368,7 @@ export class DocumentAccessBuilder {
   /**
    * Allow all documents with the given permissions
    */
-  allowAll(
-    permissions: Permission[] = ["read", "write", "comment", "suggest"],
-  ): this {
+  allowAll(permissions: Permission[] = ["read", "write", "comment", "suggest"]): this {
     return this.allow("*", permissions);
   }
 
@@ -427,13 +419,7 @@ export class DocumentAccessBuilder {
    */
   ownDocuments(
     userId: string,
-    permissions: Permission[] = [
-      "read",
-      "write",
-      "comment",
-      "suggest",
-      "admin",
-    ],
+    permissions: Permission[] = ["read", "write", "comment", "suggest", "admin"],
   ): this {
     return this.allow(`${userId}/*`, permissions);
   }

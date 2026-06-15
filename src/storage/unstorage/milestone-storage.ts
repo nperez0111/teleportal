@@ -33,10 +33,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
    * @param cb - The callback to execute
    * @returns The TTL of the lock
    */
-  async transaction<T>(
-    key: string,
-    cb: (key: string) => Promise<T>,
-  ): Promise<T> {
+  async transaction<T>(key: string, cb: (key: string) => Promise<T>): Promise<T> {
     return withTransaction(this.storage, key, cb, { ttl: this.ttl });
   }
 
@@ -57,10 +54,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
       return [];
     }
 
-    return Milestone.decodeMetaDoc(
-      milestoneMetaDoc,
-      this.getMilestoneSnapshot.bind(this),
-    );
+    return Milestone.decodeMetaDoc(milestoneMetaDoc, this.getMilestoneSnapshot.bind(this));
   }
 
   /**
@@ -81,9 +75,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
       }
 
       if (options?.lifecycleState) {
-        milestones = milestones.filter(
-          (m) => m.lifecycleState === options.lifecycleState,
-        );
+        milestones = milestones.filter((m) => m.lifecycleState === options.lifecycleState);
       }
 
       return milestones;
@@ -97,9 +89,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
     documentId: Document["id"],
     id: Milestone["id"],
   ): Promise<MilestoneSnapshot> {
-    const content = await this.storage.getItemRaw(
-      this.#getContentKey(documentId, id),
-    );
+    const content = await this.storage.getItemRaw(this.#getContentKey(documentId, id));
 
     if (!content) {
       throw new Error("failed to hydrate milestone", {
@@ -124,44 +114,35 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
     createdBy: { type: "user" | "system"; id: string };
   }): Promise<string> {
     const id = uuidv4();
-    await this.transaction(
-      this.#getMetadataKey(ctx.documentId),
-      async (key) => {
-        const milestones = await this.#getMilestonesInternal(key);
+    await this.transaction(this.#getMetadataKey(ctx.documentId), async (key) => {
+      const milestones = await this.#getMilestonesInternal(key);
 
-        const existingIndex = milestones.findIndex((m) => m.id === id);
+      const existingIndex = milestones.findIndex((m) => m.id === id);
 
-        const milestone = new Milestone({ ...ctx, id });
+      const milestone = new Milestone({ ...ctx, id });
 
-        // If milestone exists, replace it; otherwise, append it
-        if (existingIndex === -1) {
-          milestones.push(milestone);
-        } else {
-          milestones[existingIndex] = milestone;
-        }
+      // If milestone exists, replace it; otherwise, append it
+      if (existingIndex === -1) {
+        milestones.push(milestone);
+      } else {
+        milestones[existingIndex] = milestone;
+      }
 
-        // Re-encode the metadata document with updated milestones
-        const newMilestoneMetaDoc = Milestone.encodeMetaDoc(milestones);
+      // Re-encode the metadata document with updated milestones
+      const newMilestoneMetaDoc = Milestone.encodeMetaDoc(milestones);
 
-        await Promise.all([
-          this.storage.setItemRaw(
-            this.#getContentKey(ctx.documentId, id),
-            milestone.encode(),
-          ),
-          this.storage.setItemRaw(key, newMilestoneMetaDoc),
-        ]);
-      },
-    );
+      await Promise.all([
+        this.storage.setItemRaw(this.#getContentKey(ctx.documentId, id), milestone.encode()),
+        this.storage.setItemRaw(key, newMilestoneMetaDoc),
+      ]);
+    });
     return id;
   }
 
   /**
    * Fetch a specific milestone from storage
    */
-  async getMilestone(
-    documentId: Document["id"],
-    id: Milestone["id"],
-  ): Promise<Milestone | null> {
+  async getMilestone(documentId: Document["id"], id: Milestone["id"]): Promise<Milestone | null> {
     const milestones = await this.getMilestones(documentId);
     return milestones.find((milestone) => milestone.id === id) ?? null;
   }
@@ -202,9 +183,7 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
       if (changed) {
         await Promise.all([
           this.storage.setItemRaw(key, Milestone.encodeMetaDoc(milestones)),
-          ...contentKeysToDelete.map((contentKey) =>
-            this.storage.removeItem(contentKey),
-          ),
+          ...contentKeysToDelete.map((contentKey) => this.storage.removeItem(contentKey)),
         ]);
       }
     });

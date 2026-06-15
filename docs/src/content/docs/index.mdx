@@ -16,21 +16,27 @@ hero:
       variant: minimal
 
 banner:
-    content: |
-      Read our blog post about <a href="https://pckt.blog/b/nick-the-sick/teleportal-a-real-time-collaborative-editing-framework-y5fe174"><b>FOSDEM 2026</b></a>! 🚀
-
+  content: |
+    Read our blog post about <a href="https://pckt.blog/b/nick-the-sick/teleportal-a-real-time-collaborative-editing-framework-y5fe174"><b>FOSDEM 2026</b></a>! 🚀
 ---
+
 import CardHover from "../../components/CardHover.astro";
 import { Card, CardGrid } from "@astrojs/starlight/components";
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-import { LinkButton } from '@astrojs/starlight/components';
-import { Badge } from '@astrojs/starlight/components';
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { LinkButton } from "@astrojs/starlight/components";
+import { Badge } from "@astrojs/starlight/components";
 
 ## Try it out!
 
 <div style="display: flex; gap: 1rem;">
-<iframe src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false" style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"></iframe>
-<iframe src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false" style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"></iframe>
+  <iframe
+    src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false"
+    style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"
+  ></iframe>
+  <iframe
+    src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false"
+    style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"
+  ></iframe>
 </div>
 
 <Badge text="Tip" variant="tip" /> Click on Pepper, the parrot, to open the Teleportal devtools!
@@ -41,42 +47,41 @@ import { Badge } from '@astrojs/starlight/components';
 
 <CardHover />
 <div class="card-cnt">
-<CardGrid stagger>
-  <Card title="Collaborative Editing" icon="seti:db">
-    Integrates with any editor supporting Y.js - ProseMirror, Quill, Monaco,
-    BlockNote, Tiptap, and more.
-  </Card>
-  <Card title="Storage Agnostic" icon="seti:db">
-    Use any storage backend - Redis, PostgreSQL, S3, Cloudflare R2, or implement
-    your own. Documents are never stored in-memory, making it perfect for
-    scalable deployments.
-  </Card>
-  <Card title="Transport Flexible" icon="seti:html">
-    Works with WebSockets, HTTP, Server-Sent Events, or any transport that
-    supports bidirectional communication. Built on web-native Streams APIs.
-  </Card>
-  <Card title="Runtime Agnostic" icon="node">
-    Built on web primitives and works on any JavaScript runtime - Node.js, Bun,
-    Deno, or any modern JavaScript environment. It's only plain JavaScript.
-  </Card>
-  <Card title="Modular Architecture" icon="seti:folder">
-    Teleportal is built as a composable set of modules that can be used together
-    to make a complete sync server. Use your own auth, storage, and more.
-  </Card>
-  <Card title="Encryption" icon="seti:lock">
-    Supports end-to-end encryption and encryption at rest. Optional AES-GCM
-    encryption for document updates and file transfers. Includes key management
-    utilities and encrypted transport layers.
-  </Card>
-  <Card title="Monitoring & Observability" icon="information">
-    Built-in Prometheus metrics, health checks, and status endpoints. Track
-    clients, sessions, messages, and performance metrics.
-  </Card>
-</CardGrid>
+  <CardGrid stagger>
+    <Card title="Collaborative Editing" icon="seti:db">
+      Integrates with any editor supporting Y.js - ProseMirror, Quill, Monaco, BlockNote, Tiptap,
+      and more.
+    </Card>
+    <Card title="Storage Agnostic" icon="seti:db">
+      Use any storage backend - Redis, PostgreSQL, S3, Cloudflare R2, or implement your own.
+      Documents are never stored in-memory, making it perfect for scalable deployments.
+    </Card>
+    <Card title="Transport Flexible" icon="seti:html">
+      Works with WebSockets, HTTP, Server-Sent Events, or any transport that supports bidirectional
+      communication. Built on web-native Streams APIs.
+    </Card>
+    <Card title="Runtime Agnostic" icon="node">
+      Built on web primitives and works on any JavaScript runtime - Node.js, Bun, Deno, or any
+      modern JavaScript environment. It's only plain JavaScript.
+    </Card>
+    <Card title="Modular Architecture" icon="seti:folder">
+      Teleportal is built as a composable set of modules that can be used together to make a
+      complete sync server. Use your own auth, storage, and more.
+    </Card>
+    <Card title="Encryption" icon="seti:lock">
+      Supports end-to-end encryption and encryption at rest. Optional AES-GCM encryption for
+      document updates and file transfers. Includes key management utilities and encrypted transport
+      layers.
+    </Card>
+    <Card title="Monitoring & Observability" icon="information">
+      Built-in Prometheus metrics, health checks, and status endpoints. Track clients, sessions,
+      messages, and performance metrics.
+    </Card>
+  </CardGrid>
 </div>
 
 <div class="hero-code">
-    <h2 class="head">Show me the code!</h2>
+  <h2 class="head">Show me the code!</h2>
 </div>
 
 <Tabs>
@@ -91,27 +96,28 @@ import { YDocStorage } from "teleportal/storage";
 
 // token manager is a JWT token verifier and manager.
 const tokenManager = createTokenManager({
-  secret: "your-secret-key-here",
-  expiresIn: 3600, // 1 hour
-  issuer: "teleportal.tools",
+secret: "your-secret-key-here",
+expiresIn: 3600, // 1 hour
+issuer: "teleportal.tools",
 });
 
 // Create a Teleportal server instance
 const server = new Server({
-  // you can use any storage backend you want, this one is in-memory
-  storage: new YDocStorage(),
-  // every message is verified against the token's permissions to the document
-  checkPermission: checkPermissionWithTokenManager(tokenManager),
+// you can use any storage backend you want, this one is in-memory
+storage: new YDocStorage(),
+// every message is verified against the token's permissions to the document
+checkPermission: checkPermissionWithTokenManager(tokenManager),
 });
 
 // Serve the Teleportal server with crossws (for multi-runtime support)
 serve({
-  // websocket upgrades are denied if the token is invalid
-  websocket: tokenAuthenticatedWebsocketHandler({ server, tokenManager }),
-  // HTTP requests are denied if the token is invalid
-  fetch: tokenAuthenticatedHTTPHandler({ server, tokenManager }),
+// websocket upgrades are denied if the token is invalid
+websocket: tokenAuthenticatedWebsocketHandler({ server, tokenManager }),
+// HTTP requests are denied if the token is invalid
+fetch: tokenAuthenticatedHTTPHandler({ server, tokenManager }),
 });
-```
+
+````
   </TabItem>
   <TabItem label="client.ts">
 
@@ -131,41 +137,42 @@ await provider.synced;
 // Insert text into the document
 const ytext = provider.doc.getText("content");
 ytext.insert(0, "Hello, world!");
-```
+````
+
   </TabItem>
 </Tabs>
 
 With that, you have token-authenticated, real-time collaborative editing with Y.js!
 
-<br/>
-<br/>
+<br />
+<br />
 ---
 
-
 <div class="hero-code">
-    <h2 class="head">Why Teleportal?</h2>
+  <h2 class="head">Why Teleportal?</h2>
 </div>
 
 Teleportal is designed not as a standalone server that you need to setup and deploy, but as a framework to build your own sync server, with just the features you need. You don't need to wait until Teleportal has all of the features you need, no more waiting for new APIs or plugins, just build it!
 
 This allows you to use:
 
-
 <div class="card-cnt">
-<CardGrid>
-<Card title="Any storage" icon="seti:db">
-Use any storage backend you want, from Redis to PostgreSQL to S3
-</Card>
-<Card title="Any transport" icon="seti:html">
-Use any transport you want, from WebSockets to HTTP to HTTP SSE
-</Card>
-<Card title="Any JS runtime" icon="node">
-Use any JS runtime you want, from Node.js to Bun to Deno (it even works in the browser!)
-</Card>
-<Card title="Any authentication" icon="seti:lock">
-Use any authentication provider you want, from JWT to OAuth to custom
-</Card>
-</CardGrid>
+  <CardGrid>
+    <Card title="Any storage" icon="seti:db">
+      Use any storage backend you want, from Redis to PostgreSQL to S3
+    </Card>
+    <Card title="Any transport" icon="seti:html">
+      Use any transport you want, from WebSockets to HTTP to HTTP SSE
+    </Card>
+    <Card title="Any JS runtime" icon="node">
+      Use any JS runtime you want, from Node.js to Bun to Deno (it even works in the browser!)
+    </Card>
+    <Card title="Any authentication" icon="seti:lock">
+      Use any authentication provider you want, from JWT to OAuth to custom
+    </Card>
+  </CardGrid>
 </div>
 
-<LinkButton href="/what-is-teleportal/" icon="right-arrow" style="margin-top: 2rem;">Learn more about Teleportal</LinkButton>
+<LinkButton href="/what-is-teleportal/" icon="right-arrow" style="margin-top: 2rem;">
+  Learn more about Teleportal
+</LinkButton>

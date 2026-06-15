@@ -30,7 +30,7 @@ function loadSettings(): DevtoolsSettings {
               : defaults.messageLimit,
           filters: {
             ...DEFAULT_FILTERS,
-            ...(parsed.filters ?? {}),
+            ...parsed.filters,
           },
         };
       }

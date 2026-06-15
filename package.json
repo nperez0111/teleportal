@@ -1,31 +1,35 @@
 {
   "name": "teleportal",
   "version": "0.0.4",
+  "private": false,
   "description": "A storage, transport & runtime agnostic Y.js server/provider. Built on web primitives, supports subdocs, and handles everything without in-memory storage. Perfect for collaborative apps! 🚀",
   "keywords": [
-    "yjs",
-    "server",
-    "provider",
-    "storage",
-    "transport",
-    "protocol",
     "e2ee",
+    "protocol",
+    "provider",
     "runtime",
-    "subdocs"
+    "server",
+    "storage",
+    "subdocs",
+    "transport",
+    "yjs"
   ],
-  "repository": "nperez0111/teleportal",
   "license": "MPL-2.0",
-  "sideEffects": false,
-  "type": "module",
+  "repository": "nperez0111/teleportal",
   "workspaces": [
     "playground",
     "examples/*",
     "docs"
   ],
-  "private": false,
-  "publishConfig": {
-    "access": "public"
-  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/lib/index.mjs",
+  "types": "./dist/lib/index.d.mts",
   "exports": {
     ".": "./dist/lib/index.mjs",
     "./storage": "./dist/storage/index.mjs",
@@ -50,18 +54,14 @@
     "./agent": "./dist/agent/index.mjs",
     "./attribution": "./dist/lib/attribution/index.mjs"
   },
-  "main": "./dist/lib/index.mjs",
-  "types": "./dist/lib/index.d.mts",
-  "files": [
-    "dist",
-    "src",
-    "README.md"
-  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "obuild",
+    "build": "vp pack",
     "build:demo": "cd ./playground && bun run build",
-    "lint": "eslint . && prettier -c src playground",
-    "lint:fix": "automd && eslint . --fix && prettier -w src playground",
+    "lint": "vp check",
+    "lint:fix": "vp check --fix",
     "prepack": "bun run build",
     "dev": "PORT=1235 bun run --watch ./playground/bun/server.ts",
     "dev:encrypted": "PORT=1234 bun run --watch ./playground/bun/encrypted-server.ts",
@@ -82,22 +82,17 @@
   "devDependencies": {
     "@nats-io/transport-node": "3.3.1",
     "@types/bun": "1.3.10",
-    "@typescript-eslint/eslint-plugin": "8.57.0",
-    "@typescript-eslint/parser": "8.57.0",
     "automd": "0.4.3",
     "bun-plugin-tailwind": "0.1.2",
     "changelogen": "0.6.2",
     "crossws": "0.4.4",
-    "eslint": "9.39.4",
-    "eslint-config-unjs": "0.6.2",
     "eventsource": "4.1.0",
     "ioredis": "5.10.0",
     "msw": "2.12.10",
-    "obuild": "0.4.32",
-    "prettier": "3.8.1",
     "srvx": "0.11.9",
     "typescript": "5.9.3",
-    "unstorage": "1.17.4"
+    "unstorage": "1.17.4",
+    "vite-plus": "0.1.24"
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",
@@ -122,10 +117,10 @@
   "engines": {
     "node": ">=24"
   },
+  "packageManager": "bun@1.3.8",
   "msw": {
     "workerDirectory": [
       "public"
     ]
-  },
-  "packageManager": "bun@1.3.8"
+  }
 }

@@ -154,17 +154,13 @@ export class FallbackConnection extends Connection<FallbackContext> {
           await this.tryHttpConnection(currentAttemptId);
         } catch (error) {
           if (currentAttemptId === this.#connectionAttemptId) {
-            this.handleConnectionError(
-              error instanceof Error ? error : new Error(String(error)),
-            );
+            this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
           }
         }
       }
     } catch (error) {
       if (currentAttemptId === this.#connectionAttemptId) {
-        this.handleConnectionError(
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
@@ -303,10 +299,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
         }
 
         if (state.type === "errored") {
-          if (
-            this.#websocketConnectionStatus === "init" &&
-            type === "websocket"
-          ) {
+          if (this.#websocketConnectionStatus === "init" && type === "websocket") {
             // ignore websocket errors if we haven't failed it yet
             return;
           }

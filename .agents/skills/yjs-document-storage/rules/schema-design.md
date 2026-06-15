@@ -93,7 +93,7 @@ When the split lifecycle is **parent-known** (i.e. the parent doc can reference 
 
 ```typescript
 const rootDoc = new Y.Doc();
-const pageDoc = new Y.Doc();            // subdocument
+const pageDoc = new Y.Doc(); // subdocument
 rootDoc.getMap("pages").set("page-1", pageDoc);
 
 // Subdocuments are NOT auto-loaded by default — call .load() when needed
@@ -126,8 +126,8 @@ yarray.insert(0, [ymap.get("my other array") as Y.Array]);
 
 ```typescript
 // Good: flat storage, containers hold IDs not shared types
-const yPages = ydoc.getMap("pages");          // pageId → Y.Map(page content)
-const yFolders = ydoc.getMap("folders");      // folderId → Y.Map({ pageIds: Y.Array<string> })
+const yPages = ydoc.getMap("pages"); // pageId → Y.Map(page content)
+const yFolders = ydoc.getMap("folders"); // folderId → Y.Map({ pageIds: Y.Array<string> })
 
 // "Moving" a page between folders is just updating ID lists — the page Y.Map never moves
 ```
@@ -167,4 +167,3 @@ ymap.set("meta", { ...ymap.get("meta"), foo: "bar" });
 ```
 
 For values that need per-field granular updates, don't store them as JSON at all — use a nested `Y.Map`.
-

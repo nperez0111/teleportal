@@ -12,10 +12,7 @@
   --sl-color-gray-6: #eceef2;
   --sl-color-gray-7: #f5f6f8;
   --sl-color-black: #ffffff;
-  --sl-bg-gradient: radial-gradient(
-    hsla(275, 60%, 74%, 0.183),
-    transparent 40%
-  );
+  --sl-bg-gradient: radial-gradient(hsla(275, 60%, 74%, 0.183), transparent 40%);
   --sl-community-link: #ffffff;
   --sl-perf-progress: #60a5fa;
   --sl-discord: #5865f2;
@@ -36,10 +33,7 @@
   --sl-color-gray-5: #353841;
   --sl-color-gray-6: #24272f;
   --sl-color-black: #17181c;
-  --sl-bg-gradient: radial-gradient(
-    hsla(274, 21%, 27%, 0.183),
-    transparent 40%
-  );
+  --sl-bg-gradient: radial-gradient(hsla(274, 21%, 27%, 0.183), transparent 40%);
   --sl-community-link: #ffffff;
   --sl-perf-progress: #60a5fa;
   --sl-discord: #5865f2;

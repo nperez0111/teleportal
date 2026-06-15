@@ -48,13 +48,11 @@ export function createContentIdsFromUpdate(update: Uint8Array): ContentIds {
   }
 
   const deletes = new IdSet();
-  ds.clients.forEach(
-    (deleteItems: Array<{ clock: number; len: number }>, clientID: number) => {
-      for (const item of deleteItems) {
-        deletes.add(clientID, item.clock, item.len);
-      }
-    },
-  );
+  ds.clients.forEach((deleteItems: Array<{ clock: number; len: number }>, clientID: number) => {
+    for (const item of deleteItems) {
+      deletes.add(clientID, item.clock, item.len);
+    }
+  });
 
   return { inserts, deletes };
 }

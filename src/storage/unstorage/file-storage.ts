@@ -51,9 +51,7 @@ export class UnstorageFileStorage implements FileStorage {
     await this.#storage.setItem(fileKey, {
       metadata: file.metadata,
       contentId: Array.from(file.contentId),
-      chunkKeys: file.chunks.map((_, index) =>
-        this.#getChunkKey(fileKey, index),
-      ),
+      chunkKeys: file.chunks.map((_, index) => this.#getChunkKey(fileKey, index)),
     });
 
     await Promise.all(
@@ -74,9 +72,7 @@ export class UnstorageFileStorage implements FileStorage {
     if (!serialized) return null;
 
     const chunks = await Promise.all(
-      serialized.chunkKeys.map((chunkKey) =>
-        this.#storage.getItemRaw<Uint8Array>(chunkKey),
-      ),
+      serialized.chunkKeys.map((chunkKey) => this.#storage.getItemRaw<Uint8Array>(chunkKey)),
     );
     const validChunks = chunks.filter((c): c is Uint8Array => c !== null);
 
@@ -102,9 +98,7 @@ export class UnstorageFileStorage implements FileStorage {
 
     if (!serialized) return null;
 
-    await Promise.all(
-      serialized.chunkKeys.map((k) => this.#storage.removeItem(k)),
-    );
+    await Promise.all(serialized.chunkKeys.map((k) => this.#storage.removeItem(k)));
     await this.#storage.removeItem(fileKey);
 
     return serialized.metadata;
@@ -126,9 +120,7 @@ export class UnstorageFileStorage implements FileStorage {
     await this.#storage.setItem(fileKey, {
       metadata: uploadResult.progress.metadata,
       contentId: Array.from(uploadResult.contentId),
-      chunkKeys: Array.from({ length: expectedChunks }, (_, i) =>
-        this.#getChunkKey(fileKey, i),
-      ),
+      chunkKeys: Array.from({ length: expectedChunks }, (_, i) => this.#getChunkKey(fileKey, i)),
     });
 
     // Fetch and store chunks incrementally

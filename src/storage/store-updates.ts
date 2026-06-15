@@ -7,15 +7,11 @@ import type { Message, Tag } from "teleportal";
 export type UpdateMessage = Tag<Uint8Array, "update-message">;
 
 export const getWriteDocUpdateStream = () =>
-  new TransformStream<
-    Message<any>,
-    { document: string; update: UpdateMessage }
-  >({
+  new TransformStream<Message<any>, { document: string; update: UpdateMessage }>({
     transform(chunk, controller) {
       if (
         chunk.type === "doc" &&
-        (chunk.payload.type === "sync-step-2" ||
-          chunk.payload.type === "update")
+        (chunk.payload.type === "sync-step-2" || chunk.payload.type === "update")
       ) {
         const encoder = encoding.createEncoder();
         encoding.writeVarUint8Array(encoder, chunk.payload.update);

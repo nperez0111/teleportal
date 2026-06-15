@@ -8,13 +8,7 @@
  *   inserts: IdMap { 42 → [{clock: 0, len: 10, attrs: [{name: "insert", val: "user-123"}, {name: "insertAt", val: 1700000000}]}] }
  */
 
-import {
-  type ContentIds,
-  type IdRange,
-  IdRanges,
-  IdSet,
-  type MaybeIdRange,
-} from "./content-ids";
+import { type ContentIds, type IdRange, IdRanges, IdSet, type MaybeIdRange } from "./content-ids";
 
 // --- ContentAttribute ---
 
@@ -25,10 +19,7 @@ export class ContentAttribute<V = unknown> {
   ) {}
 }
 
-export function createContentAttribute<V>(
-  name: string,
-  val: V,
-): ContentAttribute<V> {
+export function createContentAttribute<V>(name: string, val: V): ContentAttribute<V> {
   return new ContentAttribute(name, val);
 }
 
@@ -105,11 +96,7 @@ export class AttrRanges {
       let winner: AttrRange | undefined;
       let winnerIdx = -1;
       for (const [j, range] of input.entries()) {
-        if (
-          range.clock <= start &&
-          range.clock + range.len >= end &&
-          j > winnerIdx
-        ) {
+        if (range.clock <= start && range.clock + range.len >= end && j > winnerIdx) {
           winner = range;
           winnerIdx = j;
         }
@@ -119,11 +106,7 @@ export class AttrRanges {
       }
 
       const last = merged.at(-1);
-      if (
-        last &&
-        last.clock + last.len === start &&
-        attrsEqual(last.attrs, winner.attrs)
-      ) {
+      if (last && last.clock + last.len === start && attrsEqual(last.attrs, winner.attrs)) {
         last.len = end - last.clock;
       } else {
         merged.push(new AttrRange(start, end - start, winner.attrs));
@@ -136,9 +119,7 @@ export class AttrRanges {
   }
 
   copy(): AttrRanges {
-    return new AttrRanges(
-      this.getIds().map((r) => new AttrRange(r.clock, r.len, [...r.attrs])),
-    );
+    return new AttrRanges(this.getIds().map((r) => new AttrRange(r.clock, r.len, [...r.attrs])));
   }
 }
 
@@ -221,14 +202,7 @@ export class IdMap {
     return result;
   }
 
-  forEach(
-    f: (
-      client: number,
-      clock: number,
-      len: number,
-      attrs: ContentAttribute[],
-    ) => void,
-  ) {
+  forEach(f: (client: number, clock: number, len: number, attrs: ContentAttribute[]) => void) {
     for (const [client, ranges] of this.clients.entries()) {
       for (const range of ranges.getIds()) {
         f(client, range.clock, range.len, range.attrs);
@@ -244,10 +218,7 @@ export interface ContentMap {
   deletes: IdMap;
 }
 
-export function createContentMap(
-  inserts?: IdMap,
-  deletes?: IdMap,
-): ContentMap {
+export function createContentMap(inserts?: IdMap, deletes?: IdMap): ContentMap {
   return {
     inserts: inserts ?? new IdMap(),
     deletes: deletes ?? new IdMap(),
@@ -310,10 +281,7 @@ export function filterContentMap(
   );
 }
 
-function filterIdMap(
-  idMap: IdMap,
-  predicate: (attrs: ContentAttribute[]) => boolean,
-): IdMap {
+function filterIdMap(idMap: IdMap, predicate: (attrs: ContentAttribute[]) => boolean): IdMap {
   const filtered = new IdMap();
   for (const [client, ranges] of idMap.clients.entries()) {
     for (const range of ranges.getIds()) {
@@ -329,10 +297,7 @@ function filterIdMap(
  * Exclude ranges from a ContentMap that are present in the exclude ContentIds.
  * This prevents double-attribution when merging updates that share operations.
  */
-export function excludeContentMap(
-  content: ContentMap,
-  exclude: ContentIds,
-): ContentMap {
+export function excludeContentMap(content: ContentMap, exclude: ContentIds): ContentMap {
   return createContentMap(
     excludeIdMapByIdSet(content.inserts, exclude.inserts),
     excludeIdMapByIdSet(content.deletes, exclude.deletes),
@@ -357,10 +322,7 @@ function excludeIdMapByIdSet(idMap: IdMap, exclude: IdSet): IdMap {
 /**
  * Intersect a ContentMap with ContentIds, keeping only ranges that exist in both.
  */
-export function intersectContentMap(
-  contentMap: ContentMap,
-  contentIds: ContentIds,
-): ContentMap {
+export function intersectContentMap(contentMap: ContentMap, contentIds: ContentIds): ContentMap {
   return createContentMap(
     intersectIdMapByIdSet(contentMap.inserts, contentIds.inserts),
     intersectIdMapByIdSet(contentMap.deletes, contentIds.deletes),
@@ -385,9 +347,7 @@ function intersectIdMapByIdSet(idMap: IdMap, idSet: IdSet): IdMap {
 /**
  * Create ContentIds from a ContentMap (discarding the attributes).
  */
-export function createContentIdsFromContentMap(
-  contentMap: ContentMap,
-): ContentIds {
+export function createContentIdsFromContentMap(contentMap: ContentMap): ContentIds {
   const inserts = new IdSet();
   contentMap.inserts.forEach((client, clock, len) => {
     inserts.add(client, clock, len);

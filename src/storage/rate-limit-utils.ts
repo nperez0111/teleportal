@@ -27,21 +27,14 @@ export function calculateTokensToAdd(
  * @param now - Current timestamp in milliseconds
  * @returns Updated rate limit state
  */
-export function refillRateLimitState(
-  state: RateLimitState,
-  now: number,
-): RateLimitState {
+export function refillRateLimitState(state: RateLimitState, now: number): RateLimitState {
   const elapsed = now - state.lastRefill;
 
   if (elapsed <= 0) {
     return state;
   }
 
-  const tokensToAdd = calculateTokensToAdd(
-    elapsed,
-    state.windowMs,
-    state.maxMessages,
-  );
+  const tokensToAdd = calculateTokensToAdd(elapsed, state.windowMs, state.maxMessages);
 
   const newTokens = Math.min(state.maxMessages, state.tokens + tokensToAdd);
 
@@ -59,10 +52,7 @@ export function refillRateLimitState(
  * @param maxMessages - Maximum number of messages allowed in the window
  * @returns Initial rate limit state
  */
-export function createInitialState(
-  windowMs: number,
-  maxMessages: number,
-): RateLimitState {
+export function createInitialState(windowMs: number, maxMessages: number): RateLimitState {
   return {
     tokens: maxMessages,
     lastRefill: Date.now(),
@@ -97,12 +87,7 @@ export function getRateLimitKey(
   ruleId: string,
   userId: string | undefined,
   documentId: string | undefined,
-  trackBy:
-    | "user"
-    | "document"
-    | "user-document"
-    | "transport"
-    | string = "transport",
+  trackBy: "user" | "document" | "user-document" | "transport" | string = "transport",
 ): string | null {
   if (trackBy === "transport") {
     return null;
@@ -117,9 +102,7 @@ export function getRateLimitKey(
   }
 
   if (trackBy === "user-document") {
-    return userId && documentId
-      ? `rate-limit:${ruleId}:user-doc:${userId}:${documentId}`
-      : null;
+    return userId && documentId ? `rate-limit:${ruleId}:user-doc:${userId}:${documentId}` : null;
   }
 
   return null;

@@ -26,9 +26,7 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
     }
 
     if (options?.lifecycleState) {
-      milestones = milestones.filter(
-        (m) => m.lifecycleState === options.lifecycleState,
-      );
+      milestones = milestones.filter((m) => m.lifecycleState === options.lifecycleState);
     }
 
     return milestones;
@@ -46,10 +44,7 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
     return id;
   }
 
-  async getMilestone(
-    _documentId: Document["id"],
-    id: Milestone["id"],
-  ): Promise<Milestone | null> {
+  async getMilestone(_documentId: Document["id"], id: Milestone["id"]): Promise<Milestone | null> {
     const milestone = this.milestones.get(id);
     if (milestone && milestone.lifecycleState === "deleted") {
       return null;

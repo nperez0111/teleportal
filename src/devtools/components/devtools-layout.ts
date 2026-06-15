@@ -1,11 +1,7 @@
 import { MessageList } from "./message-list";
 import { MessageInspector } from "./message-inspector";
 import { FiltersPanel } from "./filters-panel";
-import type {
-  DevtoolsMessage,
-  Statistics,
-  ConnectionStateInfo,
-} from "../types";
+import type { DevtoolsMessage, Statistics, ConnectionStateInfo } from "../types";
 import type { SettingsManager } from "../settings-manager";
 import type { FilterManager } from "../filter-manager";
 
@@ -24,8 +20,7 @@ export class DevtoolsLayout {
   ) {
     this.onClearMessages = onClearMessages || null;
     this.element = document.createElement("div");
-    this.element.className =
-      "devtools-container devtools-h-full devtools-w-full";
+    this.element.className = "devtools-container devtools-h-full devtools-w-full";
 
     // Create filters panel
     this.filtersPanel = new FiltersPanel(
@@ -51,15 +46,13 @@ export class DevtoolsLayout {
     // Build layout
     // Top: Filters panel
     const filtersContainer = document.createElement("div");
-    filtersContainer.className =
-      "devtools-shrink-0 devtools-border-b devtools-border-gray-200";
+    filtersContainer.className = "devtools-shrink-0 devtools-border-b devtools-border-gray-200";
     filtersContainer.append(this.filtersPanel.getElement());
     this.element.append(filtersContainer);
 
     // Main content area
     const mainContent = document.createElement("div");
-    mainContent.className =
-      "devtools-flex-1 devtools-flex devtools-overflow-hidden";
+    mainContent.className = "devtools-flex-1 devtools-flex devtools-overflow-hidden";
 
     // Left: Message List
     const messageListContainer = document.createElement("div");
@@ -88,9 +81,7 @@ export class DevtoolsLayout {
   ) {
     this.messageList.setMessages(filteredMessages);
     if (this.selectedMessage) {
-      const stillExists = filteredMessages.some(
-        (m) => m.id === this.selectedMessage!.id,
-      );
+      const stillExists = filteredMessages.some((m) => m.id === this.selectedMessage!.id);
       if (stillExists) {
         this.messageList.setSelectedMessageId(this.selectedMessage.id);
       } else {

@@ -8,15 +8,18 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false, onClose }: SidebarProps) {
+export function Sidebar({
+  currentDocumentId,
+  onDocumentSelect,
+  isMobile = false,
+  onClose,
+}: SidebarProps) {
   const documents = fileService.documents;
   const [, forceUpdate] = useState<number>(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [showCopiedTooltip, setShowCopiedTooltip] = useState<string | null>(
-    null,
-  );
+  const [showCopiedTooltip, setShowCopiedTooltip] = useState<string | null>(null);
 
   const createNewDocument = async (encrypted: boolean = false) => {
     const newDoc = await fileService.createDocument({
@@ -90,26 +93,21 @@ export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false,
   );
 
   return (
-    <div className={`${isMobile ? 'w-80' : 'w-64'} bg-gray-50 dark:bg-gray-950 border-r border-gray-200 dark:border-gray-800 flex flex-col h-full max-w-[calc(100vw-2rem)] md:max-w-none`}>
+    <div
+      className={`${isMobile ? "w-80" : "w-64"} bg-gray-50 dark:bg-gray-950 border-r border-gray-200 dark:border-gray-800 flex flex-col h-full max-w-[calc(100vw-2rem)] md:max-w-none`}
+    >
       {/* Header */}
       <div className="px-4 h-20 flex items-center justify-between border-b border-gray-200 dark:border-gray-800">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center space-x-3">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
-              TelePortal
-            </h2>
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">TelePortal</h2>
             {isMobile && onClose && (
               <button
                 onClick={onClose}
                 className="p-1 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg transition-colors ml-auto"
                 title="Close sidebar"
               >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -126,12 +124,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false,
               className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg transition-colors"
               title="Create encrypted document"
             >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -145,12 +138,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false,
               className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg transition-colors"
               title="Create new document"
             >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -209,9 +197,7 @@ export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false,
               </svg>
             </div>
             <p className="font-medium mb-2">Welcome to your workspace!</p>
-            <p className="text-sm mb-4">
-              Create your first document to get started
-            </p>
+            <p className="text-sm mb-4">Create your first document to get started</p>
             <button
               onClick={handleCreateRegularDocument}
               className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
@@ -308,7 +294,9 @@ export function Sidebar({ currentDocumentId, onDocumentSelect, isMobile = false,
                           Updated {formatDate(doc.updatedAt)}
                         </p>
                       </div>
-                      <div className={`${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity flex space-x-1`}>
+                      <div
+                        className={`${isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"} transition-opacity flex space-x-1`}
+                      >
                         <div className="relative">
                           <button
                             onClick={(e) => {

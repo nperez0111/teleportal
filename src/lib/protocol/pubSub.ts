@@ -13,9 +13,7 @@ export function decodePubSubMessage(message: Uint8Array) {
   const decoder = decoding.createDecoder(message);
 
   const sourceId = decoding.readVarString(decoder);
-  const decodedMessage = decoding.readTailAsUint8Array(
-    decoder,
-  ) as BinaryMessage;
+  const decodedMessage = decoding.readTailAsUint8Array(decoder) as BinaryMessage;
 
   return {
     sourceId,

@@ -127,8 +127,7 @@ describe("lamport clock", () => {
     });
 
     it("should convert large lamport clock id to client id and counter", () => {
-      const [clientId, counter] =
-        LamportClock.fromLamportClockId("999999-123456");
+      const [clientId, counter] = LamportClock.fromLamportClockId("999999-123456");
       expect(clientId).toBe(999999);
       expect(counter).toBe(123456);
     });

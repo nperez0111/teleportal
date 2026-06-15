@@ -1,8 +1,4 @@
-import {
-  applyAwarenessUpdate,
-  Awareness,
-  encodeAwarenessUpdate,
-} from "y-protocols/awareness";
+import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
@@ -34,14 +30,10 @@ export interface YDocSourceHandler {
 
 export interface YDocSinkHandler {
   handleSyncStep1(stateVector: StateVector): Promise<DocMessage<ClientContext>>;
-  handleSyncStep2(
-    syncStep2: SyncStep2Update,
-  ): Promise<void | Message<ClientContext>>;
+  handleSyncStep2(syncStep2: SyncStep2Update): Promise<void | Message<ClientContext>>;
   handleUpdate(update: Update): Promise<void>;
   handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void>;
-  handleAwarenessRequest(
-    update: AwarenessUpdateMessage,
-  ): Promise<AwarenessMessage<ClientContext>>;
+  handleAwarenessRequest(update: AwarenessUpdateMessage): Promise<AwarenessMessage<ClientContext>>;
 }
 
 /**
@@ -213,10 +205,7 @@ export function getYDocSink<Context extends ClientContext>({
         document,
         {
           type: "sync-step-2",
-          update: Y.diffUpdateV2(
-            Y.encodeStateAsUpdateV2(ydoc),
-            stateVector,
-          ) as SyncStep2Update,
+          update: Y.diffUpdateV2(Y.encodeStateAsUpdateV2(ydoc), stateVector) as SyncStep2Update,
         },
         context,
       );
@@ -287,10 +276,7 @@ export function getYDocSink<Context extends ClientContext>({
                   const update = encodeAwarenessUpdate(awareness, [
                     awareness.clientID,
                   ]) as AwarenessUpdateMessage;
-                  observer.call(
-                    "message",
-                    await handler.handleAwarenessRequest(update),
-                  );
+                  observer.call("message", await handler.handleAwarenessRequest(update));
                   break;
                 }
                 default: {
@@ -307,16 +293,12 @@ export function getYDocSink<Context extends ClientContext>({
             case "doc": {
               switch (chunk.payload.type) {
                 case "sync-step-1": {
-                  const response = await handler.handleSyncStep1(
-                    chunk.payload.sv,
-                  );
+                  const response = await handler.handleSyncStep1(chunk.payload.sv);
                   observer.call("message", response);
                   break;
                 }
                 case "sync-step-2": {
-                  const compaction = await handler.handleSyncStep2(
-                    chunk.payload.update,
-                  );
+                  const compaction = await handler.handleSyncStep2(chunk.payload.update);
                   if (compaction) {
                     observer.call("message", compaction);
                   }

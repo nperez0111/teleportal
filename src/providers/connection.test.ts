@@ -192,16 +192,12 @@ describe("Connection", () => {
 
     it("should throw error when connecting destroyed connection", async () => {
       await connection.destroy();
-      await expect(connection.connect()).rejects.toThrow(
-        "Connection is destroyed",
-      );
+      await expect(connection.connect()).rejects.toThrow("Connection is destroyed");
     });
 
     it("should throw error when disconnecting destroyed connection", async () => {
       await connection.destroy();
-      await expect(connection.disconnect()).rejects.toThrow(
-        "Connection is destroyed",
-      );
+      await expect(connection.disconnect()).rejects.toThrow("Connection is destroyed");
     });
 
     it("should throw error when sending to destroyed connection", async () => {
@@ -212,9 +208,7 @@ describe("Connection", () => {
         { type: "sync-step-1", sv: new Uint8Array() as StateVector },
         { clientId: "test-client" } as ClientContext,
       );
-      await expect(connection.send(message)).rejects.toThrow(
-        "Connection is destroyed",
-      );
+      await expect(connection.send(message)).rejects.toThrow("Connection is destroyed");
     });
 
     it("should be idempotent when destroy() is called multiple times", async () => {
@@ -324,11 +318,9 @@ describe("Connection", () => {
         maxBufferedMessages: 2,
       });
       const msg = (i: number) =>
-        new DocMessage(
-          "test-doc",
-          { type: "sync-step-1", sv: new Uint8Array() as StateVector },
-          { clientId: `test-${i}` } as ClientContext,
-        );
+        new DocMessage("test-doc", { type: "sync-step-1", sv: new Uint8Array() as StateVector }, {
+          clientId: `test-${i}`,
+        } as ClientContext);
       const m1 = msg(1);
       const m2 = msg(2);
       await cappedConnection.send(m1);
@@ -591,9 +583,7 @@ describe("Connection", () => {
       // Should have disconnected or errored due to timeout
       // Note: The timeout might not trigger if the check isn't scheduled properly,
       // so we'll just verify the connection state is valid
-      expect(["connected", "disconnected", "errored"]).toContain(
-        connection.state.type,
-      );
+      expect(["connected", "disconnected", "errored"]).toContain(connection.state.type);
     });
 
     it("should reset timeout when message is received", async () => {

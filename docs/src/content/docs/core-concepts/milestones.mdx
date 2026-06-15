@@ -67,9 +67,7 @@ List all milestones for a document:
 const milestones = await provider.listMilestones();
 
 // List with incremental updates (only new milestones)
-const newMilestones = await provider.listMilestones(
-  existingMilestoneIds
-);
+const newMilestones = await provider.listMilestones(existingMilestoneIds);
 ```
 
 ## Retrieving Milestones
@@ -129,6 +127,7 @@ interface Milestone {
 ```
 
 The `createdBy` field indicates who or what created the milestone:
+
 - `{ type: "user", id: userId }` - Created by a user via `milestone-create-request`
 - `{ type: "system", id: nodeId }` - Created automatically by the system (triggers, API)
 
@@ -164,19 +163,16 @@ import { MilestoneStorage } from "teleportal/storage";
 interface MilestoneStorage {
   listMilestones(
     documentId: string,
-    options?: { snapshotIds?: string[]; includeDeleted?: boolean }
+    options?: { snapshotIds?: string[]; includeDeleted?: boolean },
   ): Promise<Milestone[]>;
 
-  getMilestoneSnapshot(
-    documentId: string,
-    milestoneId: string
-  ): Promise<Uint8Array | null>;
+  getMilestoneSnapshot(documentId: string, milestoneId: string): Promise<Uint8Array | null>;
 
   createMilestone(
     documentId: string,
     snapshot: Uint8Array,
     name?: string,
-    userId?: string
+    userId?: string,
   ): Promise<Milestone>;
 
   // ... other methods

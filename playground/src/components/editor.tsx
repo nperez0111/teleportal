@@ -12,10 +12,7 @@ import { EncryptionClient } from "../../../src/transports/encrypted/client";
 interface EditorProps {
   selectedMilestone: Milestone | null;
   provider: Provider<
-    Transport<
-      ClientContext,
-      DefaultTransportProperties & { handler?: EncryptionClient }
-    >
+    Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
   >;
   user?: {
     /**
@@ -37,9 +34,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
           fragment: provider.doc.getXmlFragment("document"),
           user: {
             name: user?.name ?? "NICK THE SICK",
-            color:
-              user?.color ??
-              "#" + Math.floor(Math.random() * 16777215).toString(16),
+            color: user?.color ?? "#" + Math.floor(Math.random() * 16777215).toString(16),
           },
           provider,
         }
@@ -52,11 +47,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     },
     async uploadFile(file, blockId) {
       try {
-        const fileId = await provider.uploadFile(
-          file,
-          blockId,
-          provider.transport.handler?.key,
-        );
+        const fileId = await provider.uploadFile(file, blockId, provider.transport.handler?.key);
 
         return `teleportal://${fileId}`;
       } catch (error) {
@@ -67,10 +58,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     async resolveFileUrl(url) {
       if (url.startsWith("teleportal://")) {
         const fileId = url.split("://")[1];
-        const file = await provider.downloadFile(
-          fileId,
-          provider.transport.handler?.key,
-        );
+        const file = await provider.downloadFile(fileId, provider.transport.handler?.key);
         return URL.createObjectURL(file);
       }
       return url;

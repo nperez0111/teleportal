@@ -130,12 +130,12 @@ Initiate a file upload and stream chunks to the server.
 
 ```typescript
 type FileUploadRequest = {
-  fileId: string;        // Content-addressable ID (hash of file)
-  filename: string;      // Original filename
-  size: number;          // File size in bytes
-  mimeType: string;      // MIME type
-  lastModified: number;  // Timestamp
-  encrypted: boolean;    // Whether file is encrypted
+  fileId: string; // Content-addressable ID (hash of file)
+  filename: string; // Original filename
+  size: number; // File size in bytes
+  mimeType: string; // MIME type
+  lastModified: number; // Timestamp
+  encrypted: boolean; // Whether file is encrypted
 };
 ```
 
@@ -145,8 +145,8 @@ type FileUploadRequest = {
 type FileUploadResponse = {
   fileId: string;
   allowed: boolean;
-  reason?: string;       // Present if not allowed
-  statusCode?: number;   // 403 if denied, 500 on error
+  reason?: string; // Present if not allowed
+  statusCode?: number; // 403 if denied, 500 on error
 };
 ```
 
@@ -159,7 +159,7 @@ type FilePartStream = {
   fileId: string;
   chunkIndex: number;
   chunkData: Uint8Array;
-  merkleProof: Uint8Array[];  // Proof for chunk integrity
+  merkleProof: Uint8Array[]; // Proof for chunk integrity
   totalChunks: number;
   bytesUploaded: number;
   encrypted: boolean;
@@ -191,8 +191,8 @@ type FileDownloadResponse = {
   lastModified: number;
   encrypted: boolean;
   allowed: boolean;
-  reason?: string;       // Present if not allowed
-  statusCode?: number;   // 404 if not found
+  reason?: string; // Present if not allowed
+  statusCode?: number; // 404 if not found
 };
 ```
 
@@ -303,17 +303,17 @@ Server handlers receive `RpcServerContext`:
 
 ```typescript
 interface RpcServerContext {
-  server: Server;           // The Server instance
-  documentId: string;       // The namespaced document ID
-  session: Session;         // The Session instance
-  userId?: string;          // User ID (if authenticated)
-  clientId?: string;        // Client ID
+  server: Server; // The Server instance
+  documentId: string; // The namespaced document ID
+  session: Session; // The Session instance
+  userId?: string; // User ID (if authenticated)
+  clientId?: string; // Client ID
 }
 ```
 
 ## Constants
 
-- **MAX_FILE_SIZE**: 1GB (1024 * 1024 * 1024 bytes)
+- **MAX_FILE_SIZE**: 1GB (1024 _ 1024 _ 1024 bytes)
 - **Cleanup interval**: 5 minutes (expired uploads are periodically cleaned)
 
 ## Exports

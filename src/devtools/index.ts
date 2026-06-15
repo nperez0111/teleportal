@@ -7,9 +7,7 @@ import { devtoolsStyles } from "./styles";
 const STYLE_ID = "teleportal-devtools-styles";
 
 function injectStyles() {
-  let styleElement = document.getElementById(
-    STYLE_ID,
-  ) as HTMLStyleElement | null;
+  let styleElement = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
 
   if (styleElement) {
     // Update existing styles (for hot-reload)
@@ -36,11 +34,7 @@ export function getDevtoolsState() {
 }
 
 export function createTeleportalDevtools(
-  {
-    settingsManager,
-    eventManager,
-    filterManager,
-  }: DevtoolsState = getDevtoolsState(),
+  { settingsManager, eventManager, filterManager }: DevtoolsState = getDevtoolsState(),
 ): HTMLElement {
   injectStyles();
 
@@ -55,8 +49,7 @@ export function createTeleportalDevtools(
     const filters = filterManager.getFilters();
     const filteredMessages = filterManager.getFilteredMessages(messages);
     const availableDocuments = filterManager.getAvailableDocuments(messages);
-    const availableMessageTypes =
-      filterManager.getAvailableMessageTypes(messages);
+    const availableMessageTypes = filterManager.getAvailableMessageTypes(messages);
 
     layout.update(
       messages,

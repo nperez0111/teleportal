@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { toBase64 } from "lib0/buffer";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -136,8 +128,7 @@ class MockEventSourceForMSW {
   url: string;
   withCredentials: boolean = false;
 
-  public listeners: Map<string, Set<(event: MessageEvent | Event) => void>> =
-    new Map();
+  public listeners: Map<string, Set<(event: MessageEvent | Event) => void>> = new Map();
   private shouldSendClientId: boolean = true;
   private clientId: string = "test-client-id";
 
@@ -164,10 +155,7 @@ class MockEventSourceForMSW {
     });
   }
 
-  addEventListener(
-    type: string,
-    listener: (event: MessageEvent | Event) => void,
-  ) {
+  addEventListener(type: string, listener: (event: MessageEvent | Event) => void) {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
     }
@@ -176,10 +164,7 @@ class MockEventSourceForMSW {
     this.dispatchEvent(new Event("listener-added"));
   }
 
-  removeEventListener(
-    type: string,
-    listener: (event: MessageEvent | Event) => void,
-  ) {
+  removeEventListener(type: string, listener: (event: MessageEvent | Event) => void) {
     this.listeners.get(type)?.delete(listener);
   }
 
@@ -196,11 +181,7 @@ class MockEventSourceForMSW {
             event instanceof MessageEvent && // Verify event.data exists and is a string
             typeof event.data !== "string"
           ) {
-            console.error(
-              "MessageEvent.data is not a string:",
-              typeof event.data,
-              event.data,
-            );
+            console.error("MessageEvent.data is not a string:", typeof event.data, event.data);
             continue;
           }
           // Call the listener - this is the handler from getSSESource
@@ -226,19 +207,14 @@ class MockEventSourceForMSW {
   }
 
   // Helper method for tests to simulate receiving messages
-  async simulateMessage(
-    data: string,
-    eventType: string = "message",
-    id?: string,
-  ): Promise<void> {
+  async simulateMessage(data: string, eventType: string = "message", id?: string): Promise<void> {
     if (this.readyState === MockEventSourceForMSW.OPEN) {
       // Wait for listeners to be attached
       // The ReadableStream's start() method sets up listeners when pipeTo is called
       // Check if listeners exist, and wait if they don't
       let attempts = 0;
       while (
-        (!this.listeners.has(eventType) ||
-          this.listeners.get(eventType)?.size === 0) &&
+        (!this.listeners.has(eventType) || this.listeners.get(eventType)?.size === 0) &&
         attempts < 100
       ) {
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -307,9 +283,7 @@ if (globalThis.EventTarget === undefined) {
 
     removeEventListener(type: string, listener: (event: any) => void) {
       if (this.listeners[type]) {
-        this.listeners[type] = this.listeners[type].filter(
-          (l) => l !== listener,
-        );
+        this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
       }
     }
 
@@ -332,9 +306,7 @@ function createTestMessage(): DocMessage<any> {
 }
 
 // Helper to create a Transport from an HttpConnection
-function connectionToTransport(
-  connection: HttpConnection,
-): Transport<ClientContext> {
+function connectionToTransport(connection: HttpConnection): Transport<ClientContext> {
   const writable = new WritableStream<Message<ClientContext>>({
     async write(message) {
       await connection.send(message);
@@ -419,10 +391,7 @@ describe("HttpConnection with MSW", () => {
   afterEach(async () => {
     if (client) {
       // Ensure connection is properly closed before destroying
-      if (
-        client.state.type === "connected" ||
-        client.state.type === "connecting"
-      ) {
+      if (client.state.type === "connected" || client.state.type === "connecting") {
         await client.disconnect();
       }
       await client.destroy();
@@ -633,21 +602,9 @@ describe("HttpConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Simulate multiple messages using the mock EventSource
-      await eventSourceRef.current.simulateMessage(
-        toBase64(msg1.encoded),
-        "message",
-        msg1.id,
-      );
-      await eventSourceRef.current.simulateMessage(
-        toBase64(msg2.encoded),
-        "message",
-        msg2.id,
-      );
-      await eventSourceRef.current.simulateMessage(
-        toBase64(msg3.encoded),
-        "message",
-        msg3.id,
-      );
+      await eventSourceRef.current.simulateMessage(toBase64(msg1.encoded), "message", msg1.id);
+      await eventSourceRef.current.simulateMessage(toBase64(msg2.encoded), "message", msg2.id);
+      await eventSourceRef.current.simulateMessage(toBase64(msg3.encoded), "message", msg3.id);
 
       // Wait for messages to be received and processed through the stream pipeline
       for (let i = 0; i < 50; i++) {
@@ -864,9 +821,7 @@ describe("HttpConnection with MSW", () => {
 
       // Connection should attempt to reconnect
       // Note: With mock EventSource, reconnection behavior is tested via the base Connection class
-      expect(["disconnected", "errored", "connecting", "connected"]).toContain(
-        client.state.type,
-      );
+      expect(["disconnected", "errored", "connecting", "connected"]).toContain(client.state.type);
     });
 
     test("should respect maxReconnectAttempts", async () => {
@@ -904,9 +859,7 @@ describe("HttpConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       // After max attempts, connection should be in a terminal state
-      expect(["disconnected", "errored", "connecting", "connected"]).toContain(
-        client.state.type,
-      );
+      expect(["disconnected", "errored", "connecting", "connected"]).toContain(client.state.type);
     });
   });
 
@@ -943,9 +896,7 @@ describe("HttpConnection with MSW", () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       // Connection should handle the error (may be in various states)
-      expect(["disconnected", "errored", "connecting", "connected"]).toContain(
-        client.state.type,
-      );
+      expect(["disconnected", "errored", "connecting", "connected"]).toContain(client.state.type);
     });
   });
 
@@ -1024,9 +975,7 @@ describe("HttpConnection with MSW", () => {
       expect(states).toContain("connecting");
       expect(states).toContain("connected");
       // May also see disconnected if close was processed
-      expect(["disconnected", "errored", "connected"]).toContain(
-        client.state.type,
-      );
+      expect(["disconnected", "errored", "connected"]).toContain(client.state.type);
     });
   });
 
@@ -1214,8 +1163,7 @@ describe("HttpConnection with MSW", () => {
                       if (
                         eventSourceRef.current.listeners.has("message") &&
                         eventSourceRef.current.listeners.get("message")?.size &&
-                        eventSourceRef.current.listeners.get("message")!.size >
-                          0
+                        eventSourceRef.current.listeners.get("message")!.size > 0
                       ) {
                         listenerReady = true;
                         break;
@@ -1224,11 +1172,7 @@ describe("HttpConnection with MSW", () => {
                     }
                     if (listenerReady) {
                       const encoded = toBase64(msg.encoded);
-                      await eventSourceRef.current.simulateMessage(
-                        encoded,
-                        "message",
-                        msg.id,
-                      );
+                      await eventSourceRef.current.simulateMessage(encoded, "message", msg.id);
                     }
                   }
                 };
@@ -1315,9 +1259,7 @@ describe("HttpConnection with MSW", () => {
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
-      expect(fileId).toMatchInlineSnapshot(
-        `"yEjhAT+fBKnWP6Q85/1K8DUVLHxmmkpAS2cQfO5fLk4="`,
-      );
+      expect(fileId).toMatchInlineSnapshot(`"yEjhAT+fBKnWP6Q85/1K8DUVLHxmmkpAS2cQfO5fLk4="`);
     });
 
     test("should handle multiple chunk file upload via HTTP", async () => {
@@ -1358,10 +1300,8 @@ describe("HttpConnection with MSW", () => {
                       for (let i = 0; i < 50; i++) {
                         if (
                           eventSourceRef.current.listeners.has("message") &&
-                          eventSourceRef.current.listeners.get("message")
-                            ?.size &&
-                          eventSourceRef.current.listeners.get("message")!
-                            .size > 0
+                          eventSourceRef.current.listeners.get("message")?.size &&
+                          eventSourceRef.current.listeners.get("message")!.size > 0
                         ) {
                           listenerReady = true;
                           break;
@@ -1457,9 +1397,7 @@ describe("HttpConnection with MSW", () => {
       expect(storedFile).not.toBeNull();
       expect(storedFile!.metadata.filename).toBe("test.txt");
       expect(storedFile!.metadata.size).toBe(fileContent.length);
-      expect(fileId).toMatchInlineSnapshot(
-        `"h3KLkpK8GaKRh4b5BUiHr1xcYQ2TGSjx7kDOgfNXmlM="`,
-      );
+      expect(fileId).toMatchInlineSnapshot(`"h3KLkpK8GaKRh4b5BUiHr1xcYQ2TGSjx7kDOgfNXmlM="`);
     });
 
     test.skip("should upload and download file through HTTP connection (round-trip)", async () => {
@@ -1501,8 +1439,7 @@ describe("HttpConnection with MSW", () => {
                       if (
                         eventSourceRef.current.listeners.has("message") &&
                         eventSourceRef.current.listeners.get("message")?.size &&
-                        eventSourceRef.current.listeners.get("message")!.size >
-                          0
+                        eventSourceRef.current.listeners.get("message")!.size > 0
                       ) {
                         listenerReady = true;
                         break;
@@ -1511,11 +1448,7 @@ describe("HttpConnection with MSW", () => {
                     }
                     if (listenerReady) {
                       const encoded = toBase64(msg.encoded);
-                      await eventSourceRef.current.simulateMessage(
-                        encoded,
-                        "message",
-                        msg.id,
-                      );
+                      await eventSourceRef.current.simulateMessage(encoded, "message", msg.id);
                     }
                   }
                 };
@@ -1530,10 +1463,7 @@ describe("HttpConnection with MSW", () => {
             return HttpResponse.json({ success: true });
           } catch {
             // Return error response
-            return HttpResponse.json(
-              { error: "Failed to process message" },
-              { status: 500 },
-            );
+            return HttpResponse.json({ error: "Failed to process message" }, { status: 500 });
           }
         }),
       );
@@ -1611,9 +1541,7 @@ describe("HttpConnection with MSW", () => {
       expect(downloadedFile.type).toContain("text/plain");
 
       // Compare file contents
-      const downloadedContent = new Uint8Array(
-        await downloadedFile.arrayBuffer(),
-      );
+      const downloadedContent = new Uint8Array(await downloadedFile.arrayBuffer());
       expect(downloadedContent.length).toBe(fileContent.length);
       expect(downloadedContent).toEqual(fileContent);
     });

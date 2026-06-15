@@ -4,9 +4,7 @@ import { DocumentEditor } from "./documentEditor";
 import { fileService } from "../services/fileService";
 
 export function Shell() {
-  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(
-    null,
-  );
+  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Check if sidebar should be hidden via query parameter

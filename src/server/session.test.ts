@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  setSystemTime,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { getLogger } from "@logtape/logtape";
 import * as Y from "yjs";
 import type {
@@ -16,12 +9,7 @@ import type {
   SyncStep2Update,
   Update,
 } from "teleportal";
-import {
-  AwarenessMessage,
-  DocMessage,
-  InMemoryPubSub,
-  PresenceMessage,
-} from "teleportal";
+import { AwarenessMessage, DocMessage, InMemoryPubSub, PresenceMessage } from "teleportal";
 import type {
   Document,
   DocumentMetadata,
@@ -34,11 +22,7 @@ import {
   encodeAwarenessUpdate,
   removeAwarenessStates,
 } from "y-protocols/awareness";
-import {
-  createEncryptionKey,
-  decryptUpdate,
-  encryptUpdate,
-} from "teleportal/encryption-key";
+import { createEncryptionKey, decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { Session } from "./session";
 import { Server } from "./server";
 import { Client } from "./client";
@@ -77,10 +61,7 @@ class MockDocumentStorage implements DocumentStorage {
   public lastSyncStep2: SyncStep2Update | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
     return {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
@@ -91,15 +72,16 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(
-    _key: string,
-    syncStep2: SyncStep2Update,
-  ): Promise<void> {
+  async handleSyncStep2(_key: string, syncStep2: SyncStep2Update): Promise<void> {
     this.mockHandleSyncStep2 = true;
     this.lastSyncStep2 = syncStep2;
   }
 
-  async handleUpdate(_documentId: string, update: Update, _attribution?: EncodedContentMap): Promise<void> {
+  async handleUpdate(
+    _documentId: string,
+    update: Update,
+    _attribution?: EncodedContentMap,
+  ): Promise<void> {
     this.mockHandleUpdate = true;
     this.storedUpdate = update;
   }
@@ -117,10 +99,7 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.metadata.set(documentId, metadata);
   }
 
@@ -156,10 +135,7 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
+  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
@@ -198,10 +174,7 @@ async function applyServerMessagesToObserver(
   decrypt?: (u: Uint8Array) => Promise<Uint8Array>,
 ) {
   for (const msg of messages) {
-    if (
-      msg.type === "awareness" &&
-      (msg as any).payload?.type === "awareness-update"
-    ) {
+    if (msg.type === "awareness" && (msg as any).payload?.type === "awareness-update") {
       try {
         const raw = (msg as any).payload.update as Uint8Array;
         const update = decrypt ? await decrypt(raw) : raw;
@@ -209,15 +182,8 @@ async function applyServerMessagesToObserver(
       } catch {
         // A faithful e2ee client rejects undecryptable awareness updates.
       }
-    } else if (
-      msg.type === "presence" &&
-      (msg as any).payload?.type === "presence-leave"
-    ) {
-      removeAwarenessStates(
-        observer,
-        [(msg as any).payload.awarenessId],
-        "remote",
-      );
+    } else if (msg.type === "presence" && (msg as any).payload?.type === "presence-leave") {
+      removeAwarenessStates(observer, [(msg as any).payload.awarenessId], "remote");
     }
   }
 }
@@ -316,11 +282,7 @@ describe("Session", () => {
       );
 
       // Publish from different node
-      await pubSub.publish(
-        `document/test-doc` as const,
-        message.encoded,
-        "other-node",
-      );
+      await pubSub.publish(`document/test-doc` as const, message.encoded, "other-node");
 
       // Wait for message to be processed
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -341,11 +303,7 @@ describe("Session", () => {
       );
 
       // Publish from same node
-      await pubSub.publish(
-        `document/test-doc` as const,
-        message.encoded,
-        nodeId,
-      );
+      await pubSub.publish(`document/test-doc` as const, message.encoded, nodeId);
 
       // Wait for message to be processed
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -366,11 +324,7 @@ describe("Session", () => {
       );
 
       // Publish message for different document
-      await pubSub.publish(
-        `document/other-doc` as const,
-        message.encoded,
-        "other-node",
-      );
+      await pubSub.publish(`document/other-doc` as const, message.encoded, "other-node");
 
       // Wait for message to be processed
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -817,10 +771,7 @@ describe("Session", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(client2.sentMessages.length).toBeGreaterThan(prevCount);
 
-        await applyServerMessagesToObserver(
-          observer,
-          client2.sentMessages.slice(prevCount),
-        );
+        await applyServerMessagesToObserver(observer, client2.sentMessages.slice(prevCount));
         expect(observer.getStates().has(awareness1.clientID)).toBe(false);
 
         awareness1.destroy();
@@ -885,11 +836,7 @@ describe("Session", () => {
         const observer = new Awareness(observerDoc);
         observer.setLocalState(null);
         const decrypt = (u: Uint8Array) => decryptUpdate(key, u as any);
-        await applyServerMessagesToObserver(
-          observer,
-          c2.sentMessages,
-          decrypt,
-        );
+        await applyServerMessagesToObserver(observer, c2.sentMessages, decrypt);
         expect(observer.getStates().has(awareness1.clientID)).toBe(true);
 
         // Disconnect client1.
@@ -898,11 +845,7 @@ describe("Session", () => {
         await new Promise((r) => setTimeout(r, 0));
         expect(c2.sentMessages.length).toBeGreaterThan(prevCount);
 
-        await applyServerMessagesToObserver(
-          observer,
-          c2.sentMessages.slice(prevCount),
-          decrypt,
-        );
+        await applyServerMessagesToObserver(observer, c2.sentMessages.slice(prevCount), decrypt);
         expect(observer.getStates().has(awareness1.clientID)).toBe(false);
 
         awareness1.destroy();
@@ -914,11 +857,7 @@ describe("Session", () => {
     });
 
     describe("presence messages", () => {
-      const announce = (
-        clientId: string,
-        awarenessId: number,
-        userId = "user-1",
-      ) =>
+      const announce = (clientId: string, awarenessId: number, userId = "user-1") =>
         new PresenceMessage(
           "test-doc",
           { type: "presence-announce", awarenessId },
@@ -941,11 +880,9 @@ describe("Session", () => {
         await session.apply(announce("client-1", 111), client1 as any);
 
         // The announcing client is never told about its own join.
-        expect(
-          presenceMsgs(client1).some(
-            (m) => (m.payload as any).clientId === "client-1",
-          ),
-        ).toBe(false);
+        expect(presenceMsgs(client1).some((m) => (m.payload as any).clientId === "client-1")).toBe(
+          false,
+        );
         // The already-announced peer learns of the join, with both ids + userId.
         const joins = presenceMsgs(client2).slice(prev);
         expect(joins).toHaveLength(1);
@@ -965,9 +902,7 @@ describe("Session", () => {
         await session.apply(announce("client-2", 222), client2 as any);
 
         // client-2 should learn about the already-present client-1.
-        const roster = presenceMsgs(client2).filter(
-          (m) => (m.payload as any).awarenessId === 111,
-        );
+        const roster = presenceMsgs(client2).filter((m) => (m.payload as any).awarenessId === 111);
         expect(roster).toHaveLength(1);
         expect(roster[0]!.payload).toMatchObject({
           type: "presence-join",
@@ -1142,9 +1077,7 @@ describe("Session", () => {
       // Heartbeat from node A advertising a1 -> b1 sees a join.
       await bus.publish(
         TOPIC,
-        heartbeat([
-          { awarenessId: 111, clientId: "a1", userId: "user-a", data: {} },
-        ]).encoded,
+        heartbeat([{ awarenessId: 111, clientId: "a1", userId: "user-a", data: {} }]).encoded,
         "node-a",
       );
       await tick();
@@ -1184,9 +1117,7 @@ describe("Session", () => {
 
         await bus.publish(
           TOPIC,
-          heartbeat([
-            { awarenessId: 111, clientId: "a1", userId: "user-a", data: {} },
-          ]).encoded,
+          heartbeat([{ awarenessId: 111, clientId: "a1", userId: "user-a", data: {} }]).encoded,
           "node-a",
         );
         await tick();
@@ -1238,9 +1169,7 @@ describe("Session", () => {
         server: mockServer,
       });
 
-      await expect(
-        unloadedSession[Symbol.asyncDispose](),
-      ).resolves.toBeUndefined();
+      await expect(unloadedSession[Symbol.asyncDispose]()).resolves.toBeUndefined();
     });
 
     it("should cancel pending cleanup when disposed", (done: () => void) => {
@@ -1390,9 +1319,7 @@ describe("Session", () => {
         deduped: false,
       });
 
-      const replEvents = events.filter(
-        (e) => e.source === "replication" && e.deduped === false,
-      );
+      const replEvents = events.filter((e) => e.source === "replication" && e.deduped === false);
       expect(replEvents.length).toBeGreaterThan(0);
       expect(replEvents[0].sourceNodeId).toBe("node-2");
     });

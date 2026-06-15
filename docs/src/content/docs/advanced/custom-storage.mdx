@@ -5,10 +5,10 @@ description: Guide on how to implement a custom document storage backend
 
 Teleportal was designed to decouple storage from the compute layer, so you can use any storage backend that you want. There are two layers of abstraction when it comes to storage:
 
- - **Layer 1**: `DocumentStorage` - The interface that the server uses to store & retrieve documents & document metadata
- - **Layer 2**:
-   - `UnencryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving document content (which has different constraints than encrypted documents)
-   - `EncryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving encrypted document content (which has different constraints than unencrypted documents)
+- **Layer 1**: `DocumentStorage` - The interface that the server uses to store & retrieve documents & document metadata
+- **Layer 2**:
+  - `UnencryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving document content (which has different constraints than encrypted documents)
+  - `EncryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving encrypted document content (which has different constraints than unencrypted documents)
 
 These layers differ because the `DocumentStorage` interface is designed to essentially handle raw messages & store them as they come in. Whereas, the `UnencryptedDocumentStorage` and `EncryptedDocumentStorage` interfaces are designed to store documents & document metadata via a more convenient API.
 
@@ -32,12 +32,7 @@ interface DocumentStorage {
 ## Example: Custom DocumentStorage
 
 ```typescript
-import type {
-  DocumentStorage,
-  Document,
-  DocumentMetadata,
-  Update,
-} from "teleportal/storage";
+import type { DocumentStorage, Document, DocumentMetadata, Update } from "teleportal/storage";
 import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
 import { mergeUpdates, getStateVectorFromUpdate } from "teleportal/storage";
 
@@ -73,30 +68,26 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     await myBackend.storeMetadata(documentId, metadata);
   }
 
   async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
-    return (await myBackend.getMetadata(documentId)) ?? {
-      files: [],
-      milestones: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    return (
+      (await myBackend.getMetadata(documentId)) ?? {
+        files: [],
+        milestones: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+    );
   }
 
   async deleteDocument(documentId: string): Promise<void> {
     await myBackend.deleteDocument(documentId);
   }
 
-  async transaction<T>(
-    documentId: string,
-    cb: () => Promise<T>
-  ): Promise<T> {
+  async transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
     // Implement transaction logic for your backend
     // This might use database transactions, distributed locks, etc.
     return await myBackend.transaction(documentId, cb);

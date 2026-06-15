@@ -30,12 +30,8 @@ export function getHTTPHandlers<Context extends ServerContext>({
   fetch: fallbackFetch,
 }: {
   server: Server<Context>;
-  getContext: (
-    request: Request,
-  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
-  getInitialDocuments?: (
-    request: Request,
-  ) => { document: string; encrypted?: boolean }[];
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
+  getInitialDocuments?: (request: Request) => { document: string; encrypted?: boolean }[];
   fetch?: (req: Request) => Response | Promise<Response>;
 }): (req: Request) => Response | Promise<Response> {
   const sseReaderEndpoint = getSSEReaderEndpoint({
@@ -79,9 +75,7 @@ export function getHTTPHandlers<Context extends ServerContext>({
       return await getStatusHandler(server)(req);
     }
 
-    return fallbackFetch
-      ? await fallbackFetch(req)
-      : new Response("Not Found", { status: 404 });
+    return fallbackFetch ? await fallbackFetch(req) : new Response("Not Found", { status: 404 });
   };
 }
 

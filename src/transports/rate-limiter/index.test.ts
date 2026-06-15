@@ -259,12 +259,8 @@ describe("RateLimitedTransport", () => {
     await writer.write(msg);
 
     // Check both rules have state
-    const userState = await mockStorage.getState(
-      "rate-limit:user-limit:user:user1",
-    );
-    const docState = await mockStorage.getState(
-      "rate-limit:document-limit:doc:doc1",
-    );
+    const userState = await mockStorage.getState("rate-limit:user-limit:user:user1");
+    const docState = await mockStorage.getState("rate-limit:document-limit:doc:doc1");
     expect(userState).not.toBeNull();
     expect(docState).not.toBeNull();
     expect(userState?.tokens).toBe(99); // 100 - 1

@@ -66,10 +66,7 @@ function getMyTransportSink(): Sink<Context> {
 }
 
 // Compose into a transport
-const transport: Transport<Context> = compose(
-  getMyTransportSource(),
-  getMyTransportSink()
-);
+const transport: Transport<Context> = compose(getMyTransportSource(), getMyTransportSink());
 ```
 
 ## Binary Transport

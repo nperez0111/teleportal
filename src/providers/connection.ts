@@ -1,9 +1,4 @@
-import {
-  AckMessage,
-  Message,
-  Observable,
-  RawReceivedMessage,
-} from "teleportal";
+import { AckMessage, Message, Observable, RawReceivedMessage } from "teleportal";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
@@ -151,9 +146,7 @@ const DEFAULT_RECONNECT_DELAY_JITTER = 0;
 const DEFAULT_MAX_BUFFERED_MESSAGES = Number.POSITIVE_INFINITY;
 const DEFAULT_RECONNECT_BACKOFF_FACTOR = 1.3;
 
-export abstract class Connection<
-  Context extends ConnectionContext = any,
-> extends Observable<{
+export abstract class Connection<Context extends ConnectionContext = any> extends Observable<{
   update: (state: ConnectionState<Context>) => void;
   connected: () => void;
   disconnected: () => void;
@@ -237,15 +230,9 @@ export abstract class Connection<
     const factor = reconnectBackoffFactor;
     const maxExponent =
       factor > 1
-        ? Math.floor(
-            Math.log(maxBackoffTime / initialReconnectDelay) / Math.log(factor),
-          )
+        ? Math.floor(Math.log(maxBackoffTime / initialReconnectDelay) / Math.log(factor))
         : 0;
-    this.#backoff = new ExponentialBackoff(
-      initialReconnectDelay,
-      Math.max(0, maxExponent),
-      factor,
-    );
+    this.#backoff = new ExponentialBackoff(initialReconnectDelay, Math.max(0, maxExponent), factor);
     this.#maxReconnectAttempts = maxReconnectAttempts;
     this.#reconnectDelayJitter = Math.max(0, reconnectDelayJitter);
     this.#maxBufferedMessages =
@@ -431,10 +418,7 @@ export abstract class Connection<
       this.#isOnline = true;
 
       // If we were disconnected due to being offline and should connect, try to reconnect
-      if (
-        this.#connectionIntent === "auto" &&
-        this.state.type === "disconnected"
-      ) {
+      if (this.#connectionIntent === "auto" && this.state.type === "disconnected") {
         this.#backoff.reset();
         this.#reconnectAttempt++;
         this.initConnection();
@@ -499,8 +483,7 @@ export abstract class Connection<
     }
 
     const timeSinceLastMessage = Date.now() - this.#lastMessageReceived;
-    const timeUntilTimeout =
-      this.#messageReconnectTimeoutMs - timeSinceLastMessage;
+    const timeUntilTimeout = this.#messageReconnectTimeoutMs - timeSinceLastMessage;
 
     if (timeUntilTimeout <= 0) {
       // Already timed out
@@ -533,9 +516,7 @@ export abstract class Connection<
    * Check if the connection should attempt to connect (for initial connections or reconnections)
    */
   protected shouldAttemptConnection(): boolean {
-    return (
-      this.#connectionIntent === "auto" && !this.destroyed && this.#isOnline
-    );
+    return this.#connectionIntent === "auto" && !this.destroyed && this.#isOnline;
   }
 
   /**
@@ -608,11 +589,7 @@ export abstract class Connection<
     if (this.state.type === "connected") {
       // Track in-flight messages that expect an ack. Ack, awareness and presence
       // messages are fire-and-forget and are never acked.
-      if (
-        message.type !== "ack" &&
-        message.type !== "awareness" &&
-        message.type !== "presence"
-      ) {
+      if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
         const wasEmpty = this.#inFlightMessages.size === 0;
         this.#inFlightMessages.set(message.id, message);
         // Emit event when messages become in-flight
@@ -623,11 +600,7 @@ export abstract class Connection<
 
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails
-        if (
-          message.type !== "ack" &&
-          message.type !== "awareness" &&
-          message.type !== "presence"
-        ) {
+        if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
           this.#inFlightMessages.delete(message.id);
           // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
@@ -645,9 +618,7 @@ export abstract class Connection<
           this.timerManager.setTimeout(() => resolve(), 1);
         });
         const error =
-          err instanceof Error
-            ? err
-            : new Error("Failed to send message", { cause: err });
+          err instanceof Error ? err : new Error("Failed to send message", { cause: err });
         this.handleConnectionError(error);
       });
     } else {

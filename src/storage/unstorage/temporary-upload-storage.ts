@@ -36,8 +36,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     },
   ) {
     this.#storage = storage;
-    this.#uploadTimeoutMs =
-      options?.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
+    this.#uploadTimeoutMs = options?.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
     this.#keyPrefix = options?.keyPrefix ?? "file";
   }
 
@@ -95,21 +94,12 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
-    await this.#storage.setItemRaw(
-      this.#getChunkKey(uploadId, chunkIndex),
-      chunkData,
-    );
+    await this.#storage.setItemRaw(this.#getChunkKey(uploadId, chunkIndex), chunkData);
 
     // Recompute bytesUploaded from all stored chunks for correctness.
-    const chunkKeys = await this.#storage.getKeys(
-      this.#getChunkKeyPrefix(uploadId),
-    );
-    const chunks = await Promise.all(
-      chunkKeys.map((k) => this.#storage.getItemRaw<Uint8Array>(k)),
-    );
-    const bytesUploaded = chunks
-      .filter(Boolean)
-      .reduce((sum, c) => sum + c!.length, 0);
+    const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
+    const chunks = await Promise.all(chunkKeys.map((k) => this.#storage.getItemRaw<Uint8Array>(k)));
+    const bytesUploaded = chunks.filter(Boolean).reduce((sum, c) => sum + c!.length, 0);
 
     await this.#storage.setItem(sessionKey, {
       ...sessionData,
@@ -130,9 +120,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       return null;
     }
 
-    const chunkKeys = await this.#storage.getKeys(
-      this.#getChunkKeyPrefix(uploadId),
-    );
+    const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
     const chunks = new Map<number, boolean>();
     for (const k of chunkKeys) {
       const chunkIndex = Number.parseInt(k.split(":chunk:")[1] ?? "-1", 10);
@@ -150,19 +138,14 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     };
   }
 
-  async completeUpload(
-    uploadId: string,
-    fileId?: File["id"],
-  ): Promise<FileUploadResult> {
+  async completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult> {
     const progress = await this.getUploadProgress(uploadId);
     if (!progress) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
     const expectedChunks =
-      progress.metadata.size === 0
-        ? 1
-        : Math.ceil(progress.metadata.size / CHUNK_SIZE);
+      progress.metadata.size === 0 ? 1 : Math.ceil(progress.metadata.size / CHUNK_SIZE);
 
     for (let i = 0; i < expectedChunks; i++) {
       if (!progress.chunks.get(i)) {
@@ -172,9 +155,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
     const chunksInOrder: Uint8Array[] = [];
     for (let i = 0; i < expectedChunks; i++) {
-      const stored = await this.#storage.getItemRaw<Uint8Array>(
-        this.#getChunkKey(uploadId, i),
-      );
+      const stored = await this.#storage.getItemRaw<Uint8Array>(this.#getChunkKey(uploadId, i));
       if (!stored) {
         throw new Error(`Chunk ${i} not found for upload ${uploadId}`);
       }
@@ -225,9 +206,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
         const chunkKey = this.#getChunkKey(uploadId, chunkIndex);
         const stored = await this.#storage.getItemRaw<Uint8Array>(chunkKey);
         if (!stored) {
-          throw new Error(
-            `Chunk ${chunkIndex} not found for upload ${uploadId}`,
-          );
+          throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
         }
 
         // Mark as fetched and delete from temporary storage
@@ -235,9 +214,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
         await this.#storage.removeItem(chunkKey);
 
         // Check if all chunks have been fetched and clean up session
-        const remainingChunkKeys = await this.#storage.getKeys(
-          this.#getChunkKeyPrefix(uploadId),
-        );
+        const remainingChunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
         if (remainingChunkKeys.length === 0) {
           // All chunks have been fetched, clean up the session
           await this.#storage.removeItem(this.#getUploadSessionKey(uploadId));
@@ -267,9 +244,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
       if (now - progress.lastActivity > this.#uploadTimeoutMs) {
         // Delete chunks
-        const chunkKeys = await this.#storage.getKeys(
-          this.#getChunkKeyPrefix(uploadId),
-        );
+        const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
         await Promise.all(chunkKeys.map((k) => this.#storage.removeItem(k)));
         // Delete session metadata
         await this.#storage.removeItem(this.#getUploadSessionKey(uploadId));

@@ -1,6 +1,14 @@
 {
   "name": "docs",
   "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
   "dependencies": {
     "@astrojs/react": "4.4.2",
     "@astrojs/starlight": "^0.37.6",
@@ -13,14 +21,6 @@
     "sharp": "^0.34.2",
     "starlight-llms-txt": "0.7.0"
   },
-  "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "astro": "astro"
-  },
-  "type": "module",
   "devDependencies": {
     "rehype-mermaid": "3.0.0",
     "unist-util-visit": "5.1.0"

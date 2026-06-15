@@ -30,21 +30,11 @@ export class RedisPubSub implements PubSub {
   // So we don't have to actually bundle in the redis client. See the NATS transport for an example.
   constructor(redisOptions: { path: string; options?: RedisOptions }) {
     // Use separate connections for publishing and subscribing
-    this.publisherRedis = new Redis(
-      redisOptions.path,
-      redisOptions.options ?? {},
-    );
-    this.subscriberRedis = new Redis(
-      redisOptions.path,
-      redisOptions.options ?? {},
-    );
+    this.publisherRedis = new Redis(redisOptions.path, redisOptions.options ?? {});
+    this.subscriberRedis = new Redis(redisOptions.path, redisOptions.options ?? {});
   }
 
-  async publish(
-    topic: PubSubTopic,
-    message: BinaryMessage,
-    sourceId: string,
-  ): Promise<void> {
+  async publish(topic: PubSubTopic, message: BinaryMessage, sourceId: string): Promise<void> {
     // Encode the message with instance ID to avoid loops
     const encoded = encodePubSubMessage(message, sourceId);
     await this.publisherRedis.publish(topic, Buffer.from(encoded));
@@ -57,8 +47,7 @@ export class RedisPubSub implements PubSub {
     await this.subscriberRedis.subscribe(topic);
 
     const messageHandler = (channel: string | Buffer, rawMessage: Buffer) => {
-      const channelStr =
-        typeof channel === "string" ? channel : channel.toString();
+      const channelStr = typeof channel === "string" ? channel : channel.toString();
 
       if (channelStr === topic) {
         try {
@@ -80,19 +69,13 @@ export class RedisPubSub implements PubSub {
 
     const unsubscribe = async (): Promise<void> => {
       this.subscriberRedis.off("messageBuffer", messageHandler);
-      this.subscribedTopics.set(
-        topic,
-        (this.subscribedTopics.get(topic) ?? 0) - 1,
-      );
+      this.subscribedTopics.set(topic, (this.subscribedTopics.get(topic) ?? 0) - 1);
       if ((this.subscribedTopics.get(topic) ?? 0) <= 0) {
         await this.subscriberRedis.unsubscribe(topic);
       }
     };
 
-    this.subscribedTopics.set(
-      topic,
-      (this.subscribedTopics.get(topic) ?? 0) + 1,
-    );
+    this.subscribedTopics.set(topic, (this.subscribedTopics.get(topic) ?? 0) + 1);
     return unsubscribe;
   }
 

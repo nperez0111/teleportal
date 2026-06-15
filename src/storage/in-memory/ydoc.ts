@@ -1,15 +1,7 @@
 import * as Y from "yjs";
 
-import {
-  getStateVectorFromUpdate,
-  getUpdateFromDoc,
-  type Update,
-} from "teleportal";
-import {
-  decodeContentMap,
-  encodeContentMap,
-  mergeContentMaps,
-} from "teleportal/attribution";
+import { getStateVectorFromUpdate, getUpdateFromDoc, type Update } from "teleportal";
+import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
 import type { Document, DocumentMetadata, EncodedContentMap } from "../types";
@@ -23,11 +15,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     super();
   }
 
-  async handleUpdate(
-    key: string,
-    update: Update,
-    attribution?: EncodedContentMap,
-  ): Promise<void> {
+  async handleUpdate(key: string, update: Update, attribution?: EncodedContentMap): Promise<void> {
     if (!YDocStorage.docs.has(key)) {
       YDocStorage.docs.set(key, new Y.Doc());
     }
@@ -76,10 +64,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    key: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
     YDocStorage.metadata.set(key, metadata);
   }
 
@@ -91,12 +76,9 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     }
     return {
       ...existing,
-      createdAt:
-        typeof existing.createdAt === "number" ? existing.createdAt : now,
-      updatedAt:
-        typeof existing.updatedAt === "number" ? existing.updatedAt : now,
-      encrypted:
-        typeof existing.encrypted === "boolean" ? existing.encrypted : false,
+      createdAt: typeof existing.createdAt === "number" ? existing.createdAt : now,
+      updatedAt: typeof existing.updatedAt === "number" ? existing.updatedAt : now,
+      encrypted: typeof existing.encrypted === "boolean" ? existing.encrypted : false,
     };
   }
 
@@ -106,9 +88,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     YDocStorage.attributionMaps.delete(key);
   }
 
-  async retrieveAttribution(
-    documentId: string,
-  ): Promise<EncodedContentMap | null> {
+  async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
     const list = YDocStorage.attributionMaps.get(documentId);
     if (!list || list.length === 0) return null;
     if (list.length === 1) return list[0];

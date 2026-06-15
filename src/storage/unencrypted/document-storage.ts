@@ -8,12 +8,7 @@ import {
   type Update,
 } from "teleportal";
 
-import type {
-  Document,
-  DocumentMetadata,
-  DocumentStorage,
-  EncodedContentMap,
-} from "../types";
+import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "../types";
 
 function defaultMetadata(now: number, encrypted: boolean): DocumentMetadata {
   return {
@@ -30,7 +25,7 @@ function defaultMetadata(now: number, encrypted: boolean): DocumentMetadata {
  */
 export abstract class UnencryptedDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
-  storageType: "unencrypted" = "unencrypted";
+  storageType = "unencrypted" as const;
 
   abstract handleUpdate(
     documentId: Document["id"],
@@ -42,18 +37,13 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
     documentId: Document["id"],
     metadata: DocumentMetadata,
   ): Promise<void>;
-  abstract getDocumentMetadata(
-    documentId: Document["id"],
-  ): Promise<DocumentMetadata>;
+  abstract getDocumentMetadata(documentId: Document["id"]): Promise<DocumentMetadata>;
   abstract deleteDocument(documentId: Document["id"]): Promise<void>;
   transaction<T>(documentId: Document["id"], cb: () => Promise<T>): Promise<T> {
     return cb();
   }
 
-  async handleSyncStep1(
-    documentId: Document["id"],
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: Document["id"], syncStep1: StateVector): Promise<Document> {
     const now = Date.now();
     const doc = (await this.getDocument(documentId)) ?? {
       id: documentId,
@@ -75,12 +65,8 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(
-    documentId: Document["id"],
-    syncStep2: SyncStep2Update,
-  ): Promise<void> {
+  async handleSyncStep2(documentId: Document["id"], syncStep2: SyncStep2Update): Promise<void> {
     // when unencrypted, there is no difference between the sync step 2 and the update message type
     await this.handleUpdate(documentId, syncStep2 as unknown as Update);
   }
-
 }

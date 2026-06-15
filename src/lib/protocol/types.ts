@@ -195,12 +195,7 @@ export type PresenceStep =
 /**
  * Any Y.js update which concerns a document.
  */
-export type DocStep =
-  | SyncStep1
-  | SyncStep2
-  | SyncDone
-  | UpdateStep
-  | AuthMessage;
+export type DocStep = SyncStep1 | SyncStep2 | SyncDone | UpdateStep | AuthMessage;
 
 /**
  * Any Y.js update which contains awareness updates.
@@ -245,9 +240,7 @@ export type RpcStream<Payload = unknown> = {
   payload: Payload;
 };
 
-export type RpcResponse<OK = unknown, Error = unknown> =
-  | RpcSuccess<OK>
-  | RpcError<Error>;
+export type RpcResponse<OK = unknown, Error = unknown> = RpcSuccess<OK> | RpcError<Error>;
 
 export type RpcRequest = unknown;
 
@@ -269,9 +262,7 @@ import type { Session } from "../../server/session";
  * Base context provided to all RPC handlers on the server.
  * This is automatically enriched by Session when invoking handlers.
  */
-export interface RpcServerContext<
-  Context extends ServerContext = ServerContext,
-> {
+export interface RpcServerContext<Context extends ServerContext = ServerContext> {
   /** The Server instance */
   server: Server<Context>;
   /** The namespaced document ID */
@@ -337,12 +328,7 @@ export interface RpcServerRequestHandler<
 }
 
 export type RpcHandlerRegistry = {
-  [method: string]: RpcServerRequestHandler<
-    unknown,
-    unknown,
-    unknown,
-    RpcServerContext
-  >;
+  [method: string]: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>;
 };
 
 import type * as decoding from "lib0/decoding";

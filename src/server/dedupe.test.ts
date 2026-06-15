@@ -56,10 +56,10 @@ describe("TtlDedupe", () => {
     it("should prune expired messages", async () => {
       const shortTtlDedupe = new TtlDedupe({ ttlMs: 50 });
       shortTtlDedupe.shouldAccept("doc-1", "msg-1");
-      
+
       // Wait for message to expire
       await new Promise((resolve) => setTimeout(resolve, 60));
-      
+
       // Should accept again after expiration
       const result = shortTtlDedupe.shouldAccept("doc-1", "msg-1");
       expect(result).toBe(true);
@@ -67,16 +67,16 @@ describe("TtlDedupe", () => {
 
     it("should enforce maxPerDoc limit", () => {
       const smallMaxDedupe = new TtlDedupe({ maxPerDoc: 3 });
-      
+
       // Add messages up to the limit
       smallMaxDedupe.shouldAccept("doc-1", "msg-1");
       smallMaxDedupe.shouldAccept("doc-1", "msg-2");
       smallMaxDedupe.shouldAccept("doc-1", "msg-3");
-      
+
       // Should still accept new messages (oldest will be pruned)
       const result = smallMaxDedupe.shouldAccept("doc-1", "msg-4");
       expect(result).toBe(true);
-      
+
       // Oldest message should be pruned
       const oldestResult = smallMaxDedupe.shouldAccept("doc-1", "msg-1");
       expect(oldestResult).toBe(true);
@@ -88,13 +88,13 @@ describe("TtlDedupe", () => {
       dedupe.shouldAccept("doc-1", "msg-1");
       dedupe.shouldAccept("doc-1", "msg-2");
       dedupe.shouldAccept("doc-2", "msg-1");
-      
+
       dedupe.clearDocument("doc-1");
-      
+
       // Messages for doc-1 should be cleared
       expect(dedupe.shouldAccept("doc-1", "msg-1")).toBe(true);
       expect(dedupe.shouldAccept("doc-1", "msg-2")).toBe(true);
-      
+
       // Messages for doc-2 should still be there
       expect(dedupe.shouldAccept("doc-2", "msg-1")).toBe(false);
     });
@@ -110,9 +110,9 @@ describe("TtlDedupe", () => {
       dedupe.shouldAccept("doc-1", "msg-2");
       dedupe.shouldAccept("doc-2", "msg-1");
       dedupe.shouldAccept("doc-3", "msg-1");
-      
+
       dedupe.clearAll();
-      
+
       // All messages should be cleared
       expect(dedupe.shouldAccept("doc-1", "msg-1")).toBe(true);
       expect(dedupe.shouldAccept("doc-1", "msg-2")).toBe(true);
@@ -125,4 +125,3 @@ describe("TtlDedupe", () => {
     });
   });
 });
-

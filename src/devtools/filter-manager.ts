@@ -57,10 +57,7 @@ export class FilterManager {
         const searchLower = filters.searchText.toLowerCase();
         const payloadStr = JSON.stringify(msg.message).toLowerCase();
         const docStr = (msg.document || "").toLowerCase();
-        if (
-          !payloadStr.includes(searchLower) &&
-          !docStr.includes(searchLower)
-        ) {
+        if (!payloadStr.includes(searchLower) && !docStr.includes(searchLower)) {
           return false;
         }
       }

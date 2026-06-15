@@ -39,11 +39,7 @@ const server = new Server({
 
     const payload = result.payload;
     const requiredPermission = type === "read" ? "read" : "write";
-    return tokenManager.hasDocumentPermission(
-      payload,
-      documentId!,
-      requiredPermission
-    );
+    return tokenManager.hasDocumentPermission(payload, documentId!, requiredPermission);
   },
 });
 
@@ -53,8 +49,9 @@ serve({
     onUpgrade: async (request) => {
       // Extract token from request
       const url = new URL(request.url);
-      const token = url.searchParams.get("token") ||
-                   request.headers.get("authorization")?.replace("Bearer ", "");
+      const token =
+        url.searchParams.get("token") ||
+        request.headers.get("authorization")?.replace("Bearer ", "");
 
       if (!token) {
         throw new Response("No token provided", { status: 401 });

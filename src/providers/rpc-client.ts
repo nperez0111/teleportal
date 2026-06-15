@@ -22,60 +22,44 @@ export class RpcClient {
   }
 
   #setupMessageListener() {
-    this.#messageHandler = this.#connection.on(
-      "received-message",
-      (message) => {
-        if (message.type !== "rpc") return;
-        if (
-          message.requestType !== "response" &&
-          message.requestType !== "stream"
-        )
-          return;
+    this.#messageHandler = this.#connection.on("received-message", (message) => {
+      if (message.type !== "rpc") return;
+      if (message.requestType !== "response" && message.requestType !== "stream") return;
 
-        const originalRequestId = message.originalRequestId;
-        if (!originalRequestId) return;
+      const originalRequestId = message.originalRequestId;
+      if (!originalRequestId) return;
 
-        const pending = this.#pendingRequests.get(originalRequestId);
-        if (!pending) return;
+      const pending = this.#pendingRequests.get(originalRequestId);
+      if (!pending) return;
 
-        if (message.requestType === "stream") {
-          if (message.payload.type === "success" && pending.onStream) {
-            pending.onStream(message.payload.payload);
-          }
-          return;
+      if (message.requestType === "stream") {
+        if (message.payload.type === "success" && pending.onStream) {
+          pending.onStream(message.payload.payload);
         }
+        return;
+      }
 
-        const response = message.payload as RpcSuccess | RpcError;
-        if (response.type === "error") {
-          pending.reject(
-            new RpcOperationError(
-              response.statusCode,
-              response.details,
-              response.payload,
-            ),
-          );
-        } else {
-          pending.resolve(response);
-        }
-      },
-    );
+      const response = message.payload as RpcSuccess | RpcError;
+      if (response.type === "error") {
+        pending.reject(
+          new RpcOperationError(response.statusCode, response.details, response.payload),
+        );
+      } else {
+        pending.resolve(response);
+      }
+    });
   }
 
   /**
    * Register an external handler for RPC messages.
    * Returns a function to unregister the handler.
    */
-  onMessage(
-    handler: (message: RpcMessage<any>) => void | Promise<void>,
-  ): () => void {
-    const messageHandler = this.#connection.on(
-      "received-message",
-      async (message) => {
-        if (message.type === "rpc") {
-          await handler(message);
-        }
-      },
-    );
+  onMessage(handler: (message: RpcMessage<any>) => void | Promise<void>): () => void {
+    const messageHandler = this.#connection.on("received-message", async (message) => {
+      if (message.type === "rpc") {
+        await handler(message);
+      }
+    });
 
     return () => {
       messageHandler();

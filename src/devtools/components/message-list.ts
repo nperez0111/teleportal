@@ -11,15 +11,11 @@ export class MessageList {
   private listContainer: HTMLElement;
   private header: HTMLElement;
 
-  constructor(
-    onSelectMessage: (message: DevtoolsMessage) => void,
-    onClearMessages?: () => void,
-  ) {
+  constructor(onSelectMessage: (message: DevtoolsMessage) => void, onClearMessages?: () => void) {
     this.onSelectMessage = onSelectMessage;
     this.onClearMessages = onClearMessages || null;
     this.element = document.createElement("div");
-    this.element.className =
-      "devtools-flex devtools-flex-col devtools-h-full devtools-bg-white";
+    this.element.className = "devtools-flex devtools-flex-col devtools-h-full devtools-bg-white";
 
     // Header - matches inspector header styling
     this.header = document.createElement("div");
@@ -35,8 +31,7 @@ export class MessageList {
     const copyAllBtn = document.createElement("button");
     copyAllBtn.className = "devtools-button devtools-text-xs";
     copyAllBtn.textContent = "Copy Log";
-    copyAllBtn.title =
-      "Copy all visible messages as a log transcript for debugging";
+    copyAllBtn.title = "Copy all visible messages as a log transcript for debugging";
     copyAllBtn.addEventListener("click", () => {
       const log = this.messages.map((m) => formatLogEntry(m)).join("\n");
       navigator.clipboard.writeText(log).then(() => {
@@ -86,9 +81,7 @@ export class MessageList {
     const title = this.element.querySelector("h2");
     if (title) {
       title.textContent =
-        this.messages.length === 1
-          ? "1 Message"
-          : `${this.messages.length} Messages`;
+        this.messages.length === 1 ? "1 Message" : `${this.messages.length} Messages`;
     }
   }
 

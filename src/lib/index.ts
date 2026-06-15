@@ -64,9 +64,7 @@ export type Transport<
 /**
  * A transport which sends and receives Y.js binary messages.
  */
-export type BinaryTransport<
-  AdditionalProperties extends Record<string, unknown> = {},
-> = {
+export type BinaryTransport<AdditionalProperties extends Record<string, unknown> = {}> = {
   /**
    * Reads bytes
    */

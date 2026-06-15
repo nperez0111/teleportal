@@ -14,11 +14,7 @@ import {
   mergeContentMaps,
   milestoneContentMap,
 } from "teleportal/attribution";
-import {
-  createEncryptionKey,
-  decryptUpdate,
-  encryptUpdate,
-} from "teleportal/encryption-key";
+import { createEncryptionKey, decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { getAttributionRpcHandlers } from "./index";
 import { collectRangeIds, resolveRangeAttribution } from "./resolve";
 
@@ -62,9 +58,7 @@ function milestoneScenario() {
   return { s1, s2, full };
 }
 
-function contributors(
-  map: Parameters<typeof getActivity>[0],
-): (string | null)[] {
+function contributors(map: Parameters<typeof getActivity>[0]): (string | null)[] {
   return [...new Set(getActivity(map).map((e) => e.userId))].sort();
 }
 
@@ -78,22 +72,12 @@ function docFromSnapshot(snapshot: Uint8Array): Y.Doc {
  * Build an encoded ContentMap attributing every operation in `update` to
  * `userId` at `timestamp` — mirrors what the server records on write.
  */
-function attribute(
-  update: Uint8Array,
-  userId: string,
-  timestamp: number,
-): EncodedContentMap {
+function attribute(update: Uint8Array, userId: string, timestamp: number): EncodedContentMap {
   return encodeContentMap(
     createContentMapFromContentIds(
       createContentIdsFromUpdate(update),
-      [
-        createContentAttribute("insert", userId),
-        createContentAttribute("insertAt", timestamp),
-      ],
-      [
-        createContentAttribute("delete", userId),
-        createContentAttribute("deleteAt", timestamp),
-      ],
+      [createContentAttribute("insert", userId), createContentAttribute("insertAt", timestamp)],
+      [createContentAttribute("delete", userId), createContentAttribute("deleteAt", timestamp)],
     ),
   );
 }
@@ -225,9 +209,7 @@ describe("getAttributionRpcHandlers", () => {
         r
           .getIds()
           .flatMap((range) =>
-            range.attrs
-              .filter((a) => a.name === "insert")
-              .map((a) => a.val as string),
+            range.attrs.filter((a) => a.name === "insert").map((a) => a.val as string),
           ),
       );
       expect([...new Set(remaining)]).toEqual(["user-1"]);
@@ -248,14 +230,10 @@ describe("resolveRangeAttribution", () => {
     const { text, map } = twoUserDoc();
 
     const hello = resolveRangeAttribution(text, 0, 6, map);
-    expect(hello).toEqual([
-      { from: 0, to: 6, userId: "user-1", timestamp: 1000 },
-    ]);
+    expect(hello).toEqual([{ from: 0, to: 6, userId: "user-1", timestamp: 1000 }]);
 
     const world = resolveRangeAttribution(text, 6, 5, map);
-    expect(world).toEqual([
-      { from: 6, to: 11, userId: "user-2", timestamp: 2000 },
-    ]);
+    expect(world).toEqual([{ from: 6, to: 11, userId: "user-2", timestamp: 2000 }]);
   });
 
   it("splits a range spanning both authors", () => {

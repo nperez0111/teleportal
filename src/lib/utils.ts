@@ -1,9 +1,7 @@
 import { createHooks } from "hookable";
 import { BinaryMessage, PubSub, PubSubTopic } from "teleportal";
 
-export class Observable<
-  EVENTS extends Record<string, (...args: any[]) => void>,
-> {
+export class Observable<EVENTS extends Record<string, (...args: any[]) => void>> {
   #hooks = createHooks<EVENTS>();
 
   /**
@@ -53,18 +51,11 @@ export class Observable<
  */
 export class InMemoryPubSub
   extends Observable<{
-    [key: PubSubTopic]: (ctx: {
-      message: BinaryMessage;
-      sourceId: string;
-    }) => void;
+    [key: PubSubTopic]: (ctx: { message: BinaryMessage; sourceId: string }) => void;
   }>
   implements PubSub
 {
-  async publish(
-    topic: PubSubTopic,
-    message: BinaryMessage,
-    sourceId: string,
-  ): Promise<void> {
+  async publish(topic: PubSubTopic, message: BinaryMessage, sourceId: string): Promise<void> {
     await this.call(topic, { message, sourceId });
   }
 

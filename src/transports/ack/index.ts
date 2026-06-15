@@ -167,26 +167,23 @@ export function withAckTrackingSink<
   const setupAckSubscription = async () => {
     if (unsubscribeAck) return;
 
-    unsubscribeAck = await pubSub.subscribe(
-      ackTopic,
-      (message, messageSourceId) => {
-        // Ignore messages from the same source to avoid processing our own ACKs
-        if (messageSourceId === sourceId) {
-          return;
-        }
+    unsubscribeAck = await pubSub.subscribe(ackTopic, (message, messageSourceId) => {
+      // Ignore messages from the same source to avoid processing our own ACKs
+      if (messageSourceId === sourceId) {
+        return;
+      }
 
-        const decoded = decodeMessage(message);
-        if (decoded instanceof AckMessage) {
-          const messageId = decoded.payload.messageId;
-          const pending = pendingAcks.get(messageId);
-          if (pending) {
-            clearTimeout(pending.timeout);
-            pending.resolve();
-            pendingAcks.delete(messageId);
-          }
+      const decoded = decodeMessage(message);
+      if (decoded instanceof AckMessage) {
+        const messageId = decoded.payload.messageId;
+        const pending = pendingAcks.get(messageId);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          pending.resolve();
+          pendingAcks.delete(messageId);
         }
-      },
-    );
+      }
+    });
   };
 
   // Set up abort handler

@@ -8,18 +8,10 @@ import {
   type Update,
   encodeMessageArray,
 } from "teleportal";
-import type {
-  Document,
-  DocumentMetadata,
-  DocumentStorage,
-} from "teleportal/storage";
+import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 
 import { Server } from "../server/server";
-import {
-  getHTTPEndpoint,
-  getSSEReaderEndpoint,
-  getSSEWriterEndpoint,
-} from "./handlers";
+import { getHTTPEndpoint, getSSEReaderEndpoint, getSSEWriterEndpoint } from "./handlers";
 import { getDocumentsFromQueryParams } from "./utils";
 
 // Mock DocumentStorage for testing
@@ -32,10 +24,7 @@ class MockDocumentStorage implements DocumentStorage {
   storedUpdate: Update | null = null;
   metadata: Map<string, DocumentMetadata> = new Map();
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
     return {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
@@ -66,10 +55,7 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.metadata.set(documentId, metadata);
   }
 
@@ -105,10 +91,7 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
+  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);
@@ -125,9 +108,7 @@ describe("HTTP Handlers", () => {
   let server: Server<ServerContext>;
   let mockGetStorage: any;
   let pubSub: InMemoryPubSub;
-  let mockGetContext: (
-    req: Request,
-  ) => Promise<Omit<ServerContext, "clientId">>;
+  let mockGetContext: (req: Request) => Promise<Omit<ServerContext, "clientId">>;
 
   beforeEach(() => {
     pubSub = new InMemoryPubSub();
@@ -190,9 +171,7 @@ describe("HTTP Handlers", () => {
       });
 
       const response = await endpoint(request);
-      expect(response.headers.get("x-teleportal-client-id")).toBe(
-        "custom-client-id",
-      );
+      expect(response.headers.get("x-teleportal-client-id")).toBe("custom-client-id");
     });
 
     it("should extract client ID from query parameter", async () => {
@@ -201,17 +180,12 @@ describe("HTTP Handlers", () => {
         getContext: mockGetContext,
       });
 
-      const request = new Request(
-        "http://example.com/sse?client-id=query-client-id",
-        {
-          method: "GET",
-        },
-      );
+      const request = new Request("http://example.com/sse?client-id=query-client-id", {
+        method: "GET",
+      });
 
       const response = await endpoint(request);
-      expect(response.headers.get("x-teleportal-client-id")).toBe(
-        "query-client-id",
-      );
+      expect(response.headers.get("x-teleportal-client-id")).toBe("query-client-id");
     });
 
     it("should generate client ID when not provided", async () => {
@@ -237,12 +211,9 @@ describe("HTTP Handlers", () => {
         getInitialDocuments: getDocumentsFromQueryParams,
       });
 
-      const request = new Request(
-        "http://example.com/sse?documents=doc-1&documents=doc-2",
-        {
-          method: "GET",
-        },
-      );
+      const request = new Request("http://example.com/sse?documents=doc-1&documents=doc-2", {
+        method: "GET",
+      });
 
       const response = await endpoint(request);
       expect(response.status).toBe(200);
@@ -270,12 +241,9 @@ describe("HTTP Handlers", () => {
         getInitialDocuments: getDocumentsFromQueryParams,
       });
 
-      const request = new Request(
-        "http://example.com/sse?documents=doc-1:encrypted",
-        {
-          method: "GET",
-        },
-      );
+      const request = new Request("http://example.com/sse?documents=doc-1:encrypted", {
+        method: "GET",
+      });
 
       const response = await endpoint(request);
       expect(response.status).toBe(200);
@@ -312,9 +280,7 @@ describe("HTTP Handlers", () => {
     });
 
     it("should use custom getInitialDocuments", async () => {
-      const customGetInitialDocuments = () => [
-        { document: "custom-doc", encrypted: true },
-      ];
+      const customGetInitialDocuments = () => [{ document: "custom-doc", encrypted: true }];
 
       const endpoint = getSSEReaderEndpoint({
         server,
@@ -394,13 +360,10 @@ describe("HTTP Handlers", () => {
         getContext: mockGetContext,
       });
 
-      const request = new Request(
-        "http://example.com/sse?client-id=client-456",
-        {
-          method: "POST",
-          body: new Uint8Array(),
-        },
-      );
+      const request = new Request("http://example.com/sse?client-id=client-456", {
+        method: "POST",
+        body: new Uint8Array(),
+      });
 
       const response = await endpoint(request);
 
@@ -479,9 +442,7 @@ describe("HTTP Handlers", () => {
       const response = await endpoint(request);
 
       expect(response.status).toBe(200);
-      expect(response.headers.get("Content-Type")).toBe(
-        "application/octet-stream",
-      );
+      expect(response.headers.get("Content-Type")).toBe("application/octet-stream");
       expect(response.headers.get("x-powered-by")).toBe("teleportal");
       expect(response.headers.get("x-teleportal-client-id")).toBeDefined();
     });

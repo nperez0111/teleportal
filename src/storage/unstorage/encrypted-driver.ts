@@ -7,10 +7,7 @@ import TransformDriver from "./transform-driver";
 
 export function createEncryptedDriver(
   driver: Driver,
-  getKey:
-    | CryptoKey
-    | Promise<CryptoKey>
-    | ((key: string) => CryptoKey | Promise<CryptoKey>),
+  getKey: CryptoKey | Promise<CryptoKey> | ((key: string) => CryptoKey | Promise<CryptoKey>),
 ) {
   return TransformDriver({
     driver,

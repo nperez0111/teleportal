@@ -1,12 +1,4 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeEach,
-  afterEach,
-  beforeAll,
-  afterAll,
-} from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "bun:test";
 import { WebSocketConnection } from "./connection";
 import { Connection, ConnectionState } from "../connection";
 
@@ -31,9 +23,7 @@ if (globalThis.EventTarget === undefined) {
 
     removeEventListener(type: string, listener: (event: any) => void) {
       if (this.listeners[type]) {
-        this.listeners[type] = this.listeners[type].filter(
-          (l) => l !== listener,
-        );
+        this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
       }
     }
 
@@ -76,9 +66,7 @@ class MockWebSocket {
       if (this.shouldError) {
         this.readyState = MockWebSocket.CLOSED;
         this.dispatchEvent(new Event("error"));
-        this.dispatchEvent(
-          new CloseEvent("close", { code: 1006, reason: "Connection failed" }),
-        );
+        this.dispatchEvent(new CloseEvent("close", { code: 1006, reason: "Connection failed" }));
       } else if (this.shouldConnect) {
         this.readyState = MockWebSocket.OPEN;
         this.dispatchEvent(new Event("open"));
@@ -139,11 +127,7 @@ class MockWebSocket {
     this.shouldError = shouldError;
   }
 
-  setCloseAfterConnect(
-    closeAfterConnect: boolean,
-    code: number = 1000,
-    reason: string = "",
-  ) {
+  setCloseAfterConnect(closeAfterConnect: boolean, code: number = 1000, reason: string = "") {
     this.closeAfterConnect = closeAfterConnect;
     this.closeCode = code;
     this.closeReason = reason;
@@ -328,9 +312,7 @@ describe("WebSocketConnection", () => {
   test("should handle server closing connection and reconnect", async () => {
     // Create a mock WebSocket that closes after connecting
     let connectionCount = 0;
-    function ReconnectingWebSocket(
-      ...args: ConstructorParameters<typeof MockWebSocket>
-    ) {
+    function ReconnectingWebSocket(...args: ConstructorParameters<typeof MockWebSocket>) {
       const ws = new MockWebSocket(...args);
       connectionCount++;
       if (connectionCount === 1) {
@@ -460,12 +442,7 @@ describe("WebSocketConnection", () => {
     });
 
     // Start multiple connection attempts concurrently
-    const promises = [
-      client.connect(),
-      client.connect(),
-      client.connect(),
-      client.connect(),
-    ];
+    const promises = [client.connect(), client.connect(), client.connect(), client.connect()];
 
     await Promise.all(promises);
     expect(client.state.type).toBe("connected");

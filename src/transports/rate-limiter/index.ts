@@ -31,14 +31,8 @@ export interface RateLimitStateUpdatedData {
 }
 
 export interface RateLimitEmitter<Context extends ServerContext = ServerContext> {
-  call(
-    event: "rate-limit-exceeded",
-    data: RateLimitExceededData<Context>,
-  ): void;
-  call(
-    event: "rate-limit-state-updated",
-    data: RateLimitStateUpdatedData,
-  ): void;
+  call(event: "rate-limit-exceeded", data: RateLimitExceededData<Context>): void;
+  call(event: "rate-limit-state-updated", data: RateLimitStateUpdatedData): void;
 }
 
 /**
@@ -140,9 +134,7 @@ export interface RateLimitOptions<Context extends ServerContext> {
    * If returns true, all rate limit rules are skipped (message allowed) and no tokens are consumed.
    * Useful for admin users or allow-listed sources.
    */
-  shouldSkipRateLimit?: (
-    message: Message<Context>,
-  ) => Promise<boolean> | boolean;
+  shouldSkipRateLimit?: (message: Message<Context>) => Promise<boolean> | boolean;
 
   /**
    * Called when permission is denied
@@ -152,9 +144,7 @@ export interface RateLimitOptions<Context extends ServerContext> {
   /**
    * Called when rate limit is exceeded
    */
-  onRateLimitExceeded?: (
-    details: RateLimitExceededData<Context>,
-  ) => void;
+  onRateLimitExceeded?: (details: RateLimitExceededData<Context>) => void;
 
   /**
    * Called when message size limit is exceeded
@@ -202,23 +192,14 @@ export class RateLimitedTransport<
 
   private defaultRateLimitStorage?: RateLimitStorage;
   private defaultGetUserId?: (message: Message<Context>) => string | undefined;
-  private defaultGetDocumentId?: (
-    message: Message<Context>,
-  ) => string | undefined;
-  private checkPermission?: (
-    message: Message<Context>,
-  ) => Promise<boolean> | boolean;
-  private shouldSkipRateLimitFunc?: (
-    message: Message<Context>,
-  ) => Promise<boolean> | boolean;
+  private defaultGetDocumentId?: (message: Message<Context>) => string | undefined;
+  private checkPermission?: (message: Message<Context>) => Promise<boolean> | boolean;
+  private shouldSkipRateLimitFunc?: (message: Message<Context>) => Promise<boolean> | boolean;
 
   // In-memory buckets for transport-level tracking (one per rule)
   private transportBuckets: Map<string, TokenBucket> = new Map();
 
-  constructor(
-    transport: Transport<Context, AdditionalProps>,
-    options: RateLimitOptions<Context>,
-  ) {
+  constructor(transport: Transport<Context, AdditionalProps>, options: RateLimitOptions<Context>) {
     if (!options.rules || options.rules.length === 0) {
       throw new Error("At least one rate limit rule is required");
     }
@@ -233,8 +214,7 @@ export class RateLimitedTransport<
 
     this.defaultRateLimitStorage = options.rateLimitStorage;
     this.defaultGetUserId = options.getUserId ?? ((msg) => msg.context?.userId);
-    this.defaultGetDocumentId =
-      options.getDocumentId ?? ((msg) => msg.document);
+    this.defaultGetDocumentId = options.getDocumentId ?? ((msg) => msg.document);
     this.checkPermission = options.checkPermission;
     this.shouldSkipRateLimitFunc = options.shouldSkipRateLimit;
 
@@ -343,10 +323,7 @@ export class RateLimitedTransport<
     }
 
     // Resolve dynamic limits
-    const currentMaxMessages = await this.resolveLimit(
-      rule.maxMessages,
-      message,
-    );
+    const currentMaxMessages = await this.resolveLimit(rule.maxMessages, message);
     const currentWindowMs = await this.resolveLimit(rule.windowMs, message);
 
     // Get storage for this rule (rule-specific or default)
@@ -359,10 +336,7 @@ export class RateLimitedTransport<
       return storage.transaction(key, async () => {
         const now = Date.now();
         let state = await storage.getState(key);
-        this.metricsCollector?.recordRateLimitStateOperation(
-          "get",
-          rule.trackBy,
-        );
+        this.metricsCollector?.recordRateLimitStateOperation("get", rule.trackBy);
 
         if (!state) {
           state = createInitialState(currentWindowMs, currentMaxMessages);
@@ -404,10 +378,7 @@ export class RateLimitedTransport<
         currentState.tokens -= 1;
 
         await storage.setState(key, currentState, currentWindowMs);
-        this.metricsCollector?.recordRateLimitStateOperation(
-          "set",
-          rule.trackBy,
-        );
+        this.metricsCollector?.recordRateLimitStateOperation("set", rule.trackBy);
         this.eventEmitter?.call("rate-limit-state-updated", {
           ruleId: rule.id,
           key,
@@ -435,11 +406,7 @@ export class RateLimitedTransport<
           message,
         };
         this.onRateLimitExceeded?.(exceededData);
-        this.metricsCollector?.recordRateLimitExceeded(
-          "unknown",
-          undefined,
-          "transport",
-        );
+        this.metricsCollector?.recordRateLimitExceeded("unknown", undefined, "transport");
         this.eventEmitter?.call("rate-limit-exceeded", exceededData);
         return false;
       }

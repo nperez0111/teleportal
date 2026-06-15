@@ -19,10 +19,7 @@ import { type ContentMap, intersectContentMap } from "./content-map";
  * Restrict a document's full attribution ContentMap to the operations present
  * in a milestone — i.e. who authored the content as of that milestone.
  */
-export function milestoneContentMap(
-  fullMap: ContentMap,
-  milestoneIds: ContentIds,
-): ContentMap {
+export function milestoneContentMap(fullMap: ContentMap, milestoneIds: ContentIds): ContentMap {
   return intersectContentMap(fullMap, milestoneIds);
 }
 

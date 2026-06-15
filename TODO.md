@@ -10,4 +10,4 @@
   - Ideally this would be implemented in a way that is transparent to the client, and on the transport layer
 - The client side provider API should be re-worked to have a better DX as well as better reconnection logic, I've noticed sometimes a websocket connection will die and the provider fails to reconnect when it should, or maybe the connection is timing out & fails to surface an error.
 - durable streams seems like a nice alternative to SSE for reading updates from the server, unsure about them being replayed whether that is actually necessary or not.
-- 
+-
