@@ -1,4 +1,4 @@
-import { fromBase64, toBase64 } from "lib0/buffer";
+import { toBase64 } from "lib0/buffer";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import { digest } from "lib0/hash/sha256";
@@ -9,12 +9,17 @@ import {
   type EncodedContentIds,
   getEmptyEncodedContentIds,
 } from "teleportal/attribution";
-import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
+import type { LamportClockValue } from "./lamport-clock";
 
 /**
  * Represents a message identifier in the encryption state vector
  */
 export type EncryptedMessageId = string;
+
+/**
+ * Represents a snapshot identifier in the encryption protocol
+ */
+export type EncryptedSnapshotId = string;
 
 /**
  * The binary representation of a {@link DecodedEncryptedStateVector}
@@ -25,17 +30,16 @@ export type EncryptedStateVector = StateVector;
  * The decoded representation of a {@link EncryptedStateVector}
  */
 export type DecodedEncryptedStateVector = {
-  clocks: Map<ClientId, Counter>;
+  snapshotId: EncryptedSnapshotId;
+  serverVersion: number;
 };
 
 /**
  * Encodes a {@link DecodedEncryptedStateVector} to a {@link EncryptedStateVector}
  * The format is:
  *  - version: 0
- *  - length: number of clocks
- *  - clocks:
- *    - client id: number
- *    - counter: number
+ *  - snapshot id: string (empty if none)
+ *  - server version: number
  *
  * Can be decoded with {@link decodeFromStateVector}
  */
@@ -45,15 +49,13 @@ export function encodeToStateVector(
   return encoding.encode((encoder) => {
     // version
     encoding.writeVarUint(encoder, 0);
-    // length
-    encoding.writeVarUint(encoder, state.clocks.size);
-    // clocks
-    for (const [clientId, counter] of state.clocks) {
-      // client id
-      encoding.writeVarUint(encoder, clientId);
-      // counter
-      encoding.writeVarUint(encoder, counter);
-    }
+    // snapshot id (empty string for none)
+    encoding.writeVarString(encoder, state.snapshotId ?? "");
+    // server version
+    encoding.writeVarUint(
+      encoder,
+      Number.isFinite(state.serverVersion) ? state.serverVersion : 0,
+    );
   }) as EncryptedStateVector;
 }
 
@@ -65,23 +67,17 @@ export function decodeFromStateVector(
 ): DecodedEncryptedStateVector {
   try {
     const decoder = decoding.createDecoder(stateVector);
-    const clocks = new Map<ClientId, Counter>();
     // version
     const version = decoding.readVarUint(decoder);
     if (version !== 0) {
       throw new Error("Invalid version");
     }
-    // length
-    const length = decoding.readVarUint(decoder);
-    for (let i = 0; i < length; i++) {
-      // client id
-      const clientId = decoding.readVarUint(decoder);
-      // counter
-      const counter = decoding.readVarUint(decoder);
-      // set clock
-      clocks.set(clientId, counter);
-    }
-    return { clocks };
+    const snapshotId = decoding.readVarString(decoder);
+    const serverVersion = decoding.readVarUint(decoder);
+    return {
+      snapshotId,
+      serverVersion,
+    };
   } catch (e) {
     throw new Error("Failed to decode encrypted state vector", {
       cause: {
@@ -97,8 +93,10 @@ export function decodeFromStateVector(
  */
 export type DecodedEncryptedUpdatePayload = {
   id: EncryptedMessageId;
+  snapshotId: EncryptedSnapshotId;
   timestamp: LamportClockValue;
   payload: EncryptedBinary;
+  serverVersion?: number;
   contentIds: EncodedContentIds;
 };
 
@@ -106,6 +104,16 @@ export type DecodedEncryptedUpdatePayload = {
  * The binary representation of a {@link DecodedEncryptedUpdatePayload}
  */
 export type EncryptedUpdatePayload = Update;
+
+export type EncryptedSnapshot = {
+  id: EncryptedSnapshotId;
+  parentSnapshotId?: EncryptedSnapshotId | null;
+  payload: EncryptedBinary;
+};
+
+export type DecodedEncryptedDocumentMessage =
+  | { type: "snapshot"; snapshot: EncryptedSnapshot }
+  | { type: "update"; updates: DecodedEncryptedUpdatePayload[] };
 
 /**
  * Encodes a {@link DecodedEncryptedUpdatePayload} to a {@link EncryptedUpdatePayload}
@@ -116,17 +124,26 @@ export function encodeEncryptedUpdateMessages(
   return encoding.encode((encoder) => {
     // version
     encoding.writeVarUint(encoder, 0);
+    // kind (0 = updates)
+    encoding.writeUint8(encoder, 0);
     // length
     encoding.writeVarUint(encoder, updates.length);
     // updates
     for (const update of updates) {
-      // id
-      encoding.writeVarUint8Array(encoder, fromBase64(update.id));
+      if (typeof update.snapshotId !== "string") {
+        throw new Error("Encrypted update is missing snapshotId");
+      }
+      encoding.writeVarString(encoder, update.snapshotId);
       // timestamp
       // client id
       encoding.writeVarUint(encoder, update.timestamp[0]);
       // counter
       encoding.writeVarUint(encoder, update.timestamp[1]);
+      const hasServerVersion = typeof update.serverVersion === "number";
+      encoding.writeUint8(encoder, hasServerVersion ? 1 : 0);
+      if (hasServerVersion) {
+        encoding.writeVarUint(encoder, update.serverVersion!);
+      }
       // payload
       encoding.writeVarUint8Array(encoder, update.payload);
       // contentIds
@@ -140,12 +157,38 @@ export function encodeEncryptedUpdateMessages(
  */
 export function encodeEncryptedUpdate(
   update: EncryptedBinary,
+  snapshotId: EncryptedSnapshotId,
   timestamp: LamportClockValue,
+  serverVersion?: number,
   contentIds: EncodedContentIds = getEmptyEncodedContentIds(),
 ): EncryptedUpdatePayload {
   return encodeEncryptedUpdateMessages([
-    { id: toBase64(digest(update)), timestamp, payload: update, contentIds },
+    {
+      id: toBase64(digest(update)),
+      snapshotId,
+      timestamp,
+      payload: update,
+      serverVersion,
+      contentIds,
+    },
   ]);
+}
+
+export function encodeEncryptedSnapshot(
+  snapshot: EncryptedSnapshot,
+): EncryptedUpdatePayload {
+  return encoding.encode((encoder) => {
+    // version
+    encoding.writeVarUint(encoder, 0);
+    // kind (1 = snapshot)
+    encoding.writeUint8(encoder, 1);
+    // snapshot id
+    encoding.writeVarString(encoder, snapshot.id);
+    // parent snapshot id
+    encoding.writeVarString(encoder, snapshot.parentSnapshotId ?? "");
+    // payload
+    encoding.writeVarUint8Array(encoder, snapshot.payload);
+  }) as EncryptedUpdatePayload;
 }
 
 /**
@@ -153,8 +196,7 @@ export function encodeEncryptedUpdate(
  */
 export function decodeEncryptedUpdate(
   update: EncryptedUpdatePayload,
-): DecodedEncryptedUpdatePayload[] {
-  const messages: DecodedEncryptedUpdatePayload[] = [];
+): DecodedEncryptedDocumentMessage {
   try {
     const decoder = decoding.createDecoder(update);
     // version
@@ -162,14 +204,34 @@ export function decodeEncryptedUpdate(
     if (version !== 0) {
       throw new Error("Invalid version");
     }
-    // length
+    const kind = decoding.readUint8(decoder);
+    if (kind === 1) {
+      const snapshotId = decoding.readVarString(decoder);
+      const parentSnapshotId = decoding.readVarString(decoder);
+      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
+      return {
+        type: "snapshot",
+        snapshot: {
+          id: snapshotId,
+          parentSnapshotId: parentSnapshotId || null,
+          payload,
+        },
+      };
+    }
+    if (kind !== 0) {
+      throw new Error("Invalid encrypted update kind");
+    }
+    const messages: DecodedEncryptedUpdatePayload[] = [];
     const length = decoding.readVarUint(decoder);
     for (let i = 0; i < length; i++) {
-      // id
-      const id = toBase64(decoding.readVarUint8Array(decoder));
+      const snapshotId = decoding.readVarString(decoder);
       // timestamp
       const clientId = decoding.readVarUint(decoder);
       const counter = decoding.readVarUint(decoder);
+      const hasServerVersion = decoding.readUint8(decoder) === 1;
+      const serverVersion = hasServerVersion
+        ? decoding.readVarUint(decoder)
+        : undefined;
       // payload
       const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
       // contentIds
@@ -177,10 +239,16 @@ export function decodeEncryptedUpdate(
         decoder,
       ) as EncodedContentIds;
 
-      // create message instance
-      messages.push({ id, timestamp: [clientId, counter], payload, contentIds });
+      messages.push({
+        id: toBase64(digest(payload)),
+        snapshotId,
+        timestamp: [clientId, counter],
+        payload,
+        serverVersion,
+        contentIds,
+      });
     }
-    return messages;
+    return { type: "update", updates: messages };
   } catch (err) {
     throw new Error("Failed to decode encrypted update", {
       cause: {
@@ -200,21 +268,22 @@ export type EncryptedSyncStep2 = SyncStep2Update;
  * The decoded representation of a {@link EncryptedSyncStep2}
  */
 export type DecodedEncryptedSyncStep2 = {
-  messages: DecodedEncryptedUpdatePayload[];
+  snapshot?: EncryptedSnapshot | null;
+  updates: DecodedEncryptedUpdatePayload[];
 };
 
 /**
  * Encodes a {@link DecodedEncryptedSyncStep2} to a {@link EncryptedSyncStep2}
  * The format is:
  *  - version: 0
- *  - client id mapping:
+ *  - snapshot flag: boolean
+ *  - optional snapshot payload (id, parent id, ciphertext)
+ *  - updates:
+ *    - snapshot id: string
  *    - client id: number
- *    - index: number
- *  - messages:
- *    - id: base64 encoded message id
- *    - client id: number
- *    - lamport clock: number
- *    - payload: base64 encoded update
+ *    - counter: number
+ *    - server version: number
+ *    - payload: ciphertext
  *
  * Can be decoded with {@link decodeFromSyncStep2}
  */
@@ -224,35 +293,26 @@ export function encodeToSyncStep2(
   return encoding.encode((encoder) => {
     // version
     encoding.writeVarUint(encoder, 0);
-    // client id mapping to cache client ids instead of having to repeat them
-    const clientIdMapping = new Map<ClientId, number>();
-    syncStep2.messages.forEach((message) => {
-      if (!clientIdMapping.has(message.timestamp[0])) {
-        clientIdMapping.set(message.timestamp[0], clientIdMapping.size);
-      }
-    });
-    const clientIdMappingLength = clientIdMapping.size;
-    // client id mapping
-    encoding.writeVarUint(encoder, clientIdMappingLength);
-    for (const [clientId, index] of clientIdMapping) {
-      encoding.writeVarUint(encoder, clientId);
-      encoding.writeVarUint(encoder, index);
+    // snapshot flag
+    const snapshot = syncStep2.snapshot ?? null;
+    encoding.writeUint8(encoder, snapshot ? 1 : 0);
+    if (snapshot) {
+      encoding.writeVarString(encoder, snapshot.id);
+      encoding.writeVarString(encoder, snapshot.parentSnapshotId ?? "");
+      encoding.writeVarUint8Array(encoder, snapshot.payload);
     }
-    // messages length
-    encoding.writeVarUint(encoder, syncStep2.messages.length);
-    // nodes
-    for (const message of syncStep2.messages) {
-      // id
-      encoding.writeVarUint8Array(encoder, fromBase64(message.id));
-      // client id
-      encoding.writeVarUint(
-        encoder,
-        clientIdMapping.get(message.timestamp[0])!,
-      );
-      // lamport clock
-      encoding.writeVarUint(encoder, message.timestamp[1]);
-      // payload
-      encoding.writeVarUint8Array(encoder, message.payload);
+    // updates length
+    encoding.writeVarUint(encoder, syncStep2.updates.length);
+    for (const update of syncStep2.updates) {
+      encoding.writeVarString(encoder, update.snapshotId);
+      encoding.writeVarUint(encoder, update.timestamp[0]);
+      encoding.writeVarUint(encoder, update.timestamp[1]);
+      const hasServerVersion = typeof update.serverVersion === "number";
+      encoding.writeUint8(encoder, hasServerVersion ? 1 : 0);
+      if (hasServerVersion) {
+        encoding.writeVarUint(encoder, update.serverVersion!);
+      }
+      encoding.writeVarUint8Array(encoder, update.payload);
     }
   }) as EncryptedSyncStep2;
 }
@@ -265,44 +325,44 @@ export function decodeFromSyncStep2(
 ): DecodedEncryptedSyncStep2 {
   try {
     const decoder = decoding.createDecoder(syncStep2);
-    const messages: DecodedEncryptedUpdatePayload[] = [];
+    const updates: DecodedEncryptedUpdatePayload[] = [];
     // version
     const version = decoding.readVarUint(decoder);
     if (version !== 0) {
       throw new Error("Invalid version");
     }
-    // client id mapping
-    const clientIdMapping = new Map<number, ClientId>();
-    const clientIdMappingLength = decoding.readVarUint(decoder);
-    for (let i = 0; i < clientIdMappingLength; i++) {
-      // client id
-      const clientId = decoding.readVarUint(decoder);
-      // index
-      const index = decoding.readVarUint(decoder);
-      // set client id mapping
-      clientIdMapping.set(index, clientId);
+    const hasSnapshot = decoding.readUint8(decoder) === 1;
+    let snapshot: EncryptedSnapshot | null = null;
+    if (hasSnapshot) {
+      const snapshotId = decoding.readVarString(decoder);
+      const parentSnapshotId = decoding.readVarString(decoder);
+      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
+      snapshot = {
+        id: snapshotId,
+        parentSnapshotId: parentSnapshotId || null,
+        payload,
+      };
     }
-    // messages length
     const length = decoding.readVarUint(decoder);
     for (let i = 0; i < length; i++) {
-      // id
-      const id = toBase64(decoding.readVarUint8Array(decoder));
-      // client id
-      const clientId = clientIdMapping.get(decoding.readVarUint(decoder))!;
-      // lamport clock
+      const snapshotId = decoding.readVarString(decoder);
+      const clientId = decoding.readVarUint(decoder);
       const lamportClock = decoding.readVarUint(decoder);
-      // payload
+      const hasServerVersion = decoding.readUint8(decoder) === 1;
+      const serverVersion = hasServerVersion
+        ? decoding.readVarUint(decoder)
+        : undefined;
       const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
-
-      // add message
-      messages.push({
-        id,
+      updates.push({
+        id: toBase64(digest(payload)),
+        snapshotId,
         timestamp: [clientId, lamportClock],
         payload,
+        serverVersion,
         contentIds: getEmptyEncodedContentIds(),
       });
     }
-    return { messages };
+    return { snapshot, updates };
   } catch (e) {
     throw new Error("Failed to decode encrypted sync step 2 message", {
       cause: {
@@ -314,11 +374,11 @@ export function decodeFromSyncStep2(
 }
 
 export function getEmptyEncryptedStateVector(): EncryptedStateVector {
-  return encodeToStateVector({ clocks: new Map() });
+  return encodeToStateVector({ snapshotId: "", serverVersion: 0 });
 }
 
 export function getEmptyEncryptedSyncStep2(): EncryptedSyncStep2 {
-  return encodeToSyncStep2({ messages: [] });
+  return encodeToSyncStep2({ updates: [] });
 }
 
 export function getEmptyEncryptedUpdate(): EncryptedUpdatePayload {

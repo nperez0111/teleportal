@@ -822,11 +822,13 @@ export class Provider<
       // (see createMilestone for client snapshots; the server uses the same
       // format for automatic milestones). Decrypt each message's payload and
       // merge them back into a single plaintext Y.js update.
-      const messages = decodeEncryptedUpdate(
+      const decoded = decodeEncryptedUpdate(
         snapshot as unknown as EncryptedUpdatePayload,
       );
+      const encryptedUpdates =
+        decoded.type === "update" ? decoded.updates : [];
       const updates = await Promise.all(
-        messages.map(
+        encryptedUpdates.map(
           (message) =>
             decryptUpdate(
               this.encryptionKey!,
@@ -864,6 +866,7 @@ export class Provider<
       const encrypted = await encryptUpdate(this.encryptionKey, plaintext);
       snapshot = encodeEncryptedUpdate(
         encrypted,
+        "milestone",
         [0, 0],
       ) as unknown as MilestoneSnapshot;
     } else {

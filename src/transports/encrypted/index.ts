@@ -21,6 +21,10 @@ export function getEncryptedTransport(handler: EncryptionClient): Transport<
     message: (message: Message) => void;
   }>();
 
+  handler.on("send-message", (message) => {
+    observer.call("message", message);
+  });
+
   const source = getYDocSource({
     ydoc: handler.ydoc,
     document: handler.document,
