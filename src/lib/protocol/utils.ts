@@ -10,8 +10,7 @@ export const getEmptyUpdate = (): Update =>
 /**
  * An empty StateVector for use as a placeholder.
  */
-export const getEmptyStateVector = (): StateVector =>
-  new Uint8Array([0]) as StateVector;
+export const getEmptyStateVector = (): StateVector => new Uint8Array([0]) as StateVector;
 
 /**
  * Checks if an update is empty.
@@ -51,13 +50,9 @@ export function isEmptyStateVector(stateVector: StateVector): boolean {
  * @param update - The update(s) to get the state vector from.
  * @returns The state vector of the update(s).
  */
-export function getStateVectorFromUpdate(
-  update: Update | Update[],
-): StateVector {
+export function getStateVectorFromUpdate(update: Update | Update[]): StateVector {
   if (Array.isArray(update)) {
-    return Y.encodeStateVectorFromUpdateV2(
-      Y.mergeUpdatesV2(update),
-    ) as StateVector;
+    return Y.encodeStateVectorFromUpdateV2(Y.mergeUpdatesV2(update)) as StateVector;
   }
   return Y.encodeStateVectorFromUpdateV2(update) as StateVector;
 }

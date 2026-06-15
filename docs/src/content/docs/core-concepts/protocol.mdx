@@ -10,6 +10,7 @@ The Teleportal protocol is a binary protocol built on top of Y.js that handles d
 One of the core design principles of the Teleportal protocol is **multiplexing**: the ability to sync multiple documents over a single connection. This is why every message is tagged with a `documentId`.
 
 **Why multiplexing?** In real-world applications, clients often need to work with multiple documents simultaneously. Without multiplexing, you'd need a separate connection for each document, which would:
+
 - Consume more network resources
 - Increase connection overhead
 - Make connection management more complex
@@ -22,11 +23,13 @@ By tagging each message with a `documentId`, the protocol allows a single WebSoc
 Encrypted messages are handled with different semantics than unencrypted messages, which is why messages include an **encryption flag** in their header.
 
 **Why different semantics?** When a message is encrypted:
+
 - The payload structure changes (it contains encrypted data rather than raw Y.js updates)
 - The server's processing differs (it must decrypt before applying updates)
 - Storage requirements may differ (encrypted documents may need different persistence strategies)
 
 By marking messages as encrypted or not, the protocol ensures that:
+
 - The server knows how to process each message correctly
 - Clients can handle encrypted and unencrypted documents in the same connection
 - The protocol can evolve encryption features independently
@@ -46,21 +49,22 @@ sequenceDiagram
 
     Note over C,S: Client initiates sync
     C->>S: sync-step-1 (client state vector)
-    
+
     Note over S: Server compares state vectors
     S->>C: sync-step-2 (server sends missing updates)
-    
+
     Note over S: Server sends its state vector
     S->>C: sync-step-1 (server state vector)
-    
+
     Note over C: Client compares state vectors
     C->>S: sync-step-2 (client sends missing updates)
-    
+
     Note over C,S: Both sides now synchronized
     S->>C: sync-done
 ```
 
 **The flow explained:**
+
 1. **Client → Server (sync-step-1)**: Client sends its state vector, telling the server "this is what I have"
 2. **Server → Client (sync-step-2)**: Server compares state vectors and sends only the updates the client is missing
 3. **Server → Client (sync-step-1)**: Server sends its state vector, telling the client "this is what I have"
@@ -74,11 +78,13 @@ This bidirectional exchange ensures both sides converge to the same state with m
 The protocol includes **ping/pong message types** to check if the connection is still active.
 
 **Why ping/pong?** Network connections can fail silently. A client might think it's connected, but the connection could be dead. Without a keep-alive mechanism:
+
 - Dead connections would go undetected
 - Clients wouldn't know when to reconnect
 - Resources would be wasted maintaining broken connections
 
 Ping/pong messages allow both client and server to:
+
 - Detect dead connections proactively
 - Trigger reconnection logic when needed
 - Maintain connection health metrics
@@ -90,11 +96,13 @@ The server or client can send a ping, and the recipient must respond with a pong
 **ACK (acknowledgment) messages** allow the client to know whether the server actually received and processed the message it was sent.
 
 **Why ACKs?** In distributed systems, message delivery isn't guaranteed. A message could be:
+
 - Lost in transit
 - Received but not processed due to an error
 - Processed but the response lost
 
 Without ACKs, clients have no way to know if their messages were successfully handled. ACK messages provide:
+
 - **Reliability**: Clients can retry if no ACK is received
 - **Confirmation**: Clients know their updates were applied
 - **Error detection**: Servers can send negative ACKs for failed operations
@@ -106,17 +114,20 @@ This is especially important for critical operations like document updates, wher
 **RPC (Remote Procedure Call) messages** allow you to extend the protocol to add your own logic for sending and receiving data over the multiplexed connection.
 
 **Why RPC?** While document synchronization is the core use case, real applications need more:
+
 - File uploads and downloads
 - Metadata operations (like milestones)
 - Custom business logic
 - Integration with external services
 
 Rather than creating separate protocols or connections for these features, RPC messages let you:
+
 - Reuse the same connection infrastructure
 - Leverage existing authentication and multiplexing
 - Add custom functionality without protocol changes
 
 **Built-in RPC methods** demonstrate this pattern:
+
 - **Milestones**: `milestoneList`, `milestoneCreate`, `milestoneGet`, etc.
 - **Files**: `fileUpload`, `fileDownload`, etc.
 
@@ -129,16 +140,19 @@ These are all built on the RPC concept, showing how the protocol can be extended
 Messages are **encodable and decodable from binary** for efficient transmission over the network.
 
 **Why binary?** Text-based protocols (like JSON) are human-readable but inefficient:
+
 - Larger payload sizes (text encoding overhead)
 - Slower parsing (string parsing is CPU-intensive)
 - More bandwidth usage (especially for large Y.js updates)
 
 Binary encoding provides:
+
 - **Size efficiency**: Compact representation of data
 - **Speed**: Fast encoding/decoding operations
 - **Bandwidth savings**: Critical for real-time synchronization where every byte counts
 
 The protocol uses a structured binary format with:
+
 - **Header**: Message type, document ID, encryption flag, and context
 - **Payload**: Type-specific binary data (Y.js updates, awareness states, RPC data, etc.)
 

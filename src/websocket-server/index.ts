@@ -110,16 +110,12 @@ export function getWebsocketHandlers<T extends ServerContext>({
         throw new Response("Unauthorized", {
           status: 401,
           headers: {
-            "WWW-Authenticate":
-              'Basic realm="Websocket Authentication", charset="UTF-8"',
+            "WWW-Authenticate": 'Basic realm="Websocket Authentication", charset="UTF-8"',
           },
         });
       } finally {
         wideEvent.duration_ms = Date.now() - startTime;
-        emitWideEvent(
-          wideEvent.outcome === "error" ? "error" : "info",
-          wideEvent,
-        );
+        emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
       }
     },
     async open(peer) {

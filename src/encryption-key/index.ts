@@ -28,9 +28,7 @@ export async function createEncryptionKey(): Promise<CryptoKey> {
  * @param keyString - The raw key data as string
  * @returns A Promise that resolves to a CryptoKey
  */
-export async function importEncryptionKey(
-  keyString: string,
-): Promise<CryptoKey> {
+export async function importEncryptionKey(keyString: string): Promise<CryptoKey> {
   try {
     return await crypto.subtle.importKey(
       "jwk",
@@ -115,11 +113,7 @@ export async function decryptUpdate(
     const encryptedData = encryptedBinary.slice(12);
 
     // Decrypt the data
-    const decryptedData = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      encryptedData,
-    );
+    const decryptedData = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encryptedData);
 
     return new Uint8Array(decryptedData);
   } catch (error) {

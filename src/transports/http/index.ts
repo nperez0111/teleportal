@@ -5,11 +5,7 @@ import {
   type Sink,
   type Source,
 } from "teleportal";
-import {
-  BatchingOptions,
-  fromMessageArrayStream,
-  getBatchingTransform,
-} from "../utils";
+import { BatchingOptions, fromMessageArrayStream, getBatchingTransform } from "../utils";
 
 /**
  * Transport which receives a binary message from an HTTP request
@@ -34,10 +30,7 @@ export function getHTTPSource<Context extends ClientContext>({
     handleHTTPRequest: async (request) => {
       await request
         .body!.pipeThrough(
-          fromMessageArrayStream(context) as TransformStream<
-            Uint8Array,
-            Message<Context>
-          >,
+          fromMessageArrayStream(context) as TransformStream<Uint8Array, Message<Context>>,
         )
         .pipeTo(transform.writable);
       return;

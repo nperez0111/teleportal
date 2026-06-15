@@ -29,9 +29,7 @@ describe("can encode and decode", () => {
       decodeMessage(
         new AwarenessMessage("test", {
           type: "awareness-update",
-          update: new Uint8Array([
-            0x00, 0x01, 0x02, 0x03,
-          ]) as AwarenessUpdateMessage,
+          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
         }).encoded,
       ),
     ).toMatchInlineSnapshot(`
@@ -248,10 +246,7 @@ describe("can encode and decode", () => {
     const chunkData = new Uint8Array(CHUNK_SIZE);
     chunkData.fill(1);
 
-    const merkleProof = [
-      new Uint8Array(32).fill(2),
-      new Uint8Array(32).fill(3),
-    ];
+    const merkleProof = [new Uint8Array(32).fill(2), new Uint8Array(32).fill(3)];
 
     const filePart: FilePartStream = {
       fileId: "test-file-id",
@@ -286,10 +281,7 @@ describe("can encode and decode", () => {
 
   it("can encode and decode an RPC stream message (file-part) with all fields", () => {
     const chunkData = new Uint8Array([1, 2, 3, 4, 5]);
-    const merkleProof = [
-      new Uint8Array([10, 11, 12]),
-      new Uint8Array([20, 21, 22]),
-    ];
+    const merkleProof = [new Uint8Array([10, 11, 12]), new Uint8Array([20, 21, 22])];
 
     const filePart: FilePartStream = {
       fileId: "test-part-id",
@@ -550,10 +542,9 @@ describe("can encode and decode", () => {
 
     expect((decoded as RpcMessage<any>).rpcMethod).toBe("uploadChunk");
     expect((decoded as RpcMessage<any>).payload.type).toBe("success");
-    expect(
-      ((decoded as RpcMessage<any>).payload.payload as { data: Uint8Array })
-        .data,
-    ).toEqual(binaryData);
+    expect(((decoded as RpcMessage<any>).payload.payload as { data: Uint8Array }).data).toEqual(
+      binaryData,
+    );
   });
 });
 
@@ -837,9 +828,7 @@ describe("empty update", () => {
   });
 
   it("can detect a non-empty update", () => {
-    expect(
-      isEmptyUpdate(new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update),
-    ).toBe(false);
+    expect(isEmptyUpdate(new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update)).toBe(false);
   });
 });
 
@@ -849,10 +838,6 @@ describe("empty state vector", () => {
   });
 
   it("can detect a non-empty state vector", () => {
-    expect(
-      isEmptyStateVector(
-        new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector,
-      ),
-    ).toBe(false);
+    expect(isEmptyStateVector(new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector)).toBe(false);
   });
 });

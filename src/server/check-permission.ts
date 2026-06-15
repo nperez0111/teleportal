@@ -34,19 +34,11 @@ export function checkPermissionWithTokenManager(
       switch (message.payload.type) {
         case "sync-done":
         case "sync-step-1": {
-          return tokenManager.hasDocumentPermission(
-            tokenPayload,
-            documentId,
-            "read",
-          );
+          return tokenManager.hasDocumentPermission(tokenPayload, documentId, "read");
         }
         case "sync-step-2":
         case "update": {
-          return tokenManager.hasDocumentPermission(
-            tokenPayload,
-            documentId,
-            "write",
-          );
+          return tokenManager.hasDocumentPermission(tokenPayload, documentId, "write");
         }
         case "auth-message": {
           // Auth messages are responses from the server, not requests from clients
@@ -54,9 +46,7 @@ export function checkPermissionWithTokenManager(
           return false;
         }
         default: {
-          throw new Error(
-            `Unknown doc message payload type: ${(message.payload as any).type}`,
-          );
+          throw new Error(`Unknown doc message payload type: ${(message.payload as any).type}`);
         }
       }
     }

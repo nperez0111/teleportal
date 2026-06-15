@@ -34,7 +34,7 @@ Design for your domain's growth axes. Use **maps keyed by ID** for collections. 
 
 ### 2. Group by Change, Not by Description (CRITICAL)
 
-For each pair of fields ask: *"Will two users ever edit these at the same time?"*
+For each pair of fields ask: _"Will two users ever edit these at the same time?"_
 
 - **Always change together** (e.g. `updatedBy` + `updatedAt`) → one atomic value.
 - **Can change independently** (e.g. `title` vs. `status`) → separate entries.
@@ -44,7 +44,7 @@ Match Y.js granularity to your UI's editing surface.
 
 ### 3. `Array<Object>` → `Map<id, Object>` (CRITICAL)
 
-`Y.Array<Object>` is fine for append-only lists (logs, chat), but breaks for user-editable collections. A "move" is actually `delete` + `insert`, which creates a *new* item — concurrent edits to the "moved" original are lost, and two users reordering can produce duplicates. Index-based references also shift on concurrent inserts.
+`Y.Array<Object>` is fine for append-only lists (logs, chat), but breaks for user-editable collections. A "move" is actually `delete` + `insert`, which creates a _new_ item — concurrent edits to the "moved" original are lost, and two users reordering can produce duplicates. Index-based references also shift on concurrent inserts.
 
 Use `Y.Map<id, Y.Map<field, value>>` so each entity has a stable identity. For user-controlled ordering, use **fractional indexing** (string indices between neighbors) rather than integer positions, which collide when two users reorder at the same time.
 
@@ -86,7 +86,7 @@ On **initial write**, skip fields whose value matches a well-known default. Don'
 
 ### 11. Split Y.Docs When Permissions Differ (CRITICAL)
 
-Permissions can't be enforced *inside* a Y.Doc — any client that can sync it reads and writes everything. Split into an **index Y.Doc** (IDs + metadata) and **per-entity Y.Docs** (content) when:
+Permissions can't be enforced _inside_ a Y.Doc — any client that can sync it reads and writes everything. Split into an **index Y.Doc** (IDs + metadata) and **per-entity Y.Docs** (content) when:
 
 - Different entities need different read/write permissions
 - You need to revoke access to specific entities
@@ -207,6 +207,7 @@ Keep a single root `getMap("data")` (or a handful of well-known roots like `data
 ## Guidelines
 
 ### Schema Design (`rules/schema-design.md`)
+
 - Y.Doc as hard format — design for growth
 - Maps keyed by ID for collections
 - Flat typed values over nested structures
@@ -217,6 +218,7 @@ Keep a single root `getMap("data")` (or a handful of well-known roots like `data
 - Don't mutate JSON retrieved from a shared type
 
 ### Concurrency Patterns (`rules/concurrency.md`)
+
 - Group by how fields change together
 - `Array<Object>` → `Map<id, Object>` with fractional indexing
 - Known string sets → numbers
@@ -225,6 +227,7 @@ Keep a single root `getMap("data")` (or a handful of well-known roots like `data
 - Single-writer keys for counters and tallies
 
 ### Write Optimization (`rules/optimization.md`)
+
 - Batch related writes in transactions
 - Flatten small fixed-shape objects into encoded strings
 - Skip default values on initial write
@@ -232,4 +235,5 @@ Keep a single root `getMap("data")` (or a handful of well-known roots like `data
 - Tombstones on Y.Map keys are forever — avoid high-churn fields in the doc
 
 References:
+
 - [Y.js documentation](https://docs.yjs.dev)

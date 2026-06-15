@@ -36,9 +36,7 @@ const FORBIDDEN: RpcError = {
   details: "Attribution access denied",
 };
 
-async function loadContentMap(
-  context: RpcServerContext,
-): Promise<EncodedContentMap | null> {
+async function loadContentMap(context: RpcServerContext): Promise<EncodedContentMap | null> {
   const retrieve = context.session.storage.retrieveAttribution;
   if (!retrieve) return null;
   return retrieve.call(context.session.storage, context.documentId);
@@ -48,20 +46,14 @@ async function loadContentMap(
  * Build a ContentMap attribute predicate from an {@link AttributionFilter}.
  * Insert ranges carry `insert`/`insertAt`, delete ranges `delete`/`deleteAt`.
  */
-function matchesFilter(
-  filter: AttributionFilter,
-): (attrs: ContentAttribute[]) => boolean {
+function matchesFilter(filter: AttributionFilter): (attrs: ContentAttribute[]) => boolean {
   return (attrs) => {
     if (filter.userId !== undefined) {
-      const userAttr = attrs.find(
-        (a) => a.name === "insert" || a.name === "delete",
-      );
+      const userAttr = attrs.find((a) => a.name === "insert" || a.name === "delete");
       if (!userAttr || userAttr.val !== filter.userId) return false;
     }
     if (filter.from !== undefined || filter.to !== undefined) {
-      const timeAttr = attrs.find(
-        (a) => a.name === "insertAt" || a.name === "deleteAt",
-      );
+      const timeAttr = attrs.find((a) => a.name === "insertAt" || a.name === "deleteAt");
       if (timeAttr) {
         const t = timeAttr.val as number;
         if (filter.from !== undefined && t < filter.from) return false;
@@ -79,10 +71,7 @@ const activityHandler =
     context: RpcServerContext,
   ): Promise<{ response: AttributionActivityResponse | RpcError }> => {
     try {
-      if (
-        options.checkPermission &&
-        !(await options.checkPermission(context))
-      ) {
+      if (options.checkPermission && !(await options.checkPermission(context))) {
         return { response: FORBIDDEN };
       }
       const encoded = await loadContentMap(context);
@@ -99,10 +88,7 @@ const activityHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to read attribution activity",
+          details: error instanceof Error ? error.message : "Failed to read attribution activity",
         },
       };
     }
@@ -115,10 +101,7 @@ const getHandler =
     context: RpcServerContext,
   ): Promise<{ response: AttributionGetResponse | RpcError }> => {
     try {
-      if (
-        options.checkPermission &&
-        !(await options.checkPermission(context))
-      ) {
+      if (options.checkPermission && !(await options.checkPermission(context))) {
         return { response: FORBIDDEN };
       }
       const encoded = await loadContentMap(context);
@@ -127,9 +110,7 @@ const getHandler =
       const filter = payload.filter;
       if (
         filter &&
-        (filter.userId !== undefined ||
-          filter.from !== undefined ||
-          filter.to !== undefined)
+        (filter.userId !== undefined || filter.from !== undefined || filter.to !== undefined)
       ) {
         const predicate = matchesFilter(filter);
         const filtered = filterContentMap(decodeContentMap(encoded), predicate);
@@ -142,10 +123,7 @@ const getHandler =
         response: {
           type: "error",
           statusCode: 500,
-          details:
-            error instanceof Error
-              ? error.message
-              : "Failed to read attribution",
+          details: error instanceof Error ? error.message : "Failed to read attribution",
         },
       };
     }
@@ -162,9 +140,7 @@ const getHandler =
  * - `attributionActivity` — activity timeline (works for encrypted documents).
  * - `attributionGet` — the encoded ContentMap for client-side range resolution.
  */
-export function getAttributionRpcHandlers(
-  options: AttributionRpcOptions = {},
-): RpcHandlerRegistry {
+export function getAttributionRpcHandlers(options: AttributionRpcOptions = {}): RpcHandlerRegistry {
   return {
     ["attributionActivity"]: {
       handler: activityHandler(options),

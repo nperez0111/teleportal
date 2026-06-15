@@ -16,7 +16,7 @@ Yjs's merge behavior is **different for each shared type**. Knowing which type g
 
 ### Y.Map Values: Last-Writer-Wins by `clientID` (not timestamp)
 
-Per the Yjs internals: *"Maps are lists of entries. The last inserted entry for each key is used, and all other duplicates for each key are flagged as deleted."*
+Per the Yjs internals: _"Maps are lists of entries. The last inserted entry for each key is used, and all other duplicates for each key are flagged as deleted."_
 
 When two clients concurrently write different values to the **same key**, Yjs deterministically picks one to win — the client with the **higher `clientID`**, not the later wall-clock timestamp. This matters:
 
@@ -24,7 +24,7 @@ When two clients concurrently write different values to the **same key**, Yjs de
 - LWW-by-clientID is deterministic but **not intuitive**: a later edit on the lower-`clientID` peer can lose to an earlier edit on the higher-`clientID` peer.
 - **Counters and other read-modify-write patterns silently lose writes.** If both clients read `5`, both write `6`, one write is discarded. Use per-client keys (`ymap.set(ydoc.clientID, value)`) and sum on read, or use a dedicated LWW-with-timestamp library.
 
-> `Y.Text` is the exception — it uses a character-level CRDT that *does* merge concurrent keystrokes. See below.
+> `Y.Text` is the exception — it uses a character-level CRDT that _does_ merge concurrent keystrokes. See below.
 
 ### Group Values by How They Change, Not by What They Describe
 
@@ -55,7 +55,7 @@ yDoc.set("archived", true); // user toggles a checkbox
 3. **Index-based references are unstable.** "The item at index 3" changes meaning whenever anyone inserts at a lower index.
 4. **Range-insert interleaving.** Two clients inserting ranges at the same position can produce interleaved output.
 
-Use `Y.Map<id, Y.Map<field, value>>` so each entity has a stable ID, and concurrent edits to *different* entities never collide.
+Use `Y.Map<id, Y.Map<field, value>>` so each entity has a stable ID, and concurrent edits to _different_ entities never collide.
 
 ```typescript
 // Bad: Y.Array for a user-editable collection — moves lose data, reorders duplicate

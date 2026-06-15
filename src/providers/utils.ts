@@ -2,14 +2,8 @@
  * Timer interface for dependency injection
  */
 export interface Timer {
-  setTimeout: (
-    callback: () => void,
-    delay: number,
-  ) => ReturnType<typeof setTimeout>;
-  setInterval: (
-    callback: () => void,
-    interval: number,
-  ) => ReturnType<typeof setInterval>;
+  setTimeout: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
+  setInterval: (callback: () => void, interval: number) => ReturnType<typeof setInterval>;
   clearTimeout: (id: ReturnType<typeof setTimeout>) => void;
   clearInterval: (id: ReturnType<typeof setInterval>) => void;
 }
@@ -43,10 +37,7 @@ export class TimerManager {
     return this.timer;
   }
 
-  setTimeout(
-    callback: () => void,
-    delay: number,
-  ): ReturnType<typeof setTimeout> {
+  setTimeout(callback: () => void, delay: number): ReturnType<typeof setTimeout> {
     const id = this.timer.setTimeout(() => {
       this.timers.delete(id);
       callback();
@@ -55,10 +46,7 @@ export class TimerManager {
     return id;
   }
 
-  setInterval(
-    callback: () => void,
-    interval: number,
-  ): ReturnType<typeof setInterval> {
+  setInterval(callback: () => void, interval: number): ReturnType<typeof setInterval> {
     const id = this.timer.setInterval(callback, interval);
     this.intervals.add(id);
     return id;
@@ -101,13 +89,8 @@ export class ExponentialBackoff {
     if (!Number.isInteger(base) || base < 0) {
       throw new Error("Base must be a positive integer or zero");
     }
-    if (
-      maxExponent !== undefined &&
-      (!Number.isInteger(maxExponent) || maxExponent < 0)
-    ) {
-      throw new Error(
-        "MaxExponent must be undefined, a positive integer or zero",
-      );
+    if (maxExponent !== undefined && (!Number.isInteger(maxExponent) || maxExponent < 0)) {
+      throw new Error("MaxExponent must be undefined, a positive integer or zero");
     }
     if (typeof factor !== "number" || factor < 1) {
       throw new Error("Factor must be a number >= 1");
@@ -128,10 +111,7 @@ export class ExponentialBackoff {
 
   next(): number {
     this._retries++;
-    this.i =
-      this.maxExponent === undefined
-        ? this.i + 1
-        : Math.min(this.i + 1, this.maxExponent);
+    this.i = this.maxExponent === undefined ? this.i + 1 : Math.min(this.i + 1, this.maxExponent);
     return this.current;
   }
 

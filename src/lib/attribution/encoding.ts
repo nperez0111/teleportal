@@ -41,9 +41,7 @@ import {
 // --- IdSet encoding ---
 
 function writeIdSet(encoder: encoding.Encoder, idSet: IdSet) {
-  const clients = [...idSet.clients.entries()].sort(
-    ([a], [b]) => a - b,
-  );
+  const clients = [...idSet.clients.entries()].sort(([a], [b]) => a - b);
   encoding.writeVarUint(encoder, clients.length);
 
   for (const [client, ranges] of clients) {
@@ -154,10 +152,7 @@ function writeIdMap(encoder: encoding.Encoder, idMap: IdMap) {
             encoding.writeVarUint(encoder, nIdx);
           }
 
-          encoding.writeAny(
-            encoder,
-            attr.val as encoding.AnyEncodable,
-          );
+          encoding.writeAny(encoder, attr.val as encoding.AnyEncodable);
         } else {
           encoding.writeVarUint(encoder, idx);
         }

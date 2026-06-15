@@ -140,9 +140,7 @@ describe("UnstorageFileStorage", () => {
     expect(chunk0).toEqual(chunks[0]);
 
     // Verify chunk 0 was deleted from temporary storage
-    const chunkKeysAfter0 = await unstorage.getKeys(
-      `file:upload:${uploadId}:chunk:`,
-    );
+    const chunkKeysAfter0 = await unstorage.getKeys(`file:upload:${uploadId}:chunk:`);
     expect(chunkKeysAfter0.length).toBe(1);
 
     // Session should still exist (not all chunks fetched yet)
@@ -153,9 +151,7 @@ describe("UnstorageFileStorage", () => {
     expect(chunk1).toEqual(chunks[1]);
 
     // Verify all chunks and session are cleaned up
-    const chunkKeysAfter1 = await unstorage.getKeys(
-      `file:upload:${uploadId}:chunk:`,
-    );
+    const chunkKeysAfter1 = await unstorage.getKeys(`file:upload:${uploadId}:chunk:`);
     expect(chunkKeysAfter1.length).toBe(0);
 
     progress = await temp.getUploadProgress(uploadId);
@@ -194,9 +190,7 @@ describe("UnstorageFileStorage", () => {
     expect(chunk).toEqual(chunks[0]);
 
     // Second fetch should fail
-    await expect(result.getChunk(0)).rejects.toThrow(
-      "Chunk 0 has already been fetched",
-    );
+    await expect(result.getChunk(0)).rejects.toThrow("Chunk 0 has already been fetched");
   });
 
   it("should not duplicate data - file persisted to durable storage, temp chunks cleaned up", async () => {
@@ -229,15 +223,11 @@ describe("UnstorageFileStorage", () => {
     expect(file).not.toBeNull();
 
     // Verify temporary upload chunks are cleaned up (no duplication)
-    const tempChunkKeys = await unstorage.getKeys(
-      `file:upload:${uploadId}:chunk:`,
-    );
+    const tempChunkKeys = await unstorage.getKeys(`file:upload:${uploadId}:chunk:`);
     expect(tempChunkKeys.length).toBe(0);
 
     // Verify durable storage chunks still exist
-    const durableChunkKeys = await unstorage.getKeys(
-      `file:file:${fileId}:chunk:`,
-    );
+    const durableChunkKeys = await unstorage.getKeys(`file:file:${fileId}:chunk:`);
     expect(durableChunkKeys.length).toBe(1);
 
     // File should still be retrievable from durable storage
@@ -276,9 +266,7 @@ describe("UnstorageFileStorage", () => {
       expect(file).not.toBeNull();
 
       // Verify file chunks exist in storage
-      const chunkKeysBefore = await unstorage.getKeys(
-        `file:file:${fileId}:chunk:`,
-      );
+      const chunkKeysBefore = await unstorage.getKeys(`file:file:${fileId}:chunk:`);
       expect(chunkKeysBefore.length).toBeGreaterThan(0);
 
       // Delete the file
@@ -289,9 +277,7 @@ describe("UnstorageFileStorage", () => {
       expect(file).toBeNull();
 
       // Verify file chunks are deleted
-      const chunkKeysAfter = await unstorage.getKeys(
-        `file:file:${fileId}:chunk:`,
-      );
+      const chunkKeysAfter = await unstorage.getKeys(`file:file:${fileId}:chunk:`);
       expect(chunkKeysAfter.length).toBe(0);
 
       // Verify file metadata is deleted
@@ -306,13 +292,10 @@ describe("UnstorageFileStorage", () => {
 function createMockDocumentStorage(): DocumentStorage {
   class MockDocumentStorage implements DocumentStorage {
     readonly type = "document-storage" as const;
-    storageType: "unencrypted" = "unencrypted";
+    storageType = "unencrypted" as const;
     metadata: Map<string, DocumentMetadata> = new Map();
 
-    async handleSyncStep1(
-      documentId: string,
-      syncStep1: StateVector,
-    ): Promise<Document> {
+    async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
       return {
         id: documentId,
         metadata: await this.getDocumentMetadata(documentId),
@@ -323,10 +306,7 @@ function createMockDocumentStorage(): DocumentStorage {
       };
     }
 
-    async handleSyncStep2(
-      _documentId: string,
-      _syncStep2: SyncStep2Update,
-    ): Promise<void> {}
+    async handleSyncStep2(_documentId: string, _syncStep2: SyncStep2Update): Promise<void> {}
 
     async handleUpdate(_documentId: string, _update: Update): Promise<void> {}
 
@@ -341,10 +321,7 @@ function createMockDocumentStorage(): DocumentStorage {
       };
     }
 
-    async writeDocumentMetadata(
-      documentId: string,
-      metadata: DocumentMetadata,
-    ): Promise<void> {
+    async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
       this.metadata.set(documentId, metadata);
     }
 

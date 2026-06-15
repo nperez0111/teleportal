@@ -82,10 +82,7 @@ export function encodeMessage(
           case "update":
           case "sync-step-2": {
             // message type
-            encoding.writeUint8(
-              encoder,
-              message.payload.type === "sync-step-2" ? 1 : 2,
-            );
+            encoding.writeUint8(encoder, message.payload.type === "sync-step-2" ? 1 : 2);
             // update
             encoding.writeVarUint8Array(encoder, message.payload.update);
             break;
@@ -99,10 +96,7 @@ export function encodeMessage(
             // message type
             encoding.writeUint8(encoder, 4);
             // permission
-            encoding.writeUint8(
-              encoder,
-              message.payload.permission === "denied" ? 0 : 1,
-            );
+            encoding.writeUint8(encoder, message.payload.permission === "denied" ? 0 : 1);
             // reason
             encoding.writeVarString(encoder, message.payload.reason);
             break;
@@ -114,10 +108,7 @@ export function encodeMessage(
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 2);
         // message id
-        encoding.writeVarUint8Array(
-          encoder,
-          fromBase64(message.payload.messageId),
-        );
+        encoding.writeVarUint8Array(encoder, fromBase64(message.payload.messageId));
         break;
       }
       case "presence": {
@@ -134,17 +125,11 @@ export function encodeMessage(
           case "presence-join":
           case "presence-leave": {
             // sub-type
-            encoding.writeUint8(
-              encoder,
-              message.payload.type === "presence-join" ? 1 : 2,
-            );
+            encoding.writeUint8(encoder, message.payload.type === "presence-join" ? 1 : 2);
             encoding.writeVarUint(encoder, message.payload.awarenessId);
             encoding.writeVarString(encoder, message.payload.clientId);
             encoding.writeVarString(encoder, message.payload.userId);
-            encoding.writeAny(
-              encoder,
-              message.payload.data as encoding.AnyEncodable,
-            );
+            encoding.writeAny(encoder, message.payload.data as encoding.AnyEncodable);
             break;
           }
           case "presence-heartbeat": {
@@ -175,9 +160,7 @@ export function encodeMessage(
         // method name
         encoding.writeVarString(encoder, message.rpcMethod);
 
-        const requestTypeIndex = ["request", "stream", "response"].indexOf(
-          message.requestType,
-        );
+        const requestTypeIndex = ["request", "stream", "response"].indexOf(message.requestType);
         if (requestTypeIndex === -1) {
           throw new Error("Invalid RPC request type", {
             cause: { update: message },
@@ -187,26 +170,17 @@ export function encodeMessage(
         encoding.writeUint8(encoder, requestTypeIndex);
 
         // original request id
-        if (
-          message.requestType === "response" ||
-          message.requestType === "stream"
-        ) {
+        if (message.requestType === "response" || message.requestType === "stream") {
           if (!message.originalRequestId) {
-            throw new Error(
-              "Original request ID is required for response or stream messages",
-              {
-                cause: { message },
-              },
-            );
+            throw new Error("Original request ID is required for response or stream messages", {
+              cause: { message },
+            });
           }
           encoding.writeVarString(encoder, message.originalRequestId);
         }
 
         // is error or success
-        encoding.writeUint8(
-          encoder,
-          message.payload.type === "success" ? 0 : 1,
-        );
+        encoding.writeUint8(encoder, message.payload.type === "success" ? 0 : 1);
         if (message.payload.type === "success") {
           const serialized = serializer?.({
             type: "rpc",
@@ -218,10 +192,7 @@ export function encodeMessage(
           if (serialized === undefined) {
             const payloadEncoder = encoding.createEncoder();
             encoding.writeAny(payloadEncoder, message.payload.payload as any);
-            encoding.writeVarUint8Array(
-              encoder,
-              encoding.toUint8Array(payloadEncoder),
-            );
+            encoding.writeVarUint8Array(encoder, encoding.toUint8Array(payloadEncoder));
           } else {
             encoding.writeVarUint8Array(encoder, serialized);
           }
@@ -259,15 +230,7 @@ export function encodeMessage(
  * Serialize a doc step, this is compatible with the y-protocols implementation.
  */
 export function encodeDocStep<
-  T extends
-    | 0
-    | 1
-    | 2
-    | 3
-    | "sync-step-1"
-    | "sync-step-2"
-    | "sync-done"
-    | "update",
+  T extends 0 | 1 | 2 | 3 | "sync-step-1" | "sync-step-2" | "sync-done" | "update",
   S extends DocStep = T extends 0 | "sync-step-1"
     ? SyncStep1
     : T extends 1 | "sync-step-2"
@@ -279,11 +242,7 @@ export function encodeDocStep<
           : never,
 >(
   messageType: T,
-  payload: S extends SyncStep1
-    ? StateVector
-    : S extends SyncDone
-      ? undefined
-      : Update,
+  payload: S extends SyncStep1 ? StateVector : S extends SyncDone ? undefined : Update,
 ): S {
   try {
     const encoder = encoding.createEncoder();

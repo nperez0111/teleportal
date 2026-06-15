@@ -2,10 +2,7 @@ import { serve } from "crossws/server";
 import { createStorage } from "unstorage";
 
 import { Server } from "teleportal/server";
-import {
-  UnstorageDocumentStorage,
-  UnstorageRateLimitStorage,
-} from "teleportal/storage";
+import { UnstorageDocumentStorage, UnstorageRateLimitStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 const storage = createStorage();

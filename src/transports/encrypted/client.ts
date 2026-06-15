@@ -32,17 +32,9 @@ import {
   LamportClock,
 } from "teleportal/protocol/encryption";
 import { getEmptyEncodedContentIds } from "teleportal/attribution";
-import {
-  applyAwarenessUpdate,
-  Awareness,
-  encodeAwarenessUpdate,
-} from "y-protocols/awareness.js";
+import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness.js";
 import * as Y from "yjs";
-import {
-  getSyncTransactionOrigin,
-  YDocSinkHandler,
-  YDocSourceHandler,
-} from "../ydoc";
+import { getSyncTransactionOrigin, YDocSinkHandler, YDocSourceHandler } from "../ydoc";
 
 /** Default interval for periodic snapshot compaction (5 minutes). Use 0 to disable. */
 export const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
@@ -51,10 +43,7 @@ type EncryptionClientEvents = {
   "snapshot-stored": (snapshot: EncryptedSnapshot) => void;
   "update-stored": (update: DecodedEncryptedUpdatePayload) => void;
   "update-acknowledged": (update: DecodedEncryptedUpdatePayload) => void;
-  "state-updated": (state: {
-    snapshotId: string | null;
-    serverVersion: number;
-  }) => void;
+  "state-updated": (state: { snapshotId: string | null; serverVersion: number }) => void;
   /** Emitted when the client wants to send a message (e.g. periodic compaction snapshot). */
   "send-message": (message: Message) => void;
 };
@@ -80,14 +69,8 @@ export class EncryptionClient
   public ydoc: Y.Doc;
   public awareness: Awareness;
   public key: CryptoKey;
-  #decryptUpdate: (
-    key: CryptoKey,
-    encryptedUpdate: EncryptedBinary,
-  ) => Promise<DecryptedBinary>;
-  #encryptUpdate: (
-    key: CryptoKey,
-    update: DecryptedBinary,
-  ) => Promise<EncryptedBinary>;
+  #decryptUpdate: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
+  #encryptUpdate: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
 
   constructor({
     document,
@@ -102,14 +85,8 @@ export class EncryptionClient
     ydoc?: Y.Doc;
     awareness?: Awareness;
     key: CryptoKey;
-    decryptUpdate?: (
-      key: CryptoKey,
-      encryptedUpdate: EncryptedBinary,
-    ) => Promise<DecryptedBinary>;
-    encryptUpdate?: (
-      key: CryptoKey,
-      update: DecryptedBinary,
-    ) => Promise<EncryptedBinary>;
+    decryptUpdate?: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
+    encryptUpdate?: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
     /** Interval in ms to create a compaction snapshot. Default 5 minutes. Set to 0 to disable. */
     snapshotIntervalMs?: number;
   }) {
@@ -147,9 +124,7 @@ export class EncryptionClient
       void (async () => {
         if (!this.activeSnapshotId) return;
         const currentState = Y.encodeStateAsUpdateV2(this.ydoc);
-        const snapshotState = await this.decryptUpdate(
-          this.activeSnapshot!.payload,
-        );
+        const snapshotState = await this.decryptUpdate(this.activeSnapshot!.payload);
         if (
           currentState.length === snapshotState.length &&
           currentState.every((b, i) => b === snapshotState[i])
@@ -176,9 +151,7 @@ export class EncryptionClient
   /**
    * Decrypts an {@link EncryptedBinary} using the {@link CryptoKey}.
    */
-  public decryptUpdate(
-    encryptedUpdate: EncryptedBinary,
-  ): Promise<DecryptedBinary> {
+  public decryptUpdate(encryptedUpdate: EncryptedBinary): Promise<DecryptedBinary> {
     return this.#decryptUpdate(this.key, encryptedUpdate);
   }
 
@@ -186,10 +159,7 @@ export class EncryptionClient
     return this.activeSnapshot?.id ?? null;
   }
 
-  private getUpdateKey(
-    snapshotId: string,
-    timestamp: [number, number],
-  ): string {
+  private getUpdateKey(snapshotId: string, timestamp: [number, number]): string {
     return `${snapshotId}:${timestamp[0]}-${timestamp[1]}`;
   }
 
@@ -244,9 +214,7 @@ export class EncryptionClient
   /** Decrypt and apply in chunks to yield to the event loop and keep UI responsive. */
   private static readonly DECRYPT_BATCH_SIZE = 100;
 
-  private async applyUpdates(
-    updates: DecodedEncryptedUpdatePayload[],
-  ): Promise<void> {
+  private async applyUpdates(updates: DecodedEncryptedUpdatePayload[]): Promise<void> {
     const toDecrypt: DecodedEncryptedUpdatePayload[] = [];
     for (const update of updates) {
       if (this.hasSeen(update)) {
@@ -324,9 +292,7 @@ export class EncryptionClient
     return snapshot;
   }
 
-  private createUpdatePayload(
-    payload: EncryptedBinary,
-  ): DecodedEncryptedUpdatePayload {
+  private createUpdatePayload(payload: EncryptedBinary): DecodedEncryptedUpdatePayload {
     if (!this.activeSnapshotId) {
       throw new Error("Cannot create update without an active snapshot");
     }
@@ -339,10 +305,7 @@ export class EncryptionClient
       contentIds: getEmptyEncodedContentIds(),
     };
     this.markSeen(update);
-    this.pendingUpdates.set(
-      this.getUpdateKey(update.snapshotId, timestamp),
-      update,
-    );
+    this.pendingUpdates.set(this.getUpdateKey(update.snapshotId, timestamp), update);
     this.call("update-stored", update);
     return update;
   }
@@ -377,10 +340,7 @@ export class EncryptionClient
       this.document,
       {
         type: "sync-step-1",
-        sv: getEncryptedStateVector(
-          this.activeSnapshotId ?? "",
-          this.serverVersion,
-        ),
+        sv: getEncryptedStateVector(this.activeSnapshotId ?? "", this.serverVersion),
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -433,9 +393,7 @@ export class EncryptionClient
    * When this was an initial sync (server sent snapshot + updates), returns a compaction snapshot message
    * so the server can store it as the new active snapshot and avoid replaying the update log for future syncs.
    */
-  public async handleSyncStep2(
-    syncStep2: EncryptedSyncStep2,
-  ): Promise<Message | void> {
+  public async handleSyncStep2(syncStep2: EncryptedSyncStep2): Promise<Message | void> {
     const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
     const hadSnapshot = !!decodedSyncStep2.snapshot;
     const hadUpdates = decodedSyncStep2.updates.length > 0;
@@ -464,9 +422,7 @@ export class EncryptionClient
   /**
    * Handles an {@link AwarenessUpdateMessage} by decrypting it and applying it to the {@link Awareness}.
    */
-  public async handleAwarenessUpdate(
-    update: AwarenessUpdateMessage,
-  ): Promise<void> {
+  public async handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void> {
     applyAwarenessUpdate(
       this.awareness,
       await this.decryptUpdate(update),
@@ -477,9 +433,7 @@ export class EncryptionClient
   /**
    * Handles an {@link AwarenessRequestMessage} by encrypting the {@link AwarenessUpdateMessage} and returning a {@link AwarenessMessage}.
    */
-  public async handleAwarenessRequest(): Promise<
-    AwarenessMessage<ClientContext>
-  > {
+  public async handleAwarenessRequest(): Promise<AwarenessMessage<ClientContext>> {
     return new AwarenessMessage(
       this.document,
       {
@@ -538,9 +492,7 @@ export class EncryptionClient
   /**
    * Handles an {@link AwarenessUpdateMessage} by encrypting it and returning a {@link AwarenessMessage}.
    */
-  public async onAwarenessUpdate(
-    update: AwarenessUpdateMessage,
-  ): Promise<Message> {
+  public async onAwarenessUpdate(update: AwarenessUpdateMessage): Promise<Message> {
     const encryptedUpdate = await this.encryptUpdate(update);
 
     return new AwarenessMessage(

@@ -1,9 +1,6 @@
 import { useState } from "react";
 import { useEffect, useRef } from "react";
-import {
-  createTeleportalDevtools,
-  getDevtoolsState,
-} from "teleportal/devtools";
+import { createTeleportalDevtools, getDevtoolsState } from "teleportal/devtools";
 
 export function TeleportalDevtoolsPanelReact() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -21,15 +18,11 @@ export function TeleportalDevtoolsPanelReact() {
     // Cleanup on unmount
     return () => {
       if (devtoolsRef.current) {
-        const cleanup = (devtoolsRef.current as any)
-          .__teleportalDevtoolsCleanup;
+        const cleanup = (devtoolsRef.current as any).__teleportalDevtoolsCleanup;
         if (cleanup) {
           cleanup();
         }
-        if (
-          containerRef.current &&
-          devtoolsRef.current.parentNode === containerRef.current
-        ) {
+        if (containerRef.current && devtoolsRef.current.parentNode === containerRef.current) {
           containerRef.current.removeChild(devtoolsRef.current);
         }
       }

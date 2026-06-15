@@ -37,9 +37,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
   /**
    * A function that extracts the context from the request.
    */
-  getContext: (
-    request: Request,
-  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   /**
    * Callback function to extract documents to subscribe to from the request with optional encryption flag.
    *
@@ -128,10 +126,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
       throw error;
     } finally {
       wideEvent.duration_ms = Date.now() - startTime;
-      emitWideEvent(
-        (wideEvent.outcome as string) === "error" ? "error" : "info",
-        wideEvent,
-      );
+      emitWideEvent((wideEvent.outcome as string) === "error" ? "error" : "info", wideEvent);
     }
   }
   return handleSSEReader;
@@ -147,9 +142,7 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
   ackTimeout = 5000,
 }: {
   server: Server<Context>;
-  getContext: (
-    request: Request,
-  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   /**
    * Timeout in milliseconds for waiting for ACKs.
    * @default 5000 (5 seconds)
@@ -159,8 +152,7 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
   return async (req: Request): Promise<Response> => {
     const startTime = Date.now();
     const clientId =
-      req.headers.get("x-teleportal-client-id") ??
-      new URL(req.url).searchParams.get("client-id");
+      req.headers.get("x-teleportal-client-id") ?? new URL(req.url).searchParams.get("client-id");
     const wideEvent: Record<string, unknown> = {
       event_type: "http_sse_writer",
       timestamp: new Date().toISOString(),
@@ -202,10 +194,7 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
         abortSignal: req.signal,
       });
 
-      await Promise.all([
-        httpSource.handleHTTPRequest(req),
-        pipe(httpSource, trackedSink),
-      ]);
+      await Promise.all([httpSource.handleHTTPRequest(req), pipe(httpSource, trackedSink)]);
 
       try {
         await trackedSink.waitForAcks();
@@ -248,10 +237,7 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
       throw error;
     } finally {
       wideEvent.duration_ms = Date.now() - startTime;
-      emitWideEvent(
-        wideEvent.outcome === "error" ? "error" : "info",
-        wideEvent,
-      );
+      emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
     }
   };
 }
@@ -265,9 +251,7 @@ export function getHTTPEndpoint<Context extends ServerContext>({
   getContext,
 }: {
   server: Server<Context>;
-  getContext: (
-    request: Request,
-  ) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
 }) {
   return async (req: Request): Promise<Response> => {
     const startTime = Date.now();
@@ -304,16 +288,13 @@ export function getHTTPEndpoint<Context extends ServerContext>({
       await httpTransport.handleHTTPRequest(req);
       wideEvent.outcome = "success";
       wideEvent.status_code = 200;
-      return new Response(
-        transformStream.readable as ReadableStream<Uint8Array>,
-        {
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "x-powered-by": "teleportal",
-            "x-teleportal-client-id": context.clientId,
-          },
+      return new Response(transformStream.readable as ReadableStream<Uint8Array>, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "x-powered-by": "teleportal",
+          "x-teleportal-client-id": context.clientId,
         },
-      );
+      });
     } catch (error) {
       wideEvent.outcome = "error";
       wideEvent.status_code = 500;
@@ -321,10 +302,7 @@ export function getHTTPEndpoint<Context extends ServerContext>({
       throw error;
     } finally {
       wideEvent.duration_ms = Date.now() - startTime;
-      emitWideEvent(
-        wideEvent.outcome === "error" ? "error" : "info",
-        wideEvent,
-      );
+      emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
     }
   };
 }

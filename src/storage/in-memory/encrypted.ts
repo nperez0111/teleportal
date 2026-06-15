@@ -1,12 +1,5 @@
-import type {
-  EncryptedSnapshot,
-  EncryptedUpdatePayload,
-} from "teleportal/protocol/encryption";
-import {
-  decodeContentMap,
-  encodeContentMap,
-  mergeContentMaps,
-} from "teleportal/attribution";
+import type { EncryptedSnapshot, EncryptedUpdatePayload } from "teleportal/protocol/encryption";
+import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
@@ -45,10 +38,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   }
   public static docs = new Map<string, EncryptedDocumentRecord>();
 
-  async writeDocumentMetadata(
-    key: string,
-    metadata: EncryptedDocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(key: string, metadata: EncryptedDocumentMetadata): Promise<void> {
     const existing = await this.options.fetch(key);
     await this.options.write(key, {
       metadata,
@@ -100,10 +90,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     await this.options.write(key, existing);
   }
 
-  async fetchSnapshot(
-    key: string,
-    snapshotId: string,
-  ): Promise<EncryptedSnapshot | null> {
+  async fetchSnapshot(key: string, snapshotId: string): Promise<EncryptedSnapshot | null> {
     const doc = await this.options.fetch(key);
     if (!doc) {
       return null;
@@ -115,10 +102,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     return record.snapshot;
   }
 
-  async writeSnapshotMetadata(
-    key: string,
-    metadata: EncryptedSnapshotMetadata,
-  ): Promise<void> {
+  async writeSnapshotMetadata(key: string, metadata: EncryptedSnapshotMetadata): Promise<void> {
     const doc = await this.options.fetch(key);
     if (!doc) {
       return;
@@ -201,9 +185,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     EncryptedMemoryStorage.attributionMaps.delete(key);
   }
 
-  async retrieveAttribution(
-    documentId: string,
-  ): Promise<EncodedContentMap | null> {
+  async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
     const list = EncryptedMemoryStorage.attributionMaps.get(documentId);
     if (!list || list.length === 0) return null;
     if (list.length === 1) return list[0];

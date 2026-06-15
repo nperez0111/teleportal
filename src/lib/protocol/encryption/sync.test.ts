@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { EncryptedBinary } from "../../../encryption-key";
-import {
-  decodeFromStateVector,
-  decodeFromSyncStep2,
-} from "./encoding";
+import { decodeFromStateVector, decodeFromSyncStep2 } from "./encoding";
 import type { DecodedEncryptedUpdatePayload, EncryptedSnapshot } from "./encoding";
 import {
   getDecodedStateVector,

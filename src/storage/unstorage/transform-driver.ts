@@ -33,11 +33,7 @@ export default defineDriver((options: TransformDriverOptions) => {
       if (key.endsWith("$")) {
         return await options.driver.setItemRaw?.(key, value, opts);
       }
-      await options.driver.setItemRaw?.(
-        key,
-        await options.onWrite(key, value),
-        opts,
-      );
+      await options.driver.setItemRaw?.(key, await options.onWrite(key, value), opts);
     },
     async getItemRaw(key, opts) {
       const value = await options.driver.getItemRaw?.(key, opts);
@@ -60,11 +56,7 @@ export default defineDriver((options: TransformDriverOptions) => {
       if (key.endsWith("$")) {
         return await options.driver.setItem?.(key, value, opts);
       }
-      await options.driver.setItem?.(
-        key,
-        await options.onWrite(key, value),
-        opts,
-      );
+      await options.driver.setItem?.(key, await options.onWrite(key, value), opts);
     },
     async removeItem(key, opts) {
       await options.driver.removeItem?.(key, opts);

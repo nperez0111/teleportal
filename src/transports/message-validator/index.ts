@@ -1,9 +1,4 @@
-import {
-  type Message,
-  type Sink,
-  type Source,
-  type Transport,
-} from "teleportal";
+import { type Message, type Sink, type Source, type Transport } from "teleportal";
 import { compose } from "teleportal/transports";
 
 /**
@@ -15,10 +10,7 @@ export function withMessageValidatorSink<
 >(
   sink: Sink<Context, AdditionalProperties>,
   options?: {
-    isAuthorized?: (
-      chunk: Message<Context>,
-      type: "read" | "write",
-    ) => Promise<boolean>;
+    isAuthorized?: (chunk: Message<Context>, type: "read" | "write") => Promise<boolean>;
   },
 ): Sink<Context, AdditionalProperties> {
   return {
@@ -52,10 +44,7 @@ export function withMessageValidatorSource<
 >(
   source: Source<Context, AdditionalProperties>,
   options?: {
-    isAuthorized?: (
-      chunk: Message<Context>,
-      type: "read" | "write",
-    ) => Promise<boolean>;
+    isAuthorized?: (chunk: Message<Context>, type: "read" | "write") => Promise<boolean>;
   },
 ): Source<Context, AdditionalProperties> {
   return {
@@ -86,10 +75,7 @@ export function withMessageValidator<
 >(
   transport: Transport<Context, AdditionalProperties>,
   options?: {
-    isAuthorized?: (
-      chunk: Message<Context>,
-      type: "read" | "write",
-    ) => Promise<boolean>;
+    isAuthorized?: (chunk: Message<Context>, type: "read" | "write") => Promise<boolean>;
   },
 ): Transport<Context, AdditionalProperties> {
   return compose(

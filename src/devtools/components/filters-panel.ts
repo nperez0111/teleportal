@@ -30,8 +30,7 @@ export class FiltersPanel {
     this.onClearFilters = onClearFilters;
 
     this.element = document.createElement("div");
-    this.element.className =
-      "devtools-bg-gray-50 devtools-border-b devtools-border-gray-200";
+    this.element.className = "devtools-bg-gray-50 devtools-border-b devtools-border-gray-200";
     this.render();
   }
 
@@ -82,10 +81,7 @@ export class FiltersPanel {
 
   private getConnectionStatusText(): string {
     if (!this.connectionState) return "Disconnected";
-    return (
-      this.connectionState.type.charAt(0).toUpperCase() +
-      this.connectionState.type.slice(1)
-    );
+    return this.connectionState.type.charAt(0).toUpperCase() + this.connectionState.type.slice(1);
   }
 
   private handleDocumentToggle(docId: string) {
@@ -149,8 +145,7 @@ export class FiltersPanel {
     // Clear filters button
     if (this.hasActiveFilters()) {
       const clearButton = document.createElement("button");
-      clearButton.className =
-        "devtools-text-xs devtools-text-blue-600 devtools-hover:underline";
+      clearButton.className = "devtools-text-xs devtools-text-blue-600 devtools-hover:underline";
       clearButton.textContent = "Clear";
       clearButton.addEventListener("click", this.onClearFilters);
       header.append(clearButton);
@@ -168,8 +163,7 @@ export class FiltersPanel {
 
     // Connection status
     const connectionStatus = document.createElement("div");
-    connectionStatus.className =
-      "devtools-flex devtools-items-center devtools-gap-1.5";
+    connectionStatus.className = "devtools-flex devtools-items-center devtools-gap-1.5";
 
     // Clean up old interval
     if (this.timestampInterval) {
@@ -205,18 +199,14 @@ export class FiltersPanel {
       const timestampText = document.createElement("span");
       timestampText.className =
         "devtools-text-gray-500 devtools-ml-1 devtools-font-mono devtools-text-xs";
-      timestampText.textContent = formatRelativeTime(
-        this.connectionState.timestamp,
-      );
+      timestampText.textContent = formatRelativeTime(this.connectionState.timestamp);
       connectionStatus.append(timestampText);
       this.timestampElement = timestampText;
 
       // Update timestamp every second
       this.timestampInterval = setInterval(() => {
         if (this.timestampElement && this.connectionState?.timestamp) {
-          this.timestampElement.textContent = formatRelativeTime(
-            this.connectionState.timestamp,
-          );
+          this.timestampElement.textContent = formatRelativeTime(this.connectionState.timestamp);
         }
       }, 1000);
     } else {
@@ -271,8 +261,7 @@ export class FiltersPanel {
 
       // Search input
       const searchContainer = document.createElement("div");
-      searchContainer.className =
-        "devtools-flex devtools-items-center devtools-gap-2";
+      searchContainer.className = "devtools-flex devtools-items-center devtools-gap-2";
       const searchLabel = document.createElement("label");
       searchLabel.className =
         "devtools-text-xs devtools-font-medium devtools-text-gray-700 devtools-whitespace-nowrap";
@@ -291,8 +280,7 @@ export class FiltersPanel {
 
       // Direction select
       const directionContainer = document.createElement("div");
-      directionContainer.className =
-        "devtools-flex devtools-items-center devtools-gap-2";
+      directionContainer.className = "devtools-flex devtools-items-center devtools-gap-2";
       const directionLabel = document.createElement("label");
       directionLabel.className =
         "devtools-text-xs devtools-font-medium devtools-text-gray-700 devtools-whitespace-nowrap";
@@ -308,10 +296,7 @@ export class FiltersPanel {
       `;
       directionSelect.addEventListener("change", (e) => {
         this.onFiltersChange({
-          direction: (e.target as HTMLSelectElement).value as
-            | "all"
-            | "sent"
-            | "received",
+          direction: (e.target as HTMLSelectElement).value as "all" | "sent" | "received",
         });
       });
       directionContainer.append(directionSelect);
@@ -341,8 +326,7 @@ export class FiltersPanel {
           });
           docItem.append(checkbox);
           const docText = document.createElement("span");
-          docText.className =
-            "devtools-font-mono devtools-text-gray-900 devtools-truncate";
+          docText.className = "devtools-font-mono devtools-text-gray-900 devtools-truncate";
           docText.textContent = docId;
           docItem.append(docText);
           docsList.append(docItem);

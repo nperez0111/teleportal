@@ -62,19 +62,14 @@ export class LamportClock {
   /**
    * Convert a {@link ClientId} and {@link Counter} to a {@link LamportClockId}
    */
-  public static toLamportClockId(
-    clientId: ClientId,
-    counter: Counter,
-  ): LamportClockId {
+  public static toLamportClockId(clientId: ClientId, counter: Counter): LamportClockId {
     return `${clientId}-${counter}`;
   }
 
   /**
    * Convert a {@link LamportClockId} to a {@link ClientId} and {@link Counter}
    */
-  public static fromLamportClockId(
-    lamportClockId: LamportClockId,
-  ): LamportClockValue {
+  public static fromLamportClockId(lamportClockId: LamportClockId): LamportClockValue {
     const [clientId, counter] = lamportClockId.split("-");
     return [parseInt(clientId), parseInt(counter)];
   }

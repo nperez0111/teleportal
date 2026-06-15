@@ -24,10 +24,7 @@ const tokenManager = createTokenManager({
 class ProviderManager {
   private static instance: ProviderManager | null = null;
   private provider: Provider<
-    Transport<
-      ClientContext,
-      DefaultTransportProperties & { handler?: EncryptionClient }
-    >
+    Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
   > | null = null;
   private websocketConnection: Promise<Connection> | null = null;
   private subscribers = new Set<(provider: Provider | null) => void>();
@@ -133,10 +130,7 @@ export function useProvider(
   key: CryptoKey | undefined,
 ): {
   provider: Provider<
-    Transport<
-      ClientContext,
-      DefaultTransportProperties & { handler?: EncryptionClient }
-    >
+    Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
   > | null;
 } {
   const [provider, setProvider] = useState<Provider | null>(null);
@@ -161,10 +155,7 @@ export function useProvider(
 
   return {
     provider: provider as Provider<
-      Transport<
-        ClientContext,
-        DefaultTransportProperties & { handler?: EncryptionClient }
-      >
+      Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
     > | null,
   };
 }

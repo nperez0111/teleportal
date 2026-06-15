@@ -69,13 +69,10 @@ function getWebsocketHandlers<T extends Pick<crossws.PeerContext, "room" | "user
     id: string;
     peer: crossws.Peer;
   }) => void | Promise<void>;
-  onMessage?: (ctx: {
-    message: BinaryMessage;
-    peer: crossws.Peer;
-  }) => void | Promise<void>;
+  onMessage?: (ctx: { message: BinaryMessage; peer: crossws.Peer }) => void | Promise<void>;
 }): {
   hooks: crossws.Hooks;
-}
+};
 ```
 
 **Parameters:**
@@ -149,7 +146,7 @@ function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
   server: Server<T>;
   tokenManager: TokenManager;
   hooks?: Partial<Parameters<typeof getWebsocketHandlers>[0]>;
-}): ReturnType<typeof getWebsocketHandlers>
+}): ReturnType<typeof getWebsocketHandlers>;
 ```
 
 **Parameters:**

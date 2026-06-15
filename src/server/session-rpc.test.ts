@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import type {
-  Message,
-  ServerContext,
-  StateVector,
-  SyncStep2Update,
-  Update,
-} from "teleportal";
+import type { Message, ServerContext, StateVector, SyncStep2Update, Update } from "teleportal";
 import { RpcMessage } from "teleportal";
 import type {
   Document,
@@ -47,10 +41,7 @@ class MockDocumentStorage implements DocumentStorage {
   public storedUpdate: Update | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
     return {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
@@ -61,12 +52,13 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(
-    _key: string,
-    _syncStep2: SyncStep2Update,
-  ): Promise<void> {}
+  async handleSyncStep2(_key: string, _syncStep2: SyncStep2Update): Promise<void> {}
 
-  async handleUpdate(_documentId: string, update: Update, _attribution?: import("teleportal/storage").EncodedContentMap): Promise<void> {
+  async handleUpdate(
+    _documentId: string,
+    update: Update,
+    _attribution?: import("teleportal/storage").EncodedContentMap,
+  ): Promise<void> {
     this.storedUpdate = update;
   }
 
@@ -82,10 +74,7 @@ class MockDocumentStorage implements DocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.metadata.set(documentId, metadata);
   }
 
@@ -121,10 +110,7 @@ class MockDocumentStorage implements DocumentStorage {
     });
   }
 
-  async removeFileFromDocument(
-    documentId: string,
-    fileId: string,
-  ): Promise<void> {
+  async removeFileFromDocument(documentId: string, fileId: string): Promise<void> {
     await this.transaction(documentId, async () => {
       const metadata = await this.getDocumentMetadata(documentId);
       const files = (metadata.files ?? []).filter((id) => id !== fileId);

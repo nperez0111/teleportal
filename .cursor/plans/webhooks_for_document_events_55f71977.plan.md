@@ -135,12 +135,12 @@ Main orchestrator that:
 2. **Idle Detection**: Maintain a Map of document → last activity timestamp. Use `setTimeout` to check for idle documents periodically. Reset timer on any document activity.
 
 3. **Rate Limit Integration**: The rate limiter is at transport level. We'll need to:
-
    - Provide a way to wrap transports with rate limiter that captures callbacks
    - Or provide a helper that users can use when creating rate-limited transports
    - Track rate limit events and map to document/client IDs
 
 4. **Webhook Payload Format**: Standard format includes:
+
    ```typescript
    {
      event: "created" | "updated" | "idle" | "archived" | "rate-limit-exceeded",

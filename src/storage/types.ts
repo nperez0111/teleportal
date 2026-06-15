@@ -105,10 +105,7 @@ export interface TemporaryUploadStorage {
    * @param fileId - Optional merkle root hash (contentId). If not provided, it will be computed from the chunks.
    * @returns The final upload progress and a function to retrieve a chunk for the upload by chunk index. This allows rebuilding the whole file from the chunks to move it into a cold-storage.
    */
-  completeUpload(
-    uploadId: string,
-    fileId?: File["id"],
-  ): Promise<FileUploadResult>;
+  completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult>;
 
   /**
    * Clean up expired upload sessions.
@@ -233,10 +230,7 @@ export interface MilestoneStorage {
   /**
    * Pull a milestone from storage
    */
-  getMilestone(
-    documentId: Document["id"],
-    id: Milestone["id"],
-  ): Promise<Milestone | null>;
+  getMilestone(documentId: Document["id"], id: Milestone["id"]): Promise<Milestone | null>;
 
   /**
    * Return the available milestones for a documentId (likely unloaded and metadata-only)
@@ -413,18 +407,12 @@ export interface DocumentStorage {
   /**
    * Implements synchronization with a client's state vector.
    */
-  handleSyncStep1(
-    documentId: Document["id"],
-    syncStep1: StateVector,
-  ): Promise<Document>;
+  handleSyncStep1(documentId: Document["id"], syncStep1: StateVector): Promise<Document>;
 
   /**
    * Implements synchronization with a client's state vector.
    */
-  handleSyncStep2(
-    documentId: Document["id"],
-    syncStep2: SyncStep2Update,
-  ): Promise<void>;
+  handleSyncStep2(documentId: Document["id"], syncStep2: SyncStep2Update): Promise<void>;
 
   /**
    * Handles an update for a document.
@@ -446,10 +434,7 @@ export interface DocumentStorage {
   /**
    * Stores document metadata.
    */
-  writeDocumentMetadata(
-    documentId: Document["id"],
-    metadata: DocumentMetadata,
-  ): Promise<void>;
+  writeDocumentMetadata(documentId: Document["id"], metadata: DocumentMetadata): Promise<void>;
 
   /**
    * Fetches document metadata.
@@ -474,9 +459,7 @@ export interface DocumentStorage {
    * Returns null if no attribution data exists.
    * Implementations that support attribution override this method.
    */
-  retrieveAttribution?(
-    documentId: Document["id"],
-  ): Promise<EncodedContentMap | null>;
+  retrieveAttribution?(documentId: Document["id"]): Promise<EncodedContentMap | null>;
 }
 
 /**

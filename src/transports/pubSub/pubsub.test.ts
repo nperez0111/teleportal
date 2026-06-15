@@ -111,9 +111,7 @@ describe("PubSub pubSub", () => {
     const message = docMessage.encoded;
 
     // Should not throw - publishing to non-existent topics is valid
-    await expect(
-      pubSub.publish(topic, message, "test-client"),
-    ).resolves.toBeUndefined();
+    await expect(pubSub.publish(topic, message, "test-client")).resolves.toBeUndefined();
   });
 
   it("can close and cleanup", async () => {
@@ -183,9 +181,7 @@ describe("PubSub Sink", () => {
     const sink = getPubSubSink<TestContext>({
       pubSub,
       topicResolver: (msg: Message<TestContext>) =>
-        msg.context.clientId === "client-1"
-          ? "client/topic-1"
-          : "client/topic-2",
+        msg.context.clientId === "client-1" ? "client/topic-1" : "client/topic-2",
       sourceId: "test-source",
     });
 
@@ -469,11 +465,7 @@ describe("PubSub Transport", () => {
         room: "external-room",
       },
     );
-    await pubSub.publish(
-      "document/test-doc",
-      externalMessage.encoded,
-      "external-source",
-    );
+    await pubSub.publish("document/test-doc", externalMessage.encoded, "external-source");
 
     // Wait for the external message to be received
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -549,11 +541,7 @@ describe("PubSub Transport", () => {
         room: "external-room",
       },
     );
-    await pubSub.publish(
-      "document/test-doc",
-      externalMessage.encoded,
-      "external-source",
-    );
+    await pubSub.publish("document/test-doc", externalMessage.encoded, "external-source");
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -634,16 +622,8 @@ describe("PubSub Transport", () => {
       },
     );
 
-    await pubSub.publish(
-      "document/doc-1",
-      externalMessage1.encoded,
-      "external-source",
-    );
-    await pubSub.publish(
-      "document/doc-2",
-      externalMessage2.encoded,
-      "external-source",
-    );
+    await pubSub.publish("document/doc-1", externalMessage1.encoded, "external-source");
+    await pubSub.publish("document/doc-2", externalMessage2.encoded, "external-source");
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 

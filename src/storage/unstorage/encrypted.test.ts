@@ -40,10 +40,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
 
     const updatePayload: DecodedEncryptedUpdatePayload = {
       id: "update-1",
@@ -52,16 +49,11 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       payload: new Uint8Array([5, 6]) as EncryptedBinary,
       contentIds: getEmptyEncodedContentIds(),
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedUpdateMessages([updatePayload]),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedUpdateMessages([updatePayload]));
 
     const doc = await storage.getDocument("doc-1");
     expect(doc).not.toBeNull();
-    const decoded = decodeFromSyncStep2(
-      doc!.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(doc!.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(1);
 
@@ -71,13 +63,8 @@ describe("UnstorageEncryptedDocumentStorage", () => {
   });
 
   it("returns empty sync step for missing snapshot", async () => {
-    const result = await storage.handleSyncStep1(
-      "doc-1",
-      getEmptyEncryptedStateVector(),
-    );
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const result = await storage.handleSyncStep1("doc-1", getEmptyEncryptedStateVector());
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.updates.length).toBe(0);
     expect(decoded.snapshot).toBeNull();
   });
@@ -91,10 +78,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
         parentSnapshotId: null,
         payload: new Uint8Array([0]) as EncryptedBinary,
       };
-      await storage.handleEncryptedUpdate(
-        key,
-        encodeEncryptedSnapshot(snapshot),
-      );
+      await storage.handleEncryptedUpdate(key, encodeEncryptedSnapshot(snapshot));
     }
 
     function makeAttribution(userId: string, clientId = 1, clock = 0, len = 1): EncodedContentMap {
@@ -102,10 +86,14 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       inserts.add(clientId, clock, len);
       const contentIds = createContentIds(inserts, new IdSet());
       return encodeContentMap(
-        createContentMapFromContentIds(contentIds, [
-          createContentAttribute("insert", userId),
-          createContentAttribute("insertAt", Date.now()),
-        ], []),
+        createContentMapFromContentIds(
+          contentIds,
+          [
+            createContentAttribute("insert", userId),
+            createContentAttribute("insertAt", Date.now()),
+          ],
+          [],
+        ),
       );
     }
 

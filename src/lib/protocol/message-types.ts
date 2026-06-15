@@ -118,9 +118,7 @@ export abstract class CustomMessage<
  *
  * This is an untrusted update at this point, as it has not been validated by the server for access control rights.
  */
-export class AwarenessMessage<
-  Context extends Record<string, unknown>,
-> extends CustomMessage<
+export class AwarenessMessage<Context extends Record<string, unknown>> extends CustomMessage<
   Context,
   AwarenessUpdateMessage | AwarenessRequestMessage
 > {
@@ -144,9 +142,10 @@ export class AwarenessMessage<
  *
  * It also supports decoding the underlying {@link DocStep} and encoding it back to a {@link SendableDocMessage}.
  */
-export class DocMessage<
-  Context extends Record<string, unknown>,
-> extends CustomMessage<Context, EncodedDocUpdateMessage<DocStep>> {
+export class DocMessage<Context extends Record<string, unknown>> extends CustomMessage<
+  Context,
+  EncodedDocUpdateMessage<DocStep>
+> {
   public type = "doc" as const;
   public context: Context;
 
@@ -170,9 +169,10 @@ export class DocMessage<
 /**
  * A message that acknowledges the receipt of a message.
  */
-export class AckMessage<
-  Context extends Record<string, unknown>,
-> extends CustomMessage<Context, EncodedAckMessage> {
+export class AckMessage<Context extends Record<string, unknown>> extends CustomMessage<
+  Context,
+  EncodedAckMessage
+> {
   public type = "ack" as const;
   public context: Context;
   public encrypted: boolean = false;
@@ -194,9 +194,10 @@ export class AckMessage<
  * client's awareness clientID to the server even for end-to-end encrypted
  * documents — where the awareness payload itself is opaque to the server.
  */
-export class PresenceMessage<
-  Context extends Record<string, unknown>,
-> extends CustomMessage<Context, PresenceMessageBinary> {
+export class PresenceMessage<Context extends Record<string, unknown>> extends CustomMessage<
+  Context,
+  PresenceMessageBinary
+> {
   public type = "presence" as const;
   public context: Context;
   public encrypted: boolean = false;
@@ -219,9 +220,10 @@ export class PresenceMessage<
 /**
  * An RPC message for remote procedure calls.
  */
-export class RpcMessage<
-  Context extends Record<string, unknown>,
-> extends CustomMessage<Context, EncodedRpcMessage> {
+export class RpcMessage<Context extends Record<string, unknown>> extends CustomMessage<
+  Context,
+  EncodedRpcMessage
+> {
   public type = "rpc" as const;
   public context: Context;
   #serializer?: (context: SerializerContext) => Uint8Array | undefined;
@@ -271,9 +273,7 @@ export class RpcMessage<
  * @param message - The message to check.
  * @returns Whether the message is a binary message.
  */
-export const isBinaryMessage = (
-  message: Uint8Array,
-): message is BinaryMessage => {
+export const isBinaryMessage = (message: Uint8Array): message is BinaryMessage => {
   return (
     // Y
     message[0] === 0x59 &&

@@ -12,12 +12,7 @@ import {
 } from "./index";
 
 /** A ContentMap attributing client `client`'s ops [0,len) to `user` at `t`. */
-function userMap(
-  client: number,
-  len: number,
-  user: string,
-  t: number,
-): ContentMap {
+function userMap(client: number, len: number, user: string, t: number): ContentMap {
   const ids = createContentIds();
   ids.inserts.add(client, 0, len);
   return createContentMapFromContentIds(ids, [
@@ -37,19 +32,13 @@ function users(map: ContentMap): string[] {
 }
 
 describe("milestoneContentMap", () => {
-  const full = mergeContentMaps([
-    userMap(1, 6, "user-1", 1000),
-    userMap(2, 5, "user-2", 2000),
-  ]);
+  const full = mergeContentMaps([userMap(1, 6, "user-1", 1000), userMap(2, 5, "user-2", 2000)]);
 
   it("keeps only content present in the milestone", () => {
     // Milestone with only client 1's content.
     expect(users(milestoneContentMap(full, ids([1, 6])))).toEqual(["user-1"]);
     // Milestone with both clients' content.
-    expect(users(milestoneContentMap(full, ids([1, 6], [2, 5])))).toEqual([
-      "user-1",
-      "user-2",
-    ]);
+    expect(users(milestoneContentMap(full, ids([1, 6], [2, 5])))).toEqual(["user-1", "user-2"]);
   });
 
   it("drops attribution for ops not in the milestone", () => {
@@ -59,10 +48,7 @@ describe("milestoneContentMap", () => {
 });
 
 describe("changesetContentMap", () => {
-  const full = mergeContentMaps([
-    userMap(1, 6, "user-1", 1000),
-    userMap(2, 5, "user-2", 2000),
-  ]);
+  const full = mergeContentMaps([userMap(1, 6, "user-1", 1000), userMap(2, 5, "user-2", 2000)]);
 
   it("keeps only the operations added between two milestones", () => {
     const from = ids([1, 6]); // milestone A: user-1 only

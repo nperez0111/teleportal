@@ -5,11 +5,10 @@
 }
 
 :root {
-  --font-family:
-    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen;
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen;
   --mono-font-family:
-    "Fira Code", "Hack", Menlo, Monaco, "Lucida Console", "Liberation Mono",
-    "Courier New", monospace;
+    "Fira Code", "Hack", Menlo, Monaco, "Lucida Console", "Liberation Mono", "Courier New",
+    monospace;
 }
 
 body {

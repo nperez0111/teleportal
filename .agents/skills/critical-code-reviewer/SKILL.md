@@ -118,7 +118,7 @@ Code organization reveals thinking. Flag:
 When reviewing partial code:
 
 - If reviewing partial code, state what you can't verify (e.g., "Can't assess whether this duplicates existing utilities without seeing the full codebase")
-- When context is missing, flag the *risk* rather than assuming failure—mark as "Verify" not "Blocking"
+- When context is missing, flag the _risk_ rather than assuming failure—mark as "Verify" not "Blocking"
 - For iterative reviews, focus on the delta—don't re-litigate resolved items
 - If you only see a snippet, acknowledge the boundaries of your review
 

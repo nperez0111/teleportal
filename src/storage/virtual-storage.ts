@@ -31,25 +31,17 @@ export class VirtualStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
   readonly storageType: "encrypted" | "unencrypted";
 
-  retrieveAttribution?: (
-    documentId: string,
-  ) => Promise<EncodedContentMap | null>;
+  retrieveAttribution?: (documentId: string) => Promise<EncodedContentMap | null>;
 
   #storage: DocumentStorage;
-  #buffer = new Map<
-    string,
-    { updates: BufferedUpdate[]; metadata?: DocumentMetadata }
-  >();
+  #buffer = new Map<string, { updates: BufferedUpdate[]; metadata?: DocumentMetadata }>();
   #batchProcessor: (item: {
     key: string;
     updates: BufferedUpdate[];
     metadata?: DocumentMetadata;
   }) => void;
 
-  constructor(
-    storage: DocumentStorage,
-    options: VirtualStorageOptions = defaultOptions,
-  ) {
+  constructor(storage: DocumentStorage, options: VirtualStorageOptions = defaultOptions) {
     this.#storage = storage;
     this.storageType = storage.storageType;
 
@@ -91,10 +83,7 @@ export class VirtualStorage implements DocumentStorage {
     this.#addToBuffer(documentId, { updates: [{ update, attribution }] });
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.#addToBuffer(documentId, { metadata });
   }
 
@@ -127,18 +116,12 @@ export class VirtualStorage implements DocumentStorage {
     return this.#storage.deleteDocument(documentId);
   }
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: StateVector,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
     await this.#flushPending(documentId);
     return this.#storage.handleSyncStep1(documentId, syncStep1);
   }
 
-  async handleSyncStep2(
-    documentId: string,
-    syncStep2: SyncStep2Update,
-  ): Promise<void> {
+  async handleSyncStep2(documentId: string, syncStep2: SyncStep2Update): Promise<void> {
     return this.#storage.handleSyncStep2(documentId, syncStep2);
   }
 

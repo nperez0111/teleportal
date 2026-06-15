@@ -75,11 +75,7 @@ describe("Gauge", () => {
 
 describe("Histogram", () => {
   test("observes values without labels", () => {
-    const histogram = new Histogram(
-      "test_histogram",
-      "A test histogram",
-      [1, 5, 10],
-    );
+    const histogram = new Histogram("test_histogram", "A test histogram", [1, 5, 10]);
 
     histogram.observe(0.5);
     histogram.observe(3);
@@ -96,23 +92,14 @@ describe("Histogram", () => {
   });
 
   test("observes values with labels", () => {
-    const histogram = new Histogram(
-      "test_histogram",
-      "A test histogram",
-      [1, 5],
-      ["status"],
-    );
+    const histogram = new Histogram("test_histogram", "A test histogram", [1, 5], ["status"]);
 
     histogram.observe({ status: "success" }, 0.5);
     histogram.observe({ status: "success" }, 3);
 
     const output = histogram.toString();
-    expect(output).toContain(
-      'test_histogram_bucket{status="success"}{le="1"} 1',
-    );
-    expect(output).toContain(
-      'test_histogram_bucket{status="success"}{le="5"} 2',
-    );
+    expect(output).toContain('test_histogram_bucket{status="success"}{le="1"} 1');
+    expect(output).toContain('test_histogram_bucket{status="success"}{le="5"} 2');
   });
 
   test("formats correctly", () => {

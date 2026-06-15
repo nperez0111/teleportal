@@ -43,11 +43,7 @@ await new Promise((resolve) => setTimeout(resolve, 100));
 
 console.log(agentInstance1.ydoc.getText("test").toString());
 
-import {
-  Connection,
-  Provider,
-  teleportalEventClient,
-} from "teleportal/providers";
+import { Connection, Provider, teleportalEventClient } from "teleportal/providers";
 /**
  * There is probably a better way to do this, but this is a quick and dirty way to add events into the devtools.
  */

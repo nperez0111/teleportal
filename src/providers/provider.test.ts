@@ -9,11 +9,7 @@ import {
   type StateVector,
   type Transport,
 } from "teleportal";
-import {
-  Awareness,
-  applyAwarenessUpdate,
-  encodeAwarenessUpdate,
-} from "y-protocols/awareness";
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
 import * as Y from "yjs";
 import {
   type MilestoneCreateResponse,
@@ -100,9 +96,7 @@ class MockConnection extends Connection<{
 }
 
 // Mock Transport for testing
-class MockTransport
-  implements Transport<ClientContext, DefaultTransportProperties>
-{
+class MockTransport implements Transport<ClientContext, DefaultTransportProperties> {
   public readable: ReadableStream<Message<ClientContext>>;
   public writable: WritableStream<Message<ClientContext>>;
   public synced: Promise<void>;
@@ -114,9 +108,7 @@ class MockTransport
   private syncedReject?: (error: Error) => void;
 
   constructor() {
-    const { readable, writable } = new TransformStream<
-      Message<ClientContext>
-    >();
+    const { readable, writable } = new TransformStream<Message<ClientContext>>();
     this.readable = readable;
     this.writable = writable;
 
@@ -246,9 +238,7 @@ describe("Provider sync events", () => {
     // Wait for event to be processed
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const disconnectedEvent = syncEvents.find(
-      ([isSynced]) => isSynced === false,
-    );
+    const disconnectedEvent = syncEvents.find(([isSynced]) => isSynced === false);
     expect(disconnectedEvent).toBeDefined();
     if (disconnectedEvent) {
       expect(disconnectedEvent[0]).toBe(false);
@@ -562,10 +552,7 @@ describe("Provider milestone operations", () => {
     // Set up response handler for RPC snapshot request
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
-        if (
-          message.rpcMethod === "milestoneGet" &&
-          message.payload.type === "success"
-        ) {
+        if (message.rpcMethod === "milestoneGet" && message.payload.type === "success") {
           const payload = message.payload.payload as { milestoneId: string };
           if (payload.milestoneId === "milestone-1") {
             const response: MilestoneGetResponse = {
@@ -594,9 +581,7 @@ describe("Provider milestone operations", () => {
 
   it("round-trips a client-encrypted snapshot for E2EE documents", async () => {
     const { createEncryptionKey } = await import("teleportal/encryption-key");
-    const { decodeEncryptedUpdate } = await import(
-      "teleportal/protocol/encryption"
-    );
+    const { decodeEncryptedUpdate } = await import("teleportal/protocol/encryption");
     const encryptionKey = await createEncryptionKey();
     await setupProvider({ encryptionKey });
 
@@ -609,8 +594,7 @@ describe("Provider milestone operations", () => {
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
         if (message.rpcMethod === "milestoneCreate") {
-          stored = (message.payload.payload as { snapshot: Uint8Array })
-            .snapshot;
+          stored = (message.payload.payload as { snapshot: Uint8Array }).snapshot;
           const response: MilestoneCreateResponse = {
             milestone: {
               id: "milestone-1",
@@ -654,9 +638,9 @@ describe("Provider milestone operations", () => {
     // the plaintext update itself).
     expect(stored).toBeDefined();
     expect(new Uint8Array(stored!)).not.toEqual(new Uint8Array(plaintext));
-    const decodedStored = decodeEncryptedUpdate(stored as unknown as Parameters<
-      typeof decodeEncryptedUpdate
-    >[0]);
+    const decodedStored = decodeEncryptedUpdate(
+      stored as unknown as Parameters<typeof decodeEncryptedUpdate>[0],
+    );
     expect(decodedStored.type).toBe("update");
     if (decodedStored.type === "update") {
       expect(decodedStored.updates.length).toBe(1);
@@ -669,12 +653,8 @@ describe("Provider milestone operations", () => {
   });
 
   it("decrypts multi-message automatic-milestone containers for E2EE documents", async () => {
-    const { createEncryptionKey, encryptUpdate } = await import(
-      "teleportal/encryption-key"
-    );
-    const { encodeEncryptedUpdateMessages } = await import(
-      "teleportal/protocol/encryption"
-    );
+    const { createEncryptionKey, encryptUpdate } = await import("teleportal/encryption-key");
+    const { encodeEncryptedUpdateMessages } = await import("teleportal/protocol/encryption");
     const { getEmptyEncodedContentIds } = await import("teleportal/attribution");
     const { toBase64 } = await import("lib0/buffer");
     const { digest } = await import("lib0/hash/sha256");
@@ -702,9 +682,7 @@ describe("Provider milestone operations", () => {
         };
       }),
     );
-    const container = encodeEncryptedUpdateMessages(
-      messages,
-    ) as unknown as MilestoneSnapshot;
+    const container = encodeEncryptedUpdateMessages(messages) as unknown as MilestoneSnapshot;
 
     mockConnection.responseHandler = (message) => {
       if (
@@ -745,10 +723,7 @@ describe("Provider milestone operations", () => {
     // Set up response handler for RPC create request
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
-        if (
-          message.rpcMethod === "milestoneCreate" &&
-          message.payload.type === "success"
-        ) {
+        if (message.rpcMethod === "milestoneCreate" && message.payload.type === "success") {
           const payload = message.payload.payload as { name?: string };
           const response: MilestoneCreateResponse = {
             milestone: {
@@ -786,10 +761,7 @@ describe("Provider milestone operations", () => {
     // Set up response handler for RPC create request
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
-        if (
-          message.rpcMethod === "milestoneCreate" &&
-          message.payload.type === "success"
-        ) {
+        if (message.rpcMethod === "milestoneCreate" && message.payload.type === "success") {
           const payload = message.payload.payload as Record<string, unknown>;
           const response: MilestoneCreateResponse = {
             milestone: {
@@ -826,10 +798,7 @@ describe("Provider milestone operations", () => {
     // Set up response handler for RPC update request
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
-        if (
-          message.rpcMethod === "milestoneUpdateName" &&
-          message.payload.type === "success"
-        ) {
+        if (message.rpcMethod === "milestoneUpdateName" && message.payload.type === "success") {
           const payload = message.payload.payload as {
             milestoneId: string;
             name: string;
@@ -859,10 +828,7 @@ describe("Provider milestone operations", () => {
       return null;
     };
 
-    const milestone = await provider.updateMilestoneName(
-      "milestone-1",
-      "Updated Name",
-    );
+    const milestone = await provider.updateMilestoneName("milestone-1", "Updated Name");
 
     expect(milestone.id).toBe("milestone-1");
     expect(milestone.name).toBe("Updated Name");
@@ -874,10 +840,7 @@ describe("Provider milestone operations", () => {
     // Set up response handler to return RPC error response
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
-        if (
-          message.rpcMethod === "milestoneList" &&
-          message.payload.type === "success"
-        ) {
+        if (message.rpcMethod === "milestoneList" && message.payload.type === "success") {
           const payload = message.payload.payload as { snapshotIds?: string[] };
           return new RpcMessage(
             "test-doc",
@@ -893,9 +856,7 @@ describe("Provider milestone operations", () => {
       return null;
     };
 
-    await expect(provider.listMilestones()).rejects.toThrow(
-      "RPC error (403): Permission denied",
-    );
+    await expect(provider.listMilestones()).rejects.toThrow("RPC error (403): Permission denied");
   });
 
   it("should handle milestone list with snapshotIds filter", async () => {
@@ -904,10 +865,7 @@ describe("Provider milestone operations", () => {
     // Set up response handler for RPC list request
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
-        if (
-          message.rpcMethod === "milestoneList" &&
-          message.payload.type === "success"
-        ) {
+        if (message.rpcMethod === "milestoneList" && message.payload.type === "success") {
           const payload = message.payload.payload as { snapshotIds?: string[] };
           // Verify snapshotIds were sent
           expect(payload.snapshotIds).toEqual(["milestone-1"]);
@@ -1411,8 +1369,7 @@ describe("Provider presence", () => {
 
     const announce = mockConnection.sentMessages.find(
       (m): m is PresenceMessage<ClientContext> =>
-        m.type === "presence" &&
-        (m as any).payload?.type === "presence-announce",
+        m.type === "presence" && (m as any).payload?.type === "presence-announce",
     );
     expect(announce).toBeDefined();
     expect(announce!.payload).toEqual({
@@ -1433,9 +1390,7 @@ describe("Provider presence", () => {
       encodeAwarenessUpdate(peerAwareness, [peerAwareness.clientID]),
       "remote",
     );
-    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(
-      true,
-    );
+    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(true);
 
     const leaves: any[] = [];
     provider.on("peer-leave", (peer) => leaves.push(peer));
@@ -1452,9 +1407,7 @@ describe("Provider presence", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Awareness cleared locally (no key required).
-    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(
-      false,
-    );
+    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(false);
     expect(leaves).toHaveLength(1);
     expect(leaves[0]).toEqual({
       awarenessId: peerAwareness.clientID,

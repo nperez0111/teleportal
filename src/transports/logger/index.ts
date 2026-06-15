@@ -10,9 +10,7 @@ import { withPassthrough } from "../passthrough";
 export function withLogger<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown>,
->(
-  transport: Transport<Context, AdditionalProperties>,
-): Transport<Context, AdditionalProperties> {
+>(transport: Transport<Context, AdditionalProperties>): Transport<Context, AdditionalProperties> {
   return withPassthrough(transport, {
     onWrite: (chunk) => {
       console.info("transport write", chunk.toString(), chunk);

@@ -91,9 +91,7 @@ describe("Client", () => {
       );
 
       // Client-v2 propagates errors (unlike server-v1 which handles them)
-      await expect(errorClient.send(mockMessage)).rejects.toThrow(
-        "Write error",
-      );
+      await expect(errorClient.send(mockMessage)).rejects.toThrow("Write error");
     });
 
     it("should handle concurrent send operations safely", async () => {

@@ -87,11 +87,10 @@ Consequences:
 - **Monotonically-updated signals** (e.g. "last activity timestamp") → emit at coarser granularity (every minute, not every keystroke), or store in a separate rotatable Y.Doc you can rebuild on schedule.
 - **Write-heavy counters** → single-writer keys in a Y.Map counts sub-map (see `concurrency.md`), rather than repeatedly overwriting one key.
 
-Tombstones on *different* keys don't share this problem — they're per-key. A Y.Map with 10k different keys each set once is cheap. A Y.Map with one key set 10k times is not.
+Tombstones on _different_ keys don't share this problem — they're per-key. A Y.Map with 10k different keys each set once is cheap. A Y.Map with one key set 10k times is not.
 
 ### Plan for Document Deletion Up Front
 
 You can't delete a top-level shared type (see `schema-design.md`). Combined with the tombstone-forever behavior above, this means a Y.Doc that was originally designed with lots of root-level types or one high-churn root key has no clean path to "shrink" later — you'd have to create a new document and migrate.
 
 Before deciding where a high-churn field should live, ask: "will this ever need to be reset without migrating every client?" If yes, nest it somewhere you can `delete()`, or put it in a subdocument you can replace.
-

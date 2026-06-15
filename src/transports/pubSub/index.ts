@@ -97,25 +97,18 @@ export function getPubSubSource<Context extends ServerContext>({
     pubSub,
     async subscribe(topic) {
       if (!subscribedTopics.has(topic)) {
-        const unsubscribe = await pubSub.subscribe(
-          topic,
-          (message, messageSourceId) => {
-            if (messageSourceId === sourceId) {
-              return;
-            }
-            controller.enqueue(message);
-          },
-        );
+        const unsubscribe = await pubSub.subscribe(topic, (message, messageSourceId) => {
+          if (messageSourceId === sourceId) {
+            return;
+          }
+          controller.enqueue(message);
+        });
         subscribedTopics.set(topic, unsubscribe);
       }
     },
     async unsubscribe(topic) {
       if (topic === undefined) {
-        await Promise.all(
-          [...subscribedTopics.values()].map((unsubscribe) =>
-            unsubscribe(),
-          ),
-        );
+        await Promise.all([...subscribedTopics.values()].map((unsubscribe) => unsubscribe()));
         subscribedTopics.clear();
         return;
       }
@@ -130,11 +123,7 @@ export function getPubSubSource<Context extends ServerContext>({
         controller = _controller;
       },
       async cancel() {
-        await Promise.all(
-          [...subscribedTopics.values()].map((unsubscribe) =>
-            unsubscribe(),
-          ),
-        );
+        await Promise.all([...subscribedTopics.values()].map((unsubscribe) => unsubscribe()));
         subscribedTopics.clear();
       },
     }).pipeThrough(getMessageReader(getContext)),

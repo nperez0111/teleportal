@@ -41,10 +41,6 @@ export {
 
 export { createContentIdsFromUpdate } from "./extract";
 
-export {
-  type ActivityEntry,
-  getActivity,
-  resolveItemAttribution,
-} from "./queries";
+export { type ActivityEntry, getActivity, resolveItemAttribution } from "./queries";
 
 export { milestoneContentMap, changesetContentMap } from "./milestone";

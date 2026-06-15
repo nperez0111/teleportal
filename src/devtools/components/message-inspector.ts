@@ -74,10 +74,7 @@ export class MessageInspector {
 
   private renderHeader() {
     if (!this.message) return;
-    const payload = formatMessagePayload(
-      this.message.message,
-      this.message.provider,
-    );
+    const payload = formatMessagePayload(this.message.message, this.message.provider);
     const header = document.createElement("div");
     header.className = "devtools-inspector-header";
 
@@ -92,8 +89,7 @@ export class MessageInspector {
     const logBtn = document.createElement("button");
     logBtn.className = "devtools-inspector-copy-btn";
     logBtn.innerHTML = `${this.getCopyIcon()} Copy Log`;
-    logBtn.title =
-      "Copy a one-line log entry (direction, type, doc, timing) for sharing";
+    logBtn.title = "Copy a one-line log entry (direction, type, doc, timing) for sharing";
     logBtn.addEventListener("click", () => {
       const entry = formatLogEntry(this.message!);
       this.copyToClipboard(entry, logBtn);
@@ -146,10 +142,7 @@ export class MessageInspector {
     }
 
     // Payload section
-    const payload = formatMessagePayload(
-      this.message.message,
-      this.message.provider,
-    );
+    const payload = formatMessagePayload(this.message.message, this.message.provider);
     if (payload) {
       content.append(this.renderPayloadSection(payload));
     }
@@ -189,20 +182,12 @@ export class MessageInspector {
 
     // Document
     card.append(
-      this.createCopyableRow(
-        "Document",
-        this.message!.document || "N/A",
-        !!this.message!.document,
-      ),
+      this.createCopyableRow("Document", this.message!.document || "N/A", !!this.message!.document),
     );
 
     // Timestamp
     card.append(
-      this.createCopyableRow(
-        "Timestamp",
-        new Date(this.message!.timestamp).toISOString(),
-        true,
-      ),
+      this.createCopyableRow("Timestamp", new Date(this.message!.timestamp).toISOString(), true),
     );
 
     // Encrypted
@@ -229,11 +214,7 @@ export class MessageInspector {
     return row;
   }
 
-  private createCopyableRow(
-    label: string,
-    value: string,
-    copyable: boolean,
-  ): HTMLElement {
+  private createCopyableRow(label: string, value: string, copyable: boolean): HTMLElement {
     const row = document.createElement("div");
     row.className = "devtools-inspector-row";
 
@@ -243,12 +224,10 @@ export class MessageInspector {
     row.append(labelEl);
 
     const valueContainer = document.createElement("div");
-    valueContainer.className =
-      "devtools-inspector-value devtools-inspector-value-copyable";
+    valueContainer.className = "devtools-inspector-value devtools-inspector-value-copyable";
 
     const valueText = document.createElement("div");
-    valueText.className =
-      "devtools-inspector-value-text devtools-inspector-value-mono";
+    valueText.className = "devtools-inspector-value-text devtools-inspector-value-mono";
     valueText.textContent = value;
     valueContainer.append(valueText);
 
@@ -341,9 +320,7 @@ export class MessageInspector {
     const encrypted = this.message!.message.encrypted;
     const indicator = document.createElement("span");
     indicator.className = `devtools-inspector-encrypted ${
-      encrypted
-        ? "devtools-inspector-encrypted-yes"
-        : "devtools-inspector-encrypted-no"
+      encrypted ? "devtools-inspector-encrypted-yes" : "devtools-inspector-encrypted-no"
     }`;
 
     if (encrypted) {
@@ -386,9 +363,7 @@ export class MessageInspector {
     const label = document.createElement("span");
     label.className = "devtools-inspector-ack-label";
     label.textContent =
-      this.message!.direction === "sent"
-        ? "Acknowledged by server"
-        : "Acknowledged by client";
+      this.message!.direction === "sent" ? "Acknowledged by server" : "Acknowledged by client";
     ackButton.append(label);
 
     const chevron = document.createElement("span");
@@ -413,9 +388,7 @@ export class MessageInspector {
       const ackPayload = this.message!.ackedBy!.ackMessage.payload as {
         messageId: string;
       };
-      details.append(
-        this.createAckDetailRow("Acknowledged ID", ackPayload.messageId),
-      );
+      details.append(this.createAckDetailRow("Acknowledged ID", ackPayload.messageId));
 
       ackContainer.append(details);
     }

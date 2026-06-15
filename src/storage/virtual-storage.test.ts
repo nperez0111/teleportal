@@ -34,10 +34,7 @@ class MockDocumentStorage implements DocumentStorage {
     return this.documents.get(documentId) ?? null;
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     this.writtenMetadata.push(metadata);
     this.metadataMap.set(documentId, metadata);
   }
@@ -57,17 +54,11 @@ class MockDocumentStorage implements DocumentStorage {
     this.metadataMap.delete(documentId);
   }
 
-  async handleSyncStep1(
-    documentId: string,
-    syncStep1: Uint8Array,
-  ): Promise<Document> {
+  async handleSyncStep1(documentId: string, syncStep1: Uint8Array): Promise<Document> {
     return this.documents.get(documentId)!;
   }
 
-  async handleSyncStep2(
-    documentId: string,
-    syncStep2: Uint8Array,
-  ): Promise<void> {
+  async handleSyncStep2(documentId: string, syncStep2: Uint8Array): Promise<void> {
     // Mock implementation
   }
 
@@ -80,9 +71,7 @@ class MockDocumentStorage implements DocumentStorage {
 class AttributionMockStorage extends MockDocumentStorage {
   public stored = new Map<string, EncodedContentMap>();
 
-  async retrieveAttribution(
-    documentId: string,
-  ): Promise<EncodedContentMap | null> {
+  async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
     return this.stored.get(documentId) ?? null;
   }
 }

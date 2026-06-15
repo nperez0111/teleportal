@@ -31,11 +31,7 @@ const tokenManager = createTokenManager({
 });
 
 const serverInstance = new Server({
-  storage: async (ctx: {
-    documentId: string;
-    context: ServerContext;
-    encrypted: boolean;
-  }) => {
+  storage: async (ctx: { documentId: string; context: ServerContext; encrypted: boolean }) => {
     return new UnstorageDocumentStorage(storage, {
       keyPrefix: "document",
       scanKeys: false,

@@ -61,8 +61,7 @@ export namespace FileTransferProtocol {
       let encryptionOverhead = 0;
       if (encryptionKey) {
         const numberOfChunks = Math.ceil(file.size / CHUNK_SIZE);
-        encryptionOverhead =
-          numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
+        encryptionOverhead = numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
       }
 
       const requestPayload: Record<string, unknown> = {
@@ -146,10 +145,7 @@ export namespace FileTransferProtocol {
       }
     }
 
-    abstract onDownloadComplete(
-      state: DownloadState,
-      file: File,
-    ): void | Promise<void>;
+    abstract onDownloadComplete(state: DownloadState, file: File): void | Promise<void>;
 
     async handleMessage(message: Message<Context>): Promise<boolean> {
       if (message.type === "ack") {
@@ -162,7 +158,10 @@ export namespace FileTransferProtocol {
         // Handle RPC stream messages (file parts)
         if (rpcMessage.requestType === "stream") {
           if (rpcMessage.payload.type === "success") {
-            await this.handleFilePart(rpcMessage.payload.payload as FilePartStream, rpcMessage.context);
+            await this.handleFilePart(
+              rpcMessage.payload.payload as FilePartStream,
+              rpcMessage.context,
+            );
             return true;
           }
         }
@@ -205,9 +204,7 @@ export namespace FileTransferProtocol {
       };
 
       if (payload.type === "success" && payload.payload) {
-        const downloadHandler = this.activeDownloads.get(
-          payload.payload.fileId,
-        );
+        const downloadHandler = this.activeDownloads.get(payload.payload.fileId);
         if (downloadHandler) {
           downloadHandler.fileMetadata = {
             filename: payload.payload.filename,
@@ -226,9 +223,7 @@ export namespace FileTransferProtocol {
         if (this.activeDownloads.has(message.originalRequestId!)) {
           this.activeDownloads
             .get(message.originalRequestId!)
-            ?.reject(
-              new Error(payload.details || "Download permission denied"),
-            );
+            ?.reject(new Error(payload.details || "Download permission denied"));
           this.activeDownloads.delete(message.originalRequestId!);
         }
       }
@@ -244,8 +239,7 @@ export namespace FileTransferProtocol {
       const transformStream = createMerkleTreeTransformStream(
         uploadState.file.size,
         uploadState.encryptionKey
-          ? (chunk: Uint8Array) =>
-              encryptUpdate(uploadState.encryptionKey!, chunk)
+          ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
           : undefined,
       );
 
@@ -287,10 +281,7 @@ export namespace FileTransferProtocol {
         );
     }
 
-    protected abstract verifyChunk(
-      chunk: FilePartStream,
-      fileId: string,
-    ): boolean;
+    protected abstract verifyChunk(chunk: FilePartStream, fileId: string): boolean;
 
     protected async handleFilePart(payload: FilePartStream, context?: Context) {
       const handler = this.activeDownloads.get(payload.fileId);
@@ -300,21 +291,14 @@ export namespace FileTransferProtocol {
 
       const isValid = this.verifyChunk(payload, handler.fileId);
       if (!isValid) {
-        handler.reject(
-          new Error(
-            `Chunk ${payload.chunkIndex} failed merkle proof verification`,
-          ),
-        );
+        handler.reject(new Error(`Chunk ${payload.chunkIndex} failed merkle proof verification`));
         this.activeDownloads.delete(payload.fileId);
         return;
       }
 
       if (!handler.chunks.has(payload.chunkIndex)) {
         if (handler.encryptionKey) {
-          payload.chunkData = await decryptUpdate(
-            handler.encryptionKey,
-            payload.chunkData,
-          );
+          payload.chunkData = await decryptUpdate(handler.encryptionKey, payload.chunkData);
         }
         handler.chunks.set(payload.chunkIndex, payload.chunkData);
         await this.checkDownloadCompletion(handler);
@@ -325,13 +309,9 @@ export namespace FileTransferProtocol {
       if (!handler.fileMetadata) {
         return;
       }
-      const chunkSize = handler.encryptionKey
-        ? ENCRYPTED_CHUNK_SIZE
-        : CHUNK_SIZE;
+      const chunkSize = handler.encryptionKey ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
       const expectedChunks =
-        handler.fileMetadata.size === 0
-          ? 1
-          : Math.ceil(handler.fileMetadata.size / chunkSize);
+        handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / chunkSize);
       if (handler.chunks.size >= expectedChunks) {
         try {
           const fileData = new Uint8Array(expectedChunks * CHUNK_SIZE);
@@ -344,13 +324,9 @@ export namespace FileTransferProtocol {
             fileData.set(chunk, offset);
             offset += chunk.length;
           }
-          const file = new File(
-            [fileData.slice(0, offset)],
-            handler.fileMetadata.filename,
-            {
-              type: handler.fileMetadata.mimeType,
-            },
-          );
+          const file = new File([fileData.slice(0, offset)], handler.fileMetadata.filename, {
+            type: handler.fileMetadata.mimeType,
+          });
           await this.onDownloadComplete(handler, file);
           handler.resolve(file);
         } catch (err) {
@@ -429,10 +405,7 @@ export namespace FileTransferProtocol {
       };
 
       if (method === "fileUpload") {
-        const allowed = await this.checkUploadPermission(
-          payload,
-          message.context,
-        );
+        const allowed = await this.checkUploadPermission(payload, message.context);
         if (!allowed.allowed) {
           await sendMessage(
             new RpcMessage(

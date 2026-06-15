@@ -51,9 +51,7 @@ export default function Shell() {
 
         setProvider(websocketProvider);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to initialize provider",
-        );
+        setError(err instanceof Error ? err.message : "Failed to initialize provider");
       } finally {
         setIsLoading(false);
       }

@@ -399,13 +399,17 @@ describe("UnstorageDocumentStorage", () => {
     function makeAttribution(update: Update, userId: string): EncodedContentMap {
       const contentIds = createContentIdsFromUpdate(update);
       return encodeContentMap(
-        createContentMapFromContentIds(contentIds, [
-          createContentAttribute("insert", userId),
-          createContentAttribute("insertAt", Date.now()),
-        ], [
-          createContentAttribute("delete", userId),
-          createContentAttribute("deleteAt", Date.now()),
-        ]),
+        createContentMapFromContentIds(
+          contentIds,
+          [
+            createContentAttribute("insert", userId),
+            createContentAttribute("insertAt", Date.now()),
+          ],
+          [
+            createContentAttribute("delete", userId),
+            createContentAttribute("deleteAt", Date.now()),
+          ],
+        ),
       );
     }
 

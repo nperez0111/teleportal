@@ -236,18 +236,14 @@ export function decodeDocStep<
   return decodeDocStepWithDecoder(decoder);
 }
 
-function decodeAckMessageWithDecoder(
-  decoder: decoding.Decoder,
-): DecodedAckMessage {
+function decodeAckMessageWithDecoder(decoder: decoding.Decoder): DecodedAckMessage {
   return {
     type: "ack",
     messageId: toBase64(decoding.readVarUint8Array(decoder)),
   };
 }
 
-function decodePresenceMessageWithDecoder(
-  decoder: decoding.Decoder,
-): PresenceStep {
+function decodePresenceMessageWithDecoder(decoder: decoding.Decoder): PresenceStep {
   const subType = decoding.readUint8(decoder);
   if (subType === 0) {
     return {
@@ -305,9 +301,7 @@ function decodeRpcMessageWithDecoder(
 
   const requestTypeIndex = decoding.readUint8(decoder);
 
-  const requestType = (["request", "stream", "response"] as const)[
-    requestTypeIndex
-  ];
+  const requestType = (["request", "stream", "response"] as const)[requestTypeIndex];
 
   if (!requestType) {
     throw new Error("Invalid RPC request type", {

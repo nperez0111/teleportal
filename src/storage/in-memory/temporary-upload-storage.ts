@@ -87,19 +87,14 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     };
   }
 
-  async completeUpload(
-    uploadId: string,
-    fileId?: File["id"],
-  ): Promise<FileUploadResult> {
+  async completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult> {
     const session = this.#sessions.get(uploadId);
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
     const expectedChunks =
-      session.metadata.size === 0
-        ? 1
-        : Math.ceil(session.metadata.size / CHUNK_SIZE);
+      session.metadata.size === 0 ? 1 : Math.ceil(session.metadata.size / CHUNK_SIZE);
 
     for (let i = 0; i < expectedChunks; i++) {
       if (!session.chunks.has(i)) {
@@ -157,9 +152,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
 
         const chunk = session.chunks.get(chunkIndex);
         if (!chunk) {
-          throw new Error(
-            `Chunk ${chunkIndex} not found for upload ${uploadId}`,
-          );
+          throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
         }
 
         // Mark as fetched and remove from session

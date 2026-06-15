@@ -65,11 +65,10 @@ export class MetricsCollector {
       ["documentId"],
     );
 
-    this.milestonesTotal = new Gauge(
-      "teleportal_milestones_total",
-      "Total number of milestones",
-      ["documentId", "lifecycleState"],
-    );
+    this.milestonesTotal = new Gauge("teleportal_milestones_total", "Total number of milestones", [
+      "documentId",
+      "lifecycleState",
+    ]);
 
     this.milestonesCreatedTotal = new Counter(
       "teleportal_milestones_created_total",
@@ -138,11 +137,7 @@ export class MetricsCollector {
       ["operation"],
     );
 
-    this.errorsTotal = new Counter(
-      "teleportal_errors_total",
-      "Total number of errors",
-      ["type"],
-    );
+    this.errorsTotal = new Counter("teleportal_errors_total", "Total number of errors", ["type"]);
 
     // Register all metrics
     registry.register(this.clientsActive);
@@ -169,11 +164,7 @@ export class MetricsCollector {
   /**
    * Record the size of a document
    */
-  recordDocumentSize(
-    documentId: string,
-    sizeBytes: number,
-    encrypted: boolean,
-  ): void {
+  recordDocumentSize(documentId: string, sizeBytes: number, encrypted: boolean): void {
     this.documentSizeBytes.set(sizeBytes, {
       documentId,
       encrypted: encrypted.toString(),
@@ -222,11 +213,7 @@ export class MetricsCollector {
   /**
    * Record rate limit exceeded event
    */
-  recordRateLimitExceeded(
-    userId: string,
-    documentId: string | undefined,
-    trackBy: string,
-  ): void {
+  recordRateLimitExceeded(userId: string, documentId: string | undefined, trackBy: string): void {
     this.rateLimitExceededTotal.inc({
       userId,
       documentId: documentId ?? "",
@@ -262,11 +249,7 @@ export class MetricsCollector {
   /**
    * Update milestone count for a specific state
    */
-  updateMilestoneCount(
-    documentId: string,
-    lifecycleState: string,
-    count: number,
-  ): void {
+  updateMilestoneCount(documentId: string, lifecycleState: string, count: number): void {
     this.milestonesTotal.set(count, { documentId, lifecycleState });
   }
 

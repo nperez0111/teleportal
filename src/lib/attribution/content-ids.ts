@@ -60,9 +60,7 @@ export class IdRanges {
   }
 
   copy(): IdRanges {
-    return new IdRanges(
-      this.getIds().map((r) => new IdRange(r.clock, r.len)),
-    );
+    return new IdRanges(this.getIds().map((r) => new IdRange(r.clock, r.len)));
   }
 }
 
@@ -256,10 +254,7 @@ export interface ContentIds {
   deletes: IdSet;
 }
 
-export function createContentIds(
-  inserts?: IdSet,
-  deletes?: IdSet,
-): ContentIds {
+export function createContentIds(inserts?: IdSet, deletes?: IdSet): ContentIds {
   return {
     inserts: inserts ?? new IdSet(),
     deletes: deletes ?? new IdSet(),
@@ -273,10 +268,7 @@ export function mergeContentIds(ids: ContentIds[]): ContentIds {
   };
 }
 
-export function excludeContentIds(
-  content: ContentIds,
-  exclude: ContentIds,
-): ContentIds {
+export function excludeContentIds(content: ContentIds, exclude: ContentIds): ContentIds {
   return {
     inserts: diffIdSet(content.inserts, exclude.inserts),
     deletes: diffIdSet(content.deletes, exclude.deletes),

@@ -11,8 +11,7 @@ import type { RateLimitStorage, RateLimitState } from "../../storage/types";
 class MockTransport<Context extends ServerContext> {
   public readable: ReadableStream<Message<Context>>;
   public writable: WritableStream<Message<Context>>;
-  private controller: ReadableStreamDefaultController<Message<Context>> | null =
-    null;
+  private controller: ReadableStreamDefaultController<Message<Context>> | null = null;
 
   constructor() {
     const self = this;

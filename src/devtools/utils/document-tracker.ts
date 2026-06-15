@@ -45,9 +45,7 @@ export class DocumentTracker {
   }
 
   getDocumentsForProvider(provider: Provider): DocumentState[] {
-    return [...this.documents.values()].filter(
-      (doc) => doc.provider === provider,
-    );
+    return [...this.documents.values()].filter((doc) => doc.provider === provider);
   }
 
   clear(): void {

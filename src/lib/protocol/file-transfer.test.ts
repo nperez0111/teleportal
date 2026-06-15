@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { fromBase64, toBase64 } from "lib0/buffer";
-import {
-  buildMerkleTree,
-  generateMerkleProof,
-  verifyMerkleProof,
-} from "teleportal/merkle-tree";
+import { buildMerkleTree, generateMerkleProof, verifyMerkleProof } from "teleportal/merkle-tree";
 import { RpcMessage } from "teleportal/protocol";
 import type { FilePartStream } from "../../protocols/file/methods";
 import { FileTransferProtocol } from "./file-transfer";

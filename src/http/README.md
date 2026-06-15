@@ -100,10 +100,8 @@ function getHTTPHandler<Context extends ServerContext>({
 }: {
   server: Server<Context>;
   getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
-  getInitialDocuments?: (
-    request: Request,
-  ) => { document: string; encrypted?: boolean }[];
-}): (req: Request) => Response | Promise<Response>
+  getInitialDocuments?: (request: Request) => { document: string; encrypted?: boolean }[];
+}): (req: Request) => Response | Promise<Response>;
 ```
 
 **Parameters:**
@@ -247,7 +245,7 @@ function getSSEWriterEndpoint<Context extends ServerContext>({
   server: Server<Context>;
   getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
   ackTimeout?: number;
-})
+});
 ```
 
 **Parameters:**
@@ -321,7 +319,7 @@ function getHTTPEndpoint<Context extends ServerContext>({
 }: {
   server: Server<Context>;
   getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
-})
+});
 ```
 
 **How it works:**
@@ -377,9 +375,7 @@ Default implementation for extracting document IDs from URL query parameters.
 **Signature:**
 
 ```typescript
-function getDocumentsFromQueryParams(
-  request: Request,
-): { document: string; encrypted?: boolean }[]
+function getDocumentsFromQueryParams(request: Request): { document: string; encrypted?: boolean }[];
 ```
 
 **Supported Formats:**
@@ -397,7 +393,7 @@ function getDocumentsFromQueryParams(
   { document: "doc-1", encrypted: false },
   { document: "doc-2", encrypted: true },
   { document: "doc-3", encrypted: false },
-]
+];
 ```
 
 ### `decodeHTTPRequest`
@@ -407,9 +403,7 @@ Decodes a `Response` containing a stream of `MessageArray`s into a stream of `Me
 **Signature:**
 
 ```typescript
-function decodeHTTPRequest(
-  response: Response,
-): ReadableStream<Message<ClientContext>>
+function decodeHTTPRequest(response: Response): ReadableStream<Message<ClientContext>>;
 ```
 
 **Example:**
@@ -572,7 +566,7 @@ const handler = getHTTPHandler({
   getInitialDocuments: (request, ctx) => {
     // Custom logic based on user permissions, etc.
     const userDocs = getUserDocuments(ctx.client.id);
-    return userDocs.map(doc => ({
+    return userDocs.map((doc) => ({
       document: doc.id,
       encrypted: doc.encrypted,
     }));
@@ -583,11 +577,7 @@ const handler = getHTTPHandler({
 ### Using Individual Endpoints
 
 ```typescript
-import {
-  getSSEReaderEndpoint,
-  getSSEWriterEndpoint,
-  getHTTPEndpoint,
-} from "teleportal/http";
+import { getSSEReaderEndpoint, getSSEWriterEndpoint, getHTTPEndpoint } from "teleportal/http";
 
 const sseReader = getSSEReaderEndpoint({ server, getContext });
 const sseWriter = getSSEWriterEndpoint({ server, getContext });

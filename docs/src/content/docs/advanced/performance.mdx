@@ -40,11 +40,13 @@ const doc = await batchedStorage.getDocument("doc1"); // Flushes pending writes
 ```
 
 **Benefits**:
+
 - **Faster writes**: Updates are buffered and batched
 - **Reduced I/O**: Fewer database calls
 - **Read consistency**: Pending writes are flushed on reads
 
 **When to use**:
+
 - High-frequency collaborative updates
 - Slow storage backends (remote DBs, object storage)
 - Write-heavy applications
@@ -116,6 +118,7 @@ const status = await server.getStatus();
 ```
 
 Key metrics to watch:
+
 - `teleportal_message_duration_seconds`: Message processing time
 - `teleportal_storage_operation_duration_seconds`: Storage operation time
 - `teleportal_sessions_active`: Active session count

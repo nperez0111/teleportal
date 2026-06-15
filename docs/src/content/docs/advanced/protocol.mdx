@@ -10,6 +10,7 @@ This document provides a comprehensive specification of the Teleportal protocol,
 The Teleportal protocol is designed for efficient transmission of Y.js collaborative editing messages over various transport layers. It supports document synchronization, awareness updates, file transfers, milestone management, and extensible RPC operations—all with optional encryption and robust error handling.
 
 The protocol is built around a flexible message structure that enables:
+
 - **Document Synchronization**: Bidirectional sync of Y.js documents between clients and server
 - **Awareness Updates**: Real-time user presence and cursor information
 - **File Transfers**: Chunked file uploads/downloads with Merkle tree integrity verification
@@ -27,7 +28,7 @@ All Teleportal messages follow this base structure:
 graph LR
     A[Message Header] --> B[Message Type]
     B --> C[Payload]
-    
+
     subgraph Header["Message Header"]
         H1["Magic: YJS<br/>(3 bytes)"]
         H2["Version: 0x01<br/>(1 byte)"]
@@ -36,7 +37,7 @@ graph LR
         H5["Encrypted Flag<br/>(1 byte)"]
         H1 --> H2 --> H3 --> H4 --> H5
     end
-    
+
     subgraph Type["Message Type (1 byte)"]
         T1["0x00: Document"]
         T2["0x01: Awareness"]
@@ -44,7 +45,7 @@ graph LR
         T4["0x03: File"]
         T5["0x04: RPC"]
     end
-    
+
     Header --> Type
     Type --> C
 ```
@@ -75,31 +76,31 @@ graph TD
     A --> D[ACK 0x02]
     A --> E[File 0x03]
     A --> F[RPC 0x04]
-    
+
     B --> B1[Sync Step 1]
     B --> B2[Sync Step 2]
     B --> B3[Update]
     B --> B4[Sync Done]
     B --> B5[Auth]
     B --> B6[Milestone Operations]
-    
+
     B6 --> B6a[List Request/Response]
     B6 --> B6b[Snapshot Request/Response]
     B6 --> B6c[Create Request/Response]
     B6 --> B6d[Update Name Request/Response]
     B6 --> B6e[Soft Delete Request/Response]
     B6 --> B6f[Restore Request/Response]
-    
+
     C --> C1[Awareness Update]
     C --> C2[Awareness Request]
-    
+
     D --> D1[ACK]
-    
+
     E --> E1[File Download]
     E --> E2[File Upload]
     E --> E3[File Part]
     E --> E4[File Auth]
-    
+
     F --> F1[RPC Request]
     F --> F2[RPC Response]
     F --> F3[RPC Stream]
@@ -191,7 +192,7 @@ graph TD
     I --> J[Sync Done]
     J --> K[Real-time Updates]
     K --> L[Document Update messages]
-    
+
     style B fill:#e1f5ff
     style E fill:#e1f5ff
     style J fill:#c8e6c9
@@ -239,19 +240,19 @@ graph TD
     C --> D[Client: Lazy Load]
     D --> E[Snapshot Request]
     E --> F[Server: Snapshot Response]
-    
+
     G[Client] --> H[Create Request<br/>with Snapshot]
     H --> I[Server: Create Response]
-    
+
     J[Client] --> K[Update Name Request]
     K --> L[Server: Update Name Response]
-    
+
     M[Client] --> N[Soft Delete Request]
     N --> O[Server: Soft Delete Response]
-    
+
     P[Client] --> Q[Restore Request]
     Q --> R[Server: Restore Response]
-    
+
     style C fill:#e1f5ff
     style F fill:#e1f5ff
     style I fill:#c8e6c9
@@ -269,6 +270,7 @@ graph TD
 **Purpose**: Returns list of milestone metadata  
 **Payload**: Count (varint) + array of milestone metadata  
 **Usage**: Server responds with milestone list. Each milestone includes:
+
 - Required fields: id, name, documentId, createdAt, createdBy
 - Optional fields: deletedAt, lifecycleState, expiresAt
 - `createdBy`: Indicates who/what created the milestone (`{ type: "user" | "system", id: string }`)
@@ -296,6 +298,7 @@ graph TD
 **Purpose**: Confirms milestone creation and returns metadata  
 **Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)  
 **Usage**: Server responds with created milestone information. The `createdBy` field indicates who created the milestone:
+
 - `{ type: "user", id: userId }` for user-created milestones
 - `{ type: "system", id: nodeId }` for system-created milestones
 
@@ -361,6 +364,7 @@ ACK messages provide message delivery confirmation, allowing senders to know whe
 **Purpose**: Acknowledges receipt of a specific message  
 **Payload**: MessageId (varint array) - The base64-decoded message ID of the message being acknowledged  
 **Usage**:
+
 - Used to confirm delivery of file chunks during uploads
 - Allows senders to track which messages have been successfully received
 - The messageId is the SHA-256 hash (base64-encoded) of the original message's encoded bytes
@@ -438,6 +442,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 **Purpose**: Initiates file download by requesting a file using its content ID
 
 **Payload Structure**:
+
 - FileId (varint string): Merkle root hash (base64 string) identifying the file to download
 
 **Usage**: Client requests file by providing the merkle root hash as the fileId. The server responds with file-part messages containing the file chunks.
@@ -447,6 +452,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 **Purpose**: Initiates file upload by sending file metadata
 
 **Payload Structure**:
+
 - Encrypted (1 byte): `0x00` = false, `0x01` = true
 - FileId (varint string): Client-generated UUID for this transfer session
 - Filename (varint string): Original filename
@@ -455,6 +461,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 - LastModified (varint): Last modified timestamp of the file
 
 **Usage**:
+
 - Client sends file metadata with a client-generated UUID as `fileId` to initiate upload session
 - During upload, chunks are sent with this same `fileId` (UUID) to identify the transfer session
 - After all chunks are uploaded and verified, the server computes the Merkle root hash
@@ -472,12 +479,12 @@ flowchart LR
     E --> F[File Auth Message<br/>fileId: Merkle Root Hash]
     F --> G[File stored with<br/>contentId]
     G --> H[File Download Message<br/>fileId: Merkle Root Hash]
-    
+
     style B fill:#fff9c4
     style C fill:#fff9c4
     style F fill:#c8e6c9
     style H fill:#c8e6c9
-    
+
     B -.->|Temporary| B
     F -.->|Permanent| F
 ```
@@ -487,6 +494,7 @@ flowchart LR
 **Purpose**: Sends file chunk data with Merkle proof for verification
 
 **Payload Structure**:
+
 - FileId (varint string):
   - **Upload**: Client-generated UUID matching the file upload session
   - **Download**: Merkle root hash (base64 string) identifying the file
@@ -499,10 +507,12 @@ flowchart LR
 - Encrypted (1 byte): `0x00` = false, `0x01` = true
 
 **Usage**:
+
 - **Upload**: Client sends chunks sequentially with Merkle proofs for server verification. Each chunk is acknowledged with an ACK message containing the chunk's message ID.
 - **Download**: Server sends chunks sequentially with Merkle proofs for client verification. The client verifies each chunk before assembling the complete file.
 
 **Chunk Verification**: The receiver verifies each chunk by:
+
 1. Computing the SHA-256 hash of the chunk data
 2. Reconstructing the Merkle tree path using the provided proof hashes
 3. Comparing the computed root hash with the expected fileId
@@ -513,6 +523,7 @@ flowchart LR
 **Purpose**: Server response indicating permission denied or authorization status
 
 **Payload Structure**:
+
 - Permission (1 byte): `0x00` = denied, `0x01` = allowed (currently only denied is supported)
 - FileId (varint string): The fileId of the file that was denied authorization
 - StatusCode (varint): HTTP status code (404, 403, 401, 500, or 501)
@@ -531,12 +542,12 @@ Files are split into **64KB chunks** for efficient transfer. Each chunk is hashe
 graph TD
     Root["Root Hash<br/>(ContentId/FileId)"] --> H1["Hash 1"]
     Root --> H2["Hash 2"]
-    
+
     H1 --> H3["Hash 3"]
     H1 --> H4["Hash 4"]
     H2 --> H5["Hash 5"]
     H2 --> H6["Hash 6"]
-    
+
     H3 --> C0["Chunk 0<br/>SHA-256"]
     H3 --> C1["Chunk 1<br/>SHA-256"]
     H4 --> C2["Chunk 2<br/>SHA-256"]
@@ -545,7 +556,7 @@ graph TD
     H5 --> C5["Chunk 5<br/>SHA-256"]
     H6 --> C6["Chunk 6<br/>SHA-256"]
     H6 --> C7["Chunk 7<br/>SHA-256"]
-    
+
     style Root fill:#ffccbc
     style C0 fill:#c8e6c9
     style C1 fill:#c8e6c9
@@ -558,6 +569,7 @@ graph TD
 ```
 
 **Structure Components**:
+
 - **Leaf nodes**: SHA-256 hash of each 64KB chunk
 - **Internal nodes**: Hash of concatenated child hashes
 - **Root hash**: Content ID used to uniquely identify the file
@@ -573,7 +585,7 @@ graph LR
     H2 --> P1["Proof: Hash 3<br/>(sibling)"]
     P1 --> P2["Proof: Hash 2<br/>(sibling)"]
     P2 --> Verify["Verify Root<br/>matches FileId"]
-    
+
     style C2 fill:#c8e6c9
     style Verify fill:#ffccbc
 ```
@@ -586,20 +598,20 @@ The verification process ensures data integrity by reconstructing the Merkle tre
 sequenceDiagram
     participant C as Client
     participant S as Server
-    
+
     Note over C: Prepare Chunk
     C->>C: Hash chunk data (SHA-256)
     C->>C: Build Merkle proof path
-    
+
     Note over C,S: Send Chunk
     C->>S: File Part Message<br/>(Chunk + Merkle Proof)
-    
+
     Note over S: Verify Chunk
     S->>S: Hash received chunk data
     S->>S: Reconstruct path using proof
     S->>S: Compute root hash
     S->>S: Compare with expected fileId
-    
+
     alt Verification Success
         S->>S: Store chunk
         S->>C: ACK Message
@@ -609,6 +621,7 @@ sequenceDiagram
 ```
 
 **Verification Steps**:
+
 1. **Client sends**: Chunk data (64KB) + Merkle proof (sibling hashes) + Chunk index
 2. **Server receives**: Hashes the chunk data to get leaf hash
 3. **Server reconstructs**: Uses proof hashes to build path from leaf to root
@@ -684,7 +697,7 @@ graph LR
     E --> F["..."]
     F --> G["Message N<br/>Length varint"]
     G --> H["Message N<br/>Binary Data"]
-    
+
     style A fill:#e1f5ff
     style C fill:#c8e6c9
     style E fill:#c8e6c9
@@ -719,12 +732,12 @@ graph LR
     D --> E[Binary Message]
     E --> F[Compute SHA-256]
     F --> G[Base64 Message ID]
-    
+
     H[Binary Message] --> I[Decode Header]
     I --> J[Decode Type]
     J --> K[Decode Payload]
     K --> L[Message Object]
-    
+
     style E fill:#c8e6c9
     style G fill:#ffccbc
     style H fill:#e1f5ff
@@ -743,7 +756,7 @@ graph TD
     E --> F[Used in ACK Messages]
     E --> G[Message Deduplication]
     E --> H[Idempotency Tracking]
-    
+
     style C fill:#ffccbc
     style E fill:#c8e6c9
 ```
@@ -762,11 +775,11 @@ graph TD
     A[Variable-Length Encoding] --> B[Varint Integers]
     A --> C[Varint Arrays]
     A --> D[UTF-8 Strings]
-    
+
     B --> B1["Small values: 1 byte<br/>Large values: multiple bytes"]
     C --> C1["Length varint<br/>+ Raw bytes"]
     D --> D1["Length varint<br/>+ UTF-8 bytes"]
-    
+
     style B fill:#e1f5ff
     style C fill:#e1f5ff
     style D fill:#e1f5ff
@@ -933,24 +946,24 @@ graph TB
         HTTP[HTTP]
         CUSTOM[Custom Transport]
     end
-    
+
     subgraph Protocol["Teleportal Protocol"]
         subgraph Core["Core Messages"]
             DOC[Document Messages]
             AWARE[Awareness Messages]
             ACK[ACK Messages]
         end
-        
+
         subgraph Extended["Extended Features"]
             FILE[File Messages]
             MILESTONE[Milestone Messages]
             RPC[RPC Messages]
         end
-        
+
         ENCODE[Message Encoding]
         DECODE[Message Decoding]
     end
-    
+
     subgraph Features["Protocol Features"]
         SYNC[Document Sync]
         PRESENCE[User Presence]
@@ -958,30 +971,30 @@ graph TB
         VERSIONING[Milestone Versioning]
         EXTENSIBILITY[RPC Extensibility]
     end
-    
+
     subgraph Storage["Storage Layer"]
         DOC_STORE[Document Storage]
         FILE_STORE[File Storage]
         MILESTONE_STORE[Milestone Storage]
     end
-    
+
     Transport --> Protocol
     Protocol --> Features
     Features --> Storage
-    
+
     DOC --> SYNC
     AWARE --> PRESENCE
     FILE --> TRANSFER
     MILESTONE --> VERSIONING
     RPC --> EXTENSIBILITY
-    
+
     ACK -.->|Reliability| FILE
     ACK -.->|Delivery Confirmation| DOC
-    
+
     SYNC --> DOC_STORE
     TRANSFER --> FILE_STORE
     VERSIONING --> MILESTONE_STORE
-    
+
     style Protocol fill:#e1f5ff
     style Features fill:#c8e6c9
     style Storage fill:#fff9c4
@@ -1010,29 +1023,29 @@ sequenceDiagram
     participant C1 as Client 1
     participant S as Server
     participant C2 as Client 2
-    
+
     Note over C1,S: Document Synchronization
     C1->>S: Sync Step 1
     S->>C1: Sync Step 2
     S->>C1: Sync Step 1
     C1->>S: Sync Step 2
     S->>C1: Sync Done
-    
+
     Note over C1,S: Awareness (Parallel)
     C1->>S: Awareness Update
     S->>C2: Awareness Update
-    
+
     Note over C1,S: Real-time Updates
     C1->>S: Document Update
     S->>C2: Document Update
-    
+
     Note over C1,S: File Transfer
     C1->>S: File Upload
     C1->>S: File Part (with Merkle proof)
     S->>C1: ACK
     C1->>S: File Part (final)
     S->>C1: File Auth (success)
-    
+
     Note over C1,S: Milestone Management
     C1->>S: Milestone Create Request
     S->>C1: Milestone Create Response

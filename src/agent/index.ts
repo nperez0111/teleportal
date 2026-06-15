@@ -1,10 +1,6 @@
 import { Message, Observable, ServerContext } from "teleportal";
 import { emitWideEvent, Server } from "teleportal/server";
-import {
-  getYTransportFromYDoc,
-  YDocSinkHandler,
-  YDocSourceHandler,
-} from "teleportal/transports";
+import { getYTransportFromYDoc, YDocSinkHandler, YDocSourceHandler } from "teleportal/transports";
 
 export class Agent {
   constructor(private server: Server<ServerContext>) {}
@@ -69,10 +65,7 @@ export class Agent {
       throw error;
     } finally {
       wideEvent.duration_ms = Date.now() - startTime;
-      emitWideEvent(
-        (wideEvent.outcome as string) === "error" ? "error" : "info",
-        wideEvent,
-      );
+      emitWideEvent((wideEvent.outcome as string) === "error" ? "error" : "info", wideEvent);
     }
   }
 }

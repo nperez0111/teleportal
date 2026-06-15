@@ -34,16 +34,12 @@ export function getSSESink<Context extends ClientContext>({
   const transform = new TransformStream<Message<any>, string>({
     start(controller) {
       if (context.clientId) {
-        controller.enqueue(
-          `event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`,
-        );
+        controller.enqueue(`event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`);
       }
 
       interval = setInterval(() => {
         try {
-          controller.enqueue(
-            `event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`,
-          );
+          controller.enqueue(`event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`);
         } catch {
           clearInterval(interval);
         }
@@ -64,8 +60,7 @@ export function getSSESink<Context extends ClientContext>({
     sseResponse: new Response(transform.readable, {
       headers: {
         "Content-Type": "text/event-stream",
-        "Cache-Control":
-          "private, no-cache, no-store, no-transform, must-revalidate, max-age=0",
+        "Cache-Control": "private, no-cache, no-store, no-transform, must-revalidate, max-age=0",
         "x-accel-buffering": "no",
         "x-powered-by": "teleportal",
         "x-teleportal-client-id": context?.clientId ?? "",

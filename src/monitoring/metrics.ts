@@ -137,16 +137,11 @@ export class Histogram {
   constructor(
     private name: string,
     private help: string,
-    private bucketValues: number[] = [
-      0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
-    ],
+    private bucketValues: number[] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
     private labelNames: string[] = [],
   ) {}
 
-  observe(
-    labelsOrValue: Record<string, string> | number,
-    value?: number,
-  ): void {
+  observe(labelsOrValue: Record<string, string> | number, value?: number): void {
     let labels: Record<string, string>;
     let val: number;
 
@@ -163,9 +158,7 @@ export class Histogram {
 
     if (!series) {
       series = {
-        buckets: Array.from({ length: this.bucketValues.length + 1 }).fill(
-          0,
-        ) as number[],
+        buckets: Array.from({ length: this.bucketValues.length + 1 }).fill(0) as number[],
         sum: 0,
         count: 0,
       };

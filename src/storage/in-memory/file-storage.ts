@@ -1,10 +1,5 @@
 import { CHUNK_SIZE } from "teleportal/merkle-tree";
-import type {
-  File,
-  FileStorage,
-  FileUploadResult,
-  TemporaryUploadStorage,
-} from "../types";
+import type { File, FileStorage, FileUploadResult, TemporaryUploadStorage } from "../types";
 import type { InMemoryTemporaryUploadStorage } from "./temporary-upload-storage";
 
 /**

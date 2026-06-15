@@ -49,16 +49,10 @@ export class EventManager {
         const { message, provider, connection } = event.payload;
 
         // Check connection state from the connection object if available
-        if (
-          connection &&
-          typeof connection.state === "object" &&
-          connection.state
-        ) {
+        if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
           const transport =
-            connState.type === "connected"
-              ? connState.context.connectionType
-              : null;
+            connState.type === "connected" ? connState.context.connectionType : null;
           if (
             (connState.type && connState.type !== this.connectionState?.type) ||
             transport !== this.connectionState?.transport
@@ -162,11 +156,7 @@ export class EventManager {
         const { message, provider, connection } = event.payload;
 
         // Check connection state from the connection object if available
-        if (
-          connection &&
-          typeof connection.state === "object" &&
-          connection.state
-        ) {
+        if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
           if (connState.type && connState.type !== this.connectionState?.type) {
             const newState: ConnectionStateInfo = {
@@ -334,10 +324,7 @@ export class EventManager {
         const newState: ConnectionStateInfo = {
           type: state.type,
           transport: state.type === "connected" ? "websocket" : null,
-          error:
-            state.type === "errored"
-              ? state.error?.message || String(state.error)
-              : undefined,
+          error: state.type === "errored" ? state.error?.message || String(state.error) : undefined,
           timestamp: Date.now(),
         };
         this.connectionState = newState;
@@ -367,10 +354,7 @@ export class EventManager {
     let receivedCount = 0;
 
     this.messages.forEach((msg) => {
-      const type =
-        msg.message.type === "doc"
-          ? msg.message.payload.type
-          : msg.message.type;
+      const type = msg.message.type === "doc" ? msg.message.payload.type : msg.message.type;
       messagesByType[type] = (messagesByType[type] || 0) + 1;
 
       if (msg.direction === "sent") sentCount++;
@@ -379,9 +363,7 @@ export class EventManager {
 
     // Calculate message rate (messages per second over last 10 seconds)
     const now = Date.now();
-    this.messageRateTimestamps = this.messageRateTimestamps.filter(
-      (ts) => now - ts < 10000,
-    );
+    this.messageRateTimestamps = this.messageRateTimestamps.filter((ts) => now - ts < 10000);
     const rate = this.messageRateTimestamps.length / 10;
 
     this.statistics = {

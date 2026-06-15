@@ -156,9 +156,7 @@ class MockWebSocket {
       return; // Already closed, don't dispatch events again
     }
     this.readyState = MockWebSocket.CLOSED;
-    this.dispatchEvent(
-      new CloseEvent("close", { code: code || 1000, reason: reason || "" }),
-    );
+    this.dispatchEvent(new CloseEvent("close", { code: code || 1000, reason: reason || "" }));
   }
 }
 
@@ -344,10 +342,7 @@ describe("FallbackConnection", () => {
 
     // Wait for the fallback to HTTP connection
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Fallback to HTTP timed out")),
-        500,
-      );
+      const timeout = setTimeout(() => reject(new Error("Fallback to HTTP timed out")), 500);
       client.on("update", (state) => {
         if (state.type === "connected" && client.connectionType === "http") {
           clearTimeout(timeout);
@@ -543,10 +538,7 @@ describe("FallbackConnection", () => {
 
     // Wait for connection to be established
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Connection timeout")),
-        1000,
-      );
+      const timeout = setTimeout(() => reject(new Error("Connection timeout")), 1000);
 
       client.on("update", (state) => {
         if (state.type === "connected" && client.connectionType === "http") {
@@ -808,17 +800,12 @@ describe("FallbackConnection", () => {
 
     // Wait for connection to complete (WebSocket timeout + HTTP connection)
     // WebSocket timeout is 100ms, then HTTP connection needs time to establish
-    await Promise.race([
-      connectPromise,
-      new Promise((resolve) => setTimeout(resolve, 300)),
-    ]);
+    await Promise.race([connectPromise, new Promise((resolve) => setTimeout(resolve, 300))]);
 
     // Connection should eventually succeed or be in a valid state
-    expect(
-      ["connected", "connecting", "disconnected", "errored"].includes(
-        client.state.type,
-      ),
-    ).toBe(true);
+    expect(["connected", "connecting", "disconnected", "errored"].includes(client.state.type)).toBe(
+      true,
+    );
 
     // The key test: should only have one WebSocket and one EventSource
     // (or very few if there are timing issues)

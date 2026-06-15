@@ -20,10 +20,7 @@ export interface ClientRpcHandler<Context extends ClientRpcContext = ClientRpcCo
    * @param context - The RPC context
    * @returns The request ID for tracking responses
    */
-  request?(
-    payload: Record<string, unknown>,
-    context: Context,
-  ): Promise<string> | string;
+  request?(payload: Record<string, unknown>, context: Context): Promise<string> | string;
 
   /**
    * Handle an incoming RPC response message.

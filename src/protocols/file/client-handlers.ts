@@ -200,18 +200,13 @@ class FileClientHandler implements ClientRpcHandler {
     };
 
     try {
-      await this.#rpcClient.sendRequest(
-        document,
-        "fileDownload",
-        requestPayload,
-        {
-          timeout,
-          onStream: (payload) => {
-            // Stream messages are handled via handleStream
-            // This is just for tracking
-          },
+      await this.#rpcClient.sendRequest(document, "fileDownload", requestPayload, {
+        timeout,
+        onStream: (payload) => {
+          // Stream messages are handled via handleStream
+          // This is just for tracking
         },
-      );
+      });
     } catch (error) {
       this.#activeDownloads.delete(fileId);
       this.#downloadCache.delete(fileId);
@@ -246,9 +241,7 @@ class FileClientHandler implements ClientRpcHandler {
     if (payload.type === "success" && payload.payload) {
       // Check if this is a download response (has metadata)
       if (payload.payload.filename !== undefined) {
-        const downloadHandler = this.#activeDownloads.get(
-          payload.payload.fileId,
-        );
+        const downloadHandler = this.#activeDownloads.get(payload.payload.fileId);
         if (downloadHandler) {
           downloadHandler.fileMetadata = {
             filename: payload.payload.filename!,
@@ -267,32 +260,24 @@ class FileClientHandler implements ClientRpcHandler {
         // Start processing the file upload
         // We don't await this - it runs in the background and the upload promise
         // resolves when all ACKs are received. Errors are caught and the upload is rejected.
-        this.#processFileUpload(uploadHandler, message.context).catch(
-          (error) => {
-            uploadHandler.reject(error);
-            this.#activeUploads.delete(uploadHandler.uploadId);
-          },
-        );
+        this.#processFileUpload(uploadHandler, message.context).catch((error) => {
+          uploadHandler.reject(error);
+          this.#activeUploads.delete(uploadHandler.uploadId);
+        });
         return true;
       }
     } else if (payload.type === "error") {
       // Handle error responses - check by original request ID first
       const uploadHandler = this.#activeUploads.get(message.originalRequestId!);
       if (uploadHandler) {
-        uploadHandler.reject(
-          new Error(payload.details || "Upload permission denied"),
-        );
+        uploadHandler.reject(new Error(payload.details || "Upload permission denied"));
         this.#activeUploads.delete(uploadHandler.uploadId);
         return true;
       }
 
-      const downloadHandler = this.#activeDownloads.get(
-        message.originalRequestId!,
-      );
+      const downloadHandler = this.#activeDownloads.get(message.originalRequestId!);
       if (downloadHandler) {
-        downloadHandler.reject(
-          new Error(payload.details || "Download permission denied"),
-        );
+        downloadHandler.reject(new Error(payload.details || "Download permission denied"));
         this.#activeDownloads.delete(downloadHandler.fileId);
         if (downloadHandler.timeoutId) {
           clearTimeout(downloadHandler.timeoutId);
@@ -341,11 +326,7 @@ class FileClientHandler implements ClientRpcHandler {
     return handled;
   }
 
-  async #processFileUpload(
-    uploadState: UploadState,
-    context?: any,
-    originalRequestId?: string,
-  ) {
+  async #processFileUpload(uploadState: UploadState, context?: any, originalRequestId?: string) {
     if (!this.#sendStreamMessage) {
       throw new Error("File handler not initialized");
     }
@@ -353,8 +334,7 @@ class FileClientHandler implements ClientRpcHandler {
     const transformStream = createMerkleTreeTransformStream(
       uploadState.file.size,
       uploadState.encryptionKey
-        ? (chunk: Uint8Array) =>
-            encryptUpdate(uploadState.encryptionKey!, chunk)
+        ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
     );
 
@@ -424,11 +404,7 @@ class FileClientHandler implements ClientRpcHandler {
 
     const isValid = this.#verifyChunk(payload, handler.fileId);
     if (!isValid) {
-      handler.reject(
-        new Error(
-          `Chunk ${payload.chunkIndex} failed merkle proof verification`,
-        ),
-      );
+      handler.reject(new Error(`Chunk ${payload.chunkIndex} failed merkle proof verification`));
       this.#activeDownloads.delete(payload.fileId);
       if (handler.timeoutId) {
         clearTimeout(handler.timeoutId);
@@ -438,10 +414,7 @@ class FileClientHandler implements ClientRpcHandler {
 
     if (!handler.chunks.has(payload.chunkIndex)) {
       if (handler.encryptionKey) {
-        payload.chunkData = await decryptUpdate(
-          handler.encryptionKey,
-          payload.chunkData,
-        );
+        payload.chunkData = await decryptUpdate(handler.encryptionKey, payload.chunkData);
       }
       handler.chunks.set(payload.chunkIndex, payload.chunkData);
       await this.#checkDownloadCompletion(handler);
@@ -454,9 +427,7 @@ class FileClientHandler implements ClientRpcHandler {
     }
     const chunkSize = handler.encryptionKey ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
     const expectedChunks =
-      handler.fileMetadata.size === 0
-        ? 1
-        : Math.ceil(handler.fileMetadata.size / chunkSize);
+      handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / chunkSize);
     if (handler.chunks.size >= expectedChunks) {
       try {
         const fileData = new Uint8Array(expectedChunks * CHUNK_SIZE);
@@ -469,13 +440,9 @@ class FileClientHandler implements ClientRpcHandler {
           fileData.set(chunk, offset);
           offset += chunk.length;
         }
-        const file = new File(
-          [fileData.slice(0, offset)],
-          handler.fileMetadata.filename,
-          {
-            type: handler.fileMetadata.mimeType,
-          },
-        );
+        const file = new File([fileData.slice(0, offset)], handler.fileMetadata.filename, {
+          type: handler.fileMetadata.mimeType,
+        });
         handler.resolve(file);
       } catch (err) {
         handler.reject(err as Error);

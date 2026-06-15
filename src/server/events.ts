@@ -4,11 +4,7 @@ import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
 
-export type ClientDisconnectReason =
-  | "abort"
-  | "stream-ended"
-  | "manual"
-  | "error";
+export type ClientDisconnectReason = "abort" | "stream-ended" | "manual" | "error";
 
 export type ClientMessageDirection = "in" | "out";
 
@@ -171,11 +167,7 @@ export type SessionEvents<Context extends ServerContext = ServerContext> = {
    * Emitted when the session is about to be disposed.
    * This allows handlers to clean up any session-related resources.
    */
-  dispose: (data: {
-    documentId: string;
-    namespacedDocumentId: string;
-    sessionId: string;
-  }) => void;
+  dispose: (data: { documentId: string; namespacedDocumentId: string; sessionId: string }) => void;
 };
 
 export type ServerEvents<Context extends ServerContext = ServerContext> = {
@@ -344,9 +336,5 @@ export type ServerEvents<Context extends ServerContext = ServerContext> = {
   /**
    * Emitted when rate limit state is updated
    */
-  "rate-limit-state-updated": (data: {
-    key: string;
-    tokens: number;
-    trackBy: string;
-  }) => void;
+  "rate-limit-state-updated": (data: { key: string; tokens: number; trackBy: string }) => void;
 };

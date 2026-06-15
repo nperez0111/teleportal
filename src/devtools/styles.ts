@@ -106,23 +106,23 @@ export const devtoolsStyles = `
 /* Spacing - Compact */
 .devtools-px-1 { padding-left: 4px; padding-right: 4px; }
 .devtools-px-2 { padding-left: 6px; padding-right: 6px; }
-.devtools-py-0\.5 { padding-top: 2px; padding-bottom: 2px; }
+.devtools-py-0.5 { padding-top: 2px; padding-bottom: 2px; }
 .devtools-py-1 { padding-top: 3px; padding-bottom: 3px; }
-.devtools-py-1\.5 { padding-top: 4px; padding-bottom: 4px; }
-.devtools-p-1\.5 { padding: 4px; }
+.devtools-py-1.5 { padding-top: 4px; padding-bottom: 4px; }
+.devtools-p-1.5 { padding: 4px; }
 .devtools-p-2 { padding: 6px; }
 .devtools-p-3 { padding: 8px; }
 .devtools-p-4 { padding: 12px; }
-.devtools-mt-0\.5 { margin-top: 2px; }
-.devtools-mb-0\.5 { margin-bottom: 2px; }
+.devtools-mt-0.5 { margin-top: 2px; }
+.devtools-mb-0.5 { margin-bottom: 2px; }
 .devtools-mb-1 { margin-bottom: 4px; }
 .devtools-gap-1 { gap: 4px; }
-.devtools-gap-1\.5 { gap: 8px; }
+.devtools-gap-1.5 { gap: 8px; }
 .devtools-gap-2 { gap: 10px; }
 .devtools-gap-3 { gap: 14px; }
-.devtools-space-y-0\.5 > * + * { margin-top: 2px; }
+.devtools-space-y-0.5 > * + * { margin-top: 2px; }
 .devtools-space-y-1 > * + * { margin-top: 4px; }
-.devtools-space-y-1\.5 > * + * { margin-top: 6px; }
+.devtools-space-y-1.5 > * + * { margin-top: 6px; }
 .devtools-space-y-2 > * + * { margin-top: 8px; }
 
 /* Typography */
@@ -130,7 +130,7 @@ export const devtoolsStyles = `
 .devtools-text-sm { font-size: 12px; line-height: 1.4; }
 .devtools-text-base { font-size: 13px; line-height: 1.4; }
 .devtools-text-lg { font-size: 14px; line-height: 1.4; }
-.devtools-text-\[10px\] { font-size: 11px; }
+.devtools-text-[10px] { font-size: 11px; }
 .devtools-font-mono { font-family: var(--dt-font-mono); }
 .devtools-font-medium { font-weight: 500; }
 .devtools-font-semibold { font-weight: 600; }
@@ -166,28 +166,28 @@ export const devtoolsStyles = `
 .devtools-rounded-full { border-radius: 50%; }
 
 /* Sizing */
-.devtools-w-1\.5 { width: 5px; height: 5px; }
+.devtools-w-1.5 { width: 5px; height: 5px; }
 .devtools-w-2 { width: 6px; height: 6px; }
 .devtools-w-3 { width: 10px; }
 .devtools-w-4 { width: 14px; }
 .devtools-w-16 { width: 50px; }
 .devtools-w-32 { width: auto; min-width: 70px; } /* Badge - auto width */
 .devtools-w-96 { width: 320px; }
-.devtools-h-1\.5 { height: 5px; }
+.devtools-h-1.5 { height: 5px; }
 .devtools-h-2 { height: 6px; }
-.devtools-min-w-\[60px\] { min-width: 50px; }
+.devtools-min-w-[60px] { min-width: 50px; }
 .devtools-max-h-24 { max-height: 5rem; }
 .devtools-max-h-32 { max-height: 6rem; }
 .devtools-max-h-48 { max-height: 10rem; }
-.devtools-max-h-\[60vh\] { max-height: 60vh; }
+.devtools-max-h-[60vh] { max-height: 60vh; }
 
 /* Interactive */
 .devtools-cursor-pointer { cursor: pointer; }
 .devtools-transition-colors { transition: background-color 100ms; }
-.devtools-hover\:bg-gray-50:hover { background: var(--dt-bg-hover); }
-.devtools-hover\:bg-gray-200:hover { background: var(--dt-bg-tertiary); }
-.devtools-hover\:text-gray-900:hover { color: var(--dt-text-primary); }
-.devtools-hover\:underline:hover { text-decoration: underline; }
+.devtools-hover:bg-gray-50:hover { background: var(--dt-bg-hover); }
+.devtools-hover:bg-gray-200:hover { background: var(--dt-bg-tertiary); }
+.devtools-hover:text-gray-900:hover { color: var(--dt-text-primary); }
+.devtools-hover:underline:hover { text-decoration: underline; }
 
 /* Message Type Badges - Compact */
 .devtools-bg-blue-500 { background: var(--dt-sync-1); }
@@ -280,14 +280,14 @@ export const devtoolsStyles = `
 }
 
 /* Message List Item - Clean & Spacious */
-.devtools-px-2.devtools-py-1\.5.devtools-border-b {
+.devtools-px-2.devtools-py-1.5.devtools-border-b {
   padding: 10px 12px;
   margin: 0;
   border-bottom: 1px solid var(--dt-border);
   background: var(--dt-bg-primary);
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
-.devtools-px-2.devtools-py-1\.5.devtools-border-b:hover {
+.devtools-px-2.devtools-py-1.5.devtools-border-b:hover {
   background: var(--dt-bg-hover);
 }
 
@@ -391,7 +391,7 @@ export const devtoolsStyles = `
 }
 
 /* Inspector */
-.devtools-p-1\.5.devtools-rounded.devtools-space-y-1\.5 {
+.devtools-p-1.5.devtools-rounded.devtools-space-y-1.5 {
   padding: 6px;
   background: var(--dt-bg-secondary);
   border-radius: var(--dt-radius);
@@ -453,16 +453,16 @@ pre.devtools-bg-gray-50 {
   border-radius: var(--dt-radius);
 }
 
-.devtools-hover\:bg-gray-50.devtools-px-1.devtools-py-0\.5.devtools-rounded {
+.devtools-hover:bg-gray-50.devtools-px-1.devtools-py-0.5.devtools-rounded {
   padding: 3px 5px;
   border-radius: 2px;
 }
-.devtools-hover\:bg-gray-50.devtools-px-1.devtools-py-0\.5.devtools-rounded:hover {
+.devtools-hover:bg-gray-50.devtools-px-1.devtools-py-0.5.devtools-rounded:hover {
   background: var(--dt-bg-hover);
 }
 
 /* Filter Indicator */
-.devtools-w-1\.5.devtools-h-1\.5.devtools-rounded-full.devtools-bg-green-500 {
+.devtools-w-1.5.devtools-h-1.5.devtools-rounded-full.devtools-bg-green-500 {
   width: 5px;
   height: 5px;
   background: var(--dt-success);

@@ -186,11 +186,7 @@ You can create custom storage implementations for any backend. Here's how:
 ### Example: Custom DocumentStorage
 
 ```typescript
-import type {
-  DocumentStorage,
-  Document,
-  DocumentMetadata,
-} from "teleportal/storage";
+import type { DocumentStorage, Document, DocumentMetadata } from "teleportal/storage";
 import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
 
 export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
@@ -219,10 +215,7 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
     };
   }
 
-  async writeDocumentMetadata(
-    documentId: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
     await myBackend.storeMetadata(documentId, metadata);
   }
 
@@ -244,12 +237,7 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
 ### Example: Custom FileStorage
 
 ```typescript
-import type {
-  FileStorage,
-  File,
-  FileMetadata,
-  FileUploadResult,
-} from "teleportal/storage";
+import type { FileStorage, File, FileMetadata, FileUploadResult } from "teleportal/storage";
 
 export class S3FileStorage implements FileStorage {
   readonly type = "file-storage" as const;
@@ -261,9 +249,7 @@ export class S3FileStorage implements FileStorage {
     if (!metadata) return null;
 
     // Fetch chunks from S3
-    const chunks = await Promise.all(
-      metadata.chunkKeys.map((key) => s3.getObject(key)),
-    );
+    const chunks = await Promise.all(metadata.chunkKeys.map((key) => s3.getObject(key)));
 
     return {
       id: fileId,
@@ -373,14 +359,11 @@ Creates document, file, and milestone storage based on the same unstorage instan
 import { createUnstorage, getFileRpcHandlers } from "teleportal/storage";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
 
-const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(
-  storage,
-  {
-    fileKeyPrefix: "file",
-    documentKeyPrefix: "document",
-    milestoneKeyPrefix: "document-milestone",
-  },
-);
+const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(storage, {
+  fileKeyPrefix: "file",
+  documentKeyPrefix: "document",
+  milestoneKeyPrefix: "document-milestone",
+});
 
 // Create handlers with storage instances
 const fileHandlers = getFileRpcHandlers(fileStorage);
@@ -482,13 +465,10 @@ const docStorage = createStorage({
   driver: postgresDriver({ connectionString: "..." }),
 });
 
-const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(
-  docStorage,
-  {
-    documentKeyPrefix: "doc",
-    scanKeys: true, // Recommended for relational databases
-  },
-);
+const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(docStorage, {
+  documentKeyPrefix: "doc",
+  scanKeys: true, // Recommended for relational databases
+});
 
 // Create independent storage for milestones
 const msStorage = new RedisMilestoneStorage(redisClient);
@@ -522,14 +502,11 @@ const storage = createStorage({
   }),
 });
 
-const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(
-  storage,
-  {
-    fileKeyPrefix: "file",
-    documentKeyPrefix: "doc",
-    encrypted: false,
-  },
-);
+const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(storage, {
+  fileKeyPrefix: "file",
+  documentKeyPrefix: "doc",
+  encrypted: false,
+});
 
 const server = new Server({
   getStorage: async (ctx) => documentStorage,

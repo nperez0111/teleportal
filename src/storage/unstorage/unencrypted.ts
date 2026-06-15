@@ -1,16 +1,8 @@
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 
-import {
-  getStateVectorFromUpdate,
-  mergeUpdates,
-  type Update,
-} from "teleportal";
-import {
-  decodeContentMap,
-  encodeContentMap,
-  mergeContentMaps,
-} from "teleportal/attribution";
+import { getStateVectorFromUpdate, mergeUpdates, type Update } from "teleportal";
+import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import type { Document, DocumentMetadata, EncodedContentMap } from "../types";
 import { UnencryptedDocumentStorage } from "../unencrypted";
 import { calculateDocumentSize } from "../utils";
@@ -111,9 +103,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
       const meta = await this.getDocumentMetadata(key);
       const updateSize = calculateDocumentSize(update);
-      const sizeBytes = overwriteKeys
-        ? updateSize
-        : (meta.sizeBytes ?? 0) + updateSize;
+      const sizeBytes = overwriteKeys ? updateSize : (meta.sizeBytes ?? 0) + updateSize;
 
       await this.writeDocumentMetadata(key, {
         ...meta,
@@ -146,15 +136,11 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     };
   }
 
-  private async compact(
-    key: string,
-    asyncDeleteKeys = true,
-  ): Promise<Update | null> {
+  private async compact(key: string, asyncDeleteKeys = true): Promise<Update | null> {
     const prefixedKey = this.#getKey(key);
     const keys = this.options.scanKeys
       ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))
-          ?.keys ?? new Set());
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))?.keys ?? new Set());
 
     if (keys.size === 0) {
       return null;
@@ -165,9 +151,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
     const update = mergeUpdates(
       // TODO little naive, but it's ok for now
-      (
-        await Promise.all([...keys].map((key) => this.storage.getItemRaw(key)))
-      ).filter(Boolean),
+      (await Promise.all([...keys].map((key) => this.storage.getItemRaw(key)))).filter(Boolean),
     ) as Update;
 
     // asynchronously store the update and delete the keys
@@ -186,10 +170,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     await this.compact(key, false);
   }
 
-  async writeDocumentMetadata(
-    key: string,
-    metadata: DocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
     await this.storage.setItem(this.#getMetadataKey(key), metadata);
   }
 
@@ -209,29 +190,20 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
 
     return {
       ...existing,
-      createdAt:
-        typeof existing.createdAt === "number" ? existing.createdAt : now,
-      updatedAt:
-        typeof existing.updatedAt === "number" ? existing.updatedAt : now,
-      encrypted:
-        typeof existing.encrypted === "boolean" ? existing.encrypted : false,
+      createdAt: typeof existing.createdAt === "number" ? existing.createdAt : now,
+      updatedAt: typeof existing.updatedAt === "number" ? existing.updatedAt : now,
+      encrypted: typeof existing.encrypted === "boolean" ? existing.encrypted : false,
     };
   }
 
-  async retrieveAttribution(
-    key: string,
-  ): Promise<EncodedContentMap | null> {
-    const attrKeys = await this.storage.getKeys(
-      this.#getAttributionKeyPrefix(key),
-    );
+  async retrieveAttribution(key: string): Promise<EncodedContentMap | null> {
+    const attrKeys = await this.storage.getKeys(this.#getAttributionKeyPrefix(key));
     if (attrKeys.length === 0) return null;
     if (attrKeys.length === 1) {
       return await this.storage.getItemRaw(attrKeys[0]);
     }
     const maps = (
-      await Promise.all(
-        attrKeys.map((k) => this.storage.getItemRaw<EncodedContentMap>(k)),
-      )
+      await Promise.all(attrKeys.map((k) => this.storage.getItemRaw<EncodedContentMap>(k)))
     ).filter(Boolean) as EncodedContentMap[];
     if (maps.length === 0) return null;
     if (maps.length === 1) return maps[0];
@@ -247,17 +219,14 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     // Delete updates and index
     const keys = this.options.scanKeys
       ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
-      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))
-          ?.keys ?? new Set());
+      : ((await this.storage.getItem<{ keys: Set<string> }>(prefixedKey))?.keys ?? new Set());
 
     if (keys.size > 0) {
       await Promise.all([...keys].map((k) => this.storage.removeItem(k)));
     }
 
     // Delete attribution data
-    const attrKeys = await this.storage.getKeys(
-      this.#getAttributionKeyPrefix(key),
-    );
+    const attrKeys = await this.storage.getKeys(this.#getAttributionKeyPrefix(key));
     if (attrKeys.length > 0) {
       await Promise.all(attrKeys.map((k) => this.storage.removeItem(k)));
     }

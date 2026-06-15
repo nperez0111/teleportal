@@ -199,10 +199,7 @@ export function TeleportalDevtoolsPanel() {
         if (cleanup) {
           cleanup();
         }
-        if (
-          containerRef.current &&
-          devtoolsRef.current.parentNode === containerRef.current
-        ) {
+        if (containerRef.current && devtoolsRef.current.parentNode === containerRef.current) {
           containerRef.current.removeChild(devtoolsRef.current);
         }
       }

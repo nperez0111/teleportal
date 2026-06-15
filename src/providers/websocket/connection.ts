@@ -77,8 +77,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     this.#url = options.url;
     this.#protocols = options.protocols ?? [];
     this.#WebSocketImpl = options.WebSocket ?? WebSocket;
-    this.#connectionTimeoutMs =
-      options.connectionTimeout ?? DEFAULT_CONNECTION_TIMEOUT;
+    this.#connectionTimeoutMs = options.connectionTimeout ?? DEFAULT_CONNECTION_TIMEOUT;
 
     // Initialize the state with the correct WebSocket context
     this._state = {
@@ -89,9 +88,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
   protected async initConnection(): Promise<void> {
     if (this.destroyed) {
-      throw new Error(
-        "WebSocketConnection is destroyed, create a new instance",
-      );
+      throw new Error("WebSocketConnection is destroyed, create a new instance");
     }
 
     if (!this.shouldAttemptConnection()) {
@@ -117,10 +114,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       // Set up connection timeout to handle cases where connection gets stuck.
       // Proactively close the socket so we don't leave it hanging.
       this.#connectionTimeout = this.timerManager.setTimeout(() => {
-        if (
-          this.#currentWebSocket === websocket &&
-          this.state.type === "connecting"
-        ) {
+        if (this.#currentWebSocket === websocket && this.state.type === "connecting") {
           this.#currentWebSocket = null;
           this.#cleanupWebSocketListeners(websocket);
           try {
@@ -191,9 +185,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
             readyState === this.#WebSocketImpl.CLOSED ||
             readyState === this.#WebSocketImpl.CLOSING
           ) {
-            this.handleConnectionError(
-              new Error("WebSocket error", { cause: event }),
-            );
+            this.handleConnectionError(new Error("WebSocket error", { cause: event }));
           }
           // If still CONNECTING or already OPEN, ignore the error - let close event handle failures
         },
@@ -220,8 +212,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           const currentState = this.state.type;
           const readyState = websocket.readyState;
           const wasOpenOrClosing =
-            readyState === this.#WebSocketImpl.OPEN ||
-            readyState === this.#WebSocketImpl.CLOSING;
+            readyState === this.#WebSocketImpl.OPEN || readyState === this.#WebSocketImpl.CLOSING;
 
           // If the connection was successfully opened (state is connected OR readyState indicates
           // it was open), treat as normal close
@@ -244,12 +235,9 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
             } catch {
               // ignore
             }
-            const error = new Error(
-              "WebSocket connection closed during handshake",
-              {
-                cause: event,
-              },
-            );
+            const error = new Error("WebSocket connection closed during handshake", {
+              cause: event,
+            });
             this.handleConnectionError(error);
             return;
           }
@@ -260,10 +248,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
         open: (event: Event) => {
           // Only handle open if this is still the current WebSocket and we're still connecting
-          if (
-            websocket !== this.#currentWebSocket ||
-            this.state.type !== "connecting"
-          ) {
+          if (websocket !== this.#currentWebSocket || this.state.type !== "connecting") {
             return;
           }
 
@@ -286,9 +271,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
       this.#eventListeners.set(websocket, listeners);
     } catch (error) {
-      this.handleConnectionError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      this.handleConnectionError(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -333,11 +316,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
   protected async sendMessage(message: Message): Promise<void> {
     const ws = this.#currentWebSocket;
-    if (
-      this.state.type === "connected" &&
-      ws &&
-      ws.readyState === this.#WebSocketImpl.OPEN
-    ) {
+    if (this.state.type === "connected" && ws && ws.readyState === this.#WebSocketImpl.OPEN) {
       try {
         ws.send(message.encoded);
         this.call("sent-message", message);
@@ -352,11 +331,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
 
   protected sendHeartbeat(): void {
     const ws = this.#currentWebSocket;
-    if (
-      this.state.type === "connected" &&
-      ws &&
-      ws.readyState === this.#WebSocketImpl.OPEN
-    ) {
+    if (this.state.type === "connected" && ws && ws.readyState === this.#WebSocketImpl.OPEN) {
       try {
         ws.send(encodePingMessage());
       } catch (e) {

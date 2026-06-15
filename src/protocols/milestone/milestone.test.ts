@@ -94,10 +94,7 @@ describe("Milestone RPC Methods", () => {
 
       expect(handler).toBeDefined();
 
-      const result = await handler!.handler(
-        { snapshotIds: [], includeDeleted: false },
-        context,
-      );
+      const result = await handler!.handler({ snapshotIds: [], includeDeleted: false }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestones: unknown[] };
@@ -160,10 +157,7 @@ describe("Milestone RPC Methods", () => {
       const handlers = getMilestoneRpcHandlers(mockStorage);
       const handler = handlers["milestoneCreate"];
 
-      const result = await handler!.handler(
-        { name: "v1.0", snapshot },
-        context,
-      );
+      const result = await handler!.handler({ name: "v1.0", snapshot }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestone: { id: string } };
@@ -185,10 +179,7 @@ describe("Milestone RPC Methods", () => {
       const handlers = getMilestoneRpcHandlers(mockStorage);
       const handler = handlers["milestoneUpdateName"];
 
-      const result = await handler!.handler(
-        { milestoneId: "ms-123", name: "v2.0" },
-        context,
-      );
+      const result = await handler!.handler({ milestoneId: "ms-123", name: "v2.0" }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestone: { name: string } };
@@ -238,10 +229,7 @@ describe("Milestone RPC Methods", () => {
       const handlers = getMilestoneRpcHandlers(mockStorage);
       const handler = handlers["milestoneList"];
 
-      const result = await handler!.handler(
-        { snapshotIds: [], includeDeleted: false },
-        context,
-      );
+      const result = await handler!.handler({ snapshotIds: [], includeDeleted: false }, context);
 
       expect(result.response).toHaveProperty("type", "error");
       const response = result.response as { statusCode: number };

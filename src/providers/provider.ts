@@ -21,10 +21,7 @@ import {
   encodeEncryptedUpdate,
   type EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
-import {
-  getYTransportFromYDoc,
-  type FanOutReader,
-} from "teleportal/transports";
+import { getYTransportFromYDoc, type FanOutReader } from "teleportal/transports";
 import {
   type MilestoneCreateResponse,
   type MilestoneDeleteResponse,
@@ -55,10 +52,7 @@ import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { Connection, ConnectionContext, ConnectionState } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 import { RpcClient, RpcOperationError } from "./rpc-client";
-import type {
-  ClientRpcHandlerRegistry,
-  ClientRpcContext,
-} from "./rpc-handlers";
+import type { ClientRpcHandlerRegistry, ClientRpcContext } from "./rpc-handlers";
 
 /**
  * Error thrown when a milestone operation is denied
@@ -312,10 +306,7 @@ export class Provider<
       this.init();
     }
 
-    this.abortController.signal.addEventListener(
-      "abort",
-      connection.on("connected", this.init),
-    );
+    this.abortController.signal.addEventListener("abort", connection.on("connected", this.init));
     this.abortController.signal.addEventListener(
       "abort",
       connection.on("connected", () => {
@@ -412,10 +403,7 @@ export class Provider<
     const persistenceKey = `${this.#indexedDBPrefix}${this.document}`;
 
     try {
-      this.#localPersistence = new IndexeddbPersistence(
-        persistenceKey,
-        this.doc,
-      );
+      this.#localPersistence = new IndexeddbPersistence(persistenceKey, this.doc);
 
       // Set up event listener for local persistence
       this.#localPersistence.on("synced", () => {
@@ -472,13 +460,7 @@ export class Provider<
     }
   };
 
-  private subdocListener({
-    loaded,
-    removed,
-  }: {
-    loaded: Set<Y.Doc>;
-    removed: Set<Y.Doc>;
-  }) {
+  private subdocListener({ loaded, removed }: { loaded: Set<Y.Doc>; removed: Set<Y.Doc> }) {
     for (const doc of loaded) {
       if (this.subdocs.has(doc.guid)) {
         continue;
@@ -533,9 +515,7 @@ export class Provider<
    * @param options - Provider options for the new document (excluding `client`, which is reused)
    * @returns A new Provider instance for the new document
    */
-  public switchDocument(
-    options: Omit<ProviderOptions<T>, "connection">,
-  ): Provider<T> {
+  public switchDocument(options: Omit<ProviderOptions<T>, "connection">): Provider<T> {
     this.destroy({ destroyConnection: false });
     return this.openDocument(options);
   }
@@ -543,9 +523,7 @@ export class Provider<
   /**
    * Create a new provider instance for a new document, without destroying this provider.
    */
-  public openDocument(
-    options: Omit<ProviderOptions<T>, "connection">,
-  ): Provider<T> {
+  public openDocument(options: Omit<ProviderOptions<T>, "connection">): Provider<T> {
     const doc = new Y.Doc();
     const awareness = new Awareness(doc);
 
@@ -554,8 +532,7 @@ export class Provider<
       ydoc: doc,
       awareness,
       getTransport: options.getTransport ?? (this.#getTransport as any),
-      enableOfflinePersistence:
-        options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
+      enableOfflinePersistence: options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix ?? this.#indexedDBPrefix,
       encryptionKey: options.encryptionKey ?? this.encryptionKey,
       rpcHandlers: options.rpcHandlers ?? this.#rpcHandlers,
@@ -616,14 +593,11 @@ export class Provider<
     this.#synced = synced;
     // Invalidate cached promise when connection state changes to disconnected or errored
     // (but not on every update, only when it matters)
-    this.#syncedUnsubscribe = this.#underlyingConnection.on(
-      "update",
-      (state) => {
-        if (state.type === "disconnected" || state.type === "errored") {
-          this.#clearSyncedPromise();
-        }
-      },
-    );
+    this.#syncedUnsubscribe = this.#underlyingConnection.on("update", (state) => {
+      if (state.type === "disconnected" || state.type === "errored") {
+        this.#clearSyncedPromise();
+      }
+    });
     return synced;
   }
 
@@ -660,16 +634,13 @@ export class Provider<
       };
 
       // Listen for the messages-in-flight event
-      unsubscribe = this.#underlyingConnection.on(
-        "messages-in-flight",
-        (hasInFlight) => {
-          if (!resolved && !hasInFlight) {
-            resolved = true;
-            cleanup();
-            resolve();
-          }
-        },
-      );
+      unsubscribe = this.#underlyingConnection.on("messages-in-flight", (hasInFlight) => {
+        if (!resolved && !hasInFlight) {
+          resolved = true;
+          cleanup();
+          resolve();
+        }
+      });
     });
   }
 
@@ -759,8 +730,7 @@ export class Provider<
       documentId: meta.documentId,
       createdAt: meta.createdAt,
       createdBy: meta.createdBy,
-      getSnapshot: (documentId: string, id: string) =>
-        this.getMilestoneSnapshot(id),
+      getSnapshot: (documentId: string, id: string) => this.getMilestoneSnapshot(id),
     });
   }
 
@@ -771,9 +741,7 @@ export class Provider<
    * @throws Error if the operation is denied or if the connection fails
    */
   async listMilestones(
-    optionsOrSnapshotIds?:
-      | string[]
-      | { includeDeleted?: boolean; snapshotIds?: string[] },
+    optionsOrSnapshotIds?: string[] | { includeDeleted?: boolean; snapshotIds?: string[] },
   ): Promise<Milestone[]> {
     const snapshotIds = Array.isArray(optionsOrSnapshotIds)
       ? optionsOrSnapshotIds
@@ -789,9 +757,7 @@ export class Provider<
         { snapshotIds, includeDeleted },
       );
 
-      return response.milestones.map((meta) =>
-        this.#createMilestoneFromMeta(meta),
-      );
+      return response.milestones.map((meta) => this.#createMilestoneFromMeta(meta));
     } catch (error) {
       if (error instanceof RpcOperationError) {
         throw new MilestoneOperationError("list milestones", error);
@@ -822,24 +788,15 @@ export class Provider<
       // (see createMilestone for client snapshots; the server uses the same
       // format for automatic milestones). Decrypt each message's payload and
       // merge them back into a single plaintext Y.js update.
-      const decoded = decodeEncryptedUpdate(
-        snapshot as unknown as EncryptedUpdatePayload,
-      );
-      const encryptedUpdates =
-        decoded.type === "update" ? decoded.updates : [];
+      const decoded = decodeEncryptedUpdate(snapshot as unknown as EncryptedUpdatePayload);
+      const encryptedUpdates = decoded.type === "update" ? decoded.updates : [];
       const updates = await Promise.all(
         encryptedUpdates.map(
-          (message) =>
-            decryptUpdate(
-              this.encryptionKey!,
-              message.payload,
-            ) as Promise<Update>,
+          (message) => decryptUpdate(this.encryptionKey!, message.payload) as Promise<Update>,
         ),
       );
       const plaintext =
-        updates.length === 0
-          ? Y.encodeStateAsUpdateV2(new Y.Doc())
-          : mergeUpdates(updates);
+        updates.length === 0 ? Y.encodeStateAsUpdateV2(new Y.Doc()) : mergeUpdates(updates);
       return plaintext as unknown as MilestoneSnapshot;
     } catch (error) {
       if (error instanceof RpcOperationError) {
@@ -874,12 +831,11 @@ export class Provider<
     }
 
     try {
-      const response =
-        await this.#rpcClient.sendRequest<MilestoneCreateResponse>(
-          this.document,
-          "milestoneCreate",
-          { name, snapshot },
-        );
+      const response = await this.#rpcClient.sendRequest<MilestoneCreateResponse>(
+        this.document,
+        "milestoneCreate",
+        { name, snapshot },
+      );
 
       return this.#createMilestoneFromMeta(response.milestone);
     } catch (error) {
@@ -897,17 +853,13 @@ export class Provider<
    * @returns Promise that resolves with the updated Milestone instance
    * @throws Error if the operation is denied or if the connection fails
    */
-  async updateMilestoneName(
-    milestoneId: string,
-    name: string,
-  ): Promise<Milestone> {
+  async updateMilestoneName(milestoneId: string, name: string): Promise<Milestone> {
     try {
-      const response =
-        await this.#rpcClient.sendRequest<MilestoneUpdateNameResponse>(
-          this.document,
-          "milestoneUpdateName",
-          { milestoneId, name },
-        );
+      const response = await this.#rpcClient.sendRequest<MilestoneUpdateNameResponse>(
+        this.document,
+        "milestoneUpdateName",
+        { milestoneId, name },
+      );
 
       return this.#createMilestoneFromMeta(response.milestone);
     } catch (error) {
@@ -926,11 +878,9 @@ export class Provider<
    */
   async deleteMilestone(milestoneId: string): Promise<void> {
     try {
-      await this.#rpcClient.sendRequest<MilestoneDeleteResponse>(
-        this.document,
-        "milestoneDelete",
-        { milestoneId },
-      );
+      await this.#rpcClient.sendRequest<MilestoneDeleteResponse>(this.document, "milestoneDelete", {
+        milestoneId,
+      });
     } catch (error) {
       if (error instanceof RpcOperationError) {
         throw new MilestoneOperationError("delete milestone", error);
@@ -947,12 +897,11 @@ export class Provider<
    */
   async restoreMilestone(milestoneId: string): Promise<Milestone> {
     try {
-      const response =
-        await this.#rpcClient.sendRequest<MilestoneRestoreResponse>(
-          this.document,
-          "milestoneRestore",
-          { milestoneId },
-        );
+      const response = await this.#rpcClient.sendRequest<MilestoneRestoreResponse>(
+        this.document,
+        "milestoneRestore",
+        { milestoneId },
+      );
 
       return this.#createMilestoneFromMeta(response.milestone);
     } catch (error) {
@@ -973,12 +922,11 @@ export class Provider<
    * @returns A sorted list of activity entries
    */
   async getActivity(options?: AttributionFilter): Promise<ActivityEntry[]> {
-    const response =
-      await this.#rpcClient.sendRequest<AttributionActivityResponse>(
-        this.document,
-        "attributionActivity",
-        { ...options },
-      );
+    const response = await this.#rpcClient.sendRequest<AttributionActivityResponse>(
+      this.document,
+      "attributionActivity",
+      { ...options },
+    );
     return response.activity;
   }
 
@@ -989,17 +937,13 @@ export class Provider<
    *
    * @param filter - Optional server-side filter (`userId`, `from`/`to`)
    */
-  async getAttributionMap(
-    filter?: AttributionFilter,
-  ): Promise<ContentMap | null> {
+  async getAttributionMap(filter?: AttributionFilter): Promise<ContentMap | null> {
     const response = await this.#rpcClient.sendRequest<AttributionGetResponse>(
       this.document,
       "attributionGet",
       filter ? { filter } : {},
     );
-    this.#attributionMap = response.contentMap
-      ? decodeContentMap(response.contentMap)
-      : null;
+    this.#attributionMap = response.contentMap ? decodeContentMap(response.contentMap) : null;
     return this.#attributionMap;
   }
 
@@ -1073,9 +1017,7 @@ export class Provider<
    * client-side by intersecting the document's full ContentMap with the
    * milestone's operation IDs. Returns null when no attribution data exists.
    */
-  async getMilestoneContentMap(
-    milestoneId: string,
-  ): Promise<ContentMap | null> {
+  async getMilestoneContentMap(milestoneId: string): Promise<ContentMap | null> {
     const [map, ids] = await Promise.all([
       this.#ensureAttributionMap(),
       this.#milestoneContentIds(milestoneId),
@@ -1124,10 +1066,7 @@ export class Provider<
     toMilestoneId: string,
     options?: AttributionFilter,
   ): Promise<ActivityEntry[]> {
-    const map = await this.getChangesetContentMap(
-      fromMilestoneId,
-      toMilestoneId,
-    );
+    const map = await this.getChangesetContentMap(fromMilestoneId, toMilestoneId);
     if (!map) return [];
     return getActivity(map, options);
   }
@@ -1162,16 +1101,13 @@ export class Provider<
     // Set up message routing for RPC handlers
     // We route messages from the connection directly, not through RpcClient,
     // so handlers can process responses even if RpcClient has already handled them
-    const unregister = this.#underlyingConnection.on(
-      "received-message",
-      async (message) => {
-        if (message.type === "rpc") {
-          await this.#routeRpcMessage(message);
-        } else if (message.type === "ack") {
-          await this.#routeAckMessage(message);
-        }
-      },
-    );
+    const unregister = this.#underlyingConnection.on("received-message", async (message) => {
+      if (message.type === "rpc") {
+        await this.#routeRpcMessage(message);
+      } else if (message.type === "ack") {
+        await this.#routeAckMessage(message);
+      }
+    });
     this.#handlerCleanups.push(unregister);
 
     // Track which handler instances we've already set up (since fileUpload and fileDownload share the same instance)
@@ -1195,12 +1131,9 @@ export class Provider<
         !setupHandlers.has(handler)
       ) {
         setupHandlers.add(handler);
-        (handler as any).setRpcClient(
-          this.#rpcClient,
-          async (msg: Message<any>) => {
-            await this.#rpcClient.sendStream(msg as RpcMessage<any>);
-          },
-        );
+        (handler as any).setRpcClient(this.#rpcClient, async (msg: Message<any>) => {
+          await this.#rpcClient.sendStream(msg as RpcMessage<any>);
+        });
       }
     }
   }
@@ -1265,14 +1198,9 @@ export class Provider<
    * @throws FileOperationError if file handlers are not registered
    * @throws FileOperationDeniedError if the upload is denied by the server
    */
-  async uploadFile(
-    file: File,
-    fileId?: string,
-    encryptionKey?: CryptoKey,
-  ): Promise<string> {
+  async uploadFile(file: File, fileId?: string, encryptionKey?: CryptoKey): Promise<string> {
     // Check both fileUpload and fileDownload since they might be the same handler instance
-    const fileHandler = (this.#rpcHandlers.fileUpload ||
-      this.#rpcHandlers.fileDownload) as any;
+    const fileHandler = (this.#rpcHandlers.fileUpload || this.#rpcHandlers.fileDownload) as any;
     if (!fileHandler || typeof (fileHandler as any).uploadFile !== "function") {
       throw new FileOperationError(
         "upload file",
@@ -1306,18 +1234,10 @@ export class Provider<
    * @throws FileOperationError if file handlers are not registered
    * @throws FileOperationDeniedError if the download is denied by the server
    */
-  async downloadFile(
-    fileId: string,
-    encryptionKey?: CryptoKey,
-    timeout?: number,
-  ): Promise<File> {
+  async downloadFile(fileId: string, encryptionKey?: CryptoKey, timeout?: number): Promise<File> {
     // Check both fileUpload and fileDownload since they might be the same handler instance
-    const fileHandler = (this.#rpcHandlers.fileDownload ||
-      this.#rpcHandlers.fileUpload) as any;
-    if (
-      !fileHandler ||
-      typeof (fileHandler as any).downloadFile !== "function"
-    ) {
+    const fileHandler = (this.#rpcHandlers.fileDownload || this.#rpcHandlers.fileUpload) as any;
+    if (!fileHandler || typeof (fileHandler as any).downloadFile !== "function") {
       throw new FileOperationError(
         "download file",
         new Error(
@@ -1388,10 +1308,8 @@ export class Provider<
       options.connection ??
       new FallbackConnection({
         url: url!,
-        websocketTimeout:
-          "websocketTimeout" in options ? options.websocketTimeout : undefined,
-        websocketOptions:
-          "websocketOptions" in options ? options.websocketOptions : undefined,
+        websocketTimeout: "websocketTimeout" in options ? options.websocketTimeout : undefined,
+        websocketOptions: "websocketOptions" in options ? options.websocketOptions : undefined,
         httpOptions: "httpOptions" in options ? options.httpOptions : undefined,
       });
 

@@ -8,26 +8,8 @@
 
 const KEY = "teleportal-identity";
 
-const ADJECTIVES = [
-  "Swift",
-  "Curious",
-  "Bold",
-  "Calm",
-  "Bright",
-  "Keen",
-  "Quiet",
-  "Lucky",
-];
-const ANIMALS = [
-  "Otter",
-  "Falcon",
-  "Fox",
-  "Heron",
-  "Lynx",
-  "Wren",
-  "Bear",
-  "Moth",
-];
+const ADJECTIVES = ["Swift", "Curious", "Bold", "Calm", "Bright", "Keen", "Quiet", "Lucky"];
+const ANIMALS = ["Otter", "Falcon", "Fox", "Heron", "Lynx", "Wren", "Bear", "Moth"];
 
 function randomName(): string {
   // Avoid Math.random bias concerns — this is purely cosmetic demo identity.

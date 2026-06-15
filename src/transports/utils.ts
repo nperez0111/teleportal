@@ -343,9 +343,7 @@ export const toMessageArrayStream = () =>
     },
   });
 
-export const fromMessageArrayStream = <Context extends ClientContext>(
-  context: Context,
-) =>
+export const fromMessageArrayStream = <Context extends ClientContext>(context: Context) =>
   new TransformStream<MessageArray, Message<Context>>({
     transform: (chunk, controller) => {
       for (const message of decodeMessageArray(chunk)) {

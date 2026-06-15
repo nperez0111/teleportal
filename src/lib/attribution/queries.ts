@@ -27,23 +27,14 @@ export function getActivity(
 ): ActivityEntry[] {
   const filtered = filterContentMap(contentMap, (attrs) => {
     if (options?.from !== undefined || options?.to !== undefined) {
-      const timeAttr = attrs.find(
-        (a) => a.name === "insertAt" || a.name === "deleteAt",
-      );
+      const timeAttr = attrs.find((a) => a.name === "insertAt" || a.name === "deleteAt");
       if (timeAttr) {
-        if (
-          options.from !== undefined &&
-          (timeAttr.val as number) < options.from
-        )
-          return false;
-        if (options.to !== undefined && (timeAttr.val as number) > options.to)
-          return false;
+        if (options.from !== undefined && (timeAttr.val as number) < options.from) return false;
+        if (options.to !== undefined && (timeAttr.val as number) > options.to) return false;
       }
     }
     if (options?.userId !== undefined) {
-      const userAttr = attrs.find(
-        (a) => a.name === "insert" || a.name === "delete",
-      );
+      const userAttr = attrs.find((a) => a.name === "insert" || a.name === "delete");
       if (!userAttr || userAttr.val !== options.userId) return false;
     }
     return true;

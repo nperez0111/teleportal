@@ -24,16 +24,10 @@ export function Whiteboard({ provider }: WhiteboardProps) {
 
     let binding: ExcalidrawBinding | null = null;
 
-    binding = new ExcalidrawBinding(
-      yElements,
-      yAssets,
-      api,
-      provider.awareness,
-      {
-        excalidrawDom: excalidrawRef.current,
-        undoManager: new Y.UndoManager(yElements),
-      },
-    );
+    binding = new ExcalidrawBinding(yElements, yAssets, api, provider.awareness, {
+      excalidrawDom: excalidrawRef.current,
+      undoManager: new Y.UndoManager(yElements),
+    });
     setBindings(binding);
 
     return () => {

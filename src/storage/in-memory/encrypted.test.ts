@@ -70,10 +70,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
 
     const updatePayload: DecodedEncryptedUpdatePayload = {
       id: "update-1",
@@ -90,8 +87,7 @@ describe("EncryptedMemoryStorage", () => {
     expect(storedPayload).toBeDefined();
     const decoded = decodeEncryptedUpdate(storedPayload!);
     expect(decoded.type).toBe("update");
-    if (decoded.type === "update")
-      expect(decoded.updates[0].serverVersion).toBe(1);
+    if (decoded.type === "update") expect(decoded.updates[0].serverVersion).toBe(1);
   });
 
   it("returns snapshot + updates on sync step 1 when client is empty", async () => {
@@ -100,10 +96,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
 
     const updatePayload: DecodedEncryptedUpdatePayload = {
       id: "update-1",
@@ -112,18 +105,10 @@ describe("EncryptedMemoryStorage", () => {
       payload: new Uint8Array([5, 6]) as EncryptedBinary,
       contentIds: getEmptyEncodedContentIds(),
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedUpdateMessages([updatePayload]),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedUpdateMessages([updatePayload]));
 
-    const result = await storage.handleSyncStep1(
-      "doc-1",
-      getEmptyEncryptedStateVector(),
-    );
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const result = await storage.handleSyncStep1("doc-1", getEmptyEncryptedStateVector());
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(1);
   });
@@ -134,10 +119,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
 
     const updatePayload: DecodedEncryptedUpdatePayload = {
       id: "update-1",
@@ -146,16 +128,11 @@ describe("EncryptedMemoryStorage", () => {
       payload: new Uint8Array([5, 6]) as EncryptedBinary,
       contentIds: getEmptyEncodedContentIds(),
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedUpdateMessages([updatePayload]),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedUpdateMessages([updatePayload]));
 
     const doc = await storage.getDocument("doc-1");
     expect(doc).not.toBeNull();
-    const decoded = decodeFromSyncStep2(
-      doc!.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(doc!.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(1);
 
@@ -165,13 +142,8 @@ describe("EncryptedMemoryStorage", () => {
   });
 
   it("handleSyncStep1 with no document returns empty update and zero state", async () => {
-    const result = await storage.handleSyncStep1(
-      "doc-1",
-      getEmptyEncryptedStateVector(),
-    );
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const result = await storage.handleSyncStep1("doc-1", getEmptyEncryptedStateVector());
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot).toBeNull();
     expect(decoded.updates.length).toBe(0);
     const state = decodeFromStateVector(result.content.stateVector);
@@ -185,10 +157,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
     const oneUpdate: DecodedEncryptedUpdatePayload = {
       id: "u1",
       snapshotId: snapshot.id,
@@ -196,16 +165,11 @@ describe("EncryptedMemoryStorage", () => {
       payload: new Uint8Array([1]) as EncryptedBinary,
       contentIds: getEmptyEncodedContentIds(),
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedUpdateMessages([oneUpdate]),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedUpdateMessages([oneUpdate]));
 
     const stateVector = getEncryptedStateVector(snapshot.id, 1);
     const result = await storage.handleSyncStep1("doc-1", stateVector);
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot).toBeNull();
     expect(decoded.updates.length).toBe(0);
     const state = decodeFromStateVector(result.content.stateVector);
@@ -219,10 +183,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
     for (let i = 1; i <= 3; i++) {
       await storage.handleEncryptedUpdate(
         "doc-1",
@@ -240,9 +201,7 @@ describe("EncryptedMemoryStorage", () => {
 
     const stateVector = getEncryptedStateVector(snapshot.id, 1);
     const result = await storage.handleSyncStep1("doc-1", stateVector);
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot).toBeNull();
     expect(decoded.updates.length).toBe(2);
     expect(decoded.updates.map((u) => u.serverVersion)).toEqual([2, 3]);
@@ -254,10 +213,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
     await storage.handleEncryptedUpdate(
       "doc-1",
       encodeEncryptedUpdateMessages([
@@ -276,9 +232,7 @@ describe("EncryptedMemoryStorage", () => {
       serverVersion: 0,
     });
     const result = await storage.handleSyncStep1("doc-1", stateVector);
-    const decoded = decodeFromSyncStep2(
-      result.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(result.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(1);
   });
@@ -289,10 +243,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
 
     const wrongSnapshotUpdate: DecodedEncryptedUpdatePayload = {
       id: "u1",
@@ -314,10 +265,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([9]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
     await storage.handleEncryptedUpdate(
       "doc-1",
       encodeEncryptedUpdateMessages([
@@ -339,10 +287,7 @@ describe("EncryptedMemoryStorage", () => {
       contentIds: getEmptyEncodedContentIds(),
     };
     await expect(
-      storage.handleEncryptedUpdate(
-        "doc-1",
-        encodeEncryptedUpdateMessages([outOfOrder]),
-      ),
+      storage.handleEncryptedUpdate("doc-1", encodeEncryptedUpdateMessages([outOfOrder])),
     ).rejects.toThrow("Update counter out of order");
   });
 
@@ -352,10 +297,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([1]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot1),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot1));
 
     const snapshot2NoParent: EncryptedSnapshot = {
       id: "snapshot-2",
@@ -377,10 +319,7 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([1]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot1),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot1));
 
     const snapshot2WrongParent: EncryptedSnapshot = {
       id: "snapshot-2",
@@ -388,10 +327,7 @@ describe("EncryptedMemoryStorage", () => {
       payload: new Uint8Array([2]) as EncryptedBinary,
     };
     await expect(
-      storage.handleEncryptedUpdate(
-        "doc-1",
-        encodeEncryptedSnapshot(snapshot2WrongParent),
-      ),
+      storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot2WrongParent)),
     ).rejects.toThrow("Snapshot parent does not match active snapshot");
   });
 
@@ -401,20 +337,14 @@ describe("EncryptedMemoryStorage", () => {
       parentSnapshotId: null,
       payload: new Uint8Array([1]) as EncryptedBinary,
     };
-    await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot1),
-    );
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot1));
 
     const snapshot2: EncryptedSnapshot = {
       id: "snapshot-2",
       parentSnapshotId: "snapshot-1",
       payload: new Uint8Array([2]) as EncryptedBinary,
     };
-    const stored = await storage.handleEncryptedUpdate(
-      "doc-1",
-      encodeEncryptedSnapshot(snapshot2),
-    );
+    const stored = await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot2));
     expect(stored).not.toBeNull();
     const doc = await storage.getDocument("doc-1");
     expect(doc?.metadata.activeSnapshotId).toBe("snapshot-2");
@@ -444,9 +374,7 @@ describe("EncryptedMemoryStorage", () => {
 
     const doc = await storage.getDocument("doc-1");
     expect(doc).not.toBeNull();
-    const decoded = decodeFromSyncStep2(
-      doc!.content.update as unknown as EncryptedSyncStep2,
-    );
+    const decoded = decodeFromSyncStep2(doc!.content.update as unknown as EncryptedSyncStep2);
     expect(decoded.snapshot?.id).toBe(snapshot.id);
     expect(decoded.updates.length).toBe(1);
   });
@@ -460,10 +388,7 @@ describe("EncryptedMemoryStorage", () => {
         parentSnapshotId: null,
         payload: new Uint8Array([0]) as EncryptedBinary,
       };
-      await storage.handleEncryptedUpdate(
-        key,
-        encodeEncryptedSnapshot(snapshot),
-      );
+      await storage.handleEncryptedUpdate(key, encodeEncryptedSnapshot(snapshot));
     }
 
     function makeAttribution(userId: string, clientId = 1, clock = 0, len = 1): EncodedContentMap {
@@ -471,10 +396,14 @@ describe("EncryptedMemoryStorage", () => {
       inserts.add(clientId, clock, len);
       const contentIds = createContentIds(inserts, new IdSet());
       return encodeContentMap(
-        createContentMapFromContentIds(contentIds, [
-          createContentAttribute("insert", userId),
-          createContentAttribute("insertAt", Date.now()),
-        ], []),
+        createContentMapFromContentIds(
+          contentIds,
+          [
+            createContentAttribute("insert", userId),
+            createContentAttribute("insertAt", Date.now()),
+          ],
+          [],
+        ),
       );
     }
 

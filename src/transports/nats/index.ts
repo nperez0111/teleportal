@@ -15,11 +15,7 @@ export class NatsPubSub implements PubSub {
     this.nc = getConnection();
   }
 
-  async publish(
-    topic: PubSubTopic,
-    message: BinaryMessage,
-    sourceId: string,
-  ): Promise<void> {
+  async publish(topic: PubSubTopic, message: BinaryMessage, sourceId: string): Promise<void> {
     // Encode the message with instance ID to avoid loops
     const encoded = encodePubSubMessage(message, sourceId);
     (await this.nc).publish(topic, encoded);

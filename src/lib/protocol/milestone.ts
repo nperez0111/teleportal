@@ -38,10 +38,7 @@ export class Milestone {
    */
   public createdBy: { type: "user" | "system"; id: string };
 
-  private getSnapshot?: (
-    documentId: string,
-    id: string,
-  ) => Promise<MilestoneSnapshot>;
+  private getSnapshot?: (documentId: string, id: string) => Promise<MilestoneSnapshot>;
   private snapshot?: MilestoneSnapshot;
 
   constructor({
@@ -75,10 +72,7 @@ export class Milestone {
       }
     | {
         snapshot?: undefined;
-        getSnapshot: (
-          documentId: string,
-          id: string,
-        ) => Promise<MilestoneSnapshot>;
+        getSnapshot: (documentId: string, id: string) => Promise<MilestoneSnapshot>;
       }
   )) {
     this.id = id;
@@ -130,9 +124,7 @@ export class Milestone {
         });
       return this.#loadingPromise;
     }
-    throw new Error(
-      "getSnapshot should be defined if snapshot is not already available",
-    );
+    throw new Error("getSnapshot should be defined if snapshot is not already available");
   }
 
   /**
@@ -153,10 +145,7 @@ export class Milestone {
     });
   }
 
-  public static encodeMeta(
-    milestone: Milestone,
-    existingEncoder?: encoding.Encoder,
-  ): Uint8Array {
+  public static encodeMeta(milestone: Milestone, existingEncoder?: encoding.Encoder): Uint8Array {
     function encode(encoder: encoding.Encoder): Uint8Array {
       // Y
       encoding.writeUint8(encoder, 0x59);
@@ -185,35 +174,25 @@ export class Milestone {
 
       encoding.writeUint8(encoder, flags);
 
-      if (milestone.deletedAt !== undefined)
-        encoding.writeFloat64(encoder, milestone.deletedAt);
-      if (milestone.deletedBy !== undefined)
-        encoding.writeVarString(encoder, milestone.deletedBy);
+      if (milestone.deletedAt !== undefined) encoding.writeFloat64(encoder, milestone.deletedAt);
+      if (milestone.deletedBy !== undefined) encoding.writeVarString(encoder, milestone.deletedBy);
       if (milestone.lifecycleState !== undefined)
         encoding.writeVarString(encoder, milestone.lifecycleState);
       if (milestone.retentionPolicyId !== undefined)
         encoding.writeVarString(encoder, milestone.retentionPolicyId);
-      if (milestone.expiresAt !== undefined)
-        encoding.writeFloat64(encoder, milestone.expiresAt);
+      if (milestone.expiresAt !== undefined) encoding.writeFloat64(encoder, milestone.expiresAt);
 
       encoding.writeUint8(encoder, milestone.createdBy.type === "user" ? 1 : 0);
       encoding.writeVarString(encoder, milestone.createdBy.id);
 
-      return existingEncoder
-        ? encoding.toUint8Array(encoder)
-        : (undefined as any);
+      return existingEncoder ? encoding.toUint8Array(encoder) : (undefined as any);
     }
 
     return existingEncoder ? encode(existingEncoder) : encoding.encode(encode);
   }
 
-  public static decodeMeta(
-    source: Uint8Array,
-    existingDecoder?: decoding.Decoder,
-  ) {
-    const decoder = existingDecoder
-      ? existingDecoder
-      : decoding.createDecoder(source);
+  public static decodeMeta(source: Uint8Array, existingDecoder?: decoding.Decoder) {
+    const decoder = existingDecoder ? existingDecoder : decoding.createDecoder(source);
     const Y = decoding.readUint8(decoder);
     const J = decoding.readUint8(decoder);
     const S = decoding.readUint8(decoder);
@@ -231,20 +210,14 @@ export class Milestone {
 
     let deletedAt: number | undefined;
     let deletedBy: string | undefined;
-    let lifecycleState:
-      | "active"
-      | "archived"
-      | "deleted"
-      | "expired"
-      | undefined;
+    let lifecycleState: "active" | "archived" | "deleted" | "expired" | undefined;
     let retentionPolicyId: string | undefined;
     let expiresAt: number | undefined;
 
     const flags = decoding.readUint8(decoder);
     if (flags & Math.trunc(1)) deletedAt = decoding.readFloat64(decoder);
     if (flags & (1 << 1)) deletedBy = decoding.readVarString(decoder);
-    if (flags & (1 << 2))
-      lifecycleState = decoding.readVarString(decoder) as any;
+    if (flags & (1 << 2)) lifecycleState = decoding.readVarString(decoder) as any;
     if (flags & (1 << 3)) retentionPolicyId = decoding.readVarString(decoder);
     if (flags & (1 << 4)) expiresAt = decoding.readFloat64(decoder);
 
@@ -286,9 +259,7 @@ export class Milestone {
     while (decoding.hasContent(decoder)) {
       const milestoneCtx = Milestone.decodeMeta(source, decoder);
 
-      milestones.push(
-        new Milestone(Object.assign(milestoneCtx, { getSnapshot })),
-      );
+      milestones.push(new Milestone(Object.assign(milestoneCtx, { getSnapshot })));
     }
 
     return milestones;
@@ -312,9 +283,7 @@ export class Milestone {
       expiresAt,
       createdBy,
     } = Milestone.decodeMeta(source, decoder);
-    const snapshot = decoding.readTailAsUint8Array(
-      decoder,
-    ) as MilestoneSnapshot;
+    const snapshot = decoding.readTailAsUint8Array(decoder) as MilestoneSnapshot;
 
     return new Milestone({
       id,

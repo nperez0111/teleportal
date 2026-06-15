@@ -57,14 +57,8 @@ describe("RedisRateLimitStorage", () => {
     await storage.setState("test", state, 5000);
 
     expect(mockRedis.multi).toHaveBeenCalled();
-    expect(mockRedis.hmset).toHaveBeenCalledWith(
-      "teleportal:ratelimit:test",
-      state,
-    );
-    expect(mockRedis.expire).toHaveBeenCalledWith(
-      "teleportal:ratelimit:test",
-      5,
-    );
+    expect(mockRedis.hmset).toHaveBeenCalledWith("teleportal:ratelimit:test", state);
+    expect(mockRedis.expire).toHaveBeenCalledWith("teleportal:ratelimit:test", 5);
     expect(mockRedis.exec).toHaveBeenCalled();
   });
 

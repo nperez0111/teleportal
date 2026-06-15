@@ -167,9 +167,7 @@ describe("withTransaction", () => {
       expect(executionOrder).toContain("end-1");
       expect(executionOrder).toContain("end-2");
       // Second should finish before first (different keys, no blocking)
-      expect(executionOrder.indexOf("end-2")).toBeLessThan(
-        executionOrder.indexOf("end-1"),
-      );
+      expect(executionOrder.indexOf("end-2")).toBeLessThan(executionOrder.indexOf("end-1"));
     });
   });
 
@@ -263,9 +261,7 @@ describe("withTransaction", () => {
           },
           { ttl: 1000, maxRetries, baseDelay: 10 },
         ),
-      ).rejects.toThrow(
-        `Transaction lock acquisition failed after ${maxRetries} retries`,
-      );
+      ).rejects.toThrow(`Transaction lock acquisition failed after ${maxRetries} retries`);
     });
 
     it("should respect max delay cap", async () => {
@@ -460,18 +456,16 @@ describe("withTransaction", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Start multiple concurrent requests that will need to wait
-      const concurrentPromises = Array.from(
-        { length: concurrentRequests },
-        (_, i) =>
-          withTransaction(
-            storage,
-            key,
-            async () => {
-              executionOrder.push(i + 1);
-              return `result-${i + 1}`;
-            },
-            { ttl: 1000, baseDelay: 10 },
-          ),
+      const concurrentPromises = Array.from({ length: concurrentRequests }, (_, i) =>
+        withTransaction(
+          storage,
+          key,
+          async () => {
+            executionOrder.push(i + 1);
+            return `result-${i + 1}`;
+          },
+          { ttl: 1000, baseDelay: 10 },
+        ),
       );
 
       const [firstResult, ...otherResults] = await Promise.all([
@@ -533,9 +527,7 @@ describe("withTransaction", () => {
           },
           { ttl: 1000, maxRetries: customMaxRetries, baseDelay: 10 },
         ),
-      ).rejects.toThrow(
-        `Transaction lock acquisition failed after ${customMaxRetries} retries`,
-      );
+      ).rejects.toThrow(`Transaction lock acquisition failed after ${customMaxRetries} retries`);
     });
 
     it("should use custom baseDelay", async () => {

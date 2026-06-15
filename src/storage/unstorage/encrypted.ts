@@ -3,10 +3,7 @@ import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 
 import { EncryptedBinary } from "teleportal/encryption-key";
-import type {
-  EncryptedSnapshot,
-  EncryptedUpdatePayload,
-} from "teleportal/protocol/encryption";
+import type { EncryptedSnapshot, EncryptedUpdatePayload } from "teleportal/protocol/encryption";
 import {
   decodeContentMap,
   encodeContentMap,
@@ -109,10 +106,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     });
   }
 
-  async writeDocumentMetadata(
-    key: string,
-    metadata: EncryptedDocumentMetadata,
-  ): Promise<void> {
+  async writeDocumentMetadata(key: string, metadata: EncryptedDocumentMetadata): Promise<void> {
     await this.storage.setItem(this.#getMetadataKey(key), metadata);
   }
 
@@ -145,16 +139,10 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       this.#getSnapshotPayloadKey(key, snapshot.id),
       snapshot.payload,
     );
-    await this.storage.setItem(
-      this.#getSnapshotMetaKey(key, snapshot.id),
-      metadata,
-    );
+    await this.storage.setItem(this.#getSnapshotMetaKey(key, snapshot.id), metadata);
   }
 
-  async fetchSnapshot(
-    key: string,
-    snapshotId: string,
-  ): Promise<EncryptedSnapshot | null> {
+  async fetchSnapshot(key: string, snapshotId: string): Promise<EncryptedSnapshot | null> {
     const payload = await this.storage.getItemRaw<EncryptedBinary>(
       this.#getSnapshotPayloadKey(key, snapshotId),
     );
@@ -169,31 +157,21 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     };
   }
 
-  async writeSnapshotMetadata(
-    key: string,
-    metadata: EncryptedSnapshotMetadata,
-  ): Promise<void> {
-    await this.storage.setItem(
-      this.#getSnapshotMetaKey(key, metadata.id),
-      metadata,
-    );
+  async writeSnapshotMetadata(key: string, metadata: EncryptedSnapshotMetadata): Promise<void> {
+    await this.storage.setItem(this.#getSnapshotMetaKey(key, metadata.id), metadata);
   }
 
   async getSnapshotMetadata(
     key: string,
     snapshotId: string,
   ): Promise<EncryptedSnapshotMetadata | null> {
-    const metadata = await this.storage.getItem(
-      this.#getSnapshotMetaKey(key, snapshotId),
-    );
+    const metadata = await this.storage.getItem(this.#getSnapshotMetaKey(key, snapshotId));
     return (metadata as EncryptedSnapshotMetadata) ?? null;
   }
 
   async storeUpdate(key: string, update: StoredEncryptedUpdate): Promise<void> {
     const updatesKey = this.#getSnapshotUpdatesKey(key, update.snapshotId);
-    const existing = (await this.storage.getItem(updatesKey)) as
-      | StoredUpdateRecord[]
-      | null;
+    const existing = (await this.storage.getItem(updatesKey)) as StoredUpdateRecord[] | null;
     const updates = existing ?? [];
     updates.push(serializeUpdate(update));
     await this.storage.setItem(updatesKey, updates);
@@ -205,9 +183,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     afterVersion: number,
   ): Promise<StoredEncryptedUpdate[]> {
     const updatesKey = this.#getSnapshotUpdatesKey(key, snapshotId);
-    const existing = (await this.storage.getItem(updatesKey)) as
-      | StoredUpdateRecord[]
-      | null;
+    const existing = (await this.storage.getItem(updatesKey)) as StoredUpdateRecord[] | null;
     if (!existing) {
       return [];
     }
@@ -228,20 +204,14 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     }
   }
 
-  async retrieveAttribution(
-    key: string,
-  ): Promise<EncodedContentMap | null> {
-    const attrKeys = await this.storage.getKeys(
-      this.#getAttributionKeyPrefix(key),
-    );
+  async retrieveAttribution(key: string): Promise<EncodedContentMap | null> {
+    const attrKeys = await this.storage.getKeys(this.#getAttributionKeyPrefix(key));
     if (attrKeys.length === 0) return null;
     if (attrKeys.length === 1) {
       return await this.storage.getItemRaw(attrKeys[0]);
     }
     const maps = (
-      await Promise.all(
-        attrKeys.map((k) => this.storage.getItemRaw<EncodedContentMap>(k)),
-      )
+      await Promise.all(attrKeys.map((k) => this.storage.getItemRaw<EncodedContentMap>(k)))
     ).filter(Boolean) as EncodedContentMap[];
     if (maps.length === 0) return null;
     if (maps.length === 1) return maps[0];
@@ -251,9 +221,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
 
   async deleteDocument(key: string): Promise<void> {
     const metadata = await this.getDocumentMetadata(key);
-    const snapshotIds = Array.isArray(metadata.snapshots)
-      ? metadata.snapshots
-      : [];
+    const snapshotIds = Array.isArray(metadata.snapshots) ? metadata.snapshots : [];
     const promises: Promise<unknown>[] = [];
     for (const snapshotId of snapshotIds) {
       promises.push(
@@ -265,9 +233,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     await Promise.all(promises);
 
     // Delete attribution data
-    const attrKeys = await this.storage.getKeys(
-      this.#getAttributionKeyPrefix(key),
-    );
+    const attrKeys = await this.storage.getKeys(this.#getAttributionKeyPrefix(key));
     if (attrKeys.length > 0) {
       await Promise.all(attrKeys.map((k) => this.storage.removeItem(k)));
     }

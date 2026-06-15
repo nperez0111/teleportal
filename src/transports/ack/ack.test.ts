@@ -60,11 +60,7 @@ describe("withAckSink", () => {
       context,
     });
 
-    const docMessage = new DocMessage(
-      "test-doc",
-      { type: "sync-done" },
-      context,
-    );
+    const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     const writer = ackSink.writable.getWriter();
     await writer.write(docMessage);
@@ -107,9 +103,7 @@ describe("withAckSink", () => {
       "test-doc",
       {
         type: "awareness-update",
-        update: new Uint8Array([
-          0x00, 0x01, 0x02, 0x03,
-        ]) as AwarenessUpdateMessage,
+        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
       },
       context,
     );
@@ -294,11 +288,7 @@ describe("withAckTrackingSink", () => {
       ackTimeout: 1000,
     });
 
-    const docMessage = new DocMessage(
-      "test-doc",
-      { type: "sync-done" },
-      context,
-    );
+    const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
     const writer = trackedSink.writable.getWriter();
@@ -343,11 +333,7 @@ describe("withAckTrackingSink", () => {
       ackTimeout: 100, // Short timeout for testing
     });
 
-    const docMessage = new DocMessage(
-      "test-doc",
-      { type: "sync-done" },
-      context,
-    );
+    const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
     const writer = trackedSink.writable.getWriter();
@@ -375,11 +361,7 @@ describe("withAckTrackingSink", () => {
       ackTimeout: 1000, // Longer timeout to allow for slow propagation
     });
 
-    const docMessage = new DocMessage(
-      "test-doc",
-      { type: "sync-done" },
-      context,
-    );
+    const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
     const writer = trackedSink.writable.getWriter();
@@ -531,11 +513,7 @@ describe("withAckTrackingSink", () => {
       abortSignal: abortController.signal,
     });
 
-    const docMessage = new DocMessage(
-      "test-doc",
-      { type: "sync-done" },
-      context,
-    );
+    const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
     const writer = trackedSink.writable.getWriter();
@@ -566,11 +544,7 @@ describe("withAckTrackingSink", () => {
       ackTimeout: 1000,
     });
 
-    const docMessage = new DocMessage(
-      "test-doc",
-      { type: "sync-done" },
-      context,
-    );
+    const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
     const writer = trackedSink.writable.getWriter();
