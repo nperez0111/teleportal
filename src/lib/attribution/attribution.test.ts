@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import {
   ContentAttribute,
+  IdMap,
   IdSet,
   createContentAttribute,
   createContentIds,
@@ -389,4 +390,98 @@ describe("queries", () => {
     expect(activity.length).toBe(1);
     expect(activity[0].userId).toBe("user-2");
   });
+});
+
+describe("AttrRanges.getIds overlap flattening", () => {
+  const A = () => [createContentAttribute("insert", "user-A")];
+  const B = () => [createContentAttribute("insert", "user-B")];
+  const shape = (m: IdMap, client: number) =>
+    m.clients
+      .get(client)!
+      .getIds()
+      .map((r) => ({ clock: r.clock, len: r.len, u: r.attrs[0].val }));
+
+  it("keeps the tail of a range that fully contains a later one", () => {
+    const m = new IdMap();
+    m.add(1, 0, 10, A());
+    m.add(1, 3, 2, B()); // [3,5) contained inside [0,10)
+    expect(shape(m, 1)).toEqual([
+      { clock: 0, len: 3, u: "user-A" },
+      { clock: 3, len: 2, u: "user-B" },
+      { clock: 5, len: 5, u: "user-A" }, // tail preserved, not dropped
+    ]);
+  });
+
+  it("flattens containment regardless of insertion order", () => {
+    const m = new IdMap();
+    m.add(1, 3, 2, B()); // contained range added first
+    m.add(1, 0, 10, A());
+    // The containing range was added later, so it wins the contested span.
+    expect(shape(m, 1)).toEqual([{ clock: 0, len: 10, u: "user-A" }]);
+  });
+
+  it("splits partial overlaps, later-added range winning the contested span", () => {
+    const m = new IdMap();
+    m.add(1, 0, 5, A()); // [0,5)
+    m.add(1, 3, 5, B()); // [3,8)
+    expect(shape(m, 1)).toEqual([
+      { clock: 0, len: 3, u: "user-A" },
+      { clock: 3, len: 5, u: "user-B" },
+    ]);
+  });
+
+  it("keeps adjacent ranges with differing attrs separate", () => {
+    const m = new IdMap();
+    m.add(1, 0, 5, A());
+    m.add(1, 5, 5, B());
+    expect(shape(m, 1)).toEqual([
+      { clock: 0, len: 5, u: "user-A" },
+      { clock: 5, len: 5, u: "user-B" },
+    ]);
+  });
+
+  it("coalesces adjacent ranges with equal attrs", () => {
+    const m = new IdMap();
+    m.add(1, 0, 5, A());
+    m.add(1, 5, 5, A());
+    expect(shape(m, 1)).toEqual([{ clock: 0, len: 10, u: "user-A" }]);
+  });
+
+  it("preserves all spans when merging maps with overlapping deletes", () => {
+    // Two users delete overlapping ranges of the same client's items in
+    // separate updates; merged attribution must not silently lose either span.
+    const delAttr = (u: string) => [createContentAttribute("delete", u)];
+    const map1 = createContentMapFromContentIds(
+      { inserts: new IdSet(), deletes: idSet(1, 0, 10) },
+      [],
+      delAttr("user-A"),
+    );
+    const map2 = createContentMapFromContentIds(
+      { inserts: new IdSet(), deletes: idSet(1, 4, 2) },
+      [],
+      delAttr("user-B"),
+    );
+    const merged = mergeContentMaps([map1, map2]);
+    expect(shapeDeletes(merged.deletes, 1)).toEqual([
+      { clock: 0, len: 4, u: "user-A" },
+      { clock: 4, len: 2, u: "user-B" },
+      { clock: 6, len: 4, u: "user-A" },
+    ]);
+  });
+
+  function idSet(client: number, clock: number, len: number): IdSet {
+    const s = new IdSet();
+    s.add(client, clock, len);
+    return s;
+  }
+  function shapeDeletes(m: IdMap, client: number) {
+    return m.clients
+      .get(client)!
+      .getIds()
+      .map((r) => ({
+        clock: r.clock,
+        len: r.len,
+        u: r.attrs.find((a) => a.name === "delete")?.val,
+      }));
+  }
 });

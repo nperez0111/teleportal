@@ -63,17 +63,18 @@ const snapshot = await provider.getMilestoneSnapshot(milestone.id);
 ## Encryption (E2EE)
 
 For end-to-end-encrypted documents (a `Provider` created with an `encryptionKey`),
-`createMilestone` encrypts the snapshot with that key before it leaves the client, so the
-server only ever stores ciphertext; `getMilestoneSnapshot` decrypts it transparently, so
-callers still receive a plaintext Y.js update. The server treats the snapshot as opaque
-bytes either way. This is what makes client-side
-[milestone attribution](../attribution/README.md) possible without exposing content to the
-server.
+`createMilestone` encrypts the snapshot with that key before it leaves the client and wraps
+it in the same encrypted-update-message container the server uses for automatic milestones,
+so the server only ever stores ciphertext. `getMilestoneSnapshot` decrypts every message in
+that container and merges them back into a single plaintext Y.js update, so callers always
+receive plaintext. The server treats the snapshot as opaque bytes either way. This is what
+makes client-side [milestone attribution](../attribution/README.md) possible without exposing
+content to the server.
 
-> Known limitation: server-generated **automatic** milestones cannot encrypt this way (the
-> server has no plaintext) and currently store a different encrypted-message-container
-> format. They are not consumed by the attribution helpers; prefer client-created milestones
-> on E2EE documents.
+Server-generated **automatic** milestones store the document's existing encrypted-message
+container (the server has no plaintext to re-encrypt), and `getMilestoneSnapshot` decrypts
+them through the same path — so both client-created and automatic milestones work with the
+attribution helpers on E2EE documents.
 
 ## Methods
 

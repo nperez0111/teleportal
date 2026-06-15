@@ -467,7 +467,7 @@ describe("Provider milestone operations", () => {
   });
 
   // Helper function to set up provider and ack initial messages
-  async function setupProvider() {
+  async function setupProvider(opts?: { encryptionKey?: CryptoKey }) {
     mockConnection.triggerConnect();
     provider = await Provider.create({
       connection: mockConnection,
@@ -475,6 +475,7 @@ describe("Provider milestone operations", () => {
       ydoc,
       getTransport: () => mockTransport,
       enableOfflinePersistence: false,
+      encryptionKey: opts?.encryptionKey,
     });
 
     // Ack any initial messages sent during provider creation
@@ -589,6 +590,146 @@ describe("Provider milestone operations", () => {
     const snapshot = await provider.getMilestoneSnapshot("milestone-1");
 
     expect(snapshot).toEqual(testSnapshot);
+  });
+
+  it("round-trips a client-encrypted snapshot for E2EE documents", async () => {
+    const { createEncryptionKey } = await import("teleportal/encryption-key");
+    const { decodeEncryptedUpdate } = await import(
+      "teleportal/protocol/encryption"
+    );
+    const encryptionKey = await createEncryptionKey();
+    await setupProvider({ encryptionKey });
+
+    ydoc.getText("content").insert(0, "secret");
+    const plaintext = Y.encodeStateAsUpdateV2(ydoc);
+
+    // Capture the encrypted snapshot createMilestone sends, then serve it back
+    // from getMilestoneSnapshot to verify it decrypts to the original content.
+    let stored: Uint8Array | undefined;
+    mockConnection.responseHandler = (message) => {
+      if (message.type === "rpc" && message.requestType === "request") {
+        if (message.rpcMethod === "milestoneCreate") {
+          stored = (message.payload.payload as { snapshot: Uint8Array })
+            .snapshot;
+          const response: MilestoneCreateResponse = {
+            milestone: {
+              id: "milestone-1",
+              name: "v1",
+              documentId: "test-doc",
+              createdAt: Date.now(),
+              createdBy: { type: "system", id: "test-node" },
+            },
+          };
+          return new RpcMessage(
+            "test-doc",
+            { type: "success", payload: response },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
+        if (message.rpcMethod === "milestoneGet") {
+          const response: MilestoneGetResponse = {
+            milestoneId: "milestone-1",
+            snapshot: stored as unknown as MilestoneSnapshot,
+          };
+          return new RpcMessage(
+            "test-doc",
+            { type: "success", payload: response },
+            message.rpcMethod,
+            "response",
+            message.id,
+            { clientId: "test-client" },
+            false,
+          );
+        }
+      }
+      return null;
+    };
+
+    await provider.createMilestone("v1");
+    // The stored snapshot must be an encrypted-update container (decodable, not
+    // the plaintext update itself).
+    expect(stored).toBeDefined();
+    expect(new Uint8Array(stored!)).not.toEqual(new Uint8Array(plaintext));
+    expect(
+      decodeEncryptedUpdate(stored as unknown as Parameters<
+        typeof decodeEncryptedUpdate
+      >[0]).length,
+    ).toBe(1);
+
+    const snapshot = await provider.getMilestoneSnapshot("milestone-1");
+    const restored = new Y.Doc();
+    Y.applyUpdateV2(restored, snapshot as unknown as Uint8Array);
+    expect(restored.getText("content").toString()).toBe("secret");
+  });
+
+  it("decrypts multi-message automatic-milestone containers for E2EE documents", async () => {
+    const { createEncryptionKey, encryptUpdate } = await import(
+      "teleportal/encryption-key"
+    );
+    const { encodeEncryptedUpdateMessages } = await import(
+      "teleportal/protocol/encryption"
+    );
+    const { getEmptyEncodedContentIds } = await import("teleportal/attribution");
+    const { toBase64 } = await import("lib0/buffer");
+    const { digest } = await import("lib0/hash/sha256");
+    const encryptionKey = await createEncryptionKey();
+    await setupProvider({ encryptionKey });
+
+    // Build the container the way the server stores automatic milestones for
+    // E2EE docs: one encrypted message per incremental update.
+    const src = new Y.Doc();
+    const updates: Uint8Array[] = [];
+    src.on("updateV2", (u: Uint8Array) => updates.push(u));
+    src.getText("content").insert(0, "Hello ");
+    src.getText("content").insert(6, "World");
+    expect(updates.length).toBe(2);
+
+    const messages = await Promise.all(
+      updates.map(async (u, i) => {
+        const payload = await encryptUpdate(encryptionKey, u);
+        return {
+          id: toBase64(digest(payload)),
+          timestamp: [1, i] as [number, number],
+          payload,
+          contentIds: getEmptyEncodedContentIds(),
+        };
+      }),
+    );
+    const container = encodeEncryptedUpdateMessages(
+      messages,
+    ) as unknown as MilestoneSnapshot;
+
+    mockConnection.responseHandler = (message) => {
+      if (
+        message.type === "rpc" &&
+        message.requestType === "request" &&
+        message.rpcMethod === "milestoneGet"
+      ) {
+        const response: MilestoneGetResponse = {
+          milestoneId: "auto-1",
+          snapshot: container,
+        };
+        return new RpcMessage(
+          "test-doc",
+          { type: "success", payload: response },
+          message.rpcMethod,
+          "response",
+          message.id,
+          { clientId: "test-client" },
+          false,
+        );
+      }
+      return null;
+    };
+
+    const snapshot = await provider.getMilestoneSnapshot("auto-1");
+    const restored = new Y.Doc();
+    Y.applyUpdateV2(restored, snapshot as unknown as Uint8Array);
+    expect(restored.getText("content").toString()).toBe("Hello World");
   });
 
   it("should create milestone", async () => {
