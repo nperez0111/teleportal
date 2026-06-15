@@ -122,6 +122,77 @@ export type DecodedAckMessage = {
 };
 
 /**
+ * A presence message, signalling a client joining or leaving a session.
+ * Always sent in cleartext (it carries no document content).
+ */
+export type PresenceMessageBinary = Tag<Uint8Array, "presence">;
+
+/**
+ * Sent by a client to announce the numeric awareness clientID it operates under.
+ * This is the only way the server learns a client's awareness clientID for
+ * end-to-end encrypted documents, where the awareness payload is opaque.
+ */
+export type DecodedPresenceAnnounce = {
+  type: "presence-announce";
+  /** The y-awareness clientID (equals the client's Y.Doc clientID). */
+  awarenessId: number;
+};
+
+/**
+ * Broadcast by the server when a client joins (after it announces) or leaves a
+ * session. `data` is an integrator-configurable bag (see `presenceConfig`).
+ */
+export type DecodedPresenceJoin = {
+  type: "presence-join";
+  /** The y-awareness clientID of the client (used by peers to track/clear it). */
+  awarenessId: number;
+  /** The server-assigned session/connection clientId. */
+  clientId: string;
+  /** The user the client is authenticated as. */
+  userId: string;
+  /** Integrator-supplied context safe to share with peers. */
+  data: Record<string, unknown>;
+};
+
+export type DecodedPresenceLeave = Omit<DecodedPresenceJoin, "type"> & {
+  type: "presence-leave";
+};
+
+/** A single peer entry carried in a presence-heartbeat roster snapshot. */
+export type PresenceHeartbeatClient = {
+  /** The y-awareness clientID of the client. */
+  awarenessId: number;
+  /** The server-assigned session/connection clientId. */
+  clientId: string;
+  /** The user the client is authenticated as. */
+  userId: string;
+  /** Integrator-supplied context safe to share with peers. */
+  data: Record<string, unknown>;
+};
+
+/**
+ * Published node-to-node (over pub/sub) at a fixed interval. Carries a snapshot
+ * of the publishing node's own local clients so other nodes can keep a fresh,
+ * crash-safe roster: receivers refresh the node's liveness and reconcile its
+ * client set, and a node whose heartbeats stop is expired by TTL. The source
+ * node id travels in the pub/sub envelope, not in the payload.
+ */
+export type DecodedPresenceHeartbeat = {
+  type: "presence-heartbeat";
+  /** The publishing node's current local clients. */
+  clients: PresenceHeartbeatClient[];
+};
+
+/**
+ * Any presence payload.
+ */
+export type PresenceStep =
+  | DecodedPresenceAnnounce
+  | DecodedPresenceJoin
+  | DecodedPresenceLeave
+  | DecodedPresenceHeartbeat;
+
+/**
  * Any Y.js update which concerns a document.
  */
 export type DocStep =

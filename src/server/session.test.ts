@@ -1,20 +1,44 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  setSystemTime,
+} from "bun:test";
 import { getLogger } from "@logtape/logtape";
 import * as Y from "yjs";
 import type {
+  AwarenessUpdateMessage,
   Message,
   ServerContext,
   StateVector,
   SyncStep2Update,
   Update,
 } from "teleportal";
-import { DocMessage, InMemoryPubSub } from "teleportal";
+import {
+  AwarenessMessage,
+  DocMessage,
+  InMemoryPubSub,
+  PresenceMessage,
+} from "teleportal";
 import type {
   Document,
   DocumentMetadata,
   DocumentStorage,
   EncodedContentMap,
 } from "teleportal/storage";
+import {
+  Awareness,
+  applyAwarenessUpdate,
+  encodeAwarenessUpdate,
+  removeAwarenessStates,
+} from "y-protocols/awareness";
+import {
+  createEncryptionKey,
+  decryptUpdate,
+  encryptUpdate,
+} from "teleportal/encryption-key";
 import { Session } from "./session";
 import { Server } from "./server";
 import { Client } from "./client";
@@ -161,6 +185,41 @@ function createTestUpdate(content = "test"): Update {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, content);
   return Y.encodeStateAsUpdateV2(doc) as Update;
+}
+
+/**
+ * Apply the messages a peer received from the server to a local Awareness,
+ * mimicking what the provider does on the client: awareness-update is applied
+ * (decrypting first for e2ee), while presence-leave clears the departed peer.
+ */
+async function applyServerMessagesToObserver(
+  observer: Awareness,
+  messages: Message<ServerContext>[],
+  decrypt?: (u: Uint8Array) => Promise<Uint8Array>,
+) {
+  for (const msg of messages) {
+    if (
+      msg.type === "awareness" &&
+      (msg as any).payload?.type === "awareness-update"
+    ) {
+      try {
+        const raw = (msg as any).payload.update as Uint8Array;
+        const update = decrypt ? await decrypt(raw) : raw;
+        applyAwarenessUpdate(observer, update, "remote");
+      } catch {
+        // A faithful e2ee client rejects undecryptable awareness updates.
+      }
+    } else if (
+      msg.type === "presence" &&
+      (msg as any).payload?.type === "presence-leave"
+    ) {
+      removeAwarenessStates(
+        observer,
+        [(msg as any).payload.awarenessId],
+        "remote",
+      );
+    }
+  }
 }
 
 describe("Session", () => {
@@ -714,6 +773,258 @@ describe("Session", () => {
         // Should not send to originating client
         expect(client1.sentMessages.length).toBe(0);
       });
+
+      it("should clear a peer's awareness state when it disconnects", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // client1 publishes its awareness state...
+        const doc1 = new Y.Doc();
+        const awareness1 = new Awareness(doc1);
+        awareness1.setLocalState({ cursor: { x: 1, y: 2 } });
+        const update = encodeAwarenessUpdate(awareness1, [
+          awareness1.clientID,
+        ]) as AwarenessUpdateMessage;
+        await session.apply(
+          new AwarenessMessage(
+            "test-doc",
+            { type: "awareness-update", update },
+            { clientId: "client-1", userId: "user-1", room: "room" },
+          ),
+          client1 as any,
+        );
+        // ...and announces the awareness clientID it operates under.
+        await session.apply(
+          new PresenceMessage(
+            "test-doc",
+            { type: "presence-announce", awarenessId: awareness1.clientID },
+            { clientId: "client-1", userId: "user-1", room: "room" },
+          ),
+          client1 as any,
+        );
+
+        // client2 saw the awareness update.
+        const observerDoc = new Y.Doc();
+        const observer = new Awareness(observerDoc);
+        observer.setLocalState(null);
+        await applyServerMessagesToObserver(observer, client2.sentMessages);
+        expect(observer.getStates().has(awareness1.clientID)).toBe(true);
+
+        // Disconnect client1 — the session broadcasts a presence-leave.
+        const prevCount = client2.sentMessages.length;
+        session.removeClient(client1 as any);
+        // The leave broadcast is fire-and-forget; give it a tick to run.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(client2.sentMessages.length).toBeGreaterThan(prevCount);
+
+        await applyServerMessagesToObserver(
+          observer,
+          client2.sentMessages.slice(prevCount),
+        );
+        expect(observer.getStates().has(awareness1.clientID)).toBe(false);
+
+        awareness1.destroy();
+        doc1.destroy();
+        observer.destroy();
+        observerDoc.destroy();
+      });
+
+      // The server cannot read an encrypted client's awareness clientID (it's
+      // inside the AES-GCM ciphertext) and has no key to author a tombstone.
+      // Presence carries the awareness clientID in cleartext, so a departed
+      // encrypted peer is still cleared on remaining clients.
+      it("clears an encrypted peer's awareness on disconnect", async () => {
+        const encSession = new Session<ServerContext>({
+          documentId: "enc-doc",
+          namespacedDocumentId: "enc-doc",
+          id: "session-enc",
+          encrypted: true,
+          storage,
+          pubSub,
+          nodeId,
+          onCleanupScheduled: () => {},
+          server: mockServer,
+        });
+        const c1 = new MockClient<ServerContext>("enc-client-1");
+        const c2 = new MockClient<ServerContext>("enc-client-2");
+        encSession.addClient(c1 as any);
+        encSession.addClient(c2 as any);
+
+        const key = await createEncryptionKey();
+
+        // client1 publishes an ENCRYPTED awareness update (AES-GCM ciphertext)...
+        const doc1 = new Y.Doc();
+        const awareness1 = new Awareness(doc1);
+        awareness1.setLocalState({ cursor: { x: 1, y: 2 } });
+        const plain = encodeAwarenessUpdate(awareness1, [
+          awareness1.clientID,
+        ]) as AwarenessUpdateMessage;
+        const cipher = (await encryptUpdate(key, plain)) as AwarenessUpdateMessage;
+        await encSession.apply(
+          new AwarenessMessage(
+            "enc-doc",
+            { type: "awareness-update", update: cipher },
+            { clientId: "enc-client-1", userId: "user-1", room: "room" },
+            true,
+          ),
+          c1 as any,
+        );
+        // ...and announces its awareness clientID in cleartext.
+        await encSession.apply(
+          new PresenceMessage(
+            "enc-doc",
+            { type: "presence-announce", awarenessId: awareness1.clientID },
+            { clientId: "enc-client-1", userId: "user-1", room: "room" },
+          ),
+          c1 as any,
+        );
+
+        // A faithful remote encrypted peer decrypts awareness updates and acts
+        // on presence-leave.
+        const observerDoc = new Y.Doc();
+        const observer = new Awareness(observerDoc);
+        observer.setLocalState(null);
+        const decrypt = (u: Uint8Array) => decryptUpdate(key, u as any);
+        await applyServerMessagesToObserver(
+          observer,
+          c2.sentMessages,
+          decrypt,
+        );
+        expect(observer.getStates().has(awareness1.clientID)).toBe(true);
+
+        // Disconnect client1.
+        const prevCount = c2.sentMessages.length;
+        encSession.removeClient(c1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(c2.sentMessages.length).toBeGreaterThan(prevCount);
+
+        await applyServerMessagesToObserver(
+          observer,
+          c2.sentMessages.slice(prevCount),
+          decrypt,
+        );
+        expect(observer.getStates().has(awareness1.clientID)).toBe(false);
+
+        awareness1.destroy();
+        doc1.destroy();
+        observer.destroy();
+        observerDoc.destroy();
+        await encSession[Symbol.asyncDispose]();
+      });
+    });
+
+    describe("presence messages", () => {
+      const announce = (
+        clientId: string,
+        awarenessId: number,
+        userId = "user-1",
+      ) =>
+        new PresenceMessage(
+          "test-doc",
+          { type: "presence-announce", awarenessId },
+          { clientId, userId, room: "room" },
+        );
+
+      const presenceMsgs = (client: MockClient<ServerContext>) =>
+        client.sentMessages.filter(
+          (m): m is PresenceMessage<ServerContext> => m.type === "presence",
+        );
+
+      it("broadcasts a join to already-announced peers (not the sender)", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // client-2 is already present and announced.
+        await session.apply(announce("client-2", 222), client2 as any);
+        const prev = presenceMsgs(client2).length;
+
+        await session.apply(announce("client-1", 111), client1 as any);
+
+        // The announcing client is never told about its own join.
+        expect(
+          presenceMsgs(client1).some(
+            (m) => (m.payload as any).clientId === "client-1",
+          ),
+        ).toBe(false);
+        // The already-announced peer learns of the join, with both ids + userId.
+        const joins = presenceMsgs(client2).slice(prev);
+        expect(joins).toHaveLength(1);
+        expect(joins[0]!.payload).toMatchObject({
+          type: "presence-join",
+          awarenessId: 111,
+          clientId: "client-1",
+          userId: "user-1",
+        });
+      });
+
+      it("sends the current roster to a newly-announced client", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-2", 222), client2 as any);
+
+        // client-2 should learn about the already-present client-1.
+        const roster = presenceMsgs(client2).filter(
+          (m) => (m.payload as any).awarenessId === 111,
+        );
+        expect(roster).toHaveLength(1);
+        expect(roster[0]!.payload).toMatchObject({
+          type: "presence-join",
+          clientId: "client-1",
+        });
+      });
+
+      it("broadcasts a presence-leave with ids, userId and async data on disconnect", async () => {
+        const presenceSession = new Session<ServerContext>({
+          documentId: "test-doc",
+          namespacedDocumentId: "test-doc",
+          id: "session-presence",
+          encrypted: false,
+          storage,
+          pubSub,
+          nodeId,
+          onCleanupScheduled: () => {},
+          presenceConfig: {
+            getPresenceData: async (ctx) => ({ userName: `name:${ctx.userId}` }),
+          },
+          server: mockServer,
+        });
+        presenceSession.addClient(client1 as any);
+        presenceSession.addClient(client2 as any);
+
+        await presenceSession.apply(announce("client-1", 111), client1 as any);
+        const prevCount = client2.sentMessages.length;
+
+        presenceSession.removeClient(client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const leaves = presenceMsgs(client2).filter(
+          (m) => (m.payload as any).type === "presence-leave",
+        );
+        expect(client2.sentMessages.length).toBeGreaterThan(prevCount);
+        expect(leaves).toHaveLength(1);
+        expect(leaves[0]!.payload).toEqual({
+          type: "presence-leave",
+          awarenessId: 111,
+          clientId: "client-1",
+          userId: "user-1",
+          data: { userName: "name:user-1" },
+        });
+
+        await presenceSession[Symbol.asyncDispose]();
+      });
+
+      it("does not broadcast a leave for a client that never announced", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        const prevCount = client2.sentMessages.length;
+        session.removeClient(client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(client2.sentMessages.length).toBe(prevCount);
+      });
     });
 
     describe("unknown payload types", () => {
@@ -730,6 +1041,177 @@ describe("Session", () => {
 
         await expect(session.apply(message)).resolves.toBeUndefined();
       });
+    });
+  });
+
+  describe("cross-node presence", () => {
+    const DOC = "xnode-doc";
+    const TOPIC = `document/${DOC}` as const;
+
+    const makeSession = (
+      id: string,
+      sessionNodeId: string,
+      bus: InMemoryPubSub,
+      presenceConfig: {
+        heartbeatIntervalMs?: number;
+        presenceTtlMs?: number;
+      } = { heartbeatIntervalMs: 0 },
+    ) =>
+      new Session<ServerContext>({
+        documentId: DOC,
+        namespacedDocumentId: DOC,
+        id,
+        encrypted: false,
+        storage,
+        pubSub: bus,
+        nodeId: sessionNodeId,
+        onCleanupScheduled: () => {},
+        presenceConfig,
+        server: mockServer,
+      });
+
+    const announce = (clientId: string, awarenessId: number, userId = "user-1") =>
+      new PresenceMessage(
+        DOC,
+        { type: "presence-announce", awarenessId },
+        { clientId, userId, room: "room" },
+      );
+
+    const heartbeat = (
+      clients: Array<{
+        awarenessId: number;
+        clientId: string;
+        userId: string;
+        data: Record<string, unknown>;
+      }>,
+    ) => new PresenceMessage(DOC, { type: "presence-heartbeat", clients });
+
+    // The in-memory pub/sub does not await the (async) subscriber, so give
+    // replicated presence handling a tick to run.
+    const tick = () => new Promise((r) => setTimeout(r, 10));
+
+    const presenceOf = (
+      client: MockClient<ServerContext>,
+      payloadType: string,
+      awarenessId: number,
+    ) =>
+      client.sentMessages.filter(
+        (m): m is PresenceMessage<ServerContext> =>
+          m.type === "presence" &&
+          (m.payload as any).type === payloadType &&
+          (m.payload as any).awarenessId === awarenessId,
+      );
+
+    it("includes a cross-node peer in a newcomer's join roster", async () => {
+      const bus = new InMemoryPubSub();
+      const nodeA = makeSession("session-a", "node-a", bus);
+      const nodeB = makeSession("session-b", "node-b", bus);
+      await nodeA.load();
+      await nodeB.load();
+
+      // a1 is present on node A; its join replicates to node B's roster.
+      const a1 = new MockClient<ServerContext>("a1");
+      nodeA.addClient(a1 as any);
+      await nodeA.apply(announce("a1", 111), a1 as any);
+      await tick();
+
+      // b1 joins on node B *after* a1, so its only source for a1 is the roster.
+      const b1 = new MockClient<ServerContext>("b1");
+      nodeB.addClient(b1 as any);
+      await nodeB.apply(announce("b1", 222), b1 as any);
+
+      const roster = presenceOf(b1, "presence-join", 111);
+      expect(roster).toHaveLength(1);
+      expect(roster[0]!.payload).toMatchObject({
+        clientId: "a1",
+        userId: "user-1",
+      });
+
+      await nodeA[Symbol.asyncDispose]();
+      await nodeB[Symbol.asyncDispose]();
+      await bus[Symbol.asyncDispose]();
+    });
+
+    it("reconciles a node's heartbeat snapshot (join, then leave on removal)", async () => {
+      const bus = new InMemoryPubSub();
+      const nodeB = makeSession("session-b", "node-b", bus);
+      await nodeB.load();
+      const b1 = new MockClient<ServerContext>("b1");
+      nodeB.addClient(b1 as any);
+
+      // Heartbeat from node A advertising a1 -> b1 sees a join.
+      await bus.publish(
+        TOPIC,
+        heartbeat([
+          { awarenessId: 111, clientId: "a1", userId: "user-a", data: {} },
+        ]).encoded,
+        "node-a",
+      );
+      await tick();
+      expect(presenceOf(b1, "presence-join", 111)).toHaveLength(1);
+
+      // Next snapshot omits a1 (e.g. a missed leave) -> b1 sees a leave.
+      const prev = b1.sentMessages.length;
+      await bus.publish(TOPIC, heartbeat([]).encoded, "node-a");
+      await tick();
+
+      const leaves = b1.sentMessages
+        .slice(prev)
+        .filter(
+          (m) =>
+            m.type === "presence" &&
+            (m.payload as any).type === "presence-leave" &&
+            (m.payload as any).awarenessId === 111,
+        );
+      expect(leaves).toHaveLength(1);
+
+      await nodeB[Symbol.asyncDispose]();
+      await bus[Symbol.asyncDispose]();
+    });
+
+    it("expires a silent node and clears its clients (crash safety)", async () => {
+      const base = new Date("2026-01-01T00:00:00.000Z");
+      setSystemTime(base);
+      try {
+        const bus = new InMemoryPubSub();
+        const nodeB = makeSession("session-b", "node-b", bus, {
+          heartbeatIntervalMs: 0,
+          presenceTtlMs: 1000,
+        });
+        await nodeB.load();
+        const b1 = new MockClient<ServerContext>("b1");
+        nodeB.addClient(b1 as any);
+
+        await bus.publish(
+          TOPIC,
+          heartbeat([
+            { awarenessId: 111, clientId: "a1", userId: "user-a", data: {} },
+          ]).encoded,
+          "node-a",
+        );
+        await tick();
+        expect(presenceOf(b1, "presence-join", 111)).toHaveLength(1);
+
+        const prev = b1.sentMessages.length;
+        // Advance past the TTL and run maintenance: node A is presumed gone.
+        setSystemTime(new Date(base.getTime() + 2000));
+        await nodeB.runPresenceMaintenance();
+
+        const leaves = b1.sentMessages
+          .slice(prev)
+          .filter(
+            (m) =>
+              m.type === "presence" &&
+              (m.payload as any).type === "presence-leave" &&
+              (m.payload as any).awarenessId === 111,
+          );
+        expect(leaves).toHaveLength(1);
+
+        await nodeB[Symbol.asyncDispose]();
+        await bus[Symbol.asyncDispose]();
+      } finally {
+        setSystemTime();
+      }
     });
   });
 

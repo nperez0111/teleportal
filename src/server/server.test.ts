@@ -333,6 +333,25 @@ describe("Server", () => {
       ).rejects.toThrow("Encryption state mismatch");
     });
 
+    it("attaches to an existing session of either encryption mode when ignoreEncryptionMismatch is set", async () => {
+      // Presence messages are always cleartext (encrypted: false) but must
+      // attach to an encrypted session without throwing — otherwise the
+      // encryption-mismatch error tears down the client connection.
+      const encryptedSession = await server.getOrOpenSession("enc-doc", {
+        encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      const session = await server.getOrOpenSession("enc-doc", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+        ignoreEncryptionMismatch: true,
+      });
+
+      expect(session).toBe(encryptedSession);
+      expect(session.encrypted).toBe(true);
+    });
+
     it("should call getStorage with correct parameters", async () => {
       let calledWith: any = null;
       const customGetStorage = (ctx: any) => {

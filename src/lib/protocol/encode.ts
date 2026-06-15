@@ -120,6 +120,55 @@ export function encodeMessage(
         );
         break;
       }
+      case "presence": {
+        // message type
+        encoding.writeUint8(encoder, 3);
+
+        switch (message.payload.type) {
+          case "presence-announce": {
+            // sub-type
+            encoding.writeUint8(encoder, 0);
+            encoding.writeVarUint(encoder, message.payload.awarenessId);
+            break;
+          }
+          case "presence-join":
+          case "presence-leave": {
+            // sub-type
+            encoding.writeUint8(
+              encoder,
+              message.payload.type === "presence-join" ? 1 : 2,
+            );
+            encoding.writeVarUint(encoder, message.payload.awarenessId);
+            encoding.writeVarString(encoder, message.payload.clientId);
+            encoding.writeVarString(encoder, message.payload.userId);
+            encoding.writeAny(
+              encoder,
+              message.payload.data as encoding.AnyEncodable,
+            );
+            break;
+          }
+          case "presence-heartbeat": {
+            // sub-type
+            encoding.writeUint8(encoder, 3);
+            encoding.writeVarUint(encoder, message.payload.clients.length);
+            for (const peer of message.payload.clients) {
+              encoding.writeVarUint(encoder, peer.awarenessId);
+              encoding.writeVarString(encoder, peer.clientId);
+              encoding.writeVarString(encoder, peer.userId);
+              encoding.writeAny(encoder, peer.data as encoding.AnyEncodable);
+            }
+            break;
+          }
+          default: {
+            // @ts-expect-error - this should be unreachable due to type checking
+            message.payload.type;
+            throw new Error("Invalid presence payload.type", {
+              cause: { message },
+            });
+          }
+        }
+        break;
+      }
       case "rpc": {
         encoding.writeUint8(encoder, 4);
 

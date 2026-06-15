@@ -351,6 +351,11 @@ export function getYDocSink<Context extends ClientContext>({
               // not the Y.doc transport.
               break;
             }
+            case "presence": {
+              // Presence (client join/leave) messages are handled by the
+              // provider, not the Y.doc transport.
+              break;
+            }
             default: {
               // Exhaustive check for message types - all types should be handled above
               const _exhaustive: never = chunk;

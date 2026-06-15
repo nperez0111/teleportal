@@ -606,8 +606,13 @@ export abstract class Connection<
     }
 
     if (this.state.type === "connected") {
-      // Track non-ack, non-awareness messages as in-flight
-      if (message.type !== "ack" && message.type !== "awareness") {
+      // Track in-flight messages that expect an ack. Ack, awareness and presence
+      // messages are fire-and-forget and are never acked.
+      if (
+        message.type !== "ack" &&
+        message.type !== "awareness" &&
+        message.type !== "presence"
+      ) {
         const wasEmpty = this.#inFlightMessages.size === 0;
         this.#inFlightMessages.set(message.id, message);
         // Emit event when messages become in-flight
@@ -618,7 +623,11 @@ export abstract class Connection<
 
       this.sendMessage(message).catch(async (err) => {
         // Remove from in-flight if send fails
-        if (message.type !== "ack" && message.type !== "awareness") {
+        if (
+          message.type !== "ack" &&
+          message.type !== "awareness" &&
+          message.type !== "presence"
+        ) {
           this.#inFlightMessages.delete(message.id);
           // Emit event with current in-flight status
           this.call("messages-in-flight", this.#inFlightMessages.size > 0);
