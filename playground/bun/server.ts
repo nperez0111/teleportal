@@ -6,6 +6,7 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
 import { importEncryptionKey } from "teleportal/encryption-key";
+import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
 import { Server, checkPermissionWithTokenManager } from "teleportal/server";
@@ -109,6 +110,8 @@ const server = new Server<TokenPayload & { clientId: string }>({
   rpcHandlers: {
     ...milestoneHandlers,
     ...fileHandlers,
+    // Read-only attribution queries (authorship timeline + ContentMap).
+    ...getAttributionRpcHandlers(),
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
   // pubSub: new RedisPubSub({

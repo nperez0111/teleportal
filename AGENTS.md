@@ -21,6 +21,7 @@ There are several sub-packages built with documentation:
 - [`teleportal/http`](./src/http/README.md) - HTTP handlers
 - [`teleportal/protocol`](./src/lib/protocol/README.md) - Protocol encoding/decoding
 - [`teleportal/protocol/encryption`](./src/lib/protocol/encryption/README.md) - Encryption protocol
+- [`teleportal/protocols/attribution`](./src/protocols/attribution/README.md) - Attribution (authorship) read RPC methods
 - [`teleportal/providers`](./src/providers/README.md) - Provider and connection architecture
 - [`teleportal/transports`](./src/transports/README.md) - Transport middleware
 - [`teleportal/token`](./src/token/README.md) - JWT token utilities

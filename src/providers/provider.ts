@@ -25,6 +25,29 @@ import {
   type MilestoneRestoreResponse,
   type MilestoneUpdateNameResponse,
 } from "../protocols/milestone";
+import {
+  resolveRangeAttribution,
+  type AttributedSegment,
+  type AttributionActivityResponse,
+  type AttributionFilter,
+  type AttributionGetResponse,
+} from "../protocols/attribution";
+import {
+  changesetContentMap,
+  createContentIdsFromUpdate,
+  decodeContentMap,
+  getActivity,
+  milestoneContentMap,
+  resolveItemAttribution,
+  type ActivityEntry,
+  type ContentIds,
+  type ContentMap,
+} from "teleportal/attribution";
+import {
+  decryptUpdate,
+  encryptUpdate,
+  type EncryptedBinary,
+} from "teleportal/encryption-key";
 import { Connection, ConnectionContext, ConnectionState } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 import { RpcClient, RpcOperationError } from "./rpc-client";
@@ -193,6 +216,8 @@ export class Provider<
   #getTransport: ProviderOptions["getTransport"];
   public subdocs: Map<string, Provider> = new Map();
   #rpcClient: RpcClient;
+  /** Cache of the decoded attribution ContentMap from the last fetch. */
+  #attributionMap: ContentMap | null | undefined;
   #rpcHandlers: ClientRpcHandlerRegistry;
   #handlerCleanups: Array<() => void> = [];
   public encryptionKey?: CryptoKey;
@@ -721,7 +746,13 @@ export class Provider<
         { milestoneId },
       );
 
-      return response.snapshot as unknown as MilestoneSnapshot;
+      const snapshot = response.snapshot as unknown as Uint8Array;
+      // For E2EE documents the snapshot is stored encrypted; decrypt it here so
+      // consumers always receive a plaintext Y.js update (see createMilestone).
+      const plaintext = this.encryptionKey
+        ? await decryptUpdate(this.encryptionKey, snapshot as EncryptedBinary)
+        : snapshot;
+      return plaintext as unknown as MilestoneSnapshot;
     } catch (error) {
       if (error instanceof RpcOperationError) {
         throw new MilestoneOperationError("get milestone snapshot", error);
@@ -737,9 +768,13 @@ export class Provider<
    * @throws Error if the operation is denied or if the connection fails
    */
   async createMilestone(name?: string): Promise<Milestone> {
-    const snapshot = Y.encodeStateAsUpdateV2(
-      this.doc,
-    ) as unknown as MilestoneSnapshot;
+    const plaintext = Y.encodeStateAsUpdateV2(this.doc);
+    // For E2EE documents, encrypt the snapshot before it leaves the client so
+    // milestone content is never stored in plaintext on the server. The server
+    // treats the snapshot as opaque bytes; getMilestoneSnapshot decrypts it.
+    const snapshot = (this.encryptionKey
+      ? await encryptUpdate(this.encryptionKey, plaintext)
+      : plaintext) as unknown as MilestoneSnapshot;
 
     try {
       const response =
@@ -829,6 +864,198 @@ export class Provider<
       }
       throw error;
     }
+  }
+
+  /**
+   * Fetch the attribution activity timeline for the current document.
+   *
+   * Works for encrypted documents — the server resolves this from authorship
+   * and timestamps without needing the document content.
+   *
+   * @param options - Optional time range (`from`/`to`, ms) and `userId` filter
+   * @returns A sorted list of activity entries
+   */
+  async getActivity(options?: AttributionFilter): Promise<ActivityEntry[]> {
+    const response =
+      await this.#rpcClient.sendRequest<AttributionActivityResponse>(
+        this.document,
+        "attributionActivity",
+        { ...options },
+      );
+    return response.activity;
+  }
+
+  /**
+   * Fetch and decode the attribution ContentMap for the current document, and
+   * cache it for subsequent local lookups. Returns null when the server has no
+   * attribution data for the document.
+   *
+   * @param filter - Optional server-side filter (`userId`, `from`/`to`)
+   */
+  async getAttributionMap(
+    filter?: AttributionFilter,
+  ): Promise<ContentMap | null> {
+    const response = await this.#rpcClient.sendRequest<AttributionGetResponse>(
+      this.document,
+      "attributionGet",
+      filter ? { filter } : {},
+    );
+    this.#attributionMap = response.contentMap
+      ? decodeContentMap(response.contentMap)
+      : null;
+    return this.#attributionMap;
+  }
+
+  /**
+   * Ensure the attribution ContentMap is loaded, fetching it once if needed.
+   */
+  async #ensureAttributionMap(): Promise<ContentMap | null> {
+    if (this.#attributionMap === undefined) {
+      await this.getAttributionMap();
+    }
+    return this.#attributionMap ?? null;
+  }
+
+  /**
+   * Resolve who authored a specific Y.js item identified by (clientID, clock).
+   * Uses the cached ContentMap, fetching it once if not yet loaded.
+   */
+  async resolveAttribution(
+    clientID: number,
+    clock: number,
+  ): Promise<{ userId: string; timestamp: number } | null> {
+    const map = await this.#ensureAttributionMap();
+    if (!map) return null;
+    return resolveItemAttribution(map, clientID, clock);
+  }
+
+  /**
+   * Resolve attribution for a content range of a Y type (e.g. a Y.Text), mapping
+   * the position range to CRDT operation IDs against the local document, then
+   * looking them up in the (cached) ContentMap. Runs entirely client-side, so it
+   * works for encrypted documents.
+   *
+   * @param type - The Y type the range refers to (Y.Text, Y.Array, Y.XmlText...)
+   * @param index - Start offset within `type`
+   * @param length - Number of positions to resolve
+   * @returns Attributed segments in the coordinate space of `type`
+   */
+  async getAttributionForRange(
+    type: Y.AbstractType<any>,
+    index: number,
+    length: number,
+  ): Promise<AttributedSegment[]> {
+    const map = await this.#ensureAttributionMap();
+    if (!map) return [];
+    return resolveRangeAttribution(type, index, length, map);
+  }
+
+  /**
+   * The operation IDs contained in a milestone, derived from its (decrypted)
+   * snapshot. These identify which CRDT operations existed as of the milestone.
+   */
+  async #milestoneContentIds(milestoneId: string): Promise<ContentIds> {
+    const snapshot = await this.getMilestoneSnapshot(milestoneId);
+    return createContentIdsFromUpdate(snapshot as unknown as Uint8Array);
+  }
+
+  /**
+   * Reconstruct the Y.Doc state captured by a milestone from its (decrypted)
+   * snapshot, for resolving content positions against that historical state.
+   */
+  async #milestoneDoc(milestoneId: string): Promise<Y.Doc> {
+    const snapshot = await this.getMilestoneSnapshot(milestoneId);
+    const doc = new Y.Doc();
+    Y.applyUpdateV2(doc, snapshot as unknown as Uint8Array);
+    return doc;
+  }
+
+  /**
+   * Attribution restricted to the content present in a milestone — i.e. who
+   * authored what the document contained as of that milestone. Computed
+   * client-side by intersecting the document's full ContentMap with the
+   * milestone's operation IDs. Returns null when no attribution data exists.
+   */
+  async getMilestoneContentMap(
+    milestoneId: string,
+  ): Promise<ContentMap | null> {
+    const [map, ids] = await Promise.all([
+      this.#ensureAttributionMap(),
+      this.#milestoneContentIds(milestoneId),
+    ]);
+    if (!map) return null;
+    return milestoneContentMap(map, ids);
+  }
+
+  /**
+   * Activity timeline for the content present in a milestone.
+   * @param options - Optional time range (`from`/`to`, ms) and `userId` filter
+   */
+  async getMilestoneActivity(
+    milestoneId: string,
+    options?: AttributionFilter,
+  ): Promise<ActivityEntry[]> {
+    const map = await this.getMilestoneContentMap(milestoneId);
+    if (!map) return [];
+    return getActivity(map, options);
+  }
+
+  /**
+   * Attribution for the changes made between two milestones — the operations
+   * added from `fromMilestoneId` to `toMilestoneId` (both new inserts and new
+   * deletes). Returns null when no attribution data exists.
+   */
+  async getChangesetContentMap(
+    fromMilestoneId: string,
+    toMilestoneId: string,
+  ): Promise<ContentMap | null> {
+    const [map, fromIds, toIds] = await Promise.all([
+      this.#ensureAttributionMap(),
+      this.#milestoneContentIds(fromMilestoneId),
+      this.#milestoneContentIds(toMilestoneId),
+    ]);
+    if (!map) return null;
+    return changesetContentMap(map, fromIds, toIds);
+  }
+
+  /**
+   * Activity timeline for the changes made between two milestones.
+   * @param options - Optional time range (`from`/`to`, ms) and `userId` filter
+   */
+  async getChangesetActivity(
+    fromMilestoneId: string,
+    toMilestoneId: string,
+    options?: AttributionFilter,
+  ): Promise<ActivityEntry[]> {
+    const map = await this.getChangesetContentMap(
+      fromMilestoneId,
+      toMilestoneId,
+    );
+    if (!map) return [];
+    return getActivity(map, options);
+  }
+
+  /**
+   * Resolve attribution for a content range as it existed in a milestone.
+   * Rebuilds the milestone's document from its (decrypted) snapshot, selects the
+   * target Y type via `select`, and resolves the range against the document's
+   * full ContentMap. Runs entirely client-side, so it works for E2EE documents.
+   *
+   * @param select - Picks the Y type from the rebuilt milestone Y.Doc
+   *   (e.g. `(doc) => doc.getText("body")`)
+   */
+  async getMilestoneAttributionForRange(
+    milestoneId: string,
+    select: (doc: Y.Doc) => Y.AbstractType<any>,
+    index: number,
+    length: number,
+  ): Promise<AttributedSegment[]> {
+    const [map, doc] = await Promise.all([
+      this.#ensureAttributionMap(),
+      this.#milestoneDoc(milestoneId),
+    ]);
+    if (!map) return [];
+    return resolveRangeAttribution(select(doc), index, length, map);
   }
 
   /**

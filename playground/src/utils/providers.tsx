@@ -12,6 +12,7 @@ import { getFileClientHandlers } from "teleportal/protocols/file";
 import { getEncryptedTransport } from "./encrypted";
 import { ClientContext, Transport } from "teleportal";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
+import { getIdentity } from "./identity";
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -44,7 +45,9 @@ class ProviderManager {
     if (!this.websocketConnection) {
       this.websocketConnection = tokenManager
         .createToken(
-          "nick",
+          // The token subject becomes the authenticated userId, which the server
+          // records as the author of every edit from this tab.
+          getIdentity().name,
           "docs",
           // TODO probably make token gen configurable callback
           new DocumentAccessBuilder()

@@ -1,8 +1,10 @@
 import { useState, useEffect, Suspense } from "react";
 import { Editor } from "./editor";
-import { Document, fileService } from "../services/fileService";
+import { fileService } from "../services/fileService";
 import { useProvider } from "../utils/providers";
 import { MilestonePanel } from "./milestonePanel";
+import { AttributionPanel } from "./attributionPanel";
+import { getIdentity } from "../utils/identity";
 import { Milestone } from "teleportal";
 
 interface DocumentEditorProps {
@@ -21,9 +23,11 @@ export function DocumentEditor({
   const [, forceUpdate] = useState<number>(0);
   const { provider } = useProvider(document?.id, document?.encryptedKey);
   const [isMilestonePanelOpen, setIsMilestonePanelOpen] = useState(false);
+  const [isAttributionPanelOpen, setIsAttributionPanelOpen] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(
     null,
   );
+  const identity = getIdentity();
 
   useEffect(() => {
     const unsubscribe = fileService.on("documents", () => {
@@ -38,6 +42,7 @@ export function DocumentEditor({
   useEffect(() => {
     setSelectedMilestone(null);
     setIsMilestonePanelOpen(false);
+    setIsAttributionPanelOpen(false);
   }, [documentId]);
 
   if (!documentId || !document) {
@@ -126,8 +131,32 @@ export function DocumentEditor({
                 </svg>
               )}
             </div>
-            {/* Versions button - pushed to the right */}
-            <div className="flex items-center ml-auto shrink-0">
+            {/* Versions + Authorship buttons - pushed to the right */}
+            <div className="flex items-center ml-auto shrink-0 gap-2">
+              <button
+                onClick={() => setIsAttributionPanelOpen((v) => !v)}
+                className={`px-3 py-2 text-sm font-medium border rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap ${
+                  isAttributionPanelOpen
+                    ? "text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700"
+                    : "text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+                }`}
+                title="See who wrote what"
+              >
+                <svg
+                  className="w-4 h-4 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6 0a4 4 0 10-3-6.65"
+                  />
+                </svg>
+                <span className="hidden md:inline">Authorship</span>
+              </button>
               <button
                 onClick={() => setIsMilestonePanelOpen(true)}
                 className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
@@ -175,12 +204,21 @@ export function DocumentEditor({
                 <Editor
                   selectedMilestone={selectedMilestone}
                   provider={provider}
+                  user={identity}
                   key={provider.doc.clientID}
                 />
               </Suspense>
             )}
           </div>
         </div>
+
+        {/* Authorship Panel - pushes content instead of overlaying */}
+        <AttributionPanel
+          provider={provider}
+          selectedMilestone={selectedMilestone}
+          isOpen={isAttributionPanelOpen}
+          onClose={() => setIsAttributionPanelOpen(false)}
+        />
 
         {/* Milestone Panel - pushes content instead of overlaying */}
         <MilestonePanel

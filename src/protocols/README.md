@@ -7,6 +7,7 @@ This package contains the protocol implementations for Teleportal's Y.js Sync Se
 - [`teleportal/protocol`](../lib/protocol/README.md) - Core RPC messaging system (RPC types and message classes are exported from `teleportal/protocol`)
 - [`teleportal/protocols/milestone`](./milestone/README.md) - Milestone RPC methods
 - [`teleportal/protocols/file`](./file/README.md) - File RPC methods
+- [`teleportal/protocols/attribution`](./attribution/README.md) - Attribution (authorship) read methods
 
 ## Overview
 
@@ -83,3 +84,4 @@ RPC messages use a binary format with the following structure:
 - [RPC System](../lib/protocol/README.md) - Core RPC types, encoding, handlers, and serialization/deserialization (exported from `teleportal/protocol`)
 - [Milestone Methods](./milestone/README.md) - Milestone CRUD operations via RPC
 - [File Methods](./file/README.md) - File upload/download authorization via RPC
+- [Attribution Methods](./attribution/README.md) - Read document authorship via RPC

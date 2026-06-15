@@ -46,3 +46,5 @@ export {
   getActivity,
   resolveItemAttribution,
 } from "./queries";
+
+export { milestoneContentMap, changesetContentMap } from "./milestone";
