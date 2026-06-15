@@ -654,11 +654,13 @@ describe("Provider milestone operations", () => {
     // the plaintext update itself).
     expect(stored).toBeDefined();
     expect(new Uint8Array(stored!)).not.toEqual(new Uint8Array(plaintext));
-    expect(
-      decodeEncryptedUpdate(stored as unknown as Parameters<
-        typeof decodeEncryptedUpdate
-      >[0]).length,
-    ).toBe(1);
+    const decodedStored = decodeEncryptedUpdate(stored as unknown as Parameters<
+      typeof decodeEncryptedUpdate
+    >[0]);
+    expect(decodedStored.type).toBe("update");
+    if (decodedStored.type === "update") {
+      expect(decodedStored.updates.length).toBe(1);
+    }
 
     const snapshot = await provider.getMilestoneSnapshot("milestone-1");
     const restored = new Y.Doc();
@@ -693,6 +695,7 @@ describe("Provider milestone operations", () => {
         const payload = await encryptUpdate(encryptionKey, u);
         return {
           id: toBase64(digest(payload)),
+          snapshotId: "snap-multi",
           timestamp: [1, i] as [number, number],
           payload,
           contentIds: getEmptyEncodedContentIds(),

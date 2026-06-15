@@ -1,5 +1,6 @@
 import type { DevtoolsMessage } from "../types";
 import {
+  formatLogEntry,
   formatMessagePayload,
   getMessageTypeLabel,
   getMessageTypeColor,
@@ -85,27 +86,49 @@ export class MessageInspector {
     title.textContent = "Message Inspector";
     header.append(title);
 
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "devtools-inspector-btn-group";
+
+    const logBtn = document.createElement("button");
+    logBtn.className = "devtools-inspector-copy-btn";
+    logBtn.innerHTML = `${this.getCopyIcon()} Copy Log`;
+    logBtn.title =
+      "Copy a one-line log entry (direction, type, doc, timing) for sharing";
+    logBtn.addEventListener("click", () => {
+      const entry = formatLogEntry(this.message!);
+      this.copyToClipboard(entry, logBtn);
+      logBtn.innerHTML = `${this.getCheckIcon()} Copied`;
+      logBtn.classList.add("copied");
+      setTimeout(() => {
+        logBtn.innerHTML = `${this.getCopyIcon()} Copy Log`;
+        logBtn.classList.remove("copied");
+      }, 1500);
+    });
+    btnGroup.append(logBtn);
+
     const copyBtn = document.createElement("button");
     copyBtn.className = "devtools-inspector-copy-btn";
-    copyBtn.innerHTML = `${this.getCopyIcon()} Copy`;
+    copyBtn.innerHTML = `${this.getCopyIcon()} Copy Payload`;
+    copyBtn.title = "Copy the decoded payload JSON";
 
     payload.then((res) => {
       if (!res) {
         return;
       }
 
-      header.append(copyBtn);
+      btnGroup.append(copyBtn);
       copyBtn.addEventListener("click", () => {
         this.copyToClipboard(res, copyBtn);
         copyBtn.innerHTML = `${this.getCheckIcon()} Copied`;
         copyBtn.classList.add("copied");
         setTimeout(() => {
-          copyBtn.innerHTML = `${this.getCopyIcon()} Copy`;
+          copyBtn.innerHTML = `${this.getCopyIcon()} Copy Payload`;
           copyBtn.classList.remove("copied");
         }, 1500);
       });
     });
 
+    header.append(btnGroup);
     this.element.append(header);
   }
 

@@ -1,5 +1,5 @@
 import type {
-  EncryptedMessageId,
+  EncryptedSnapshot,
   EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
 import {
@@ -10,27 +10,28 @@ import {
 import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
+  EncryptedSnapshotMetadata,
+  StoredEncryptedUpdate,
 } from "../encrypted";
 import type { EncodedContentMap } from "../types";
+
+type EncryptedSnapshotRecord = {
+  snapshot: EncryptedSnapshot;
+  metadata: EncryptedSnapshotMetadata;
+  updates: StoredEncryptedUpdate[];
+};
+
+type EncryptedDocumentRecord = {
+  metadata: EncryptedDocumentMetadata;
+  snapshots: Map<string, EncryptedSnapshotRecord>;
+};
 
 export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   public static attributionMaps = new Map<string, EncodedContentMap[]>();
   constructor(
     private options: {
-      write: (
-        key: string,
-        doc: {
-          metadata: EncryptedDocumentMetadata;
-          updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
-        },
-      ) => Promise<void>;
-      fetch: (key: string) => Promise<
-        | {
-            metadata: EncryptedDocumentMetadata;
-            updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
-          }
-        | undefined
-      >;
+      write: (key: string, doc: EncryptedDocumentRecord) => Promise<void>;
+      fetch: (key: string) => Promise<EncryptedDocumentRecord | undefined>;
     } = {
       write: async (key, doc) => {
         EncryptedMemoryStorage.docs.set(key, doc);
@@ -42,13 +43,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
   ) {
     super();
   }
-  public static docs = new Map<
-    string,
-    {
-      metadata: EncryptedDocumentMetadata;
-      updates: Map<EncryptedMessageId, EncryptedUpdatePayload>;
-    }
-  >();
+  public static docs = new Map<string, EncryptedDocumentRecord>();
 
   async writeDocumentMetadata(
     key: string,
@@ -57,7 +52,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     const existing = await this.options.fetch(key);
     await this.options.write(key, {
       metadata,
-      updates: existing?.updates ?? new Map(),
+      snapshots: existing?.snapshots ?? new Map(),
     });
   }
 
@@ -69,7 +64,6 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
         createdAt: now,
         updatedAt: now,
         encrypted: true,
-        seenMessages: {},
       };
     }
     const m = doc.metadata;
@@ -81,41 +75,109 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
     };
   }
 
-  async storeEncryptedMessage(
+  async storeSnapshot(
     key: string,
-    messageId: EncryptedMessageId,
-    payload: EncryptedUpdatePayload,
+    snapshot: EncryptedSnapshot,
+    metadata: EncryptedSnapshotMetadata,
   ): Promise<void> {
     const now = Date.now();
-    const existing = await this.options.fetch(key);
-    const updates = existing?.updates ?? new Map();
-    updates.set(messageId, payload);
-    await this.options.write(key, {
-      metadata:
-        existing?.metadata ??
-        ({
+    const existing =
+      (await this.options.fetch(key)) ??
+      ({
+        metadata: {
           createdAt: now,
           updatedAt: now,
           encrypted: true,
-          seenMessages: {},
-        } satisfies EncryptedDocumentMetadata),
-      updates,
+        },
+        snapshots: new Map(),
+      } satisfies EncryptedDocumentRecord);
+    const existingRecord = existing.snapshots.get(snapshot.id);
+    existing.snapshots.set(snapshot.id, {
+      snapshot,
+      metadata,
+      updates: existingRecord?.updates ?? [],
     });
+    await this.options.write(key, existing);
   }
 
-  async fetchEncryptedMessage(
+  async fetchSnapshot(
     key: string,
-    messageId: EncryptedMessageId,
-  ): Promise<EncryptedUpdatePayload | null> {
+    snapshotId: string,
+  ): Promise<EncryptedSnapshot | null> {
     const doc = await this.options.fetch(key);
     if (!doc) {
       return null;
     }
-    const update = doc.updates.get(messageId);
-    if (!update) {
+    const record = doc.snapshots.get(snapshotId);
+    if (!record) {
       return null;
     }
-    return update;
+    return record.snapshot;
+  }
+
+  async writeSnapshotMetadata(
+    key: string,
+    metadata: EncryptedSnapshotMetadata,
+  ): Promise<void> {
+    const doc = await this.options.fetch(key);
+    if (!doc) {
+      return;
+    }
+    const record = doc.snapshots.get(metadata.id);
+    if (!record) {
+      return;
+    }
+    record.metadata = metadata;
+    await this.options.write(key, doc);
+  }
+
+  async getSnapshotMetadata(
+    key: string,
+    snapshotId: string,
+  ): Promise<EncryptedSnapshotMetadata | null> {
+    const doc = await this.options.fetch(key);
+    if (!doc) {
+      return null;
+    }
+    return doc.snapshots.get(snapshotId)?.metadata ?? null;
+  }
+
+  async storeUpdate(key: string, update: StoredEncryptedUpdate): Promise<void> {
+    const now = Date.now();
+    const doc =
+      (await this.options.fetch(key)) ??
+      ({
+        metadata: {
+          createdAt: now,
+          updatedAt: now,
+          encrypted: true,
+        },
+        snapshots: new Map(),
+      } satisfies EncryptedDocumentRecord);
+    const record = doc.snapshots.get(update.snapshotId);
+    if (!record) {
+      throw new Error("Snapshot not found for update");
+    }
+    record.updates.push(update);
+    await this.options.write(key, doc);
+  }
+
+  async fetchUpdates(
+    key: string,
+    snapshotId: string,
+    afterVersion: number,
+  ): Promise<StoredEncryptedUpdate[]> {
+    const doc = await this.options.fetch(key);
+    if (!doc) {
+      return [];
+    }
+    const record = doc.snapshots.get(snapshotId);
+    if (!record) {
+      return [];
+    }
+    return record.updates
+      .filter((update) => update.serverVersion > afterVersion)
+      .sort((a, b) => a.serverVersion - b.serverVersion);
   }
 
   override async handleUpdate(

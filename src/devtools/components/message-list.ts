@@ -1,4 +1,5 @@
 import type { DevtoolsMessage } from "../types";
+import { formatLogEntry } from "../utils/message-utils";
 import { createMessageItem } from "./message-item";
 
 export class MessageList {
@@ -28,7 +29,26 @@ export class MessageList {
     this.header.append(title);
     this.element.append(this.header);
 
-    // Clear button
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "devtools-inspector-btn-group";
+
+    const copyAllBtn = document.createElement("button");
+    copyAllBtn.className = "devtools-button devtools-text-xs";
+    copyAllBtn.textContent = "Copy Log";
+    copyAllBtn.title =
+      "Copy all visible messages as a log transcript for debugging";
+    copyAllBtn.addEventListener("click", () => {
+      const log = this.messages.map((m) => formatLogEntry(m)).join("\n");
+      navigator.clipboard.writeText(log).then(() => {
+        const original = copyAllBtn.textContent;
+        copyAllBtn.textContent = "Copied!";
+        setTimeout(() => {
+          copyAllBtn.textContent = original;
+        }, 1500);
+      });
+    });
+    btnGroup.append(copyAllBtn);
+
     if (this.onClearMessages) {
       const clearButton = document.createElement("button");
       clearButton.className = "devtools-button devtools-text-xs";
@@ -37,8 +57,10 @@ export class MessageList {
       clearButton.addEventListener("click", () => {
         this.onClearMessages?.();
       });
-      this.header.append(clearButton);
+      btnGroup.append(clearButton);
     }
+
+    this.header.append(btnGroup);
 
     // List container
     this.listContainer = document.createElement("div");
