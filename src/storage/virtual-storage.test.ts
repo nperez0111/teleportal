@@ -3,6 +3,7 @@ import type {
   DocumentStorage,
   DocumentMetadata,
   Document,
+  EncodedContentMap,
 } from "teleportal/storage";
 import type { Update } from "teleportal";
 import { VirtualStorage } from "./virtual-storage";
@@ -15,12 +16,18 @@ class MockDocumentStorage implements DocumentStorage {
   milestoneStorage = undefined;
 
   public handledUpdates: Update[] = [];
+  public handledAttributions: (EncodedContentMap | undefined)[] = [];
   public writtenMetadata: DocumentMetadata[] = [];
   public documents = new Map<string, Document>();
   public metadataMap = new Map<string, DocumentMetadata>();
 
-  async handleUpdate(documentId: string, update: Update): Promise<void> {
+  async handleUpdate(
+    documentId: string,
+    update: Update,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
     this.handledUpdates.push(update);
+    this.handledAttributions.push(attribution);
   }
 
   async getDocument(documentId: string): Promise<Document | null> {
@@ -66,6 +73,17 @@ class MockDocumentStorage implements DocumentStorage {
 
   async transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
     return cb();
+  }
+}
+
+// A storage that supports attribution, to verify VirtualStorage delegates.
+class AttributionMockStorage extends MockDocumentStorage {
+  public stored = new Map<string, EncodedContentMap>();
+
+  async retrieveAttribution(
+    documentId: string,
+  ): Promise<EncodedContentMap | null> {
+    return this.stored.get(documentId) ?? null;
   }
 }
 
@@ -127,5 +145,39 @@ describe("VirtualStorage", () => {
     await virtualStorage.deleteDocument("doc1");
 
     expect(mockStorage.handledUpdates.length).toBe(1);
+  });
+
+  it("does not advertise attribution when the wrapped storage lacks it", () => {
+    // The server uses the presence of retrieveAttribution to decide whether to
+    // compute attribution at all; it must be falsy for non-attribution backends.
+    expect(virtualStorage.retrieveAttribution).toBeUndefined();
+  });
+
+  it("delegates retrieveAttribution when the wrapped storage supports it", async () => {
+    const attrStorage = new AttributionMockStorage();
+    const map = new Uint8Array([9, 9]) as EncodedContentMap;
+    attrStorage.stored.set("doc1", map);
+    const vs = new VirtualStorage(attrStorage, {
+      batchMaxSize: 10,
+      batchWaitMs: 1000,
+    });
+
+    expect(typeof vs.retrieveAttribution).toBe("function");
+    expect(await vs.retrieveAttribution!("doc1")).toBe(map);
+    expect(await vs.retrieveAttribution!("missing")).toBeNull();
+  });
+
+  it("buffers attribution and forwards it to the underlying storage", async () => {
+    const update = new Uint8Array([1, 2, 3]) as Update;
+    const attribution = new Uint8Array([7, 7, 7]) as EncodedContentMap;
+
+    // Attributed writes are batched like any other write, not bypassed.
+    await virtualStorage.handleUpdate("doc1", update, attribution);
+    expect(mockStorage.handledUpdates.length).toBe(0);
+
+    await virtualStorage.getDocument("doc1");
+
+    expect(mockStorage.handledUpdates).toEqual([update]);
+    expect(mockStorage.handledAttributions).toEqual([attribution]);
   });
 });
