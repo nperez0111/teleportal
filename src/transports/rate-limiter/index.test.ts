@@ -52,6 +52,7 @@ describe("RateLimitedTransport", () => {
   });
 
   it("should enforce rate limits with transport tracking", async () => {
+    const onRateLimitExceeded = mock();
     const rateLimited = new RateLimitedTransport(transport as any, {
       rules: [
         {
@@ -61,6 +62,7 @@ describe("RateLimitedTransport", () => {
           trackBy: "transport",
         },
       ],
+      onRateLimitExceeded,
     });
 
     const writer = rateLimited.writable.getWriter();
@@ -69,16 +71,10 @@ describe("RateLimitedTransport", () => {
     await writer.write({ type: "ping" } as any);
     await writer.write({ type: "ping" } as any);
 
-    // 3rd message should fail
-    let error;
-    try {
-      await writer.write({ type: "ping" } as any);
-    } catch (e: any) {
-      error = e;
-    }
+    // 3rd message should be silently dropped (not thrown)
+    await writer.write({ type: "ping" } as any);
 
-    expect(error).toBeDefined();
-    expect(error.message).toBe("Rate limit exceeded");
+    expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
   it("should use storage when provided", async () => {
@@ -171,6 +167,7 @@ describe("RateLimitedTransport", () => {
   });
 
   it("should apply rate limit if permission granted", async () => {
+    const onRateLimitExceeded = mock();
     const rateLimited = new RateLimitedTransport(transport as any, {
       rules: [
         {
@@ -181,23 +178,20 @@ describe("RateLimitedTransport", () => {
         },
       ],
       checkPermission: () => true, // Permission granted
+      onRateLimitExceeded,
     });
 
     const writer = rateLimited.writable.getWriter();
 
     await writer.write({ type: "ping" } as any);
 
-    // Second should fail
-    let error;
-    try {
-      await writer.write({ type: "ping" } as any);
-    } catch (e) {
-      error = e;
-    }
-    expect(error).toBeDefined();
+    // Second should be silently dropped
+    await writer.write({ type: "ping" } as any);
+    expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
   it("should skip rate limit if shouldSkipRateLimit returns true", async () => {
+    const onRateLimitExceeded = mock();
     const rateLimited = new RateLimitedTransport(transport as any, {
       rules: [
         {
@@ -208,7 +202,9 @@ describe("RateLimitedTransport", () => {
           getUserId: (msg) => (msg.context as any)?.userId,
         },
       ],
+      rateLimitStorage: mockStorage,
       shouldSkipRateLimit: (msg) => (msg.context as any)?.userId === "admin",
+      onRateLimitExceeded,
     });
 
     const writer = rateLimited.writable.getWriter();
@@ -217,14 +213,12 @@ describe("RateLimitedTransport", () => {
     await writer.write({ type: "ping", context: { userId: "admin" } } as any);
     await writer.write({ type: "ping", context: { userId: "admin" } } as any);
     await writer.write({ type: "ping", context: { userId: "admin" } } as any);
+    expect(onRateLimitExceeded).not.toHaveBeenCalled();
 
-    // Regular user should be limited
+    // Regular user should be limited (silently dropped)
     await writer.write({ type: "ping", context: { userId: "user" } } as any);
-    try {
-      await writer.write({ type: "ping", context: { userId: "user" } } as any);
-    } catch (e: any) {
-      expect(e.message).toBe("Rate limit exceeded");
-    }
+    await writer.write({ type: "ping", context: { userId: "user" } } as any);
+    expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
   it("should enforce multiple rules simultaneously", async () => {
@@ -265,5 +259,82 @@ describe("RateLimitedTransport", () => {
     expect(docState).not.toBeNull();
     expect(userState?.tokens).toBe(99); // 100 - 1
     expect(docState?.tokens).toBe(199); // 200 - 1
+  });
+
+  it("should silently drop rate-limited messages (stream survives)", async () => {
+    const onRateLimitExceeded = mock();
+    const rateLimited = new RateLimitedTransport(transport as any, {
+      rules: [
+        {
+          id: "transport-limit",
+          maxMessages: 1,
+          windowMs: 1000,
+          trackBy: "transport",
+        },
+      ],
+      onRateLimitExceeded,
+    });
+
+    const writer = rateLimited.writable.getWriter();
+
+    // First message passes
+    await writer.write({ type: "ping" } as any);
+
+    // Second message is dropped silently
+    await writer.write({ type: "ping" } as any);
+    expect(onRateLimitExceeded).toHaveBeenCalledTimes(1);
+
+    // Stream is still alive — third message is also dropped (not thrown)
+    await writer.write({ type: "ping" } as any);
+    expect(onRateLimitExceeded).toHaveBeenCalledTimes(2);
+  });
+
+  it("should drop rate-limited messages on readable stream too", async () => {
+    const onRateLimitExceeded = mock();
+    const sourceController: any = {};
+    const readable = new ReadableStream<Message<ClientContext>>({
+      start(controller) {
+        sourceController.ctrl = controller;
+      },
+    });
+    const writable = new WritableStream<Message<ClientContext>>({ write: mock() });
+
+    const rateLimited = new RateLimitedTransport({ readable, writable } as any, {
+      rules: [
+        {
+          id: "transport-limit",
+          maxMessages: 1,
+          windowMs: 1000,
+          trackBy: "transport",
+        },
+      ],
+      onRateLimitExceeded,
+    });
+
+    const received: any[] = [];
+    const reader = rateLimited.readable.getReader();
+
+    // Start reading in background
+    const readLoop = (async () => {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        received.push(value);
+      }
+    })();
+
+    // Enqueue 3 messages into source
+    sourceController.ctrl.enqueue({ type: "ping" } as any);
+    sourceController.ctrl.enqueue({ type: "ping" } as any);
+    sourceController.ctrl.enqueue({ type: "ping" } as any);
+
+    // Close the source and wait for the read loop to drain deterministically
+    // (avoids a flaky fixed-delay wait on slower CI).
+    sourceController.ctrl.close();
+    await readLoop;
+
+    // Only the first should have passed through
+    expect(received.length).toBe(1);
+    expect(onRateLimitExceeded).toHaveBeenCalledTimes(2);
   });
 });
