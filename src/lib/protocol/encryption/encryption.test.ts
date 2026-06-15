@@ -21,6 +21,7 @@ import {
   getEmptyEncryptedSyncStep2,
 } from "./encoding";
 import type { ClientId, Counter, LamportClockValue } from "./lamport-clock";
+import { getEmptyEncodedContentIds } from "teleportal/attribution";
 
 describe("protocol encryption encoding", () => {
   describe("state vector encoding/decoding", () => {
@@ -78,6 +79,7 @@ describe("protocol encryption encoding", () => {
         id: "dGVzdC1tZXNzYWdlLWlk", // base64 encoded "test-message-id"
         timestamp,
         payload: testUpdate,
+        contentIds: getEmptyEncodedContentIds(),
       };
 
       const encoded = encodeEncryptedUpdateMessages([message]);
@@ -95,11 +97,13 @@ describe("protocol encryption encoding", () => {
           id: "bXNnMQ==", // base64 encoded "msg1"
           timestamp: [1, 5],
           payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
         },
         {
           id: "bXNnMg==", // base64 encoded "msg2"
           timestamp: [2, 10],
           payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
         },
       ];
 
@@ -152,11 +156,13 @@ describe("protocol encryption encoding", () => {
           id: "msg1",
           timestamp: [1, 5],
           payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
         },
         {
           id: "msg2",
           timestamp: [2, 10],
           payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
         },
       ];
       const sync: DecodedEncryptedSyncStep2 = { messages };
@@ -175,11 +181,13 @@ describe("protocol encryption encoding", () => {
           id: "msg1",
           timestamp: [100, 5],
           payload: new Uint8Array([1, 2, 3]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
         },
         {
           id: "msg2",
           timestamp: [100, 10], // Same client id
           payload: new Uint8Array([4, 5, 6]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
         },
       ];
       const sync: DecodedEncryptedSyncStep2 = { messages };

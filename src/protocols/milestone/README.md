@@ -45,7 +45,10 @@ The `Provider` automatically handles milestone RPC requests via its `RpcClient`.
 ```typescript
 import { Provider } from "teleportal/providers";
 
-const provider = await Provider.create({ url: "wss://...", document: "my-doc" });
+const provider = await Provider.create({
+  url: "wss://...",
+  document: "my-doc",
+});
 
 // List milestones
 const milestones = await provider.listMilestones();
@@ -56,6 +59,21 @@ const milestone = await provider.createMilestone("v1.0");
 // Get milestone snapshot
 const snapshot = await provider.getMilestoneSnapshot(milestone.id);
 ```
+
+## Encryption (E2EE)
+
+For end-to-end-encrypted documents (a `Provider` created with an `encryptionKey`),
+`createMilestone` encrypts the snapshot with that key before it leaves the client, so the
+server only ever stores ciphertext; `getMilestoneSnapshot` decrypts it transparently, so
+callers still receive a plaintext Y.js update. The server treats the snapshot as opaque
+bytes either way. This is what makes client-side
+[milestone attribution](../attribution/README.md) possible without exposing content to the
+server.
+
+> Known limitation: server-generated **automatic** milestones cannot encrypt this way (the
+> server has no plaintext) and currently store a different encrypted-message-container
+> format. They are not consumed by the attribution helpers; prefer client-created milestones
+> on E2EE documents.
 
 ## Methods
 
@@ -312,6 +330,7 @@ The `session.storage` property provides access to the `DocumentStorage` for the 
 ## Method Names
 
 The RPC methods use the following string names:
+
 - `"milestoneList"` - list milestones for a document
 - `"milestoneGet"` - get a milestone snapshot
 - `"milestoneCreate"` - create a new milestone

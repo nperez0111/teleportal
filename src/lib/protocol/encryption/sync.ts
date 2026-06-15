@@ -1,4 +1,5 @@
 import { EncryptedBinary } from "teleportal/encryption-key";
+import { getEmptyEncodedContentIds } from "teleportal/attribution";
 import type {
   DecodedEncryptedStateVector,
   DecodedEncryptedSyncStep2,
@@ -92,6 +93,7 @@ export async function getDecodedSyncStep2(
                 id: messageId,
                 timestamp,
                 payload,
+                contentIds: getEmptyEncodedContentIds(),
               }
             : null,
         ),

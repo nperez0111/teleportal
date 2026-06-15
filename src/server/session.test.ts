@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getLogger } from "@logtape/logtape";
+import * as Y from "yjs";
 import type {
   Message,
   ServerContext,
@@ -12,6 +13,7 @@ import type {
   Document,
   DocumentMetadata,
   DocumentStorage,
+  EncodedContentMap,
 } from "teleportal/storage";
 import { Session } from "./session";
 import { Server } from "./server";
@@ -59,7 +61,7 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: new Uint8Array([1, 2, 3]) as unknown as Update,
+        update: createTestUpdate("sync"),
         stateVector: syncStep1,
       },
     };
@@ -73,7 +75,7 @@ class MockDocumentStorage implements DocumentStorage {
     this.lastSyncStep2 = syncStep2;
   }
 
-  async handleUpdate(_documentId: string, update: Update): Promise<void> {
+  async handleUpdate(_documentId: string, update: Update, _attribution?: EncodedContentMap): Promise<void> {
     this.mockHandleUpdate = true;
     this.storedUpdate = update;
   }
@@ -153,6 +155,12 @@ function createMockServer(): Server<ServerContext> {
       throw new Error("Not implemented in mock");
     },
   });
+}
+
+function createTestUpdate(content = "test"): Update {
+  const doc = new Y.Doc();
+  doc.getText("content").insert(0, content);
+  return Y.encodeStateAsUpdateV2(doc) as Update;
 }
 
 describe("Session", () => {
@@ -243,7 +251,7 @@ describe("Session", () => {
 
       const message = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         { clientId: "other-client", userId: "user-1", room: "room" },
         false,
       );
@@ -268,7 +276,7 @@ describe("Session", () => {
 
       const message = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         { clientId: "other-client", userId: "user-1", room: "room" },
         false,
       );
@@ -293,7 +301,7 @@ describe("Session", () => {
 
       const message = new DocMessage(
         "other-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as Update },
+        { type: "update", update: createTestUpdate() },
         { clientId: "other-client", userId: "user-1", room: "room" },
         false,
       );
@@ -486,7 +494,7 @@ describe("Session", () => {
 
   describe("write", () => {
     it("should write update to storage", async () => {
-      const update = new Uint8Array([1, 2, 3]) as Update;
+      const update = createTestUpdate();
       await session.write(update);
 
       expect(storage.mockHandleUpdate).toBe(true);
@@ -565,7 +573,7 @@ describe("Session", () => {
         session.addClient(client1 as any);
         session.addClient(client2 as any);
 
-        const update = new Uint8Array([1, 2, 3]) as Update;
+        const update = createTestUpdate();
         const message = new DocMessage(
           "test-doc",
           { type: "update", update },
@@ -587,7 +595,7 @@ describe("Session", () => {
         await session.load();
         session.addClient(client1 as any);
 
-        const update = new Uint8Array([1, 2, 3]) as Update;
+        const update = createTestUpdate();
         const message = new DocMessage(
           "test-doc",
           { type: "update", update },
@@ -625,7 +633,7 @@ describe("Session", () => {
         session.addClient(client1 as any);
         session.addClient(client2 as any);
 
-        const update = new Uint8Array([1, 2, 3]) as SyncStep2Update;
+        const update = createTestUpdate() as unknown as SyncStep2Update;
         const message = new DocMessage(
           "test-doc",
           { type: "sync-step-2", update },
@@ -645,7 +653,7 @@ describe("Session", () => {
       });
 
       it("should not send sync-done if no client provided", async () => {
-        const update = new Uint8Array([1, 2, 3]) as SyncStep2Update;
+        const update = createTestUpdate() as unknown as SyncStep2Update;
         const message = new DocMessage(
           "test-doc",
           { type: "sync-step-2", update },
@@ -864,7 +872,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+          update: createTestUpdate() as unknown as SyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -889,7 +897,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+          update: createTestUpdate() as unknown as SyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -918,7 +926,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+          update: createTestUpdate() as unknown as SyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -945,7 +953,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: new Uint8Array([1, 2, 3]) as SyncStep2Update,
+          update: createTestUpdate() as unknown as SyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );

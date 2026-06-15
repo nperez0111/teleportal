@@ -428,8 +428,15 @@ export interface DocumentStorage {
 
   /**
    * Handles an update for a document.
+   * @param attribution - Optional encoded ContentMap with attribution metadata (userId, timestamp per operation range).
+   *   Passed by the server when attribution is available (client-sourced updates with a userId).
+   *   Implementations that support attribution should persist this alongside the update.
    */
-  handleUpdate(documentId: Document["id"], update: Update): Promise<void>;
+  handleUpdate(
+    documentId: Document["id"],
+    update: Update,
+    attribution?: EncodedContentMap,
+  ): Promise<void>;
 
   /**
    * Fetches the update and computes a state vector for a document.
@@ -461,7 +468,22 @@ export interface DocumentStorage {
    * @returns The result of the transaction
    */
   transaction<T>(documentId: Document["id"], cb: () => Promise<T>): Promise<T>;
+
+  /**
+   * Get the merged attribution data (ContentMap) for a document.
+   * Returns null if no attribution data exists.
+   * Implementations that support attribution override this method.
+   */
+  retrieveAttribution?(
+    documentId: Document["id"],
+  ): Promise<EncodedContentMap | null>;
 }
+
+/**
+ * An encoded ContentMap blob. Contains attribution metadata (userId, timestamp)
+ * for CRDT operation ranges. Format matches Y.js v14's encodeContentMap.
+ */
+export type EncodedContentMap = Uint8Array & { _tag: "content-map" };
 
 /**
  * State of a rate limit for a specific key

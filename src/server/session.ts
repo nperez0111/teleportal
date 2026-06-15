@@ -16,7 +16,18 @@ import {
   type RpcServerContext,
   type RpcSuccess,
 } from "teleportal/protocol";
-import type { DocumentStorage } from "teleportal/storage";
+import type { DocumentStorage, EncodedContentMap } from "teleportal/storage";
+import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
+import { decodeEncryptedUpdate } from "teleportal/protocol/encryption";
+import {
+  type ContentIds,
+  createContentAttribute,
+  createContentIdsFromUpdate,
+  createContentMapFromContentIds,
+  decodeContentIds,
+  encodeContentMap,
+  mergeContentIds,
+} from "teleportal/attribution";
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
@@ -163,7 +174,7 @@ export class Session<Context extends ServerContext> extends Observable<
               sourceNodeId: sourceId,
               deduped: false,
             });
-          } catch (err) {
+          } catch (error_) {
             emitWideEvent("error", {
               event_type: "replication_apply_failed",
               timestamp: new Date().toISOString(),
@@ -172,8 +183,8 @@ export class Session<Context extends ServerContext> extends Observable<
               message_id: message.id,
               source_node_id: sourceId,
               error: {
-                type: err instanceof Error ? err.name : "Error",
-                message: err instanceof Error ? err.message : String(err),
+                type: error_ instanceof Error ? error_.name : "Error",
+                message: error_ instanceof Error ? error_.message : String(error_),
               },
             });
           }
@@ -266,9 +277,43 @@ export class Session<Context extends ServerContext> extends Observable<
   /**
    * Write an update to the storage.
    */
-  async write(update: Update, context?: Context) {
+  async write(
+    update: Update,
+    context?: Context,
+    source: DocumentMessageSource = "client",
+  ) {
     try {
-      await this.#storage.handleUpdate(this.namespacedDocumentId, update);
+      let attribution: EncodedContentMap | undefined;
+      if (source === "client" && context?.userId) {
+        try {
+          attribution = this.#computeAttribution(update, context);
+        } catch (error) {
+          emitWideEvent("error", {
+            event_type: "attribution_compute_failed",
+            timestamp: new Date().toISOString(),
+            document_id: this.documentId,
+            session_id: this.id,
+            error,
+          });
+        }
+      }
+
+      await this.#storage.handleUpdate(
+        this.namespacedDocumentId,
+        update,
+        attribution,
+      );
+
+      if (attribution) {
+        this.call("document-attribution", {
+          documentId: this.documentId,
+          namespacedDocumentId: this.namespacedDocumentId,
+          sessionId: this.id,
+          userId: context!.userId,
+          timestamp: Date.now(),
+          contentMap: attribution,
+        });
+      }
 
       this.call("document-write", {
         documentId: this.documentId,
@@ -334,6 +379,31 @@ export class Session<Context extends ServerContext> extends Observable<
       });
       throw error;
     }
+  }
+
+  #computeAttribution(update: Update, context: Context) {
+    let contentIds: ContentIds;
+    if (this.encrypted) {
+      const messages = decodeEncryptedUpdate(
+        update as unknown as EncryptedUpdatePayload,
+      );
+      const decoded = messages.map((m) => decodeContentIds(m.contentIds));
+      contentIds =
+        decoded.length === 1 ? decoded[0] : mergeContentIds(decoded);
+    } else {
+      contentIds = createContentIdsFromUpdate(update);
+    }
+    const now = Date.now();
+    const userId = context.userId;
+    return encodeContentMap(
+      createContentMapFromContentIds(contentIds, [
+        createContentAttribute("insert", userId),
+        createContentAttribute("insertAt", now),
+      ], [
+        createContentAttribute("delete", userId),
+        createContentAttribute("deleteAt", now),
+      ]),
+    );
   }
 
   #emitDocumentMessage(
@@ -424,7 +494,13 @@ export class Session<Context extends ServerContext> extends Observable<
               return;
             }
             case "update": {
-              await this.write(message.payload.update, message.context);
+              const messageSource: DocumentMessageSource =
+                replicationMeta?.sourceNodeId ? "replication" : "client";
+              await this.write(
+                message.payload.update,
+                message.context,
+                messageSource,
+              );
 
               await Promise.all([
                 this.broadcast(message, client?.id),
@@ -438,7 +514,7 @@ export class Session<Context extends ServerContext> extends Observable<
               this.#emitDocumentMessage(
                 message,
                 client,
-                replicationMeta?.sourceNodeId ? "replication" : "client",
+                messageSource,
                 replicationMeta?.sourceNodeId,
                 replicationMeta?.deduped,
               );
@@ -510,7 +586,8 @@ export class Session<Context extends ServerContext> extends Observable<
           const rpcMessage = message as RpcMessage<Context>;
           const { requestType, originalRequestId } = rpcMessage;
 
-          if (requestType === "request") {
+          switch (requestType) {
+          case "request": {
             const method = rpcMessage.rpcMethod;
 
             if (rpcMessage.payload.type !== "success") {
@@ -602,12 +679,10 @@ export class Session<Context extends ServerContext> extends Observable<
                       payload: result.response,
                     };
               const serializer = (ctx: any) => {
-                if (ctx.type === "rpc" && ctx.requestType === "response") {
-                  // Only serialize if it's a success response (not an error)
-                  if (ctx.message.payload.type === "success") {
+                if (ctx.type === "rpc" && ctx.requestType === "response" && // Only serialize if it's a success response (not an error)
+                  ctx.message.payload.type === "success") {
                     return handler.response?.encode?.(result.response);
                   }
-                }
                 return undefined;
               };
               const responseMessage = new RpcMessage(
@@ -650,7 +725,10 @@ export class Session<Context extends ServerContext> extends Observable<
               );
               await client.send(errorMessage);
             }
-          } else if (requestType === "stream") {
+          
+          break;
+          }
+          case "stream": {
             const method = rpcMessage.rpcMethod;
             const handler = this.#rpcHandlers[method];
 
@@ -710,7 +788,14 @@ export class Session<Context extends ServerContext> extends Observable<
                 }
               }
             }
-          } else if (requestType === "response") {
+          
+          break;
+          }
+          case "response": {
+          
+          break;
+          }
+          // No default
           }
 
           return;

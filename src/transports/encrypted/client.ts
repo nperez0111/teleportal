@@ -39,6 +39,11 @@ import {
   LamportClock,
 } from "teleportal/protocol/encryption";
 import {
+  createContentIdsFromUpdate,
+  encodeContentIds,
+  getEmptyEncodedContentIds,
+} from "teleportal/attribution";
+import {
   applyAwarenessUpdate,
   Awareness,
   encodeAwarenessUpdate,
@@ -296,11 +301,12 @@ export class EncryptionClient
    * This tracks the update in the {@link seenMessages}
    */
   private async trackUpdate(payload: Update): Promise<EncryptedUpdatePayload> {
+    const contentIds = encodeContentIds(createContentIdsFromUpdate(payload));
     const encryptedUpdate = await this.encryptUpdate(payload);
     const messageId = toBase64(digest(encryptedUpdate));
     const decodedUpdate = this.createMessageNode(messageId, encryptedUpdate);
 
-    return encodeEncryptedUpdateMessages([decodedUpdate]);
+    return encodeEncryptedUpdateMessages([{ ...decodedUpdate, contentIds }]);
   }
 
   /**
@@ -372,7 +378,12 @@ export class EncryptionClient
     }
 
     this.markMessageAsSeen(timestamp, messageId);
-    const node = { id: messageId, timestamp, payload };
+    const node: DecodedEncryptedUpdatePayload = {
+      id: messageId,
+      timestamp,
+      payload,
+      contentIds: getEmptyEncodedContentIds(),
+    };
 
     this.call("seen-update", node);
 

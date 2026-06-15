@@ -1,11 +1,21 @@
+import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 
 import { EncryptedBinary } from "teleportal/encryption-key";
-import type { EncryptedMessageId } from "teleportal/protocol/encryption";
+import type {
+  EncryptedMessageId,
+  EncryptedUpdatePayload,
+} from "teleportal/protocol/encryption";
+import {
+  decodeContentMap,
+  encodeContentMap,
+  mergeContentMaps,
+} from "teleportal/attribution";
 import {
   EncryptedDocumentMetadata,
   EncryptedDocumentStorage,
 } from "../encrypted";
+import type { EncodedContentMap } from "../types";
 import { withTransaction } from "./transaction";
 
 export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage {
@@ -33,6 +43,14 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
 
   #getMessageKey(key: string, messageId: string): string {
     return this.#getKey(key) + ":" + messageId;
+  }
+
+  #getAttributionKeyPrefix(key: string): string {
+    return this.#getKey(key) + ":attribution";
+  }
+
+  #getAttributionKey(key: string): string {
+    return this.#getAttributionKeyPrefix(key) + ":" + uuidv4();
   }
 
   /**
@@ -96,9 +114,40 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
     return payload;
   }
 
+  override async handleUpdate(
+    key: string,
+    update: EncryptedUpdatePayload,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
+    await super.handleUpdate(key, update);
+    if (attribution) {
+      await this.storage.setItemRaw(this.#getAttributionKey(key), attribution);
+    }
+  }
+
+  async retrieveAttribution(
+    key: string,
+  ): Promise<EncodedContentMap | null> {
+    const attrKeys = await this.storage.getKeys(
+      this.#getAttributionKeyPrefix(key),
+    );
+    if (attrKeys.length === 0) return null;
+    if (attrKeys.length === 1) {
+      return await this.storage.getItemRaw(attrKeys[0]);
+    }
+    const maps = (
+      await Promise.all(
+        attrKeys.map((k) => this.storage.getItemRaw<EncodedContentMap>(k)),
+      )
+    ).filter(Boolean) as EncodedContentMap[];
+    if (maps.length === 0) return null;
+    if (maps.length === 1) return maps[0];
+    const merged = mergeContentMaps(maps.map((m) => decodeContentMap(m)));
+    return encodeContentMap(merged) as EncodedContentMap;
+  }
+
   async deleteDocument(key: string): Promise<void> {
     const metadata = await this.getDocumentMetadata(key);
-    const prefixedKey = this.#getKey(key);
 
     // Delete all messages
     const promises = [];
@@ -111,6 +160,14 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       }
     }
     await Promise.all(promises);
+
+    // Delete attribution data
+    const attrKeys = await this.storage.getKeys(
+      this.#getAttributionKeyPrefix(key),
+    );
+    if (attrKeys.length > 0) {
+      await Promise.all(attrKeys.map((k) => this.storage.removeItem(k)));
+    }
 
     // Delete metadata
     await this.storage.removeItem(this.#getMetadataKey(key));

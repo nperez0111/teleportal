@@ -6,6 +6,11 @@ import {
   type Message,
   type RawReceivedMessage,
 } from "teleportal";
+import {
+  type ContentMap,
+  type IdMap,
+  decodeContentMap,
+} from "teleportal/attribution";
 import { decryptUpdate } from "teleportal/encryption-key";
 import {
   decodeEncryptedUpdate,
@@ -13,6 +18,7 @@ import {
   decodeFromSyncStep2,
 } from "teleportal/protocol/encryption";
 import { Provider } from "teleportal/providers";
+import type { EncodedContentMap } from "teleportal/storage";
 import * as Y from "yjs";
 
 export type MessageType = Message | RawReceivedMessage;
@@ -102,6 +108,50 @@ function itemToJSON(item: Y.Item): Record<any, any> {
     keep: item.keep,
     lastId: item.lastId,
   };
+}
+
+function idMapToJSON(idMap: IdMap): Record<string, unknown[]> {
+  const result: Record<string, unknown[]> = {};
+  for (const [client, ranges] of idMap.clients.entries()) {
+    result[String(client)] = ranges.getIds().map((range) => ({
+      clock: range.clock,
+      len: range.len,
+      attrs: Object.fromEntries(range.attrs.map((a) => [a.name, a.val])),
+    }));
+  }
+  return result;
+}
+
+function contentMapToJSON(contentMap: ContentMap) {
+  return {
+    inserts: idMapToJSON(contentMap.inserts),
+    deletes: idMapToJSON(contentMap.deletes),
+  };
+}
+
+function formatRpcPayload(
+  message: MessageType & { type: "rpc" },
+): unknown {
+  const { payload } = message;
+
+  if (payload.type === "error") return payload;
+
+  if (
+    message.rpcMethod === "attributionGet" &&
+    message.requestType === "response"
+  ) {
+    const data = payload.payload as { contentMap: EncodedContentMap | null };
+    if (!data.contentMap) return { ...payload, payload: { contentMap: null } };
+
+    try {
+      const decoded = decodeContentMap(data.contentMap);
+      return { ...payload, payload: { contentMap: contentMapToJSON(decoded) } };
+    } catch {
+      return { ...payload, payload: { contentMap: toBase64(data.contentMap) } };
+    }
+  }
+
+  return payload;
 }
 
 export async function formatMessagePayload(
@@ -330,7 +380,11 @@ export async function formatMessagePayload(
       }
     }
     case "rpc": {
-      return JSON.stringify(message.payload, null, 2);
+      return JSON.stringify(
+        formatRpcPayload(message),
+        null,
+        2,
+      );
     }
     default: {
       // @ts-expect-error - this should be unreachable due to type checking

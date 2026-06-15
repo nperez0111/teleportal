@@ -33,6 +33,7 @@
     "./protocol": "./dist/lib/protocol/index.mjs",
     "./protocols/milestone": "./dist/protocols/milestone/index.mjs",
     "./protocols/file": "./dist/protocols/file/index.mjs",
+    "./protocols/attribution": "./dist/protocols/attribution/index.mjs",
     "./protocol/encryption": "./dist/lib/protocol/encryption/index.mjs",
     "./providers": "./dist/providers/index.mjs",
     "./transports/redis": "./dist/transports/redis/index.mjs",
@@ -46,7 +47,8 @@
     "./token": "./dist/token/index.mjs",
     "./merkle-tree": "./dist/merkle-tree/index.mjs",
     "./devtools": "./dist/devtools/index.mjs",
-    "./agent": "./dist/agent/index.mjs"
+    "./agent": "./dist/agent/index.mjs",
+    "./attribution": "./dist/lib/attribution/index.mjs"
   },
   "main": "./dist/lib/index.mjs",
   "types": "./dist/lib/index.d.mts",
