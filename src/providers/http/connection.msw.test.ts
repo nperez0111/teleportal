@@ -299,11 +299,18 @@ function createTestMessage(): DocMessage<any> {
 }
 
 describe("HttpConnection with MSW", () => {
-  const server = setupServer();
-  let client: HttpConnection;
-  let eventTarget: EventTarget;
   const baseUrl = "http://localhost:8080";
   const _sseUrl = `${baseUrl}/sse`;
+  // Default catch-all handler so stray/late POSTs from a connection that is
+  // still tearing down (e.g. a buffered flush or reconnect from the previous
+  // test) never passthrough to the real network and flake the suite. Passing
+  // it to setupServer means resetHandlers() restores it; per-test server.use()
+  // handlers are registered later and still take precedence.
+  const server = setupServer(
+    http.post(`${baseUrl}/sse`, () => HttpResponse.json({ success: true })),
+  );
+  let client: HttpConnection;
+  let eventTarget: EventTarget;
 
   // Helper to create HttpConnection with mock EventSource
   function createHttpConnectionWithMockES(

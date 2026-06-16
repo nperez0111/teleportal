@@ -285,7 +285,7 @@ describe("Session", () => {
       await pubSub.publish(`document/test-doc` as const, message.encoded, "other-node");
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should receive the broadcast
       expect(client1.sentMessages.length).toBeGreaterThan(0);
@@ -306,7 +306,7 @@ describe("Session", () => {
       await pubSub.publish(`document/test-doc` as const, message.encoded, nodeId);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should not receive the message (same node)
       expect(client1.sentMessages.length).toBe(0);
@@ -327,7 +327,7 @@ describe("Session", () => {
       await pubSub.publish(`document/other-doc` as const, message.encoded, "other-node");
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should not receive the message (wrong document)
       expect(client1.sentMessages.length).toBe(0);
@@ -1019,7 +1019,7 @@ describe("Session", () => {
 
     // The in-memory pub/sub does not await the (async) subscriber, so give
     // replicated presence handling a tick to run.
-    const tick = () => new Promise((r) => setTimeout(r, 1));
+    const tick = () => new Promise((r) => setTimeout(r, 20));
 
     const presenceOf = (
       client: MockClient<ServerContext>,

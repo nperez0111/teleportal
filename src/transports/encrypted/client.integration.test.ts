@@ -203,7 +203,13 @@ describe("encrypted client integration", () => {
     expect(sent.length).toBe(0);
 
     ydoc.getText("body").insert(5, "!");
-    while (sent.length === 0) await new Promise<void>((r) => setTimeout(r, 1));
+    {
+      const deadline = Date.now() + 5000;
+      while (sent.length === 0) {
+        if (Date.now() > deadline) throw new Error("Polling timed out");
+        await new Promise<void>((r) => setTimeout(r, 5));
+      }
+    }
     expect(sent[0].type).toBe("doc");
     if (sent[0].type === "doc" && sent[0].payload.type === "update") {
       expect(sent[0].payload.type).toBe("update");

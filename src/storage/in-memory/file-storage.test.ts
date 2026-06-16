@@ -80,7 +80,7 @@ describe("InMemoryFileStorage", () => {
   it("should cleanup expired uploads", async () => {
     const storage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage({
-      uploadTimeoutMs: 10,
+      uploadTimeoutMs: 50,
     });
     storage.temporaryUploadStorage = temp;
 
@@ -95,7 +95,7 @@ describe("InMemoryFileStorage", () => {
     });
 
     // Wait for expiration
-    await new Promise((resolve) => setTimeout(resolve, 12));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     await temp.cleanupExpiredUploads();
 

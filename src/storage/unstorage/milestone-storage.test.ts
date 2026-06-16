@@ -119,29 +119,5 @@ describe("UnstorageMilestoneStorage", () => {
     expect(restored?.lifecycleState).toBe("active");
   });
 
-  it("gets expired milestones", async () => {
-    const _id = await storage.createMilestone({
-      name: "v1",
-      documentId: "doc-1",
-      createdAt: 1,
-      snapshot: createTestSnapshot(),
-      createdBy: { type: "system", id: "test-node" },
-    });
-    // Manually set expiration (since create doesn't support it yet via interface, we can hack it or we might need to update createMilestone...
-    // Wait, I didn't update createMilestone signature in interface, but I can probably update the milestone via internal access or just update it via some method?
-    // Actually I can't easily set expiration with current interface.
-    // But I can soft delete it and check if it shows up in getExpiredMilestones? No, getExpiredMilestones checks expiresAt.
-    // I need a way to set expiresAt.
-    // I can use updateMilestoneName which creates a new Milestone... but that resets to constructor defaults unless I pass expiresAt.
-    // In my implementation of updateMilestoneName, I preserved existing fields.
-    // So if I can't set it initially, I can't set it at all via public API.
-    // However, I can manually write to storage for testing purposes or cast to any.
-    // But wait, the task 2 didn't say update `createMilestone` to accept `expiresAt`.
-    // Task 4 "Add Retention Policy Configuration Types" mentions policies.
-    // Task 10 "Implement Retention Policy Application" sets `expiresAt`.
-    // So currently I can't test `getExpiredMilestones` properly without backdoor.
-    // I'll skip testing getExpiredMilestones for now or use a cast to set it on creation if I could.
-    // But `createMilestone` interface takes specific `ctx`.
-    // I will skip getExpiredMilestones test for now until I can set it.
-  });
+  it.todo("gets expired milestones", () => {});
 });

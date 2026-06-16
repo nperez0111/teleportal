@@ -3,6 +3,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import { DocMessage, Update, type VersionedUpdate } from "teleportal";
+import { applyVersionedUpdate } from "teleportal/protocol";
 import { withPassthrough } from "../passthrough";
 import { getYDocSink, getYDocSource, getYTransportFromYDoc } from ".";
 
@@ -146,6 +147,135 @@ describe("ydoc source", () => {
         },
       }),
     );
+  });
+});
+
+describe("ydoc source batching", () => {
+  it("batches rapid updates into a single merged message", async () => {
+    const doc = new Y.Doc();
+    const source = getYDocSource({
+      ydoc: doc,
+      document: "test",
+      updateBatchIntervalMs: 20,
+    });
+
+    const messages: any[] = [];
+    const done = source.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          messages.push(chunk);
+        },
+      }),
+    );
+
+    doc.getText("t").insert(0, "a");
+    doc.getText("t").insert(1, "b");
+    doc.getText("t").insert(2, "c");
+
+    // Wait for the batch to flush, then destroy to close the stream
+    await new Promise((r) => setTimeout(r, 50));
+    doc.destroy();
+    await done;
+
+    // All three edits collapsed into one message
+    expect(messages.length).toBe(1);
+    const payload = messages[0].payload as { type: string; update: VersionedUpdate };
+    expect(payload.type).toBe("update");
+    expect(payload.update.version).toBe(2);
+
+    const verify = new Y.Doc();
+    applyVersionedUpdate(verify, payload.update);
+    expect(verify.getText("t").toString()).toBe("abc");
+  });
+
+  it("does not batch when updateBatchIntervalMs is 0", async () => {
+    const doc = new Y.Doc();
+    const source = getYDocSource({
+      ydoc: doc,
+      document: "test",
+      updateBatchIntervalMs: 0,
+    });
+
+    const messages: any[] = [];
+    const done = source.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          messages.push(chunk);
+        },
+      }),
+    );
+
+    doc.getText("t").insert(0, "a");
+    doc.getText("t").insert(1, "b");
+
+    doc.destroy();
+    await done;
+
+    expect(messages.length).toBe(2);
+    expect((messages[0].payload as any).update.version).toBe(1);
+    expect((messages[1].payload as any).update.version).toBe(1);
+  });
+
+  it("flushes pending updates on destroy", async () => {
+    const doc = new Y.Doc();
+    const source = getYDocSource({
+      ydoc: doc,
+      document: "test",
+      updateBatchIntervalMs: 5000, // long timer — won't fire naturally
+    });
+
+    const messages: any[] = [];
+    const done = source.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          messages.push(chunk);
+        },
+      }),
+    );
+
+    doc.getText("t").insert(0, "hello");
+
+    // Destroy before the batch timer fires — should still flush
+    doc.destroy();
+    await done;
+
+    expect(messages.length).toBe(1);
+    const payload = messages[0].payload as { type: string; update: VersionedUpdate };
+    const verify = new Y.Doc();
+    applyVersionedUpdate(verify, payload.update);
+    expect(verify.getText("t").toString()).toBe("hello");
+  });
+
+  it("emits separate messages for updates across different batch windows", async () => {
+    const doc = new Y.Doc();
+    const source = getYDocSource({
+      ydoc: doc,
+      document: "test",
+      updateBatchIntervalMs: 10,
+    });
+
+    const messages: any[] = [];
+    const done = source.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          messages.push(chunk);
+        },
+      }),
+    );
+
+    // First batch
+    doc.getText("t").insert(0, "a");
+    doc.getText("t").insert(1, "b");
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Second batch
+    doc.getText("t").insert(2, "c");
+    await new Promise((r) => setTimeout(r, 30));
+
+    doc.destroy();
+    await done;
+
+    expect(messages.length).toBe(2);
   });
 });
 

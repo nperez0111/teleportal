@@ -219,7 +219,7 @@ describe("HTTP Handlers", () => {
       expect(response.status).toBe(200);
 
       // Wait a bit for async operations
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Verify sessions were created
       const session1 = await server.getOrOpenSession("doc-1", {
@@ -248,7 +248,7 @@ describe("HTTP Handlers", () => {
       const response = await endpoint(request);
       expect(response.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       const session = await server.getOrOpenSession("doc-1", {
         encrypted: true,
@@ -295,7 +295,7 @@ describe("HTTP Handlers", () => {
       const response = await endpoint(request);
       expect(response.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       const session = await server.getOrOpenSession("custom-doc", {
         encrypted: true,

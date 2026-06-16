@@ -121,7 +121,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         await client.disconnect();
       }
       await client.destroy();
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
     }
     server.resetHandlers();
   });
@@ -212,7 +212,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -316,7 +316,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       // wait for the storage to be updated with retries (longer wait for large files)
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 50 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -414,7 +414,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         storedFile = await fileStorage.getFile(fileId);
       }
 

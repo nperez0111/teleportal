@@ -191,8 +191,12 @@ describe("withTransaction", () => {
       );
 
       // Poll for lock expiry instead of fixed sleep
-      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       const result = await transactionPromise;
@@ -239,8 +243,12 @@ describe("withTransaction", () => {
       }, 1);
 
       // Poll for lock expiry instead of fixed sleep
-      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
       await transactionPromise;
       clearInterval(checkInterval);
@@ -287,8 +295,12 @@ describe("withTransaction", () => {
       );
 
       // Poll for lock expiry instead of fixed sleep
-      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       const result = await transactionPromise;
@@ -369,8 +381,12 @@ describe("withTransaction", () => {
       );
 
       // Poll until transaction A has acquired the lock
-      while (!transactionALockId) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (!transactionALockId) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       // Verify transaction A has the lock
@@ -379,8 +395,12 @@ describe("withTransaction", () => {
       expect(metaBeforeTTL?.ttl).toBeGreaterThan(Date.now());
 
       // Poll until transaction A's TTL expires
-      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       // Verify transaction A's lock has expired
@@ -407,8 +427,12 @@ describe("withTransaction", () => {
       );
 
       // Poll until transaction B has started and acquired the lock
-      while (!transactionBStarted) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (!transactionBStarted) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
       expect(transactionBStarted).toBeTrue();
       expect(transactionBLockId).toBeDefined();
@@ -463,8 +487,12 @@ describe("withTransaction", () => {
       );
 
       // Poll until the first transaction acquires the lock
-      while (!firstAcquired) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (!firstAcquired) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       // Start multiple concurrent requests that will need to wait
@@ -561,8 +589,12 @@ describe("withTransaction", () => {
       );
 
       // Poll for lock expiry instead of fixed sleep
-      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
       }
 
       const result = await transactionPromise;

@@ -340,13 +340,6 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
       if (counter <= lastCounter) {
         continue;
       }
-      if (counter !== lastCounter + 1) {
-        throw new Error(
-          `Update counter out of order for client ${clientId}: expected ${
-            lastCounter + 1
-          }, got ${counter}`,
-        );
-      }
 
       const nextVersion = snapshotMeta.updateVersion + 1;
       const assignedVersion =

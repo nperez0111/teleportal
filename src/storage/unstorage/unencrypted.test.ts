@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { createStorage } from "unstorage";
 import * as Y from "yjs";
-import type { Update, VersionedUpdate } from "teleportal";
+import type {
+  Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
+  SyncStep2UpdateV2,
+} from "teleportal";
 import { getEmptyStateVector } from "../../lib/protocol/utils";
 import {
   createContentAttribute,
@@ -302,7 +307,10 @@ describe("UnstorageDocumentStorage", () => {
       const doc = new Y.Doc();
       const text = doc.getText("content");
       text.insert(0, "Sync content");
-      const syncStep2 = { version: 2 as const, data: Y.encodeStateAsUpdateV2(doc) as any };
+      const syncStep2: VersionedSyncStep2Update = {
+        version: 2 as const,
+        data: Y.encodeStateAsUpdateV2(doc) as SyncStep2UpdateV2,
+      };
 
       await storage.handleSyncStep2(key, syncStep2);
 

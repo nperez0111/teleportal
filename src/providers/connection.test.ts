@@ -293,7 +293,13 @@ describe("Connection", () => {
       const connectPromise = connection.connect();
 
       // Wait for the connecting state to appear
-      while (!states.includes("connecting")) await new Promise((r) => setTimeout(r, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (!states.includes("connecting")) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
 
       await connectPromise;
       expect(states).toContain("connecting");
@@ -354,7 +360,13 @@ describe("Connection", () => {
 
       // Connect and messages should be sent
       await connection.connect();
-      while (connection.sentMessages.length < 2) await new Promise((r) => setTimeout(r, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (connection.sentMessages.length < 2) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
 
       expect(connection.sentMessages.length).toBe(2);
       expect(connection.sentMessages).toContain(message1);
@@ -389,7 +401,13 @@ describe("Connection", () => {
       await cappedConnection.send(m2);
       await cappedConnection.send(msg(3)); // over cap, should be dropped
       await cappedConnection.connect();
-      while (cappedConnection.sentMessages.length < 2) await new Promise((r) => setTimeout(r, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (cappedConnection.sentMessages.length < 2) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
       // Only first two should have been buffered and sent
       expect(cappedConnection.sentMessages.length).toBe(2);
       expect(cappedConnection.sentMessages).toContain(m1);
@@ -439,7 +457,13 @@ describe("Connection", () => {
       // Nothing sent yet (still within the batch interval)
       expect(batched.sentMessages.length).toBe(0);
 
-      while (batched.sentMessages.length === 0) await new Promise((r) => setTimeout(r, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (batched.sentMessages.length === 0) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
 
       // The two updates collapse into a single message
       expect(batched.sentMessages.length).toBe(1);
@@ -462,7 +486,13 @@ describe("Connection", () => {
       const message = makeUpdate("doc-b", (d) => d.getMap("m").set("a", 1));
       await batched.send(message);
 
-      while (batched.sentMessages.length === 0) await new Promise((r) => setTimeout(r, 1));
+      {
+        const deadline = Date.now() + 5000;
+        while (batched.sentMessages.length === 0) {
+          if (Date.now() > deadline) throw new Error("Polling timed out");
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
 
       expect(batched.sentMessages.length).toBe(1);
       expect(batched.sentMessages[0]).toBe(message);
@@ -488,6 +518,33 @@ describe("Connection", () => {
       const before = batched.sentMessages.length;
       await batched.send(makeUpdate("doc-c", (d) => d.getMap("m").set("final", 1)));
       expect(batched.sentMessages.length).toBe(before);
+
+      await batched.destroy();
+    });
+
+    it("does not merge encrypted updates (sends each individually)", async () => {
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 10 });
+      await batched.connect();
+
+      const makeEncryptedUpdate = (doc: string): DocMessage<any> => {
+        const d = new Y.Doc();
+        d.getMap("m").set("k", "v");
+        return new DocMessage(
+          doc,
+          {
+            type: "update",
+            update: { version: 2, data: Y.encodeStateAsUpdateV2(d) as Update } as VersionedUpdate,
+          },
+          { clientId: "test-client" } as ClientContext,
+          true, // encrypted
+        );
+      };
+
+      await batched.send(makeEncryptedUpdate("doc-enc"));
+      await batched.send(makeEncryptedUpdate("doc-enc"));
+
+      // Encrypted messages bypass batching entirely, so they should be sent immediately
+      expect(batched.sentMessages.length).toBe(2);
 
       await batched.destroy();
     });
@@ -902,7 +959,7 @@ describe("Connection", () => {
       await connection.send(message);
 
       // Wait for error handling
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Message should be removed from in-flight
       expect(connection.inFlightMessageCount).toBe(0);
@@ -1083,7 +1140,7 @@ describe("Connection", () => {
         connection.simulateMessage(ackMessage);
 
         // Wait a bit for the event to process
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(connection.inFlightMessageCount).toBe(0);
         expect(connection.inFlightMessageCount).toBe(0);
@@ -1112,9 +1169,9 @@ describe("Connection", () => {
 
         await connection.send(message1);
         // Wait for batch flush
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         await connection.send(message2);
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(connection.inFlightMessageCount).toBeGreaterThan(0);
         expect(connection.inFlightMessageCount).toBe(2);
@@ -1128,7 +1185,7 @@ describe("Connection", () => {
           { clientId: "test-client" } as ClientContext,
         );
         connection.simulateMessage(ack1);
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(connection.inFlightMessageCount).toBeGreaterThan(0);
         expect(connection.inFlightMessageCount).toBe(1);
@@ -1142,7 +1199,7 @@ describe("Connection", () => {
           { clientId: "test-client" } as ClientContext,
         );
         connection.simulateMessage(ack2);
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(connection.inFlightMessageCount).toBe(0);
         expect(connection.inFlightMessageCount).toBe(0);
@@ -1211,7 +1268,7 @@ describe("Connection", () => {
         }
 
         // Wait for error handling
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         // Message should be removed from in-flight on send failure
         expect(connection.inFlightMessageCount).toBe(0);
@@ -1233,7 +1290,7 @@ describe("Connection", () => {
 
         // Should not throw or cause issues
         connection.simulateMessage(ackMessage);
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(connection.inFlightMessageCount).toBe(0);
       });

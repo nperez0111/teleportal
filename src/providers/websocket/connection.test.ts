@@ -333,8 +333,12 @@ describe("WebSocketConnection", () => {
     expect(connectionCount).toBe(1);
 
     // Poll until reconnection happens
-    while (connectionCount <= 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
+    {
+      const deadline = Date.now() + 5000;
+      while (connectionCount <= 1) {
+        if (Date.now() > deadline) throw new Error("Polling timed out");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
     }
 
     // Check that at least one reconnection attempt was made

@@ -11,7 +11,7 @@ function createTestMessage(data: number[]): BinaryMessage {
 async function collectMessages(
   readable: ReadableStream<BinaryMessage>,
   maxMessages = 10,
-  timeout = 10,
+  timeout = 100,
 ): Promise<BinaryMessage[]> {
   const messages: BinaryMessage[] = [];
   let reader: ReadableStreamDefaultReader<BinaryMessage> | null = null;

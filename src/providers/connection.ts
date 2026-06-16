@@ -639,11 +639,12 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     this.scheduleReconnect();
   }
 
-  private isDocUpdate(message: Message): boolean {
+  private isBatchableDocUpdate(message: Message): boolean {
     return (
       message.type === "doc" &&
       (message.payload as { type?: string })?.type === "update" &&
-      message.document != null
+      message.document != null &&
+      !(message as DocMessage<any>).encrypted
     );
   }
 
@@ -697,7 +698,7 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     }
 
     // Batch doc update messages when batching is enabled
-    if (this.#batchIntervalMs > 0 && !this.#flushing && this.isDocUpdate(message)) {
+    if (this.#batchIntervalMs > 0 && !this.#flushing && this.isBatchableDocUpdate(message)) {
       const docMessage = message as DocMessage<any>;
       const doc = docMessage.document;
       const update = (docMessage.payload as { update: VersionedUpdate }).update;

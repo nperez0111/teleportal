@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { FallbackConnection } from "./fallback-connection";
-import { ConnectionState } from "./connection";
+import type { ConnectionState } from "./connection";
 import { type Timer } from "./utils";
 
 process.on("uncaughtException", (err) => {

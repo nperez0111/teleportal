@@ -100,8 +100,8 @@ export function mergeUpdatesV1(updates: UpdateV1[]): UpdateV1 {
 
 export function mergeVersionedUpdates(updates: VersionedUpdate[]): VersionedUpdate {
   if (updates.length === 0) return getEmptyVersionedUpdate();
-  const version = updates[0].version;
-  if (version === 1) {
+  const allV1 = updates.every((u) => u.version === 1);
+  if (allV1) {
     return {
       version: 1,
       data: mergeUpdatesV1(updates.map((u) => u.data as UpdateV1)),
@@ -109,7 +109,7 @@ export function mergeVersionedUpdates(updates: VersionedUpdate[]): VersionedUpda
   }
   return {
     version: 2,
-    data: mergeUpdates(updates.map((u) => u.data as UpdateV2)),
+    data: mergeUpdates(updates.map((u) => convertToV2(u))),
   };
 }
 
@@ -146,7 +146,10 @@ export function encodeVersionedBytes(update: VersionedUpdate): Uint8Array {
 }
 
 export function decodeVersionedBytes(bytes: Uint8Array): VersionedUpdate {
-  const version = bytes[0] as 1 | 2;
+  const version = bytes[0];
+  if (version !== 1 && version !== 2) {
+    throw new Error(`Invalid versioned update byte: expected 1 or 2, got ${version}`);
+  }
   const data = bytes.subarray(1);
   return { version, data } as VersionedUpdate;
 }

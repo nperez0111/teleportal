@@ -14,10 +14,16 @@ import {
   type SyncStep2UpdateV2,
   type Transport,
   type UpdateV1,
+  type UpdateV2,
   type VersionedSyncStep2Update,
   type VersionedUpdate,
 } from "teleportal";
-import { applyVersionedSyncStep2, applyVersionedUpdate } from "teleportal/protocol";
+import {
+  applyVersionedSyncStep2,
+  applyVersionedUpdate,
+  convertToV2,
+  mergeUpdates,
+} from "teleportal/protocol";
 import { compose } from "teleportal/transports";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
@@ -50,6 +56,7 @@ export function getYDocSource<Context extends ClientContext>({
   observer = new Observable<{
     message: (message: Message) => void;
   }>(),
+  updateBatchIntervalMs = 0,
   handler = {
     async onUpdate(update: VersionedUpdate) {
       return new DocMessage(
@@ -91,6 +98,15 @@ export function getYDocSource<Context extends ClientContext>({
     message: (message: Message) => void;
   }>;
   handler?: YDocSourceHandler;
+  /**
+   * Batch interval in ms for merging cleartext updates before passing them
+   * to the handler. When > 0, rapid Y.Doc updates are accumulated and merged
+   * via `Y.mergeUpdatesV2` so the handler receives fewer, larger updates.
+   * Set to 0 to disable (every update is forwarded immediately).
+   *
+   * @default 0
+   */
+  updateBatchIntervalMs?: number;
 }): Source<
   Context,
   {
@@ -106,6 +122,38 @@ export function getYDocSource<Context extends ClientContext>({
   let onMessage: (message: Message) => void;
   let isDestroyed = false;
 
+  let pendingUpdates: UpdateV2[] = [];
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearBatchTimer() {
+    if (batchTimer !== null) {
+      clearTimeout(batchTimer);
+      batchTimer = null;
+    }
+  }
+
+  async function flushBatch(controller: ReadableStreamDefaultController<Message>) {
+    clearBatchTimer();
+    const updates = pendingUpdates;
+    if (updates.length === 0) return;
+    pendingUpdates = [];
+
+    const merged: VersionedUpdate = {
+      version: 2,
+      data: updates.length === 1 ? updates[0] : mergeUpdates(updates),
+    };
+    try {
+      controller.enqueue(await handler.onUpdate(merged));
+    } catch (err: any) {
+      if (
+        err?.code !== "ERR_INVALID_STATE" &&
+        err?.message !== "Invalid state: Controller is already closed"
+      ) {
+        throw err;
+      }
+    }
+  }
+
   return {
     ydoc,
     awareness,
@@ -116,17 +164,29 @@ export function getYDocSource<Context extends ClientContext>({
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
-          try {
-            const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
-            controller.enqueue(await handler.onUpdate(versioned));
-          } catch (err: any) {
-            // Stream may be closed, ignore the error
-            if (
-              err?.code !== "ERR_INVALID_STATE" &&
-              err?.message !== "Invalid state: Controller is already closed"
-            ) {
-              throw err;
+
+          if (updateBatchIntervalMs <= 0) {
+            try {
+              const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
+              controller.enqueue(await handler.onUpdate(versioned));
+            } catch (err: any) {
+              if (
+                err?.code !== "ERR_INVALID_STATE" &&
+                err?.message !== "Invalid state: Controller is already closed"
+              ) {
+                throw err;
+              }
             }
+            return;
+          }
+
+          const v2 = convertToV2({ version: 1, data: update as UpdateV1 });
+          pendingUpdates.push(v2);
+          if (batchTimer === null) {
+            batchTimer = setTimeout(() => {
+              batchTimer = null;
+              void flushBatch(controller);
+            }, updateBatchIntervalMs);
           }
         });
         onDestroy = ydoc.on("destroy", async () => {
@@ -134,6 +194,7 @@ export function getYDocSource<Context extends ClientContext>({
             return;
           }
           isDestroyed = true;
+          await flushBatch(controller);
           if (handler.destroy) {
             await handler.destroy();
           }
@@ -155,6 +216,7 @@ export function getYDocSource<Context extends ClientContext>({
             return;
           }
           isDestroyed = true;
+          await flushBatch(controller);
           if (handler.destroy) {
             await handler.destroy();
           }
@@ -169,6 +231,8 @@ export function getYDocSource<Context extends ClientContext>({
       },
       cancel() {
         isDestroyed = true;
+        clearBatchTimer();
+        pendingUpdates = [];
         ydoc.off("update", onUpdate);
         ydoc.off("destroy", onDestroy);
         awareness.off("update", onAwarenessUpdate);

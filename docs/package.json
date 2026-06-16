@@ -16,10 +16,10 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "astro": "6.4.7",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
     "astro-mermaid": "2.0.2",
     "mermaid": "11.15.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "starlight-llms-txt": "0.10.0"
   },
   "devDependencies": {

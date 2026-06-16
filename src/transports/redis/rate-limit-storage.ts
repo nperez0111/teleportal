@@ -88,7 +88,9 @@ export class RedisRateLimitStorage implements RateLimitStorage {
       }
 
       // Wait before retrying
-      await new Promise((resolve) => setTimeout(resolve, this.retryDelay + Math.random() * this.retryJitter));
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.retryDelay + Math.random() * this.retryJitter),
+      );
     }
 
     throw new Error(`Failed to acquire rate limit lock for key: ${key}`);

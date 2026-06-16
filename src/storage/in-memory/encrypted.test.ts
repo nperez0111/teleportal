@@ -264,7 +264,7 @@ describe("EncryptedMemoryStorage", () => {
     expect(result).toBeNull();
   });
 
-  it("rejects update when counter is out of order for same client", async () => {
+  it("accepts updates with counter gaps (non-sequential)", async () => {
     const snapshot: EncryptedSnapshot = {
       id: "snapshot-1",
       parentSnapshotId: null,
@@ -284,16 +284,176 @@ describe("EncryptedMemoryStorage", () => {
       ]),
     );
 
-    const outOfOrder: DecodedEncryptedUpdatePayload = {
+    // Counter jumps from 1 to 3 (gap) — should be accepted
+    const gapped: DecodedEncryptedUpdatePayload = {
       id: "u2",
       snapshotId: snapshot.id,
       timestamp: [1, 3],
       payload: new Uint8Array([3]) as EncryptedBinary,
       contentIds: getEmptyEncodedContentIds(),
     };
-    await expect(
-      storage.handleEncryptedUpdate("doc-1", encodeEncryptedUpdateMessages([outOfOrder])),
-    ).rejects.toThrow("Update counter out of order");
+    const result = await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([gapped]),
+    );
+    expect(result).not.toBeNull();
+  });
+
+  it("skips duplicate updates (counter <= lastCounter)", async () => {
+    const snapshot: EncryptedSnapshot = {
+      id: "snapshot-1",
+      parentSnapshotId: null,
+      payload: new Uint8Array([9]) as EncryptedBinary,
+    };
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
+    await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "u1",
+          snapshotId: snapshot.id,
+          timestamp: [1, 5],
+          payload: new Uint8Array([1]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+
+    // Re-send with counter 5 (equal) and counter 3 (less) — both should be skipped
+    const duplicate = await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "u1-dup",
+          snapshotId: snapshot.id,
+          timestamp: [1, 5],
+          payload: new Uint8Array([5]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+        {
+          id: "u1-old",
+          snapshotId: snapshot.id,
+          timestamp: [1, 3],
+          payload: new Uint8Array([3]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+    // All updates were duplicates, so nothing stored → null
+    expect(duplicate).toBeNull();
+
+    // Verify only the original update is stored
+    const state = decodeFromStateVector((await storage.getDocument("doc-1"))!.content.stateVector);
+    expect(state.serverVersion).toBe(1);
+  });
+
+  it("accepts a large counter gap (simulates batched client reconnect)", async () => {
+    const snapshot: EncryptedSnapshot = {
+      id: "snapshot-1",
+      parentSnapshotId: null,
+      payload: new Uint8Array([9]) as EncryptedBinary,
+    };
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
+
+    // Client sends counter 1
+    await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "u1",
+          snapshotId: snapshot.id,
+          timestamp: [1, 1],
+          payload: new Uint8Array([1]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+
+    // Client reconnects after local batching consumed many clock ticks — counter jumps to 825
+    const result = await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "u2",
+          snapshotId: snapshot.id,
+          timestamp: [1, 825],
+          payload: new Uint8Array([2]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+    expect(result).not.toBeNull();
+
+    // Counter 825 is now the last — next update at 826 should also work
+    const next = await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "u3",
+          snapshotId: snapshot.id,
+          timestamp: [1, 826],
+          payload: new Uint8Array([3]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+    expect(next).not.toBeNull();
+
+    const state = decodeFromStateVector((await storage.getDocument("doc-1"))!.content.stateVector);
+    expect(state.serverVersion).toBe(3);
+  });
+
+  it("handles multiple clients with independent counter sequences", async () => {
+    const snapshot: EncryptedSnapshot = {
+      id: "snapshot-1",
+      parentSnapshotId: null,
+      payload: new Uint8Array([9]) as EncryptedBinary,
+    };
+    await storage.handleEncryptedUpdate("doc-1", encodeEncryptedSnapshot(snapshot));
+
+    // Client A sends counter 1, then jumps to 10
+    await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "a1",
+          snapshotId: snapshot.id,
+          timestamp: [100, 1],
+          payload: new Uint8Array([1]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+    await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "a2",
+          snapshotId: snapshot.id,
+          timestamp: [100, 10],
+          payload: new Uint8Array([2]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+
+    // Client B sends counter 1 — independent of client A
+    const resultB = await storage.handleEncryptedUpdate(
+      "doc-1",
+      encodeEncryptedUpdateMessages([
+        {
+          id: "b1",
+          snapshotId: snapshot.id,
+          timestamp: [200, 1],
+          payload: new Uint8Array([3]) as EncryptedBinary,
+          contentIds: getEmptyEncodedContentIds(),
+        },
+      ]),
+    );
+    expect(resultB).not.toBeNull();
+
+    const state = decodeFromStateVector((await storage.getDocument("doc-1"))!.content.stateVector);
+    expect(state.serverVersion).toBe(3);
   });
 
   it("skips snapshot when active exists but parent is missing (e.g. second client)", async () => {
