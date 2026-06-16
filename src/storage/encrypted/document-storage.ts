@@ -14,6 +14,7 @@ import {
   encodeToStateVector,
   encodeToSyncStep2,
 } from "teleportal/protocol/encryption";
+import type { VersionedSyncStep2Update, VersionedUpdate } from "teleportal";
 import {
   type DocumentMetadata as BaseDocumentMetadata,
   type DocumentStorage,
@@ -173,16 +174,16 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
     );
   }
 
-  async handleSyncStep2(key: string, syncStep2: EncryptedSyncStep2): Promise<void> {
-    await this.handleEncryptedSyncStep2(key, syncStep2);
+  async handleSyncStep2(key: string, syncStep2: VersionedSyncStep2Update): Promise<void> {
+    await this.handleEncryptedSyncStep2(key, syncStep2.data as EncryptedSyncStep2);
   }
 
   async handleUpdate(
     key: string,
-    update: EncryptedUpdatePayload,
+    update: VersionedUpdate,
     _attribution?: EncodedContentMap,
   ): Promise<void> {
-    await this.handleEncryptedUpdate(key, update);
+    await this.handleEncryptedUpdate(key, update.data as EncryptedUpdatePayload);
   }
 
   async handleEncryptedUpdate(
@@ -338,13 +339,6 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
 
       if (counter <= lastCounter) {
         continue;
-      }
-      if (counter !== lastCounter + 1) {
-        throw new Error(
-          `Update counter out of order for client ${clientId}: expected ${
-            lastCounter + 1
-          }, got ${counter}`,
-        );
       }
 
       const nextVersion = snapshotMeta.updateVersion + 1;

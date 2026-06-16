@@ -54,7 +54,7 @@ describe("InMemoryFileStorage", () => {
     chunks[0].fill(1);
     chunks[1].fill(2);
     const contentId = buildMerkleTree(chunks).nodes.at(-1)!.hash!;
-    const fileId = toBase64(contentId);
+    const _fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
       filename: "test.txt",
@@ -80,7 +80,7 @@ describe("InMemoryFileStorage", () => {
   it("should cleanup expired uploads", async () => {
     const storage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage({
-      uploadTimeoutMs: 100,
+      uploadTimeoutMs: 50,
     });
     storage.temporaryUploadStorage = temp;
 
@@ -95,7 +95,7 @@ describe("InMemoryFileStorage", () => {
     });
 
     // Wait for expiration
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     await temp.cleanupExpiredUploads();
 

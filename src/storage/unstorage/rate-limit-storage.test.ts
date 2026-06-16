@@ -9,7 +9,7 @@ describe("UnstorageRateLimitStorage", () => {
 
   beforeEach(() => {
     unstorage = createStorage();
-    storage = new UnstorageRateLimitStorage(unstorage);
+    storage = new UnstorageRateLimitStorage(unstorage, { ttl: 5000, baseDelay: 1 });
   });
 
   it("stores and retrieves rate limit state", async () => {
@@ -69,7 +69,7 @@ describe("UnstorageRateLimitStorage", () => {
     // Start transaction 1 (slower)
     const p1 = storage.transaction(key, async () => {
       executionOrder.push("start-1");
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 5));
       executionOrder.push("end-1");
       return 1;
     });

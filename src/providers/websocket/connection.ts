@@ -226,10 +226,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           if (currentState === "connecting") {
             this.#currentWebSocket = null;
             try {
-              if (
-                readyState === this.#WebSocketImpl.OPEN ||
-                readyState === this.#WebSocketImpl.CONNECTING
-              ) {
+              if (readyState === this.#WebSocketImpl.CONNECTING) {
                 websocket.close(1000, "Connection failed");
               }
             } catch {
@@ -246,7 +243,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
           this.closeConnection();
         },
 
-        open: (event: Event) => {
+        open: (_event: Event) => {
           // Only handle open if this is still the current WebSocket and we're still connecting
           if (websocket !== this.#currentWebSocket || this.state.type !== "connecting") {
             return;
@@ -307,7 +304,7 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
       ) {
         try {
           ws.close(1000, "Connection cleanup");
-        } catch (error) {
+        } catch {
           // Ignore errors during cleanup
         }
       }
@@ -317,13 +314,8 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
   protected async sendMessage(message: Message): Promise<void> {
     const ws = this.#currentWebSocket;
     if (this.state.type === "connected" && ws && ws.readyState === this.#WebSocketImpl.OPEN) {
-      try {
-        ws.send(message.encoded);
-        this.call("sent-message", message);
-      } catch (error) {
-        // Re-throw to let base class handle buffering
-        throw error;
-      }
+      ws.send(message.encoded as Uint8Array<ArrayBuffer>);
+      this.call("sent-message", message);
     } else {
       throw new Error("Not connected - message should be buffered");
     }
@@ -333,8 +325,8 @@ export class WebSocketConnection extends Connection<WebSocketConnectContext> {
     const ws = this.#currentWebSocket;
     if (this.state.type === "connected" && ws && ws.readyState === this.#WebSocketImpl.OPEN) {
       try {
-        ws.send(encodePingMessage());
-      } catch (e) {
+        ws.send(encodePingMessage() as Uint8Array<ArrayBuffer>);
+      } catch {
         // no-op
       }
     }

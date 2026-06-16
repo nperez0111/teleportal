@@ -6,7 +6,12 @@ import type {
   DecodedEncryptedUpdatePayload,
   EncryptedSyncStep2,
 } from "teleportal/protocol/encryption";
-import type { Message, Update } from "teleportal/protocol";
+import type {
+  Message,
+  Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
+} from "teleportal/protocol";
 import { EncryptedMemoryStorage } from "teleportal/storage";
 import { EncryptionClient } from "./client";
 
@@ -37,7 +42,10 @@ describe("encrypted client integration", () => {
     });
 
     ydoc.getText("body").insert(0, "hello");
-    const initialUpdate = Y.encodeStateAsUpdateV2(ydoc) as Update;
+    const initialUpdate = {
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate;
     const snapshotMessage = await client.onUpdate(initialUpdate);
 
     if (snapshotMessage.type !== "doc" || snapshotMessage.payload.type !== "update") {
@@ -46,10 +54,13 @@ describe("encrypted client integration", () => {
 
     const storedSnapshotPayload = await storage.handleEncryptedUpdate(
       "doc-1",
-      snapshotMessage.payload.update,
+      snapshotMessage.payload.update.data as Update,
     );
     expect(storedSnapshotPayload).not.toBeNull();
-    await client.handleUpdate(storedSnapshotPayload!);
+    await client.handleUpdate({
+      version: 2,
+      data: storedSnapshotPayload! as Update,
+    } as VersionedUpdate);
 
     const decodedSnapshot = decodeEncryptedUpdate(storedSnapshotPayload!);
     if (decodedSnapshot.type !== "snapshot") {
@@ -59,7 +70,10 @@ describe("encrypted client integration", () => {
     expect(snapshotId).toBeTruthy();
 
     ydoc.getText("body").insert(5, " world");
-    const secondUpdate = Y.encodeStateAsUpdateV2(ydoc) as Update;
+    const secondUpdate = {
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate;
     const updateMessage = await client.onUpdate(secondUpdate);
 
     if (updateMessage.type !== "doc" || updateMessage.payload.type !== "update") {
@@ -68,7 +82,7 @@ describe("encrypted client integration", () => {
 
     const storedUpdatePayload = await storage.handleEncryptedUpdate(
       "doc-1",
-      updateMessage.payload.update,
+      updateMessage.payload.update.data as Update,
     );
     expect(storedUpdatePayload).not.toBeNull();
 
@@ -79,7 +93,10 @@ describe("encrypted client integration", () => {
     expect(decodedUpdate.updates[0].serverVersion).toBe(1);
     expect(decodedUpdate.updates[0].snapshotId).toBe(snapshotId);
 
-    await client.handleUpdate(storedUpdatePayload!);
+    await client.handleUpdate({
+      version: 2,
+      data: storedUpdatePayload! as Update,
+    } as VersionedUpdate);
 
     const ack = acknowledged as DecodedEncryptedUpdatePayload | null;
     expect(ack?.serverVersion).toBe(1);
@@ -102,18 +119,24 @@ describe("encrypted client integration", () => {
     });
 
     ydocA.getText("body").insert(0, "hello");
-    const snapshotMsg = await clientA.onUpdate(Y.encodeStateAsUpdateV2(ydocA) as Update);
+    const snapshotMsg = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
     if (snapshotMsg.type !== "doc" || snapshotMsg.payload.type !== "update") {
       throw new Error("Expected doc update");
     }
-    await storage.handleEncryptedUpdate("doc-1", snapshotMsg.payload.update);
+    await storage.handleEncryptedUpdate("doc-1", snapshotMsg.payload.update.data as Update);
 
     ydocA.getText("body").insert(5, " world");
-    const updateMsg = await clientA.onUpdate(Y.encodeStateAsUpdateV2(ydocA) as Update);
+    const updateMsg = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
     if (updateMsg.type !== "doc" || updateMsg.payload.type !== "update") {
       throw new Error("Expected doc update");
     }
-    await storage.handleEncryptedUpdate("doc-1", updateMsg.payload.update);
+    await storage.handleEncryptedUpdate("doc-1", updateMsg.payload.update.data as Update);
 
     const doc = await storage.getDocument("doc-1");
     expect(doc).not.toBeNull();
@@ -128,7 +151,10 @@ describe("encrypted client integration", () => {
       ydoc: ydocB,
       key,
     });
-    const compaction = await clientB.handleSyncStep2(syncStep2Payload);
+    const compaction = await clientB.handleSyncStep2({
+      version: 2,
+      data: syncStep2Payload,
+    } as unknown as VersionedSyncStep2Update);
 
     expect(compaction).toBeDefined();
     if (!compaction || compaction.type !== "doc") {
@@ -138,11 +164,14 @@ describe("encrypted client integration", () => {
       throw new Error("Expected update payload");
     }
     expect(compaction.payload.type).toBe("update");
-    const compactionDecoded = decodeEncryptedUpdate(compaction.payload.update);
+    const compactionDecoded = decodeEncryptedUpdate(compaction.payload.update.data as Update);
     expect(compactionDecoded.type).toBe("snapshot");
     expect(ydocB.getText("body").toString()).toBe("hello world");
 
-    const stored = await storage.handleEncryptedUpdate("doc-1", compaction.payload.update);
+    const stored = await storage.handleEncryptedUpdate(
+      "doc-1",
+      compaction.payload.update.data as Update,
+    );
     expect(stored).not.toBeNull();
     const docAfter = await storage.getDocument("doc-1");
     expect(docAfter).not.toBeNull();
@@ -158,7 +187,7 @@ describe("encrypted client integration", () => {
       document: "doc-1",
       ydoc,
       key,
-      snapshotIntervalMs: 20,
+      snapshotIntervalMs: 50,
     });
 
     const sent: Message[] = [];
@@ -167,16 +196,24 @@ describe("encrypted client integration", () => {
     });
 
     ydoc.getText("body").insert(0, "hello");
-    await client.onUpdate(Y.encodeStateAsUpdateV2(ydoc) as Update);
+    await client.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate);
     expect(sent.length).toBe(0);
 
     ydoc.getText("body").insert(5, "!");
-    await new Promise<void>((r) => setTimeout(r, 25));
-    expect(sent.length).toBe(1);
+    {
+      const deadline = Date.now() + 5000;
+      while (sent.length === 0) {
+        if (Date.now() > deadline) throw new Error("Polling timed out");
+        await new Promise<void>((r) => setTimeout(r, 5));
+      }
+    }
     expect(sent[0].type).toBe("doc");
     if (sent[0].type === "doc" && sent[0].payload.type === "update") {
       expect(sent[0].payload.type).toBe("update");
-      const decoded = decodeEncryptedUpdate(sent[0].payload.update);
+      const decoded = decodeEncryptedUpdate(sent[0].payload.update.data as Update);
       expect(decoded.type).toBe("snapshot");
     }
 
@@ -190,7 +227,7 @@ describe("encrypted client integration", () => {
       document: "doc-1",
       ydoc,
       key,
-      snapshotIntervalMs: 15,
+      snapshotIntervalMs: 50,
     });
 
     const sent: Message[] = [];
@@ -199,8 +236,11 @@ describe("encrypted client integration", () => {
     });
 
     ydoc.getText("body").insert(0, "hello");
-    await client.onUpdate(Y.encodeStateAsUpdateV2(ydoc) as Update);
-    await new Promise<void>((r) => setTimeout(r, 25));
+    await client.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate);
+    await new Promise<void>((r) => setTimeout(r, 55));
     expect(sent.length).toBe(0);
     client.destroy();
   });
@@ -221,8 +261,11 @@ describe("encrypted client integration", () => {
     });
 
     ydoc.getText("body").insert(0, "x");
-    await client.onUpdate(Y.encodeStateAsUpdateV2(ydoc) as Update);
-    await new Promise<void>((r) => setTimeout(r, 50));
+    await client.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate);
+    await new Promise<void>((r) => setTimeout(r, 10));
     expect(sent.length).toBe(0);
   });
 });

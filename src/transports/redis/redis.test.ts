@@ -33,12 +33,12 @@ async function isRedisAvailable(): Promise<boolean> {
 
 describe("Redis Transport", () => {
   let redisAvailable: boolean;
-  let testInstanceId: string;
+  let _testInstanceId: string;
 
   beforeAll(async () => {
     redisAvailable = await isRedisAvailable();
     if (redisAvailable) {
-      testInstanceId = "test-instance-" + Date.now();
+      _testInstanceId = "test-instance-" + Date.now();
     }
   });
 
@@ -214,7 +214,7 @@ describe("Redis Transport", () => {
 
         try {
           // Subscribe to the topic
-          const unsubscribe = await pubSub.subscribe(testTopic, (message) => {
+          const unsubscribe = await pubSub.subscribe(testTopic, (_message) => {
             messageReceived = true;
           });
 

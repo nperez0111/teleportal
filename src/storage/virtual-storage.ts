@@ -5,7 +5,7 @@ import type {
   Document,
   EncodedContentMap,
 } from "teleportal/storage";
-import type { StateVector, SyncStep2Update, Update } from "teleportal";
+import type { StateVector, VersionedSyncStep2Update, VersionedUpdate } from "teleportal";
 
 export interface VirtualStorageOptions {
   batchMaxSize: number;
@@ -18,7 +18,7 @@ const defaultOptions: VirtualStorageOptions = {
 };
 
 interface BufferedUpdate {
-  update: Update;
+  update: VersionedUpdate;
   attribution?: EncodedContentMap;
 }
 
@@ -77,7 +77,7 @@ export class VirtualStorage implements DocumentStorage {
 
   async handleUpdate(
     documentId: string,
-    update: Update,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
   ): Promise<void> {
     this.#addToBuffer(documentId, { updates: [{ update, attribution }] });
@@ -121,7 +121,7 @@ export class VirtualStorage implements DocumentStorage {
     return this.#storage.handleSyncStep1(documentId, syncStep1);
   }
 
-  async handleSyncStep2(documentId: string, syncStep2: SyncStep2Update): Promise<void> {
+  async handleSyncStep2(documentId: string, syncStep2: VersionedSyncStep2Update): Promise<void> {
     return this.#storage.handleSyncStep2(documentId, syncStep2);
   }
 

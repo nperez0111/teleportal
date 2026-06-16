@@ -51,7 +51,7 @@ for (let i = 0; i < numUpdates; i++) {
 
 const endTime = performance.now();
 const totalTime = endTime - startTime;
-const updatesPerSecond = numUpdates / (totalTime / 1000);
+const _updatesPerSecond = numUpdates / (totalTime / 1000);
 
 console.log(totalTime.toFixed(2));
 

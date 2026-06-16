@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
+import type { UpdateV2 } from "teleportal";
 import type { RpcServerContext } from "teleportal/protocol";
 import type { EncodedContentMap } from "teleportal/storage";
 import {
@@ -39,18 +40,18 @@ function milestoneScenario() {
   const full = mergeContentMaps([
     decodeContentMap(
       encodeContentMap(
-        createContentMapFromContentIds(createContentIdsFromUpdate(u1), [
-          createContentAttribute("insert", "user-1"),
-          createContentAttribute("insertAt", 1000),
-        ]),
+        createContentMapFromContentIds(
+          createContentIdsFromUpdate({ version: 2, data: u1 as UpdateV2 }),
+          [createContentAttribute("insert", "user-1"), createContentAttribute("insertAt", 1000)],
+        ),
       ),
     ),
     decodeContentMap(
       encodeContentMap(
-        createContentMapFromContentIds(createContentIdsFromUpdate(u2), [
-          createContentAttribute("insert", "user-2"),
-          createContentAttribute("insertAt", 2000),
-        ]),
+        createContentMapFromContentIds(
+          createContentIdsFromUpdate({ version: 2, data: u2 as UpdateV2 }),
+          [createContentAttribute("insert", "user-2"), createContentAttribute("insertAt", 2000)],
+        ),
       ),
     ),
   ]);
@@ -75,7 +76,7 @@ function docFromSnapshot(snapshot: Uint8Array): Y.Doc {
 function attribute(update: Uint8Array, userId: string, timestamp: number): EncodedContentMap {
   return encodeContentMap(
     createContentMapFromContentIds(
-      createContentIdsFromUpdate(update),
+      createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 }),
       [createContentAttribute("insert", userId), createContentAttribute("insertAt", timestamp)],
       [createContentAttribute("delete", userId), createContentAttribute("deleteAt", timestamp)],
     ),
@@ -261,10 +262,16 @@ describe("milestone-scoped attribution", () => {
   it("attributes the content present in a milestone", () => {
     const { s1, s2, full } = milestoneScenario();
 
-    const m1 = milestoneContentMap(full, createContentIdsFromUpdate(s1));
+    const m1 = milestoneContentMap(
+      full,
+      createContentIdsFromUpdate({ version: 2, data: s1 as UpdateV2 }),
+    );
     expect(contributors(m1)).toEqual(["user-1"]);
 
-    const m2 = milestoneContentMap(full, createContentIdsFromUpdate(s2));
+    const m2 = milestoneContentMap(
+      full,
+      createContentIdsFromUpdate({ version: 2, data: s2 as UpdateV2 }),
+    );
     expect(contributors(m2)).toEqual(["user-1", "user-2"]);
   });
 
@@ -272,8 +279,8 @@ describe("milestone-scoped attribution", () => {
     const { s1, s2, full } = milestoneScenario();
     const changeset = changesetContentMap(
       full,
-      createContentIdsFromUpdate(s1),
-      createContentIdsFromUpdate(s2),
+      createContentIdsFromUpdate({ version: 2, data: s1 as UpdateV2 }),
+      createContentIdsFromUpdate({ version: 2, data: s2 as UpdateV2 }),
     );
     expect(contributors(changeset)).toEqual(["user-2"]);
   });
@@ -304,8 +311,8 @@ describe("milestone-scoped attribution", () => {
     // The ciphertext must not equal the plaintext snapshot...
     expect(encrypted).not.toEqual(s2);
     // ...but the decrypted snapshot yields identical operation IDs.
-    expect(encodeContentIds(createContentIdsFromUpdate(decrypted))).toEqual(
-      encodeContentIds(createContentIdsFromUpdate(s2)),
-    );
+    expect(
+      encodeContentIds(createContentIdsFromUpdate({ version: 2, data: decrypted as UpdateV2 })),
+    ).toEqual(encodeContentIds(createContentIdsFromUpdate({ version: 2, data: s2 as UpdateV2 })));
   });
 });

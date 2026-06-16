@@ -23,7 +23,6 @@ import {
   encodeToSyncStep2,
   getEmptyEncryptedUpdate,
   getEmptyEncryptedStateVector,
-  getEmptyEncryptedSyncStep2,
 } from "./encoding";
 import type { LamportClockValue } from "./lamport-clock";
 import { getEmptyEncodedContentIds } from "teleportal/attribution";

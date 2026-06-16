@@ -376,7 +376,7 @@ export class FallbackConnection extends Connection<FallbackContext> {
           },
         }),
       )
-      .catch((error) => {
+      .catch(() => {
         // no-op
       });
   }

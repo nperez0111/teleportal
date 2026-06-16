@@ -1,4 +1,5 @@
-import type { EncryptedSnapshot, EncryptedUpdatePayload } from "teleportal/protocol/encryption";
+import type { VersionedUpdate } from "teleportal";
+import type { EncryptedSnapshot } from "teleportal/protocol/encryption";
 import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import {
   EncryptedDocumentMetadata,
@@ -166,7 +167,7 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
 
   override async handleUpdate(
     key: string,
-    update: EncryptedUpdatePayload,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
   ): Promise<void> {
     await super.handleUpdate(key, update);

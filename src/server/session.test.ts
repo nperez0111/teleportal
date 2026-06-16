@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
-import { getLogger } from "@logtape/logtape";
 import * as Y from "yjs";
 import type {
   AwarenessUpdateMessage,
   Message,
   ServerContext,
   StateVector,
-  SyncStep2Update,
   Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
 } from "teleportal";
 import { AwarenessMessage, DocMessage, InMemoryPubSub, PresenceMessage } from "teleportal";
 import type {
@@ -57,8 +57,8 @@ class MockDocumentStorage implements DocumentStorage {
   public mockGetDocument = false;
   public mockHandleUpdate = false;
   public mockHandleSyncStep2 = false;
-  public storedUpdate: Update | null = null;
-  public lastSyncStep2: SyncStep2Update | null = null;
+  public storedUpdate: VersionedUpdate | null = null;
+  public lastSyncStep2: VersionedSyncStep2Update | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
   async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
@@ -66,20 +66,20 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: createTestUpdate("sync"),
+        update: createTestUpdate("sync").data as Update,
         stateVector: syncStep1,
       },
     };
   }
 
-  async handleSyncStep2(_key: string, syncStep2: SyncStep2Update): Promise<void> {
+  async handleSyncStep2(_key: string, syncStep2: VersionedSyncStep2Update): Promise<void> {
     this.mockHandleSyncStep2 = true;
     this.lastSyncStep2 = syncStep2;
   }
 
   async handleUpdate(
     _documentId: string,
-    update: Update,
+    update: VersionedUpdate,
     _attribution?: EncodedContentMap,
   ): Promise<void> {
     this.mockHandleUpdate = true;
@@ -93,7 +93,7 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: this.storedUpdate,
+        update: this.storedUpdate.data as Update,
         stateVector: new Uint8Array() as unknown as StateVector,
       },
     };
@@ -157,10 +157,10 @@ function createMockServer(): Server<ServerContext> {
   });
 }
 
-function createTestUpdate(content = "test"): Update {
+function createTestUpdate(content = "test"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, content);
-  return Y.encodeStateAsUpdateV2(doc) as Update;
+  return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
 }
 
 /**
@@ -195,7 +195,7 @@ describe("Session", () => {
   let client1: MockClient<ServerContext>;
   let client2: MockClient<ServerContext>;
   let client1AsClient: Client<ServerContext>;
-  let client2AsClient: Client<ServerContext>;
+  let _client2AsClient: Client<ServerContext>;
   const nodeId = "test-node";
   let mockServer: Server<ServerContext>;
 
@@ -205,7 +205,7 @@ describe("Session", () => {
     client1 = new MockClient<ServerContext>("client-1");
     client2 = new MockClient<ServerContext>("client-2");
     client1AsClient = client1 as any;
-    client2AsClient = client2 as any;
+    _client2AsClient = client2 as any;
     mockServer = createMockServer();
 
     session = new Session({
@@ -285,7 +285,7 @@ describe("Session", () => {
       await pubSub.publish(`document/test-doc` as const, message.encoded, "other-node");
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should receive the broadcast
       expect(client1.sentMessages.length).toBeGreaterThan(0);
@@ -306,7 +306,7 @@ describe("Session", () => {
       await pubSub.publish(`document/test-doc` as const, message.encoded, nodeId);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should not receive the message (same node)
       expect(client1.sentMessages.length).toBe(0);
@@ -327,7 +327,7 @@ describe("Session", () => {
       await pubSub.publish(`document/other-doc` as const, message.encoded, "other-node");
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should not receive the message (wrong document)
       expect(client1.sentMessages.length).toBe(0);
@@ -368,8 +368,8 @@ describe("Session", () => {
     });
 
     it("should schedule cleanup when last client is removed", () => {
-      let cleanupCalled = false;
-      let cleanupSession: Session<ServerContext> | null = null;
+      let _cleanupCalled = false;
+      let _cleanupSession: Session<ServerContext> | null = null;
       const testSession = new Session({
         documentId: "test-doc-cleanup",
         namespacedDocumentId: "test-doc-cleanup",
@@ -379,8 +379,8 @@ describe("Session", () => {
         pubSub,
         nodeId,
         onCleanupScheduled: (s) => {
-          cleanupCalled = true;
-          cleanupSession = s;
+          _cleanupCalled = true;
+          _cleanupSession = s;
         },
         server: mockServer,
       });
@@ -417,16 +417,12 @@ describe("Session", () => {
       // Immediately add client back - should cancel cleanup
       testSession.addClient(client1 as any);
 
-      // Wait a bit to ensure cleanup doesn't fire
+      // Wait a bit to ensure cleanup doesn't fire (cleanup delay is 60s, so 10ms is safe)
       setTimeout(() => {
         expect(cleanupCalled).toBe(false);
-        done();
-      }, 100);
-
-      // Clean up
-      setTimeout(() => {
         testSession[Symbol.asyncDispose]();
-      }, 200);
+        done();
+      }, 10);
     });
 
     it("should not schedule cleanup if clients remain", () => {
@@ -646,7 +642,7 @@ describe("Session", () => {
         session.addClient(client1 as any);
         session.addClient(client2 as any);
 
-        const update = createTestUpdate() as unknown as SyncStep2Update;
+        const update = createTestUpdate() as unknown as VersionedSyncStep2Update;
         const message = new DocMessage(
           "test-doc",
           { type: "sync-step-2", update },
@@ -666,7 +662,7 @@ describe("Session", () => {
       });
 
       it("should not send sync-done if no client provided", async () => {
-        const update = createTestUpdate() as unknown as SyncStep2Update;
+        const update = createTestUpdate() as unknown as VersionedSyncStep2Update;
         const message = new DocMessage(
           "test-doc",
           { type: "sync-step-2", update },
@@ -1023,7 +1019,7 @@ describe("Session", () => {
 
     // The in-memory pub/sub does not await the (async) subscriber, so give
     // replicated presence handling a tick to run.
-    const tick = () => new Promise((r) => setTimeout(r, 10));
+    const tick = () => new Promise((r) => setTimeout(r, 20));
 
     const presenceOf = (
       client: MockClient<ServerContext>,
@@ -1194,24 +1190,24 @@ describe("Session", () => {
 
       // Immediately dispose - should cancel cleanup
       testSession[Symbol.asyncDispose]().then(() => {
-        // Wait a bit to ensure cleanup doesn't fire
+        // Wait a bit to ensure cleanup doesn't fire (cleanup delay is 60s, so 10ms is safe)
         setTimeout(() => {
           expect(cleanupCalled).toBe(false);
           done();
-        }, 100);
+        }, 10);
       });
     });
   });
 
   describe("events", () => {
     let session: Session<ServerContext>;
-    let cleanupScheduled = false;
+    let _cleanupScheduled = false;
     const onCleanupScheduled = () => {
-      cleanupScheduled = true;
+      _cleanupScheduled = true;
     };
 
     beforeEach(async () => {
-      cleanupScheduled = false;
+      _cleanupScheduled = false;
       const storage = new MockDocumentStorage();
       const pubSub = new InMemoryPubSub();
 
@@ -1283,7 +1279,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: createTestUpdate() as unknown as SyncStep2Update,
+          update: createTestUpdate() as unknown as VersionedSyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -1308,7 +1304,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: createTestUpdate() as unknown as SyncStep2Update,
+          update: createTestUpdate() as unknown as VersionedSyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -1335,7 +1331,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: createTestUpdate() as unknown as SyncStep2Update,
+          update: createTestUpdate() as unknown as VersionedSyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );
@@ -1362,7 +1358,7 @@ describe("Session", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: createTestUpdate() as unknown as SyncStep2Update,
+          update: createTestUpdate() as unknown as VersionedSyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
       );

@@ -56,10 +56,6 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     return `${this.#keyPrefix}:upload:`;
   }
 
-  #getFileKey(fileId: string): string {
-    return `${this.#keyPrefix}:file:${fileId}`;
-  }
-
   async beginUpload(uploadId: string, metadata: FileMetadata): Promise<void> {
     const sessionKey = this.#getUploadSessionKey(uploadId);
     const existing = await this.#storage.getItem(sessionKey);

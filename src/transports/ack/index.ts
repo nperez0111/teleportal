@@ -73,7 +73,7 @@ export function withAckSink<
         } finally {
           try {
             writer.releaseLock();
-          } catch (error) {
+          } catch {
             // Ignore errors when releasing lock (it might already be released)
           }
         }
@@ -84,7 +84,7 @@ export function withAckSink<
         } finally {
           try {
             writer.releaseLock();
-          } catch (error) {
+          } catch {
             // Ignore errors when releasing lock (it might already be released)
           }
         }
@@ -241,7 +241,7 @@ export function withAckTrackingSink<
         } finally {
           try {
             writer.releaseLock();
-          } catch (error) {
+          } catch {
             // Ignore errors when releasing lock (it might already be released)
           }
         }
@@ -252,7 +252,7 @@ export function withAckTrackingSink<
         } finally {
           try {
             writer.releaseLock();
-          } catch (error) {
+          } catch {
             // Ignore errors when releasing lock (it might already be released)
           }
         }

@@ -87,6 +87,8 @@ describe("RedisRateLimitStorage", () => {
   });
 
   it("transaction retries if lock is taken", async () => {
+    const fastStorage = new RedisRateLimitStorage(mockRedis as Redis, undefined, undefined, 1, 0);
+
     // Fail first 2 times, succeed 3rd time
     mockRedis.set
       .mockResolvedValueOnce(null)
@@ -94,7 +96,7 @@ describe("RedisRateLimitStorage", () => {
       .mockResolvedValueOnce("OK");
 
     const cb = mock().mockResolvedValue("success");
-    const result = await storage.transaction("test", cb);
+    const result = await fastStorage.transaction("test", cb);
 
     expect(result).toBe("success");
     expect(mockRedis.set).toHaveBeenCalledTimes(3);
@@ -102,13 +104,13 @@ describe("RedisRateLimitStorage", () => {
   });
 
   it("transaction throws if lock cannot be acquired", async () => {
+    const fastStorage = new RedisRateLimitStorage(mockRedis as Redis, undefined, undefined, 1, 0);
+
     // Always fail
     mockRedis.set.mockResolvedValue(null);
 
-    // Speed up retries for test
-    const start = Date.now();
     try {
-      await storage.transaction("test", async () => {});
+      await fastStorage.transaction("test", async () => {});
       expect(true).toBe(false); // Should not reach here
     } catch (e: any) {
       expect(e.message).toContain("Failed to acquire rate limit lock");

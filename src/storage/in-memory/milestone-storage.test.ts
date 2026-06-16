@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { InMemoryMilestoneStorage } from "./milestone-storage";
-import type { MilestoneSnapshot, StateVector, Update } from "teleportal";
+import type { MilestoneSnapshot } from "teleportal";
 
 describe("InMemoryMilestoneStorage", () => {
   const createTestSnapshot = (): MilestoneSnapshot =>

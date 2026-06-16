@@ -8,7 +8,10 @@ import { EncryptionClient } from "./client";
 /**
  * Wraps a transport in encryption, encrypting all document messages that are sent through the transport.
  */
-export function getEncryptedTransport(handler: EncryptionClient): Transport<
+export function getEncryptedTransport(
+  handler: EncryptionClient,
+  options?: { updateBatchIntervalMs?: number },
+): Transport<
   ClientContext,
   {
     ydoc: Y.Doc;
@@ -31,6 +34,7 @@ export function getEncryptedTransport(handler: EncryptionClient): Transport<
     awareness: handler.awareness,
     observer,
     handler,
+    updateBatchIntervalMs: options?.updateBatchIntervalMs,
   });
   const sink = getYDocSink({
     ydoc: handler.ydoc,

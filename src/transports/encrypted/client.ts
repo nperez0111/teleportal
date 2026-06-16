@@ -1,6 +1,7 @@
 import { toBase64 } from "lib0/buffer";
 import { digest } from "lib0/hash/sha256";
 import { ClientContext, Observable } from "teleportal";
+import { convertToV2 } from "teleportal/protocol";
 import {
   type DecryptedBinary,
   decryptUpdate as defaultDecryptUpdate,
@@ -13,6 +14,8 @@ import {
   DocMessage,
   Message,
   Update,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
 } from "teleportal/protocol";
 import type {
   DecodedEncryptedUpdatePayload,
@@ -379,7 +382,7 @@ export class EncryptionClient
       this.document,
       {
         type: "sync-step-2",
-        update: encryptedSyncStep2,
+        update: { version: 2, data: encryptedSyncStep2 } as unknown as VersionedSyncStep2Update,
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -393,8 +396,8 @@ export class EncryptionClient
    * When this was an initial sync (server sent snapshot + updates), returns a compaction snapshot message
    * so the server can store it as the new active snapshot and avoid replaying the update log for future syncs.
    */
-  public async handleSyncStep2(syncStep2: EncryptedSyncStep2): Promise<Message | void> {
-    const decodedSyncStep2 = decodeFromSyncStep2(syncStep2);
+  public async handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<Message | void> {
+    const decodedSyncStep2 = decodeFromSyncStep2(syncStep2.data as EncryptedSyncStep2);
     const hadSnapshot = !!decodedSyncStep2.snapshot;
     const hadUpdates = decodedSyncStep2.updates.length > 0;
     if (decodedSyncStep2.snapshot) {
@@ -410,8 +413,8 @@ export class EncryptionClient
   /**
    * Handles an {@link EncryptedUpdatePayload} by decrypting the updates and applying them to the {@link Y.Doc}.
    */
-  public async handleUpdate(payload: EncryptedUpdatePayload): Promise<void> {
-    const decoded = decodeEncryptedUpdate(payload);
+  public async handleUpdate(update: VersionedUpdate): Promise<void> {
+    const decoded = decodeEncryptedUpdate(update.data as EncryptedUpdatePayload);
     if (decoded.type === "snapshot") {
       await this.applySnapshot(decoded.snapshot);
       return;
@@ -450,19 +453,24 @@ export class EncryptionClient
   }
 
   /**
-   * Handles an {@link Update} by encrypting it and returning a {@link DocMessage}.
+   * Handles an update by encrypting it and returning a {@link DocMessage}.
+   * Converts to V2 before encrypting so the decryption side can always use applyUpdateV2.
    */
-  public async onUpdate(update: Update): Promise<Message> {
+  public async onUpdate(update: VersionedUpdate): Promise<Message> {
     if (!this.activeSnapshotId) {
       return this.createSnapshotMessage();
     }
-    const encryptedUpdate = await this.encryptUpdate(update);
+    const v2 = convertToV2(update);
+    const encryptedUpdate = await this.encryptUpdate(v2);
     const updatePayload = this.createUpdatePayload(encryptedUpdate);
     return new DocMessage(
       this.document,
       {
         type: "update",
-        update: encodeEncryptedUpdateMessages([updatePayload]),
+        update: {
+          version: 2,
+          data: encodeEncryptedUpdateMessages([updatePayload]),
+        } as unknown as VersionedUpdate,
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -480,7 +488,10 @@ export class EncryptionClient
       this.document,
       {
         type: "update",
-        update: encodeEncryptedSnapshot(snapshot),
+        update: {
+          version: 2,
+          data: encodeEncryptedSnapshot(snapshot),
+        } as unknown as VersionedUpdate,
       },
       {
         clientId: this.awareness.clientID.toString(),

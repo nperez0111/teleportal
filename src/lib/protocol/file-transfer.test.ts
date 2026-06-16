@@ -108,17 +108,17 @@ describe("FileTransferProtocol.Server - file-part only", () => {
 
     class TestServer extends FileTransferProtocol.Server<TestContext> {
       protected async checkUploadPermission(
-        metadata: any,
-        context: TestContext,
+        _metadata: any,
+        _context: TestContext,
       ): Promise<{ allowed: boolean; reason?: string }> {
         return { allowed: true };
       }
 
       protected async onUploadStart(
-        metadata: any,
-        context: TestContext,
-        document: string,
-        encrypted: boolean,
+        _metadata: any,
+        _context: TestContext,
+        _document: string,
+        _encrypted: boolean,
       ): Promise<void> {}
 
       protected async onChunkReceived(
@@ -137,12 +137,12 @@ describe("FileTransferProtocol.Server - file-part only", () => {
       }
 
       protected async onDownloadRequest(
-        payload: any,
-        context: TestContext,
-        document: string,
-        encrypted: boolean,
-        sendMessage: (message: Message<TestContext>) => Promise<void>,
-        originalMessage: any,
+        _payload: any,
+        _context: TestContext,
+        _document: string,
+        _encrypted: boolean,
+        _sendMessage: (message: Message<TestContext>) => Promise<void>,
+        _originalMessage: any,
       ): Promise<void> {}
     }
 

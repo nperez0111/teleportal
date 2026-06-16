@@ -366,7 +366,7 @@ describe("Milestone", () => {
       const getSnapshot = async (): Promise<MilestoneSnapshot> => {
         callCount++;
         // Simulate async delay
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 5));
         return snapshot;
       };
 

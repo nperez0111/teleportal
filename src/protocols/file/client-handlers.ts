@@ -52,7 +52,6 @@ class FileClientHandler implements ClientRpcHandler {
   #activeUploads = new Map<string, UploadState>();
   #activeDownloads = new Map<string, DownloadState>();
   #downloadCache = new Map<string, Promise<File>>();
-  #provider: Provider<any> | null = null;
   #rpcClient: RpcClient | null = null;
   #sendStreamMessage: ((message: Message<any>) => Promise<void>) | null = null;
   #encryptionKey?: CryptoKey;
@@ -61,8 +60,7 @@ class FileClientHandler implements ClientRpcHandler {
     this.#encryptionKey = options?.encryptionKey;
   }
 
-  init(provider: Provider<any>): void {
-    this.#provider = provider;
+  init(_provider: Provider<any>): void {
     // Access private RpcClient through the provider
     // We'll need to expose a way to get it or pass it in
     // For now, we'll store a reference that will be set up by the provider
@@ -202,7 +200,7 @@ class FileClientHandler implements ClientRpcHandler {
     try {
       await this.#rpcClient.sendRequest(document, "fileDownload", requestPayload, {
         timeout,
-        onStream: (payload) => {
+        onStream: (_payload) => {
           // Stream messages are handled via handleStream
           // This is just for tracking
         },
@@ -396,7 +394,7 @@ class FileClientHandler implements ClientRpcHandler {
     );
   }
 
-  async #handleFilePart(payload: FilePartStream, context?: any) {
+  async #handleFilePart(payload: FilePartStream, _context?: any) {
     const handler = this.#activeDownloads.get(payload.fileId);
     if (!handler) {
       return;

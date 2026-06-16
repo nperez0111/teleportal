@@ -1,12 +1,16 @@
-import { describe, it, expect, beforeEach, vi } from "bun:test";
+import { describe, it, expect, beforeEach } from "bun:test";
 import type {
   DocumentStorage,
   DocumentMetadata,
   Document,
   EncodedContentMap,
 } from "teleportal/storage";
-import type { Update } from "teleportal";
+import type { Update, VersionedUpdate, VersionedSyncStep2Update } from "teleportal";
 import { VirtualStorage } from "./virtual-storage";
+
+function versionedUpdate(bytes: Uint8Array): VersionedUpdate {
+  return { version: 2, data: bytes as Update } as VersionedUpdate;
+}
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage implements DocumentStorage {
@@ -15,7 +19,7 @@ class MockDocumentStorage implements DocumentStorage {
   fileStorage = undefined;
   milestoneStorage = undefined;
 
-  public handledUpdates: Update[] = [];
+  public handledUpdates: VersionedUpdate[] = [];
   public handledAttributions: (EncodedContentMap | undefined)[] = [];
   public writtenMetadata: DocumentMetadata[] = [];
   public documents = new Map<string, Document>();
@@ -23,7 +27,7 @@ class MockDocumentStorage implements DocumentStorage {
 
   async handleUpdate(
     documentId: string,
-    update: Update,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
   ): Promise<void> {
     this.handledUpdates.push(update);
@@ -54,11 +58,11 @@ class MockDocumentStorage implements DocumentStorage {
     this.metadataMap.delete(documentId);
   }
 
-  async handleSyncStep1(documentId: string, syncStep1: Uint8Array): Promise<Document> {
+  async handleSyncStep1(documentId: string, _syncStep1: Uint8Array): Promise<Document> {
     return this.documents.get(documentId)!;
   }
 
-  async handleSyncStep2(documentId: string, syncStep2: Uint8Array): Promise<void> {
+  async handleSyncStep2(_documentId: string, _syncStep2: VersionedSyncStep2Update): Promise<void> {
     // Mock implementation
   }
 
@@ -89,8 +93,8 @@ describe("VirtualStorage", () => {
   });
 
   it("should buffer updates and flush on read", async () => {
-    const update1 = new Uint8Array([1, 2, 3]) as Update;
-    const update2 = new Uint8Array([4, 5, 6]) as Update;
+    const update1 = versionedUpdate(new Uint8Array([1, 2, 3]));
+    const update2 = versionedUpdate(new Uint8Array([4, 5, 6]));
 
     // Buffer updates
     await virtualStorage.handleUpdate("doc1", update1);
@@ -126,7 +130,7 @@ describe("VirtualStorage", () => {
   });
 
   it("should flush on delete", async () => {
-    const update = new Uint8Array([1, 2, 3]) as Update;
+    const update = versionedUpdate(new Uint8Array([1, 2, 3]));
 
     await virtualStorage.handleUpdate("doc1", update);
     expect(mockStorage.handledUpdates.length).toBe(0);
@@ -157,7 +161,7 @@ describe("VirtualStorage", () => {
   });
 
   it("buffers attribution and forwards it to the underlying storage", async () => {
-    const update = new Uint8Array([1, 2, 3]) as Update;
+    const update = versionedUpdate(new Uint8Array([1, 2, 3]));
     const attribution = new Uint8Array([7, 7, 7]) as EncodedContentMap;
 
     // Attributed writes are batched like any other write, not bypassed.

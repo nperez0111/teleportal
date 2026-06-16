@@ -1,21 +1,29 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import type { StateVector, Update } from "teleportal";
-import { getEmptyStateVector, getEmptyUpdate } from "../../lib/protocol/utils";
+import type {
+  Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
+  SyncStep2UpdateV2,
+} from "teleportal";
+import { getEmptyStateVector } from "../../lib/protocol/utils";
 import {
   createContentAttribute,
   createContentIdsFromUpdate,
   createContentMapFromContentIds,
   decodeContentMap,
   encodeContentMap,
-  resolveItemAttribution,
 } from "teleportal/attribution";
 import { YDocStorage } from "./ydoc";
 import type { EncodedContentMap, FileStorage } from "../types";
 
+function versionedUpdate(bytes: Uint8Array): VersionedUpdate {
+  return { version: 2, data: bytes as Update } as VersionedUpdate;
+}
+
 describe("YDocStorage", () => {
   let storage: YDocStorage;
-  let mockFileStorage: FileStorage;
+  let _mockFileStorage: FileStorage;
 
   beforeEach(() => {
     YDocStorage.docs.clear();
@@ -32,7 +40,7 @@ describe("YDocStorage", () => {
       text.insert(0, "Hello, World!");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       expect(YDocStorage.docs.has(key)).toBe(true);
       const storedDoc = YDocStorage.docs.get(key)!;
@@ -46,7 +54,7 @@ describe("YDocStorage", () => {
       text1.insert(0, "Hello");
       const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
 
-      await storage.handleUpdate(key, update1);
+      await storage.handleUpdate(key, versionedUpdate(update1));
 
       const doc2 = new Y.Doc();
       Y.applyUpdateV2(doc2, update1);
@@ -54,7 +62,7 @@ describe("YDocStorage", () => {
       text2.insert(5, ", World!");
       const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
 
-      await storage.handleUpdate(key, update2);
+      await storage.handleUpdate(key, versionedUpdate(update2));
 
       const storedDoc = YDocStorage.docs.get(key)!;
       expect(storedDoc.getText("content").toString()).toBe("Hello, World!");
@@ -66,7 +74,7 @@ describe("YDocStorage", () => {
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
       const beforeTime = Date.now();
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
       const afterTime = Date.now();
 
       const metadata = await storage.getDocumentMetadata(key);
@@ -91,7 +99,7 @@ describe("YDocStorage", () => {
       text.insert(0, "Test content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const retrieved = await storage.getDocument(key);
       expect(retrieved).not.toBeNull();
@@ -109,7 +117,7 @@ describe("YDocStorage", () => {
       text.insert(0, "Original content");
       const update = Y.encodeStateAsUpdateV2(originalDoc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const retrieved = await storage.getDocument(key);
       expect(retrieved).not.toBeNull();
@@ -165,7 +173,7 @@ describe("YDocStorage", () => {
       });
 
       const metadata = await storage.getDocumentMetadata(key);
-      const now = Date.now();
+      const _now = Date.now();
 
       expect(typeof metadata.createdAt).toBe("number");
       expect(metadata.createdAt).toBeGreaterThan(0);
@@ -182,7 +190,7 @@ describe("YDocStorage", () => {
       const doc = new Y.Doc();
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
       await storage.writeDocumentMetadata(key, {
         createdAt: 1000,
         updatedAt: 2000,
@@ -203,7 +211,7 @@ describe("YDocStorage", () => {
       const doc = new Y.Doc();
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       // Verify document exists before deletion
       expect(YDocStorage.docs.has(key)).toBe(true);
@@ -224,7 +232,7 @@ describe("YDocStorage", () => {
       text.insert(0, "Full content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const emptyStateVector = getEmptyStateVector();
 
@@ -253,7 +261,10 @@ describe("YDocStorage", () => {
       const doc = new Y.Doc();
       const text = doc.getText("content");
       text.insert(0, "Sync content");
-      const syncStep2 = Y.encodeStateAsUpdateV2(doc) as any;
+      const syncStep2: VersionedSyncStep2Update = {
+        version: 2 as const,
+        data: Y.encodeStateAsUpdateV2(doc) as SyncStep2UpdateV2,
+      };
 
       await storage.handleSyncStep2(key, syncStep2);
 
@@ -290,7 +301,7 @@ describe("YDocStorage", () => {
 
   describe("attribution", () => {
     function makeAttribution(update: Update, userId: string): EncodedContentMap {
-      const contentIds = createContentIdsFromUpdate(update);
+      const contentIds = createContentIdsFromUpdate(versionedUpdate(update));
       return encodeContentMap(
         createContentMapFromContentIds(
           contentIds,
@@ -313,7 +324,7 @@ describe("YDocStorage", () => {
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
       const attribution = makeAttribution(update, "user-1");
 
-      await storage.handleUpdate(key, update, attribution);
+      await storage.handleUpdate(key, versionedUpdate(update), attribution);
 
       const retrieved = await storage.retrieveAttribution(key);
       expect(retrieved).not.toBeNull();
@@ -331,7 +342,7 @@ describe("YDocStorage", () => {
       const doc = new Y.Doc();
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const result = await storage.retrieveAttribution(key);
       expect(result).toBeNull();
@@ -343,14 +354,14 @@ describe("YDocStorage", () => {
       doc1.getText("content").insert(0, "Hello");
       const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
 
-      await storage.handleUpdate(key, update1, makeAttribution(update1, "user-1"));
+      await storage.handleUpdate(key, versionedUpdate(update1), makeAttribution(update1, "user-1"));
 
       const doc2 = new Y.Doc();
       Y.applyUpdateV2(doc2, update1);
       doc2.getText("content").insert(5, " World");
       const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
 
-      await storage.handleUpdate(key, update2, makeAttribution(update2, "user-2"));
+      await storage.handleUpdate(key, versionedUpdate(update2), makeAttribution(update2, "user-2"));
 
       const retrieved = await storage.retrieveAttribution(key);
       expect(retrieved).not.toBeNull();
@@ -364,7 +375,7 @@ describe("YDocStorage", () => {
       doc.getText("content").insert(0, "Hello");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update, makeAttribution(update, "user-1"));
+      await storage.handleUpdate(key, versionedUpdate(update), makeAttribution(update, "user-1"));
       expect(await storage.retrieveAttribution(key)).not.toBeNull();
 
       await storage.deleteDocument(key);

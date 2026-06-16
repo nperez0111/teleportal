@@ -1,6 +1,12 @@
 import * as Y from "yjs";
 
-import { getStateVectorFromUpdate, getUpdateFromDoc, type Update } from "teleportal";
+import {
+  getStateVectorFromUpdate,
+  getUpdateFromDoc,
+  type UpdateV2,
+  type VersionedUpdate,
+} from "teleportal";
+import { applyVersionedUpdate } from "teleportal/protocol";
 import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import { calculateDocumentSize } from "../utils";
 import { UnencryptedDocumentStorage } from "../unencrypted";
@@ -15,13 +21,17 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     super();
   }
 
-  async handleUpdate(key: string, update: Update, attribution?: EncodedContentMap): Promise<void> {
+  async handleUpdate(
+    key: string,
+    update: VersionedUpdate,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
     if (!YDocStorage.docs.has(key)) {
       YDocStorage.docs.set(key, new Y.Doc());
     }
     const doc = YDocStorage.docs.get(key)!;
 
-    Y.applyUpdateV2(doc, update);
+    applyVersionedUpdate(doc, update);
 
     if (attribution) {
       let list = YDocStorage.attributionMaps.get(key);
@@ -35,7 +45,7 @@ export class YDocStorage extends UnencryptedDocumentStorage {
     await this.transaction(key, async () => {
       const meta = await this.getDocumentMetadata(key);
       const fullUpdate = getUpdateFromDoc(doc);
-      const sizeBytes = calculateDocumentSize(fullUpdate as Update);
+      const sizeBytes = calculateDocumentSize(fullUpdate as UpdateV2);
       await this.writeDocumentMetadata(key, {
         ...meta,
         updatedAt: Date.now(),

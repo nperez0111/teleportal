@@ -11,10 +11,19 @@ import {
   type Sink,
   type Source,
   type StateVector,
-  type SyncStep2Update,
+  type SyncStep2UpdateV2,
   type Transport,
-  type Update,
+  type UpdateV1,
+  type UpdateV2,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
 } from "teleportal";
+import {
+  applyVersionedSyncStep2,
+  applyVersionedUpdate,
+  convertToV2,
+  mergeUpdates,
+} from "teleportal/protocol";
 import { compose } from "teleportal/transports";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
@@ -22,7 +31,7 @@ export function getSyncTransactionOrigin(ydoc: Y.Doc) {
 }
 
 export interface YDocSourceHandler {
-  onUpdate(update: Update): Promise<Message>;
+  onUpdate(update: VersionedUpdate): Promise<Message>;
   onAwarenessUpdate(update: AwarenessUpdateMessage): Promise<Message>;
   start(): Promise<Message>;
   destroy?: () => void;
@@ -30,8 +39,8 @@ export interface YDocSourceHandler {
 
 export interface YDocSinkHandler {
   handleSyncStep1(stateVector: StateVector): Promise<DocMessage<ClientContext>>;
-  handleSyncStep2(syncStep2: SyncStep2Update): Promise<void | Message<ClientContext>>;
-  handleUpdate(update: Update): Promise<void>;
+  handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<void | Message<ClientContext>>;
+  handleUpdate(update: VersionedUpdate): Promise<void>;
   handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void>;
   handleAwarenessRequest(update: AwarenessUpdateMessage): Promise<AwarenessMessage<ClientContext>>;
 }
@@ -47,13 +56,14 @@ export function getYDocSource<Context extends ClientContext>({
   observer = new Observable<{
     message: (message: Message) => void;
   }>(),
+  updateBatchIntervalMs = 0,
   handler = {
-    async onUpdate(update) {
+    async onUpdate(update: VersionedUpdate) {
       return new DocMessage(
         document,
         {
           type: "update",
-          update: update as Update,
+          update,
         },
         context,
       );
@@ -88,6 +98,15 @@ export function getYDocSource<Context extends ClientContext>({
     message: (message: Message) => void;
   }>;
   handler?: YDocSourceHandler;
+  /**
+   * Batch interval in ms for merging cleartext updates before passing them
+   * to the handler. When > 0, rapid Y.Doc updates are accumulated and merged
+   * via `Y.mergeUpdatesV2` so the handler receives fewer, larger updates.
+   * Set to 0 to disable (every update is forwarded immediately).
+   *
+   * @default 0
+   */
+  updateBatchIntervalMs?: number;
 }): Source<
   Context,
   {
@@ -103,26 +122,71 @@ export function getYDocSource<Context extends ClientContext>({
   let onMessage: (message: Message) => void;
   let isDestroyed = false;
 
+  let pendingUpdates: UpdateV2[] = [];
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearBatchTimer() {
+    if (batchTimer !== null) {
+      clearTimeout(batchTimer);
+      batchTimer = null;
+    }
+  }
+
+  async function flushBatch(controller: ReadableStreamDefaultController<Message>) {
+    clearBatchTimer();
+    const updates = pendingUpdates;
+    if (updates.length === 0) return;
+    pendingUpdates = [];
+
+    const merged: VersionedUpdate = {
+      version: 2,
+      data: updates.length === 1 ? updates[0] : mergeUpdates(updates),
+    };
+    try {
+      controller.enqueue(await handler.onUpdate(merged));
+    } catch (err: any) {
+      if (
+        err?.code !== "ERR_INVALID_STATE" &&
+        err?.message !== "Invalid state: Controller is already closed"
+      ) {
+        throw err;
+      }
+    }
+  }
+
   return {
     ydoc,
     awareness,
     handler,
     readable: new ReadableStream({
       async start(controller) {
-        onUpdate = ydoc.on("updateV2", async (update, origin) => {
+        onUpdate = ydoc.on("update", async (update: Uint8Array, origin: any) => {
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
-          try {
-            controller.enqueue(await handler.onUpdate(update as Update));
-          } catch (err: any) {
-            // Stream may be closed, ignore the error
-            if (
-              err?.code !== "ERR_INVALID_STATE" &&
-              err?.message !== "Invalid state: Controller is already closed"
-            ) {
-              throw err;
+
+          if (updateBatchIntervalMs <= 0) {
+            try {
+              const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
+              controller.enqueue(await handler.onUpdate(versioned));
+            } catch (err: any) {
+              if (
+                err?.code !== "ERR_INVALID_STATE" &&
+                err?.message !== "Invalid state: Controller is already closed"
+              ) {
+                throw err;
+              }
             }
+            return;
+          }
+
+          const v2 = convertToV2({ version: 1, data: update as UpdateV1 });
+          pendingUpdates.push(v2);
+          if (batchTimer === null) {
+            batchTimer = setTimeout(() => {
+              batchTimer = null;
+              void flushBatch(controller);
+            }, updateBatchIntervalMs);
           }
         });
         onDestroy = ydoc.on("destroy", async () => {
@@ -130,6 +194,7 @@ export function getYDocSource<Context extends ClientContext>({
             return;
           }
           isDestroyed = true;
+          await flushBatch(controller);
           if (handler.destroy) {
             await handler.destroy();
           }
@@ -151,6 +216,7 @@ export function getYDocSource<Context extends ClientContext>({
             return;
           }
           isDestroyed = true;
+          await flushBatch(controller);
           if (handler.destroy) {
             await handler.destroy();
           }
@@ -165,7 +231,9 @@ export function getYDocSource<Context extends ClientContext>({
       },
       cancel() {
         isDestroyed = true;
-        ydoc.off("updateV2", onUpdate);
+        clearBatchTimer();
+        pendingUpdates = [];
+        ydoc.off("update", onUpdate);
         ydoc.off("destroy", onDestroy);
         awareness.off("update", onAwarenessUpdate);
         awareness.off("destroy", onAwarenessDestroy);
@@ -205,16 +273,19 @@ export function getYDocSink<Context extends ClientContext>({
         document,
         {
           type: "sync-step-2",
-          update: Y.diffUpdateV2(Y.encodeStateAsUpdateV2(ydoc), stateVector) as SyncStep2Update,
+          update: {
+            version: 2,
+            data: Y.diffUpdateV2(Y.encodeStateAsUpdateV2(ydoc), stateVector) as SyncStep2UpdateV2,
+          },
         },
         context,
       );
     },
     async handleSyncStep2(syncStep2) {
-      Y.applyUpdateV2(ydoc, syncStep2, getSyncTransactionOrigin(ydoc));
+      applyVersionedSyncStep2(ydoc, syncStep2, getSyncTransactionOrigin(ydoc));
     },
     async handleUpdate(update) {
-      Y.applyUpdateV2(ydoc, update, getSyncTransactionOrigin(ydoc));
+      applyVersionedUpdate(ydoc, update, getSyncTransactionOrigin(ydoc));
     },
   },
 }: {
@@ -282,9 +353,8 @@ export function getYDocSink<Context extends ClientContext>({
                 default: {
                   // This should be unreachable due to type checking
                   const _exhaustive: never = chunk.payload;
-                  _exhaustive;
                   throw new Error("Invalid chunk.payload.type", {
-                    cause: { chunk },
+                    cause: { chunk: _exhaustive },
                   });
                 }
               }
@@ -321,9 +391,8 @@ export function getYDocSink<Context extends ClientContext>({
                 default: {
                   // This should be unreachable due to type checking
                   const _exhaustive: never = chunk.payload;
-                  _exhaustive;
                   throw new Error("Invalid chunk.payload.type", {
-                    cause: { chunk },
+                    cause: { chunk: _exhaustive },
                   });
                 }
               }
@@ -348,7 +417,7 @@ export function getYDocSink<Context extends ClientContext>({
             default: {
               // Exhaustive check for message types - all types should be handled above
               const _exhaustive: never = chunk;
-              _exhaustive;
+              void _exhaustive;
               break;
             }
           }

@@ -24,8 +24,13 @@ import {
   getEmptyEncodedContentIds,
   IdSet,
 } from "teleportal/attribution";
+import type { VersionedUpdate, Update } from "teleportal";
 import { UnstorageEncryptedDocumentStorage } from "./encrypted";
 import type { EncodedContentMap } from "../types";
+
+function versionedUpdate(bytes: Uint8Array): VersionedUpdate {
+  return { version: 2, data: bytes as Update } as VersionedUpdate;
+}
 
 describe("UnstorageEncryptedDocumentStorage", () => {
   let storage: UnstorageEncryptedDocumentStorage;
@@ -112,7 +117,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       const update = encodeEncryptedUpdateMessages([message]);
       const attribution = makeAttribution("user-1");
 
-      await storage.handleUpdate(key, update, attribution);
+      await storage.handleUpdate(key, versionedUpdate(update), attribution);
 
       const retrieved = await storage.retrieveAttribution(key);
       expect(retrieved).not.toBeNull();
@@ -139,7 +144,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       };
       const update = encodeEncryptedUpdateMessages([message]);
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const result = await storage.retrieveAttribution(key);
       expect(result).toBeNull();
@@ -167,12 +172,12 @@ describe("UnstorageEncryptedDocumentStorage", () => {
 
       await storage.handleUpdate(
         key,
-        encodeEncryptedUpdateMessages([msg1]),
+        versionedUpdate(encodeEncryptedUpdateMessages([msg1])),
         makeAttribution("user-1", 1, 0, 5),
       );
       await storage.handleUpdate(
         key,
-        encodeEncryptedUpdateMessages([msg2]),
+        versionedUpdate(encodeEncryptedUpdateMessages([msg2])),
         makeAttribution("user-2", 2, 0, 3),
       );
 
@@ -196,7 +201,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
 
       await storage.handleUpdate(
         key,
-        encodeEncryptedUpdateMessages([msg]),
+        versionedUpdate(encodeEncryptedUpdateMessages([msg])),
         makeAttribution("user-1"),
       );
       expect(await storage.retrieveAttribution(key)).not.toBeNull();

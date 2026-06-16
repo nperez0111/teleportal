@@ -35,5 +35,6 @@ There are several sub-packages built with documentation:
 - Running all the tests: `bun run test` (type check & bun test runner)
 - Checking the lint & formatting: `bun run lint` (report)
 - Fixing the lint & formatting: `bun run lint:fix` (fix)
-- Type checking: `bun run test:types` (tsc)
+- Type checking: `bun run test:types` (oxlint + tsgo via `vp check`)
 - A goal of this project is to have the minimum number of dependencies and to be as small as possible, so avoid adding dependencies unless otherwise specified
+- When fixing a bug, add a corresponding test case to prevent regression if reasonable to do so

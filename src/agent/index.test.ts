@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { getLogger } from "@logtape/logtape";
 import type { ServerContext } from "teleportal";
 import { InMemoryPubSub } from "teleportal";
 import { Server } from "teleportal/server";
@@ -180,7 +179,7 @@ describe("Agent", () => {
         encrypted: false,
       });
 
-      const clientId = result.client.id;
+      const _clientId = result.client.id;
       const session = await server.getOrOpenSession("destroy-test-doc", {
         encrypted: false,
         context: {

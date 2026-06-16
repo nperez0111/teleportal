@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import type { Message, ServerContext, StateVector, SyncStep2Update, Update } from "teleportal";
+import type {
+  Message,
+  ServerContext,
+  StateVector,
+  Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
+} from "teleportal";
 import { RpcMessage } from "teleportal";
 import type {
   Document,
@@ -12,10 +19,10 @@ import { InMemoryPubSub } from "teleportal";
 import { Session } from "./session";
 import { Server } from "./server";
 
-function createTestUpdate(content = "test"): Update {
+function createTestUpdate(content = "test"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, content);
-  return Y.encodeStateAsUpdateV2(doc) as Update;
+  return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
 }
 
 class MockClient<Context extends ServerContext> {
@@ -38,7 +45,7 @@ class MockDocumentStorage implements DocumentStorage {
   fileStorage = undefined;
   milestoneStorage: MilestoneStorage | undefined = undefined;
 
-  public storedUpdate: Update | null = null;
+  public storedUpdate: VersionedUpdate | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
   async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
@@ -46,17 +53,17 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: createTestUpdate("sync"),
+        update: createTestUpdate("sync").data as Update,
         stateVector: syncStep1,
       },
     };
   }
 
-  async handleSyncStep2(_key: string, _syncStep2: SyncStep2Update): Promise<void> {}
+  async handleSyncStep2(_key: string, _syncStep2: VersionedSyncStep2Update): Promise<void> {}
 
   async handleUpdate(
     _documentId: string,
-    update: Update,
+    update: VersionedUpdate,
     _attribution?: import("teleportal/storage").EncodedContentMap,
   ): Promise<void> {
     this.storedUpdate = update;
@@ -68,7 +75,7 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: this.storedUpdate,
+        update: this.storedUpdate.data as Update,
         stateVector: new Uint8Array() as unknown as StateVector,
       },
     };

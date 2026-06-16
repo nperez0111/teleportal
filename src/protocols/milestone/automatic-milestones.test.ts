@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { InMemoryPubSub } from "teleportal";
-import type { Update, ServerContext } from "teleportal";
+import type { Update, ServerContext, VersionedUpdate } from "teleportal";
 import type { MilestoneTrigger } from "teleportal/storage";
 import { getMilestoneRpcHandlers } from "./index";
 import { Session } from "../../server/session";
@@ -12,10 +12,10 @@ import { YDocStorage } from "../../storage/in-memory/ydoc";
 /**
  * Creates a valid Y.js update from a simple text content
  */
-function createYjsUpdate(text: string = "initial"): Update {
+function createYjsUpdate(text: string = "initial"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, text);
-  return Y.encodeStateAsUpdateV2(doc) as Update;
+  return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
 }
 
 describe("Automatic Milestones via Handler Factory", () => {
@@ -36,8 +36,9 @@ describe("Automatic Milestones via Handler Factory", () => {
   });
 
   afterEach(async () => {
-    if (session) await session[Symbol.asyncDispose]();
+    await new Promise((resolve) => setTimeout(resolve, 5));
     if (server) await server[Symbol.asyncDispose]();
+    if (session) await session[Symbol.asyncDispose]();
     await pubSub[Symbol.asyncDispose]();
   });
 
@@ -80,7 +81,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     await session.write(createYjsUpdate("update 2"));
 
     // Wait for async milestone creation (createAutomaticMilestone is fire-and-forget)
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     milestones = await milestoneStorage.getMilestones("test-doc");
     expect(milestones.length).toBe(1);
@@ -96,7 +97,7 @@ describe("Automatic Milestones via Handler Factory", () => {
       id: "trigger-time",
       enabled: true,
       type: "time-based",
-      config: { interval: 100 },
+      config: { interval: 10 },
       autoName: "Time Milestone",
     };
 
@@ -126,7 +127,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     let milestones = await milestoneStorage.getMilestones("test-doc");
     expect(milestones.length).toBe(0);
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 12));
 
     await session.write(createYjsUpdate("time update 2"));
     milestones = await milestoneStorage.getMilestones("test-doc");
@@ -241,7 +242,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     await session.write(createYjsUpdate("callback update"));
 
     // Wait for async milestone creation to complete (createAutomaticMilestone is fire-and-forget)
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(callbackCalled).toBe(true);
     expect(capturedMilestoneId).toBeTruthy();
@@ -281,7 +282,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     await session.write(createYjsUpdate("metadata update"));
 
     // Wait for async milestone creation to complete (createAutomaticMilestone is fire-and-forget)
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     const metadata = await storage.getDocumentMetadata("test-doc");
     expect(metadata.milestones).toBeDefined();

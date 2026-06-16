@@ -11,15 +11,16 @@ import type {
   Message,
   Transport,
   StateVector,
-  SyncStep2Update,
   Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
 } from "teleportal";
 import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 
-function createTestUpdate(content = "test"): Update {
+function createTestUpdate(content = "test"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, content);
-  return Y.encodeStateAsUpdateV2(doc) as Update;
+  return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
 }
 
 // Mock DocumentStorage for testing
@@ -28,7 +29,7 @@ class MockDocumentStorage implements DocumentStorage {
   storageType: "encrypted" | "unencrypted" = "unencrypted";
 
   public mockHandleUpdate = false;
-  public storedUpdate: Update | null = null;
+  public storedUpdate: VersionedUpdate | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
   async handleSyncStep1(documentId: string, syncStep1: StateVector): Promise<Document> {
@@ -36,19 +37,19 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: createTestUpdate("sync"),
+        update: createTestUpdate("sync").data as Update,
         stateVector: syncStep1,
       },
     };
   }
 
-  async handleSyncStep2(_key: string, _syncStep2: SyncStep2Update): Promise<void> {
+  async handleSyncStep2(_key: string, _syncStep2: VersionedSyncStep2Update): Promise<void> {
     return;
   }
 
   async handleUpdate(
     _documentId: string,
-    update: Update,
+    update: VersionedUpdate,
     _attribution?: import("teleportal/storage").EncodedContentMap,
   ): Promise<void> {
     this.mockHandleUpdate = true;
@@ -61,7 +62,7 @@ class MockDocumentStorage implements DocumentStorage {
       id: documentId,
       metadata: await this.getDocumentMetadata(documentId),
       content: {
-        update: this.storedUpdate,
+        update: this.storedUpdate.data as Update,
         stateVector: new Uint8Array() as unknown as StateVector,
       },
     };
@@ -129,10 +130,9 @@ class MockTransport<Context extends ServerContext> implements Transport<Context>
     this.writable = writable;
 
     // Set up readable stream controller
-    const self = this;
     this.readable = new ReadableStream<Message<Context>>({
-      start(controller) {
-        self.controller = controller;
+      start: (controller) => {
+        this.controller = controller;
       },
     });
   }
@@ -513,7 +513,7 @@ describe("Server", () => {
 
     it("should handle messages from transport", async () => {
       const transport = new MockTransport();
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "client-1",
       });
@@ -529,7 +529,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Session should be created
       const session = await server.getOrOpenSession("test-doc", {
@@ -552,7 +552,7 @@ describe("Server", () => {
       transport.closeReadable();
 
       // Wait for disconnect to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Client should be disconnected (no way to directly verify, but should not throw)
       expect(client).toBeDefined();
@@ -569,7 +569,7 @@ describe("Server", () => {
       errorTransport.closeReadable();
 
       // Wait for error handling
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should not throw
       expect(client).toBeDefined();
@@ -597,7 +597,7 @@ describe("Server", () => {
       });
 
       const transport = new MockTransport();
-      const client = serverWithPermission.createClient({
+      const _client = serverWithPermission.createClient({
         transport,
         id: "client-1",
       });
@@ -612,7 +612,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Permission should be checked
       expect(permissionChecked).toBe(true);
@@ -654,7 +654,7 @@ describe("Server", () => {
         writable,
       } as Transport<ServerContext>;
 
-      const client = serverWithPermission.createClient({
+      const _client = serverWithPermission.createClient({
         transport: customTransport,
         id: "client-1",
       });
@@ -669,7 +669,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should send auth-message with permission denied
       expect(writtenMessages.length).toBeGreaterThan(0);
@@ -727,7 +727,7 @@ describe("Server", () => {
         writable,
       } as Transport<ServerContext>;
 
-      const client = serverWithPermission.createClient({
+      const _client = serverWithPermission.createClient({
         transport: customTransport,
         id: "client-1",
       });
@@ -736,7 +736,7 @@ describe("Server", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: createTestUpdate() as unknown as SyncStep2Update,
+          update: createTestUpdate() as unknown as VersionedSyncStep2Update,
         },
         { clientId: "client-1", userId: "user-1", room: "room" },
         false,
@@ -745,7 +745,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should send sync-done message (not auth-message)
       expect(writtenMessages.length).toBeGreaterThan(0);
@@ -844,7 +844,7 @@ describe("Server", () => {
 
   describe("session cleanup", () => {
     it("should handle cleanup callback when session has no clients", async () => {
-      const session = await server.getOrOpenSession("test-doc-cleanup", {
+      const _session = await server.getOrOpenSession("test-doc-cleanup", {
         encrypted: false,
         context: { userId: "user-1", room: "room", clientId: "client-1" },
       });
@@ -868,7 +868,7 @@ describe("Server", () => {
       server.disconnectClient("client-cleanup");
 
       // Wait a bit for cleanup to be scheduled
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Verify session still exists (cleanup hasn't fired yet)
       const existingSession = await server.getOrOpenSession("test-doc-cleanup", {
@@ -879,7 +879,7 @@ describe("Server", () => {
 
       // Close transport to ensure cleanup
       transport.closeReadable();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
 
     it("should not cleanup session if client reconnects", async () => {
@@ -889,7 +889,7 @@ describe("Server", () => {
         id: "client-reconnect",
       });
 
-      const session1 = await server.getOrOpenSession("test-doc-reconnect", {
+      const _session1 = await server.getOrOpenSession("test-doc-reconnect", {
         encrypted: false,
         client: client1,
         context: { userId: "user-1", room: "room", clientId: "client-1" },
@@ -900,7 +900,7 @@ describe("Server", () => {
       transport1.closeReadable();
 
       // Wait a bit
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Reconnect before cleanup fires
       const transport2 = new MockTransport();
@@ -920,7 +920,7 @@ describe("Server", () => {
       expect(session2.documentId).toBe("test-doc-reconnect");
 
       transport2.closeReadable();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
 
     it("should cleanup session after delay when no clients", async () => {
@@ -977,7 +977,7 @@ describe("Server", () => {
       transport.closeReadable();
 
       // Wait for cleanup to be scheduled
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Verify session should be disposed (has no clients)
       expect(session.shouldDispose).toBe(true);
@@ -1004,7 +1004,7 @@ describe("Server", () => {
       // Remove client
       server.disconnectClient("client-cancel-1");
       transport1.closeReadable();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Verify session should be disposed
       expect(session.shouldDispose).toBe(true);
@@ -1027,7 +1027,7 @@ describe("Server", () => {
       expect(session2).toBe(session); // Same session instance
 
       transport2.closeReadable();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
   });
 
@@ -1063,7 +1063,7 @@ describe("Server", () => {
   describe("integration", () => {
     it("should handle full client lifecycle", async () => {
       const transport = new MockTransport();
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "client-1",
       });
@@ -1079,7 +1079,7 @@ describe("Server", () => {
       transport.enqueueMessage(syncStep1);
 
       // Wait for processing
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Session should be created
       const session = await server.getOrOpenSession("test-doc", {
@@ -1153,7 +1153,7 @@ describe("Server", () => {
       // Override the writable to capture messages
       transport.writable = writable;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "client-1",
       });
@@ -1169,7 +1169,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should have received an ACK message
       const ackMessages = writtenMessages.filter(
@@ -1194,7 +1194,7 @@ describe("Server", () => {
       // Override the writable to capture messages
       transport.writable = writable;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "client-1",
       });
@@ -1225,7 +1225,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should have received an ACK message
       const ackMessages = writtenMessages.filter(
@@ -1250,7 +1250,7 @@ describe("Server", () => {
       // Override the writable to capture messages
       transport.writable = writable;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "client-1",
       });
@@ -1268,7 +1268,7 @@ describe("Server", () => {
       transport.enqueueMessage(ackMessage);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should NOT have received another ACK (would cause loop)
       const ackMessages = writtenMessages.filter((m) => m.type === "ack");
@@ -1277,7 +1277,7 @@ describe("Server", () => {
       // Clean up - try to close, but ignore errors if already closed
       try {
         transport.closeReadable();
-      } catch (error) {
+      } catch {
         // Ignore errors if already closed
       }
     });
@@ -1306,7 +1306,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithFailingHandler.createClient({
+      const _client = serverWithFailingHandler.createClient({
         transport,
         id: "client-1",
       });
@@ -1335,7 +1335,7 @@ describe("Server", () => {
 
       transport.enqueueMessage(message);
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       const ackMessages = writtenMessages.filter(
         (m) => m.type === "ack",
@@ -1369,7 +1369,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1385,7 +1385,7 @@ describe("Server", () => {
       transport.enqueueMessage(ackMessage);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should not have sent any error messages
       const errorMessages = writtenMessages.filter(
@@ -1396,7 +1396,7 @@ describe("Server", () => {
       // Clean up - try to close, but ignore errors if already closed
       try {
         transport.closeReadable();
-      } catch (error) {
+      } catch {
         // Ignore errors if already closed
       }
       await serverWithToken[Symbol.asyncDispose]();
@@ -1422,7 +1422,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1440,7 +1440,7 @@ describe("Server", () => {
       transport.enqueueMessage(awarenessMessage);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should not have sent any error messages
       const errorMessages = writtenMessages.filter(
@@ -1451,7 +1451,7 @@ describe("Server", () => {
       // Clean up - try to close, but ignore errors if already closed
       try {
         transport.closeReadable();
-      } catch (error) {
+      } catch {
         // Ignore errors if already closed
       }
       await serverWithToken[Symbol.asyncDispose]();
@@ -1486,7 +1486,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1504,7 +1504,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should not have sent any auth error messages
       const errorMessages = writtenMessages.filter(
@@ -1548,7 +1548,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1566,7 +1566,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should have sent an auth error message
       const errorMessages = writtenMessages.filter(
@@ -1610,7 +1610,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1629,7 +1629,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should not have sent any auth error messages
       const errorMessages = writtenMessages.filter(
@@ -1673,7 +1673,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1691,7 +1691,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should have sent an auth error message
       const errorMessages = writtenMessages.filter(
@@ -1719,7 +1719,7 @@ describe("Server", () => {
       // Clean up - try to close, but ignore errors if already closed
       try {
         transport.closeReadable();
-      } catch (error) {
+      } catch {
         // Ignore errors if already closed
       }
       await serverWithToken[Symbol.asyncDispose]();
@@ -1754,7 +1754,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1763,7 +1763,7 @@ describe("Server", () => {
         "test-doc",
         {
           type: "sync-step-2",
-          update: createTestUpdate() as unknown as SyncStep2Update,
+          update: createTestUpdate() as unknown as VersionedSyncStep2Update,
         },
         {
           clientId: "client-1",
@@ -1775,7 +1775,7 @@ describe("Server", () => {
       transport.enqueueMessage(message);
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // sync-step-2 gets special handling - should receive sync-done, not auth-message
       const syncDoneMessages = writtenMessages.filter(
@@ -1799,7 +1799,7 @@ describe("Server", () => {
       // Clean up - try to close, but ignore errors if already closed
       try {
         transport.closeReadable();
-      } catch (error) {
+      } catch {
         // Ignore errors if already closed
       }
       await serverWithToken[Symbol.asyncDispose]();
@@ -1832,7 +1832,7 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       transport.writable = writable;
 
-      const client = serverWithToken.createClient({
+      const _client = serverWithToken.createClient({
         transport,
         id: "client-1",
       });
@@ -1850,7 +1850,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(readMessage);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Test write operation
       const writeMessage = new DocMessage(
@@ -1865,7 +1865,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(writeMessage);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should not have sent any auth error messages
       const errorMessages = writtenMessages.filter(
@@ -1887,7 +1887,7 @@ describe("Server", () => {
 
       // Create a client
       const transport = new MockTransport();
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "client-1",
       });
@@ -1908,7 +1908,7 @@ describe("Server", () => {
       // Process ack messages
       transport.enqueueMessage(ackMessage1);
       transport.enqueueMessage(ackMessage2);
-      await new Promise((resolve) => setTimeout(resolve, 10)); // Allow async processing
+      await new Promise((resolve) => setTimeout(resolve, 20)); // Allow async processing
 
       // Check that ack messages were tracked
       const statusAfterAck = await server.getStatus();
@@ -1930,7 +1930,7 @@ describe("Server", () => {
       server.on("client-connect", (data) => events.push(data));
 
       const transport = new MockTransport();
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "event-test-client",
       });
@@ -1946,7 +1946,7 @@ describe("Server", () => {
       server.on("client-disconnect", (data) => events.push(data));
 
       const transport = new MockTransport();
-      const client = server.createClient({
+      const _client = server.createClient({
         transport,
         id: "disconnect-test-client",
       });
@@ -1994,7 +1994,7 @@ describe("Server", () => {
       transport.closeReadable();
 
       // Wait for the stream to be processed
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(events.length).toBe(1);
       expect(events[0].clientId).toBe("stream-ended-client");
@@ -2018,7 +2018,7 @@ describe("Server", () => {
         writable,
       } as Transport<ServerContext>;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport: customTransport,
         id: "doc-load-client",
       });
@@ -2031,7 +2031,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(message);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(events.length).toBe(1);
       expect(events[0].documentId).toBe("load-test-doc");
@@ -2059,7 +2059,7 @@ describe("Server", () => {
         writable,
       } as Transport<ServerContext>;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport: customTransport,
         id: "doc-unload-client",
       });
@@ -2072,7 +2072,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(message);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Close the stream to trigger disconnect
       transport.closeReadable();
@@ -2098,7 +2098,7 @@ describe("Server", () => {
         writable,
       } as Transport<ServerContext>;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport: customTransport,
         id: "doc-delete-client",
       });
@@ -2111,7 +2111,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(message);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Now delete the document
       await server.deleteDocument(
@@ -2139,7 +2139,7 @@ describe("Server", () => {
         writable,
       } as Transport<ServerContext>;
 
-      const client = server.createClient({
+      const _client = server.createClient({
         transport: customTransport,
         id: "msg-test-client",
       });
@@ -2152,7 +2152,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(message);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       // Should have received the message (direction: "in")
       const inboundMessages = events.filter((e) => e.direction === "in");
@@ -2193,7 +2193,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(message);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       transport.closeReadable();
 
@@ -2234,7 +2234,7 @@ describe("Server", () => {
       );
 
       transport.enqueueMessage(message);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
       transport.closeReadable();
 

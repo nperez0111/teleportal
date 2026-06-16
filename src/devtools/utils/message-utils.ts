@@ -1,6 +1,18 @@
 import { decoding } from "lib0";
 import { toBase64 } from "lib0/buffer.js";
-import { DocMessage, SyncStep2Update, type Message, type RawReceivedMessage } from "teleportal";
+import {
+  DocMessage,
+  type SyncStep2UpdateV2,
+  type Message,
+  type RawReceivedMessage,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
+} from "teleportal";
+import {
+  decodeUpdateVersioned,
+  encodeStateVectorFromVersionedUpdate,
+  parseUpdateMetaVersioned,
+} from "teleportal/protocol";
 import { type ContentMap, type IdMap, decodeContentMap } from "teleportal/attribution";
 import { decryptUpdate } from "teleportal/encryption-key";
 import {
@@ -196,9 +208,10 @@ export async function formatMessagePayload(
           }
           return JSON.stringify(Y.decodeStateVector(stateVector), null, 2);
         }
+        case "update":
         case "sync-step-2": {
-          if (message.encrypted) {
-            const decoded = decodeFromSyncStep2(message.payload.update);
+          if (message.encrypted && message.payload.type === "sync-step-2") {
+            const decoded = decodeFromSyncStep2(message.payload.update.data as any);
             const items: string[] = [];
             if (decoded.snapshot) {
               if (!provider.encryptionKey) {
@@ -212,7 +225,10 @@ export async function formatMessagePayload(
                   getDocId(message),
                   {
                     type: "sync-step-2",
-                    update: decrypted as SyncStep2Update,
+                    update: {
+                      version: 2,
+                      data: decrypted as SyncStep2UpdateV2,
+                    } as VersionedSyncStep2Update,
                   },
                   message.context,
                   false,
@@ -224,7 +240,6 @@ export async function formatMessagePayload(
             return Promise.all(
               decoded.updates.map(async (val) => {
                 if (!provider.encryptionKey) {
-                  // bail, content is encrypted & we have no key
                   return toBase64(val.payload);
                 }
                 const decrypted = await decryptUpdate(provider.encryptionKey, val.payload);
@@ -234,7 +249,10 @@ export async function formatMessagePayload(
                     getDocId(message),
                     {
                       type: "sync-step-2",
-                      update: decrypted as SyncStep2Update,
+                      update: {
+                        version: 2,
+                        data: decrypted as SyncStep2UpdateV2,
+                      } as VersionedSyncStep2Update,
                     },
                     message.context,
                     false,
@@ -250,10 +268,8 @@ export async function formatMessagePayload(
               return combined.join("\n");
             });
           }
-        }
-        case "update": {
           if (message.encrypted && message.payload.type === "update") {
-            const decoded = decodeEncryptedUpdate(message.payload.update);
+            const decoded = decodeEncryptedUpdate(message.payload.update.data as any);
             if (decoded.type === "snapshot") {
               if (!provider.encryptionKey) {
                 return `snapshot:${decoded.snapshot.id} ${toBase64(decoded.snapshot.payload)}`;
@@ -267,7 +283,10 @@ export async function formatMessagePayload(
                   getDocId(message),
                   {
                     type: "sync-step-2",
-                    update: decrypted as SyncStep2Update,
+                    update: {
+                      version: 2,
+                      data: decrypted as SyncStep2UpdateV2,
+                    } as VersionedSyncStep2Update,
                   },
                   message.context,
                   false,
@@ -280,7 +299,6 @@ export async function formatMessagePayload(
             return Promise.all(
               decoded.updates.map(async (val) => {
                 if (!provider.encryptionKey) {
-                  // bail, content is encrypted & we have no key
                   return toBase64(val.payload);
                 }
                 const decrypted = await decryptUpdate(provider.encryptionKey, val.payload);
@@ -290,7 +308,10 @@ export async function formatMessagePayload(
                     getDocId(message),
                     {
                       type: "sync-step-2",
-                      update: decrypted as SyncStep2Update,
+                      update: {
+                        version: 2,
+                        data: decrypted as SyncStep2UpdateV2,
+                      } as VersionedSyncStep2Update,
                     },
                     message.context,
                     false,
@@ -305,17 +326,13 @@ export async function formatMessagePayload(
               return res.join("\n");
             });
           }
-        }
-        case "update":
-        case "sync-step-2": {
-          let update = message.payload.update;
+          const versionedUpdate = message.payload.update as VersionedUpdate;
           if (message.encrypted) {
-            // should be handled above
-            return toBase64(update);
+            return toBase64(versionedUpdate.data);
           }
 
-          const meta = Y.parseUpdateMetaV2(update);
-          const decodedUpdate = Y.decodeUpdateV2(update);
+          const meta = parseUpdateMetaVersioned(versionedUpdate);
+          const decodedUpdate = decodeUpdateVersioned(versionedUpdate);
 
           // TODO ask Kevin later about how to do this
           // we known the state vector, before and after the update
@@ -381,7 +398,9 @@ export async function formatMessagePayload(
                   clients: mapToJSON(decodedUpdate.ds.clients),
                 },
               },
-              stateVector: mapToJSON(Y.decodeStateVector(Y.encodeStateVectorFromUpdateV2(update))),
+              stateVector: mapToJSON(
+                Y.decodeStateVector(encodeStateVectorFromVersionedUpdate(versionedUpdate)),
+              ),
               meta: {
                 from: mapToJSON(meta.from),
                 to: mapToJSON(meta.to),

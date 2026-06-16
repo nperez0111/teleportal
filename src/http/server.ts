@@ -1,4 +1,4 @@
-import type { ServerContext, Message } from "teleportal";
+import type { ServerContext } from "teleportal";
 import type { Server } from "teleportal/server";
 import {
   getHTTPEndpoint,

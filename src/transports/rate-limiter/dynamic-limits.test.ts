@@ -25,7 +25,7 @@ class MockRateLimitStorage implements RateLimitStorage {
     return this.store.get(key) || null;
   }
 
-  async setState(key: string, state: RateLimitState, ttl: number) {
+  async setState(key: string, state: RateLimitState, _ttl: number) {
     this.store.set(key, state);
   }
 

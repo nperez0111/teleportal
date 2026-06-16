@@ -4,8 +4,9 @@ import {
   getEmptyStateVector,
   getEmptyUpdate,
   type StateVector,
-  type SyncStep2Update,
-  type Update,
+  type UpdateV2,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
 } from "teleportal";
 
 import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "../types";
@@ -29,7 +30,7 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
 
   abstract handleUpdate(
     documentId: Document["id"],
-    update: Update,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
   ): Promise<void>;
   abstract getDocument(documentId: Document["id"]): Promise<Document | null>;
@@ -54,7 +55,7 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
       },
     };
 
-    const update = Y.diffUpdateV2(doc.content.update, syncStep1) as Update;
+    const update = Y.diffUpdateV2(doc.content.update, syncStep1) as UpdateV2;
 
     return {
       ...doc,
@@ -65,8 +66,13 @@ export abstract class UnencryptedDocumentStorage implements DocumentStorage {
     };
   }
 
-  async handleSyncStep2(documentId: Document["id"], syncStep2: SyncStep2Update): Promise<void> {
-    // when unencrypted, there is no difference between the sync step 2 and the update message type
-    await this.handleUpdate(documentId, syncStep2 as unknown as Update);
+  async handleSyncStep2(
+    documentId: Document["id"],
+    syncStep2: VersionedSyncStep2Update,
+  ): Promise<void> {
+    await this.handleUpdate(documentId, {
+      version: syncStep2.version,
+      data: syncStep2.data,
+    } as unknown as VersionedUpdate);
   }
 }

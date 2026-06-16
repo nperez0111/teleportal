@@ -97,7 +97,7 @@ describe("Client", () => {
     it("should handle concurrent send operations safely", async () => {
       const messages = Array.from(
         { length: 10 },
-        (_, i) =>
+        (_) =>
           new DocMessage(
             "test-doc",
             { type: "sync-done" },

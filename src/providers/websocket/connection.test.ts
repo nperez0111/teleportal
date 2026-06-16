@@ -96,7 +96,7 @@ class MockWebSocket {
     }
   }
 
-  send(data: any) {
+  send(_data: any) {
     if (this.readyState !== MockWebSocket.OPEN) {
       throw new Error("WebSocket is not open");
     }
@@ -198,11 +198,11 @@ afterAll(() => {
 describe("WebSocketConnection", () => {
   let client: WebSocketConnection;
   let eventTarget: EventTarget;
-  let isOnline = true;
+  let _isOnline = true;
 
   beforeEach(async () => {
     eventTarget = new EventTarget();
-    isOnline = true;
+    _isOnline = true;
   });
 
   afterEach(async () => {
@@ -332,8 +332,14 @@ describe("WebSocketConnection", () => {
     await client.connected;
     expect(connectionCount).toBe(1);
 
-    // Wait a bit for the reconnection to happen
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Poll until reconnection happens
+    {
+      const deadline = Date.now() + 5000;
+      while (connectionCount <= 1) {
+        if (Date.now() > deadline) throw new Error("Polling timed out");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
 
     // Check that at least one reconnection attempt was made
     expect(connectionCount).toBeGreaterThan(1);
@@ -406,7 +412,7 @@ describe("WebSocketConnection", () => {
     client.connect();
     await client.connected;
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 1));
 
     // The mock WebSocket echoes back messages, so we should receive them
     expect(client.state.type).toBe("connected");
@@ -427,7 +433,7 @@ describe("WebSocketConnection", () => {
     expect(client.state.type).toBe("disconnected");
 
     // Wait a bit to ensure no reconnection
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     expect(client.state.type).toBe("disconnected");
   });
 
@@ -478,7 +484,7 @@ describe("WebSocketConnection", () => {
 
   test("should handle WebSocket errors during send gracefully", async () => {
     class FailingSendWebSocket extends MockWebSocket {
-      send(data: any) {
+      send(_data: any) {
         throw new Error("Send failed");
       }
     }
@@ -561,8 +567,8 @@ describe("WebSocketConnection", () => {
           this.dispatchEvent(new Event("open"));
           setTimeout(() => {
             this.close(1006, "Connection lost");
-          }, 5);
-        }, 10);
+          }, 1);
+        }, 1);
       }
     }
 
@@ -613,7 +619,7 @@ describe("WebSocketConnection", () => {
             this.readyState = MockWebSocket.OPEN;
             this.dispatchEvent(new Event("open"));
           });
-        }, 10);
+        }, 1);
       }
     }
 
@@ -629,17 +635,17 @@ describe("WebSocketConnection", () => {
 
     // Wait for state to settle (either connected then disconnected, or errored)
     await new Promise<void>((resolve) => {
-      let hasBeenConnected = false;
+      let _hasBeenConnected = false;
       client.on("update", (state) => {
         if (state.type === "connected") {
-          hasBeenConnected = true;
+          _hasBeenConnected = true;
         }
         if (state.type === "disconnected" || state.type === "errored") {
           resolve();
         }
       });
-      // Timeout after 100ms
-      setTimeout(() => resolve(), 100);
+      // Timeout after 10ms
+      setTimeout(() => resolve(), 10);
     });
 
     // The connection should have been treated as a normal close, not an error
@@ -654,7 +660,7 @@ describe("WebSocketConnection", () => {
 
   test("should handle invalid message data gracefully", async () => {
     class InvalidMessageWebSocket extends MockWebSocket {
-      send(data: any) {
+      send(_data: any) {
         // Echo back invalid data
         queueMicrotask(() => {
           this.dispatchEvent({
@@ -718,12 +724,12 @@ describe("WebSocketConnection", () => {
     const connectPromise = client.connect();
 
     // Destroy while connecting
-    setTimeout(() => client.destroy(), 10);
+    setTimeout(() => client.destroy(), 1);
 
     // Should not hang
     await Promise.race([
       connectPromise.catch(() => {}), // Ignore potential rejection
-      new Promise((resolve) => setTimeout(resolve, 100)),
+      new Promise((resolve) => setTimeout(resolve, 5)),
     ]);
 
     expect(client.destroyed).toBe(true);

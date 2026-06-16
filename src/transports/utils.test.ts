@@ -87,9 +87,9 @@ describe("FanOut Writer", () => {
 
       // Start collecting messages from all readers
       const [received1Promise, received2Promise, received3Promise] = [
-        collectMessages(reader1.readable, 3, 100),
-        collectMessages(reader2.readable, 3, 100),
-        collectMessages(reader3.readable, 3, 100),
+        collectMessages(reader1.readable, 3, 50),
+        collectMessages(reader2.readable, 3, 50),
+        collectMessages(reader3.readable, 3, 50),
       ];
 
       // Write messages
@@ -136,8 +136,8 @@ describe("FanOut Writer", () => {
 
       // Start collecting messages from new readers
       const [received1Promise, received2Promise] = [
-        collectMessages(reader1.readable, 1, 100),
-        collectMessages(reader2.readable, 1, 100),
+        collectMessages(reader1.readable, 1, 50),
+        collectMessages(reader2.readable, 1, 50),
       ];
 
       const message2 = createTestMessage([4, 5, 6]);
@@ -162,7 +162,7 @@ describe("FanOut Writer", () => {
       await writer.write(message);
 
       // Verify message received
-      const received = await collectMessages(reader.readable, 1, 100);
+      const received = await collectMessages(reader.readable, 1, 50);
       expect(received).toHaveLength(1);
       expect(received[0]).toEqual(message);
 
@@ -201,7 +201,7 @@ describe("FanOut Writer", () => {
       await writer.write(message);
 
       // Verify message received before closure
-      const received = await collectMessages(reader.readable, 1, 100);
+      const received = await collectMessages(reader.readable, 1, 50);
       expect(received).toHaveLength(1);
       expect(received[0]).toEqual(message);
 
@@ -232,7 +232,7 @@ describe("FanOut Writer", () => {
       await writer.write(message);
 
       // Verify message received before abortion
-      const received = await collectMessages(reader.readable, 1, 100);
+      const received = await collectMessages(reader.readable, 1, 50);
       expect(received).toHaveLength(1);
       expect(received[0]).toEqual(message);
 
@@ -262,7 +262,7 @@ describe("FanIn Reader", () => {
       const writer1 = fanInReader.getWriter();
       const writer2 = fanInReader.getWriter();
 
-      const receivedPromise = collectMessages(fanInReader.readable, 2, 300);
+      const receivedPromise = collectMessages(fanInReader.readable, 2, 50);
 
       const messages = [createTestMessage([1, 0, 0]), createTestMessage([0, 1, 0])];
 
@@ -285,7 +285,7 @@ describe("FanIn Reader", () => {
     });
 
     it("should work with no writers", async () => {
-      const received = await collectMessages(fanInReader.readable, 1, 100);
+      const received = await collectMessages(fanInReader.readable, 1, 20);
       expect(received).toHaveLength(0);
     });
 
@@ -297,7 +297,7 @@ describe("FanIn Reader", () => {
       await w.write(message);
       w.releaseLock();
 
-      const received = await collectMessages(fanInReader.readable, 1, 200);
+      const received = await collectMessages(fanInReader.readable, 1, 50);
       expect(received).toHaveLength(1);
       expect(received[0]).toEqual(message);
     });
@@ -315,7 +315,7 @@ describe("FanIn Reader", () => {
       await w2.write(createTestMessage([4, 5, 6]));
 
       // Get initial messages
-      const received1 = await collectMessages(fanInReader.readable, 2, 200);
+      const received1 = await collectMessages(fanInReader.readable, 2, 50);
       expect(received1).toHaveLength(2);
 
       // Remove writer1 should not throw
@@ -334,7 +334,7 @@ describe("FanIn Reader", () => {
       expect(() => writer2.unsubscribe()).not.toThrow();
 
       // Should not affect the readable stream
-      const received = await collectMessages(fanInReader.readable, 1, 100);
+      const received = await collectMessages(fanInReader.readable, 1, 20);
       expect(received).toHaveLength(0);
     });
 
@@ -384,7 +384,7 @@ describe("FanIn Reader", () => {
       await w.write(createTestMessage([1, 2, 3]));
 
       // Get the message
-      const received = await collectMessages(fanInReader.readable, 1, 200);
+      const received = await collectMessages(fanInReader.readable, 1, 50);
       expect(received).toHaveLength(1);
       expect(received[0]).toEqual(createTestMessage([1, 2, 3]));
 
@@ -414,7 +414,7 @@ describe("FanIn Reader", () => {
       await w.write(createTestMessage([1, 2, 3]));
 
       // Get the message before error
-      const received = await collectMessages(fanInReader.readable, 1, 200);
+      const received = await collectMessages(fanInReader.readable, 1, 50);
       expect(received).toHaveLength(1);
 
       // Abort writer should not throw
@@ -435,7 +435,7 @@ describe("Integration tests", () => {
     const message1 = createTestMessage([1, 2, 3]);
     await fanOutWriter.write(message1);
 
-    const received1 = await collectMessages(reader.readable, 1, 200);
+    const received1 = await collectMessages(reader.readable, 1, 50);
     expect(received1).toHaveLength(1);
     expect(received1[0]).toEqual(message1);
 
@@ -446,7 +446,7 @@ describe("Integration tests", () => {
     await w.write(message2);
     w.releaseLock();
 
-    const received2 = await collectMessages(fanIn.readable, 1, 200);
+    const received2 = await collectMessages(fanIn.readable, 1, 50);
     expect(received2).toHaveLength(1);
     expect(received2[0]).toEqual(message2);
 
@@ -593,7 +593,7 @@ describe("Batching Transform", () => {
     it("should send batch immediately when maxBatchSize is reached", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 2,
-        maxBatchDelay: 200,
+        maxBatchDelay: 50,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -717,7 +717,7 @@ describe("Batching Transform", () => {
     it("should flush remaining messages on close", async () => {
       const batchingTransform = getBatchingTransform({
         maxBatchSize: 5,
-        maxBatchDelay: 40,
+        maxBatchDelay: 5,
       });
       const writer = batchingTransform.writable.getWriter();
       const reader = batchingTransform.readable.getReader();
@@ -809,7 +809,7 @@ describe("Batching Transform", () => {
       const message = createTestMessage([1, 2, 3]);
 
       // Start reading before writing to prevent backpressure
-      const readPromise = reader.read();
+      const _readPromise = reader.read();
 
       await writer.write(message);
 

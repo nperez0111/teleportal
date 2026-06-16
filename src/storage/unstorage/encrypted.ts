@@ -2,8 +2,9 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 
+import type { VersionedUpdate } from "teleportal";
 import { EncryptedBinary } from "teleportal/encryption-key";
-import type { EncryptedSnapshot, EncryptedUpdatePayload } from "teleportal/protocol/encryption";
+import type { EncryptedSnapshot } from "teleportal/protocol/encryption";
 import {
   decodeContentMap,
   encodeContentMap,
@@ -195,7 +196,7 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
 
   override async handleUpdate(
     key: string,
-    update: EncryptedUpdatePayload,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
   ): Promise<void> {
     await super.handleUpdate(key, update);

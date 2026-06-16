@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
+import type { UpdateV2 } from "teleportal";
 import {
-  ContentAttribute,
   IdMap,
   IdSet,
   createContentAttribute,
@@ -117,7 +117,7 @@ describe("createContentIdsFromUpdate", () => {
     doc.getText("test").insert(0, "hello world");
     const update = Y.encodeStateAsUpdateV2(doc);
 
-    const ids = createContentIdsFromUpdate(update);
+    const ids = createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 });
     const clientID = doc.clientID;
 
     expect(ids.inserts.has(clientID, 0)).toBe(true);
@@ -132,7 +132,7 @@ describe("createContentIdsFromUpdate", () => {
     doc.getText("test").delete(0, 3);
     const update = Y.encodeStateAsUpdateV2(doc);
 
-    const ids = createContentIdsFromUpdate(update);
+    const ids = createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 });
     expect(ids.deletes.has(doc.clientID, 0)).toBe(true);
     expect(ids.deletes.has(doc.clientID, 2)).toBe(true);
     expect(ids.deletes.has(doc.clientID, 3)).toBe(false);
@@ -147,7 +147,7 @@ describe("createContentIdsFromUpdate", () => {
     Y.applyUpdateV2(doc1, Y.encodeStateAsUpdateV2(doc2));
 
     const update = Y.encodeStateAsUpdateV2(doc1);
-    const ids = createContentIdsFromUpdate(update);
+    const ids = createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 });
 
     expect(ids.inserts.has(doc1.clientID, 0)).toBe(true);
     expect(ids.inserts.has(doc1.clientID, 2)).toBe(true);

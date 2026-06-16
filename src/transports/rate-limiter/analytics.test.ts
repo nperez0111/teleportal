@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Server } from "../../server/server";
 import { YDocStorage } from "../../storage/in-memory/ydoc";
-import { noopTransport } from "../passthrough";
 import { withRateLimit } from "./index";
 import { DocMessage } from "teleportal";
 import type { Message, ServerContext, StateVector } from "teleportal";
@@ -14,10 +13,9 @@ class MockTransport<Context extends ServerContext> {
   private controller: ReadableStreamDefaultController<Message<Context>> | null = null;
 
   constructor() {
-    const self = this;
     this.readable = new ReadableStream<Message<Context>>({
-      start(controller) {
-        self.controller = controller;
+      start: (controller) => {
+        this.controller = controller;
       },
     });
     this.writable = new WritableStream<Message<Context>>();
@@ -45,7 +43,7 @@ class MockRateLimitStorage implements RateLimitStorage {
     return this.store.get(key) || null;
   }
 
-  async setState(key: string, state: RateLimitState, ttl: number) {
+  async setState(key: string, state: RateLimitState, _ttl: number) {
     this.store.set(key, state);
   }
 
@@ -113,7 +111,7 @@ describe("Rate Limit Analytics", () => {
     writer.releaseLock();
 
     // Wait for message to be processed
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     // 4. Send second message (should be rate limited)
     const message2 = new DocMessage(
@@ -131,7 +129,7 @@ describe("Rate Limit Analytics", () => {
     writer2.releaseLock();
 
     // Wait for metrics to be recorded
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     // 5. Check status - should show rate limit metrics
     const status = await server.getStatus();

@@ -2,12 +2,24 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   lint: {
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
     rules: {
       "unicorn/no-null": "off",
       "typescript/no-empty-object-type": "off",
       "typescript/no-non-null-asserted-optional-chain": "off",
+      "typescript/no-floating-promises": "off",
+      "typescript/no-redundant-type-constituents": "off",
+      "typescript/restrict-template-expressions": "off",
+      "typescript/unbound-method": "off",
+      "typescript/no-misused-spread": "off",
+      "typescript/await-thenable": "off",
+      "typescript/no-base-to-string": "off",
+      "typescript/require-array-sort-compare": "off",
     },
-    ignorePatterns: ["dist/**"],
+    ignorePatterns: ["dist/**", "docs/**", "playground/**", "examples/**"],
   },
   pack: {
     entry: {

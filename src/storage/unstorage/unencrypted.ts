@@ -1,7 +1,13 @@
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 
-import { getStateVectorFromUpdate, mergeUpdates, type Update } from "teleportal";
+import {
+  getStateVectorFromUpdate,
+  mergeUpdates,
+  type UpdateV2,
+  type VersionedUpdate,
+} from "teleportal";
+import { convertToV2, encodeVersionedBytes, decodeVersionedBytes } from "teleportal/protocol";
 import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import type { Document, DocumentMetadata, EncodedContentMap } from "../types";
 import { UnencryptedDocumentStorage } from "../unencrypted";
@@ -21,6 +27,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     scanKeys: boolean;
     ttl: number;
     keyPrefix: string;
+    transactionBaseDelay: number;
   };
   constructor(
     storage: Storage,
@@ -28,6 +35,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       scanKeys?: boolean;
       ttl?: number;
       keyPrefix?: string;
+      transactionBaseDelay?: number;
     },
   ) {
     super();
@@ -36,6 +44,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       scanKeys: false,
       ttl: 5 * 1000,
       keyPrefix: "",
+      transactionBaseDelay: 50,
       ...options,
     };
   }
@@ -70,21 +79,23 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     const prefixedKey = this.#getKey(key);
     return withTransaction(this.storage, prefixedKey, async () => cb(), {
       ttl: this.options.ttl,
+      baseDelay: this.options.transactionBaseDelay,
     });
   }
 
   /**
-   * Persist a Y.js update to storage
+   * Persist a Y.js update to storage. Stores the raw bytes with a version
+   * prefix so the original encoding (V1 or V2) is preserved.
    */
   async handleUpdate(
     key: string,
-    update: Update,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
     overwriteKeys?: boolean,
   ): Promise<void> {
     const prefixedKey = this.#getKey(key);
     const updateKey = this.#getUpdateKeyPrefix(key) + uuidv4();
-    await this.storage.setItemRaw(updateKey, update);
+    await this.storage.setItemRaw(updateKey, encodeVersionedBytes(update));
 
     if (attribution) {
       await this.storage.setItemRaw(this.#getAttributionKey(key), attribution);
@@ -102,7 +113,7 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       }
 
       const meta = await this.getDocumentMetadata(key);
-      const updateSize = calculateDocumentSize(update);
+      const updateSize = calculateDocumentSize(update.data as UpdateV2);
       const sizeBytes = overwriteKeys ? updateSize : (meta.sizeBytes ?? 0) + updateSize;
 
       await this.writeDocumentMetadata(key, {
@@ -136,7 +147,11 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
     };
   }
 
-  private async compact(key: string, asyncDeleteKeys = true): Promise<Update | null> {
+  /**
+   * Compact all stored updates into a single V2 update. Individual updates may
+   * be V1 or V2; they are all converted to V2 at merge time.
+   */
+  private async compact(key: string, asyncDeleteKeys = true): Promise<UpdateV2 | null> {
     const prefixedKey = this.#getKey(key);
     const keys = this.options.scanKeys
       ? new Set(await this.storage.getKeys(this.#getUpdateKeyPrefix(key)))
@@ -146,16 +161,22 @@ export class UnstorageDocumentStorage extends UnencryptedDocumentStorage {
       return null;
     }
     if (keys.size === 1) {
-      return await this.storage.getItemRaw([...keys][0]);
+      const raw: Uint8Array | null = await this.storage.getItemRaw([...keys][0]);
+      if (!raw) return null;
+      const versioned = decodeVersionedBytes(raw);
+      return convertToV2(versioned);
     }
 
-    const update = mergeUpdates(
-      // TODO little naive, but it's ok for now
-      (await Promise.all([...keys].map((key) => this.storage.getItemRaw(key)))).filter(Boolean),
-    ) as Update;
+    const rawUpdates = (
+      await Promise.all([...keys].map((key) => this.storage.getItemRaw<Uint8Array>(key)))
+    ).filter(Boolean) as Uint8Array[];
 
-    // asynchronously store the update and delete the keys
-    const promise = this.handleUpdate(key, update, undefined, true).then(() => {
+    const v2Updates = rawUpdates.map((raw) => convertToV2(decodeVersionedBytes(raw)));
+
+    const update = mergeUpdates(v2Updates);
+
+    const versioned: VersionedUpdate = { version: 2, data: update };
+    const promise = this.handleUpdate(key, versioned, undefined, true).then(() => {
       return Promise.all([...keys].map((key) => this.storage.removeItem(key)));
     });
 
