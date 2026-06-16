@@ -82,7 +82,7 @@ export function createFanOutWriter<T>() {
     close: () => {
       controllers = []; // free the memory
     },
-    abort: (reason) => {
+    abort: (_reason) => {
       controllers = []; // free the memory
     },
   });

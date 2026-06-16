@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { MetricsCollector } from "./metrics-collector";
 
 // Mock the Registry to avoid global state issues

@@ -1,14 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { ws } from "msw";
 import { setupServer } from "msw/node";
-import {
-  ClientContext,
-  decodeMessage,
-  isBinaryMessage,
-  Message,
-  RpcMessage,
-  ServerContext,
-} from "teleportal";
+import { decodeMessage, isBinaryMessage, Message, RpcMessage, ServerContext } from "teleportal";
 import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { RpcHandlerRegistry, RpcServerContext } from "teleportal/protocol";
 import { getFileClientHandlers, getFileRpcHandlers } from "../../protocols/file";
@@ -99,15 +92,6 @@ async function processRpcMessage(
   }
 }
 
-function connectionToTransport(
-  connection: WebSocketConnection,
-): import("teleportal").Transport<ClientContext> {
-  return {
-    readable: connection.getReader().readable,
-    writable: connection.writable,
-  };
-}
-
 // Skip MSW WebSocket tests in CI due to timing issues with MSW WebSocket interception
 // These tests are still valuable for local development
 const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
@@ -137,7 +121,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
         await client.disconnect();
       }
       await client.destroy();
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 1));
     }
     server.resetHandlers();
   });
@@ -228,7 +212,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -332,7 +316,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       // wait for the storage to be updated with retries (longer wait for large files)
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 50 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -430,7 +414,7 @@ describeOrSkip("WebSocketConnection with MSW", () => {
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         storedFile = await fileStorage.getFile(fileId);
       }
 

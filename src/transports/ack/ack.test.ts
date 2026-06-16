@@ -8,8 +8,6 @@ import {
   type PubSubTopic,
   type ServerContext,
   type Sink,
-  type StateVector,
-  type Update,
   decodeMessage,
 } from "teleportal";
 import { withAckSink, withAckTrackingSink } from "./index";
@@ -67,7 +65,7 @@ describe("withAckSink", () => {
     writer.releaseLock();
 
     // Wait for ACK to be published
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(writtenMessages).toHaveLength(1);
     expect(writtenMessages[0]).toBe(docMessage);
@@ -113,7 +111,7 @@ describe("withAckSink", () => {
     writer.releaseLock();
 
     // Wait for ACK to be published
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(writtenMessages).toHaveLength(1);
     expect(writtenMessages[0]).toBe(awarenessMessage);
@@ -158,7 +156,7 @@ describe("withAckSink", () => {
     writer.releaseLock();
 
     // Wait for potential ACK to be published
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(writtenMessages).toHaveLength(1);
     expect(writtenMessages[0]).toBe(ackMessage);
@@ -234,7 +232,7 @@ describe("withAckSink", () => {
         write(chunk) {
           writtenMessages.push(chunk);
         },
-        abort(reason) {
+        abort(_reason) {
           aborted = true;
         },
       }),
@@ -285,7 +283,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 1000,
+      ackTimeout: 50,
     });
 
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
@@ -305,7 +303,7 @@ describe("withAckTrackingSink", () => {
     );
 
     // Wait a bit for the subscription to be set up
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await pubSub.publish(ackTopic, ackMessage.encoded, "other-source");
 
@@ -330,7 +328,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 100, // Short timeout for testing
+      ackTimeout: 10, // Short timeout for testing
     });
 
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
@@ -358,7 +356,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 1000, // Longer timeout to allow for slow propagation
+      ackTimeout: 100, // Longer timeout to allow for slow propagation
     });
 
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
@@ -369,7 +367,7 @@ describe("withAckTrackingSink", () => {
     writer.releaseLock();
 
     // Wait for subscription to be set up
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Simulate slow pubsub propagation by delaying the ACK
     const ackMessage = new AckMessage(
@@ -380,8 +378,8 @@ describe("withAckTrackingSink", () => {
       context,
     );
 
-    // Wait a significant delay (simulating slow network/pubsub)
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Wait a short delay (simulating slow network/pubsub)
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
     // Send ACK after delay
     await pubSub.publish(ackTopic, ackMessage.encoded, "other-source");
@@ -407,7 +405,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 1000,
+      ackTimeout: 50,
     });
 
     const ackMessage = new AckMessage(
@@ -444,7 +442,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 1000,
+      ackTimeout: 50,
     });
 
     const message1 = new DocMessage("test-doc", { type: "sync-done" }, context);
@@ -464,7 +462,7 @@ describe("withAckTrackingSink", () => {
     writer.releaseLock();
 
     // Wait a bit for the subscription to be set up
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Send ACKs
     const ack1 = new AckMessage(
@@ -509,7 +507,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 1000,
+      ackTimeout: 50,
       abortSignal: abortController.signal,
     });
 
@@ -541,7 +539,7 @@ describe("withAckTrackingSink", () => {
       pubSub,
       ackTopic,
       sourceId: "test-source",
-      ackTimeout: 1000,
+      ackTimeout: 50,
     });
 
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
@@ -559,7 +557,7 @@ describe("withAckTrackingSink", () => {
   });
 
   it("should preserve sink properties", () => {
-    const context: TestContext = {
+    const _context: TestContext = {
       clientId: "test-client",
       userId: "test-user",
       room: "test-room",
@@ -581,7 +579,7 @@ describe("withAckTrackingSink", () => {
   });
 
   it("should handle close", async () => {
-    const context: TestContext = {
+    const _context: TestContext = {
       clientId: "test-client",
       userId: "test-user",
       room: "test-room",
@@ -613,7 +611,7 @@ describe("withAckTrackingSink", () => {
   });
 
   it("should handle abort", async () => {
-    const context: TestContext = {
+    const _context: TestContext = {
       clientId: "test-client",
       userId: "test-user",
       room: "test-room",
@@ -626,7 +624,7 @@ describe("withAckTrackingSink", () => {
         write(chunk) {
           writtenMessages.push(chunk);
         },
-        abort(reason) {
+        abort(_reason) {
           aborted = true;
         },
       }),

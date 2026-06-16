@@ -2,8 +2,9 @@ import type {
   Milestone,
   MilestoneSnapshot,
   StateVector,
-  SyncStep2Update,
-  Update,
+  UpdateV2,
+  VersionedSyncStep2Update,
+  VersionedUpdate,
 } from "teleportal";
 import type { MerkleTree } from "teleportal/merkle-tree";
 
@@ -380,9 +381,9 @@ export interface Document {
    */
   content: {
     /**
-     * The most recent update of the document
+     * The compacted update of the document (always V2 after merge/compaction).
      */
-    update: Update;
+    update: UpdateV2;
     /**
      * The most recent state vector of the document
      */
@@ -412,7 +413,7 @@ export interface DocumentStorage {
   /**
    * Implements synchronization with a client's state vector.
    */
-  handleSyncStep2(documentId: Document["id"], syncStep2: SyncStep2Update): Promise<void>;
+  handleSyncStep2(documentId: Document["id"], syncStep2: VersionedSyncStep2Update): Promise<void>;
 
   /**
    * Handles an update for a document.
@@ -422,7 +423,7 @@ export interface DocumentStorage {
    */
   handleUpdate(
     documentId: Document["id"],
-    update: Update,
+    update: VersionedUpdate,
     attribution?: EncodedContentMap,
   ): Promise<void>;
 

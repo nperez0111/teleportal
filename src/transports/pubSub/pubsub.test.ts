@@ -7,14 +7,15 @@ import {
   InMemoryPubSub,
   PubSubTopic,
   Update,
+  type VersionedUpdate,
 } from "teleportal";
 
 import { getPubSubSink, getPubSubSource, getPubSubTransport } from "./index";
 import { withPassthrough } from "../passthrough";
 
-// Helper function to create a proper Update type
-function createUpdate(data: Uint8Array) {
-  return data as Update;
+// Helper function to create a proper VersionedUpdate type
+function createUpdate(data: Uint8Array): VersionedUpdate {
+  return { version: 2, data: data as Update } as VersionedUpdate;
 }
 
 // Mock context for testing
@@ -162,7 +163,7 @@ describe("PubSub Sink", () => {
 
     const sink = getPubSubSink<TestContext>({
       pubSub,
-      topicResolver: (msg: Message<TestContext>) => topic,
+      topicResolver: (_msg: Message<TestContext>) => topic,
       sourceId: "test-source",
     });
 

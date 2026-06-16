@@ -97,6 +97,14 @@ export type DecodedEncryptedUpdatePayload = {
  */
 export type EncryptedUpdatePayload = Update;
 
+/**
+ * A versioned wrapper for encrypted updates, ensuring encrypted and cleartext
+ * updates cannot be confused at the type level.
+ */
+export type EncryptedVersionedUpdate =
+  | { version: 1; data: EncryptedUpdatePayload }
+  | { version: 2; data: EncryptedUpdatePayload };
+
 export type EncryptedSnapshot = {
   id: EncryptedSnapshotId;
   parentSnapshotId?: EncryptedSnapshotId | null;
@@ -249,6 +257,14 @@ export function decodeEncryptedUpdate(
  * The binary representation of a {@link DecodedEncryptedSyncStep2}
  */
 export type EncryptedSyncStep2 = SyncStep2Update;
+
+/**
+ * A versioned wrapper for encrypted sync-step-2 payloads, ensuring encrypted
+ * and cleartext types cannot be confused.
+ */
+export type EncryptedVersionedSyncStep2Update =
+  | { version: 1; data: EncryptedSyncStep2 }
+  | { version: 2; data: EncryptedSyncStep2 };
 
 /**
  * The decoded representation of a {@link EncryptedSyncStep2}

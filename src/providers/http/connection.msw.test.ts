@@ -2,14 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { toBase64 } from "lib0/buffer";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import {
-  DocMessage,
-  type ClientContext,
-  type Message,
-  type Transport,
-  decodeMessageArray,
-  RpcMessage,
-} from "teleportal";
+import { DocMessage, type Message, decodeMessageArray, RpcMessage } from "teleportal";
 import { getFileClientHandlers } from "../../protocols/file";
 import { Provider } from "../provider";
 import { ConnectionState } from "../connection";
@@ -217,7 +210,7 @@ class MockEventSourceForMSW {
         (!this.listeners.has(eventType) || this.listeners.get(eventType)?.size === 0) &&
         attempts < 100
       ) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -305,33 +298,12 @@ function createTestMessage(): DocMessage<any> {
   });
 }
 
-// Helper to create a Transport from an HttpConnection
-function connectionToTransport(connection: HttpConnection): Transport<ClientContext> {
-  const writable = new WritableStream<Message<ClientContext>>({
-    async write(message) {
-      await connection.send(message);
-    },
-  });
-
-  return {
-    readable: connection.getReader().readable.pipeThrough(
-      new TransformStream({
-        transform(chunk, controller) {
-          // Convert RawReceivedMessage to Message
-          controller.enqueue(chunk as Message<ClientContext>);
-        },
-      }),
-    ),
-    writable,
-  };
-}
-
 describe("HttpConnection with MSW", () => {
   const server = setupServer();
   let client: HttpConnection;
   let eventTarget: EventTarget;
   const baseUrl = "http://localhost:8080";
-  const sseUrl = `${baseUrl}/sse`;
+  const _sseUrl = `${baseUrl}/sse`;
 
   // Helper to create HttpConnection with mock EventSource
   function createHttpConnectionWithMockES(
@@ -372,6 +344,8 @@ describe("HttpConnection with MSW", () => {
       connect,
       eventTarget,
       EventSource: TestEventSource as any,
+      httpBatchingOptions: { maxBatchDelay: 5 },
+      batchIntervalMs: 0,
     });
   }
 
@@ -396,7 +370,7 @@ describe("HttpConnection with MSW", () => {
       }
       await client.destroy();
       // Give a small delay to ensure cleanup completes
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 1));
     }
     // Reset handlers to ensure no lingering connections
     server.resetHandlers();
@@ -491,7 +465,7 @@ describe("HttpConnection with MSW", () => {
       // HttpConnection creates EventSource in initConnection() which is async
       let attempts = 0;
       while (!eventSourceRef.current && attempts < 100) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -513,7 +487,7 @@ describe("HttpConnection with MSW", () => {
           listenerReady = true;
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
 
       if (!listenerReady) {
@@ -521,7 +495,7 @@ describe("HttpConnection with MSW", () => {
       }
 
       // Wait a bit to ensure pipeTo has fully started consuming
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Simulate receiving a message using the mock EventSource
       await eventSourceRef.current.simulateMessage(
@@ -533,7 +507,7 @@ describe("HttpConnection with MSW", () => {
       // Wait for message to be received and processed through the stream pipeline
       // Use polling to check if messages arrived
       for (let i = 0; i < 50; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         if (receivedMessages.length > 0) {
           break;
         }
@@ -571,7 +545,7 @@ describe("HttpConnection with MSW", () => {
       // Wait for EventSource to be created and ref to be set
       let attempts = 0;
       while (!eventSourceRef.current && attempts < 100) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -591,7 +565,7 @@ describe("HttpConnection with MSW", () => {
           listenerReady = true;
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
 
       if (!listenerReady) {
@@ -599,7 +573,7 @@ describe("HttpConnection with MSW", () => {
       }
 
       // Wait a bit to ensure pipeTo has fully started consuming
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Simulate multiple messages using the mock EventSource
       await eventSourceRef.current.simulateMessage(toBase64(msg1.encoded), "message", msg1.id);
@@ -608,7 +582,7 @@ describe("HttpConnection with MSW", () => {
 
       // Wait for messages to be received and processed through the stream pipeline
       for (let i = 0; i < 50; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         if (receivedMessages.length >= 3) {
           break;
         }
@@ -619,7 +593,7 @@ describe("HttpConnection with MSW", () => {
 
     test("should handle ping events", async () => {
       const testClientId = "test-client-ping";
-      let pingReceived = false;
+      let _pingReceived = false;
       const eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
       };
@@ -633,7 +607,7 @@ describe("HttpConnection with MSW", () => {
       client = createHttpConnectionWithMockES({ testClientId, eventSourceRef });
 
       client.on("ping", () => {
-        pingReceived = true;
+        _pingReceived = true;
       });
 
       await client.connected;
@@ -643,7 +617,7 @@ describe("HttpConnection with MSW", () => {
         eventSourceRef.current.simulateMessage("ping", "ping", "ping");
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Connection should still be alive
       expect(client.state.type).toBe("connected");
@@ -667,13 +641,16 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait a bit for connection to be fully ready and HTTP writer to be initialized
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       const testMessage = createTestMessage();
       await client.send(testMessage);
 
-      // Wait for POST request to be sent (HTTP sink batches with maxBatchDelay: 100ms)
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Poll for POST request to be sent (HTTP sink batches with maxBatchDelay: 100ms)
+      for (let i = 0; i < 200; i++) {
+        if (receivedPosts.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       expect(receivedPosts.length).toBeGreaterThan(0);
     });
@@ -694,13 +671,16 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait a bit for connection to be fully ready and HTTP writer to be initialized
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       const testMessage = createTestMessage();
       await client.send(testMessage);
 
-      // Wait for POST request to be sent (HTTP sink batches with maxBatchDelay: 100ms)
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Poll for POST request to be sent (HTTP sink batches with maxBatchDelay: 100ms)
+      for (let i = 0; i < 200; i++) {
+        if (receivedPosts.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       expect(receivedPosts.length).toBeGreaterThan(0);
       // The client-id should be used in the connection context
@@ -767,7 +747,7 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait for ReadableStream start() to complete and listeners to be set up
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Simulate receiving a message
       if (eventSourceRef.current) {
@@ -779,7 +759,7 @@ describe("HttpConnection with MSW", () => {
       }
 
       // Wait for message to be processed
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       if (client.state.type === "connected") {
         expect(client.state.context.lastEventId).toBe(testMessage.id);
@@ -809,15 +789,18 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait for connection to stabilize
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Close the EventSource to trigger reconnection
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
 
-      // Wait for reconnection attempt
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Poll for state change after EventSource close
+      for (let i = 0; i < 100; i++) {
+        if (client.state.type !== "connected") break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       // Connection should attempt to reconnect
       // Note: With mock EventSource, reconnection behavior is tested via the base Connection class
@@ -825,8 +808,8 @@ describe("HttpConnection with MSW", () => {
     });
 
     test("should respect maxReconnectAttempts", async () => {
-      const testClientId = "test-client-max-retries";
-      const eventSourceRef: { current: MockEventSourceForMSW | null } = {
+      const _testClientId = "test-client-max-retries";
+      const _eventSourceRef: { current: MockEventSourceForMSW | null } = {
         current: null,
       };
 
@@ -843,20 +826,22 @@ describe("HttpConnection with MSW", () => {
         maxReconnectAttempts: 2,
         initialReconnectDelay: 10,
         EventSource: MockEventSourceForMSW as any,
+        httpBatchingOptions: { maxBatchDelay: 5 },
+        batchIntervalMs: 0,
       });
 
       // Set the clientId manually since we're using MockEventSourceForMSW directly
       await client.connected;
 
       // Wait for connection to stabilize
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Close the EventSource to trigger reconnection attempts
       // We need to access the internal EventSource, but since we can't, we'll test
       // that the connection handles errors properly by simulating a close event
       // Note: With mock EventSource, reconnection is tested via the base Connection class
       // This test verifies that maxReconnectAttempts is respected
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // After max attempts, connection should be in a terminal state
       expect(["disconnected", "errored", "connecting", "connected"]).toContain(client.state.type);
@@ -885,15 +870,18 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait for connection to stabilize
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Error the connection by closing it
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
 
-      // Wait for error and reconnection
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Poll for state change after error
+      for (let i = 0; i < 100; i++) {
+        if (client.state.type !== "connected") break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       // Connection should handle the error (may be in various states)
       expect(["disconnected", "errored", "connecting", "connected"]).toContain(client.state.type);
@@ -925,7 +913,7 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait for buffered messages to be sent
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Messages should have been sent
       expect(receivedPosts.length).toBeGreaterThanOrEqual(0);
@@ -960,15 +948,18 @@ describe("HttpConnection with MSW", () => {
       await client.connected;
 
       // Wait for connection to stabilize
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Close the EventSource to trigger disconnected state
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
 
-      // Wait for state transitions
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Poll for state transitions after EventSource close
+      for (let i = 0; i < 100; i++) {
+        if (client.state.type !== "connected") break;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
 
       // Should have seen these states
       expect(states.length).toBeGreaterThan(0);
@@ -1069,7 +1060,7 @@ describe("HttpConnection with MSW", () => {
       // Wait for EventSource to be created and ref to be set
       let attempts = 0;
       while (!eventSourceRef.current && attempts < 100) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -1089,7 +1080,7 @@ describe("HttpConnection with MSW", () => {
           listenerReady = true;
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
 
       if (!listenerReady) {
@@ -1097,7 +1088,7 @@ describe("HttpConnection with MSW", () => {
       }
 
       // Wait a bit to ensure pipeTo has fully started consuming
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Simulate different event types
       const testMessage = createTestMessage();
@@ -1110,7 +1101,7 @@ describe("HttpConnection with MSW", () => {
 
       // Wait for messages to be received and processed through the stream pipeline
       for (let i = 0; i < 50; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         if (receivedMessages.length > 0) {
           break;
         }
@@ -1153,7 +1144,7 @@ describe("HttpConnection with MSW", () => {
                   // Wait a bit to ensure EventSource is ready
                   let attempts = 0;
                   while (!eventSourceRef.current && attempts < 50) {
-                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    await new Promise((resolve) => setTimeout(resolve, 1));
                     attempts++;
                   }
                   if (eventSourceRef.current) {
@@ -1168,7 +1159,7 @@ describe("HttpConnection with MSW", () => {
                         listenerReady = true;
                         break;
                       }
-                      await new Promise((resolve) => setTimeout(resolve, 10));
+                      await new Promise((resolve) => setTimeout(resolve, 1));
                     }
                     if (listenerReady) {
                       const encoded = toBase64(msg.encoded);
@@ -1208,7 +1199,7 @@ describe("HttpConnection with MSW", () => {
       // Wait for EventSource to be created and ref to be set
       let attempts = 0;
       while (!eventSourceRef.current && attempts < 100) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -1224,10 +1215,10 @@ describe("HttpConnection with MSW", () => {
             listenerReady = true;
             break;
           }
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
         if (listenerReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -1251,7 +1242,7 @@ describe("HttpConnection with MSW", () => {
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -1291,7 +1282,7 @@ describe("HttpConnection with MSW", () => {
                     // Wait a bit to ensure EventSource is ready
                     let attempts = 0;
                     while (!eventSourceRef.current && attempts < 50) {
-                      await new Promise((resolve) => setTimeout(resolve, 10));
+                      await new Promise((resolve) => setTimeout(resolve, 1));
                       attempts++;
                     }
                     if (eventSourceRef.current) {
@@ -1306,7 +1297,7 @@ describe("HttpConnection with MSW", () => {
                           listenerReady = true;
                           break;
                         }
-                        await new Promise((resolve) => setTimeout(resolve, 10));
+                        await new Promise((resolve) => setTimeout(resolve, 1));
                       }
                       if (listenerReady) {
                         const encoded = toBase64(response.encoded);
@@ -1345,7 +1336,7 @@ describe("HttpConnection with MSW", () => {
       // Wait for EventSource to be created and ref to be set
       let attempts = 0;
       while (!eventSourceRef.current && attempts < 100) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -1361,10 +1352,10 @@ describe("HttpConnection with MSW", () => {
             listenerReady = true;
             break;
           }
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
         if (listenerReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -1389,7 +1380,7 @@ describe("HttpConnection with MSW", () => {
       // wait for the storage to be updated with retries (longer wait for large files)
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 50 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         storedFile = await fileStorage.getFile(fileId);
       }
 
@@ -1429,7 +1420,7 @@ describe("HttpConnection with MSW", () => {
                   // Wait a bit to ensure EventSource is ready
                   let attempts = 0;
                   while (!eventSourceRef.current && attempts < 50) {
-                    await new Promise((resolve) => setTimeout(resolve, 10));
+                    await new Promise((resolve) => setTimeout(resolve, 1));
                     attempts++;
                   }
                   if (eventSourceRef.current) {
@@ -1444,7 +1435,7 @@ describe("HttpConnection with MSW", () => {
                         listenerReady = true;
                         break;
                       }
-                      await new Promise((resolve) => setTimeout(resolve, 10));
+                      await new Promise((resolve) => setTimeout(resolve, 1));
                     }
                     if (listenerReady) {
                       const encoded = toBase64(msg.encoded);
@@ -1478,7 +1469,7 @@ describe("HttpConnection with MSW", () => {
       // Wait for EventSource to be created and ref to be set
       let attempts = 0;
       while (!eventSourceRef.current && attempts < 100) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         attempts++;
       }
 
@@ -1494,10 +1485,10 @@ describe("HttpConnection with MSW", () => {
             listenerReady = true;
             break;
           }
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
         if (listenerReady) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -1522,7 +1513,7 @@ describe("HttpConnection with MSW", () => {
       // wait for the storage to be updated with retries
       let storedFile = await fileStorage.getFile(fileId);
       for (let i = 0; i < 10 && !storedFile; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         storedFile = await fileStorage.getFile(fileId);
       }
 

@@ -1,12 +1,12 @@
 import {
   AckMessage,
   DocMessage,
-  type Update,
   Message,
-  mergeUpdates,
   Observable,
   RawReceivedMessage,
+  type VersionedUpdate,
 } from "teleportal";
+import { mergeVersionedUpdates } from "teleportal/protocol";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
@@ -233,11 +233,10 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
   // Update batching (AIMD congestion control)
   #batchIntervalMs: number;
   #maxBatchIntervalMs: number;
-  #pendingUpdates = new Map<string, { updates: Update[]; message: DocMessage<any> }>();
+  #pendingUpdates = new Map<string, { updates: VersionedUpdate[]; message: DocMessage<any> }>();
   #batchFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Heartbeat and connection check state
-  #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #timeoutCheckTimer: ReturnType<typeof setTimeout> | null = null;
   #lastMessageReceived = 0;
   #heartbeatIntervalMs: number;
@@ -515,7 +514,7 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
    */
   #setupHeartbeat() {
     if (this.#heartbeatIntervalMs > 0) {
-      this.#heartbeatInterval = this.timerManager.setInterval(() => {
+      this.timerManager.setInterval(() => {
         if (this.state.type === "connected") {
           this.sendHeartbeat();
         }
@@ -670,16 +669,12 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
 
     this.#flushing = true;
     for (const [, { updates, message }] of this.#pendingUpdates) {
-      // Single update: the original message is unchanged, so send it as-is to
-      // preserve its identity (id/encoded cache). Multiple updates: build a new
-      // DocMessage instance — spreading the message would yield a plain object
-      // that loses the prototype getters (id/encoded) the transport relies on.
       const batched =
         updates.length === 1
           ? message
           : new DocMessage(
               message.document,
-              { type: "update", update: mergeUpdates(updates) },
+              { type: "update", update: mergeVersionedUpdates(updates) },
               message.context,
               message.encrypted,
             );
@@ -705,7 +700,7 @@ export abstract class Connection<Context extends ConnectionContext = any> extend
     if (this.#batchIntervalMs > 0 && !this.#flushing && this.isDocUpdate(message)) {
       const docMessage = message as DocMessage<any>;
       const doc = docMessage.document;
-      const update = (docMessage.payload as { update: Update }).update;
+      const update = (docMessage.payload as { update: VersionedUpdate }).update;
       const existing = this.#pendingUpdates.get(doc);
       if (existing) {
         existing.updates.push(update);

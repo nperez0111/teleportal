@@ -11,10 +11,13 @@ import {
   type Sink,
   type Source,
   type StateVector,
-  type SyncStep2Update,
+  type SyncStep2UpdateV2,
   type Transport,
-  type Update,
+  type UpdateV1,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
 } from "teleportal";
+import { applyVersionedSyncStep2, applyVersionedUpdate } from "teleportal/protocol";
 import { compose } from "teleportal/transports";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
@@ -22,7 +25,7 @@ export function getSyncTransactionOrigin(ydoc: Y.Doc) {
 }
 
 export interface YDocSourceHandler {
-  onUpdate(update: Update): Promise<Message>;
+  onUpdate(update: VersionedUpdate): Promise<Message>;
   onAwarenessUpdate(update: AwarenessUpdateMessage): Promise<Message>;
   start(): Promise<Message>;
   destroy?: () => void;
@@ -30,8 +33,8 @@ export interface YDocSourceHandler {
 
 export interface YDocSinkHandler {
   handleSyncStep1(stateVector: StateVector): Promise<DocMessage<ClientContext>>;
-  handleSyncStep2(syncStep2: SyncStep2Update): Promise<void | Message<ClientContext>>;
-  handleUpdate(update: Update): Promise<void>;
+  handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<void | Message<ClientContext>>;
+  handleUpdate(update: VersionedUpdate): Promise<void>;
   handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void>;
   handleAwarenessRequest(update: AwarenessUpdateMessage): Promise<AwarenessMessage<ClientContext>>;
 }
@@ -48,12 +51,12 @@ export function getYDocSource<Context extends ClientContext>({
     message: (message: Message) => void;
   }>(),
   handler = {
-    async onUpdate(update) {
+    async onUpdate(update: VersionedUpdate) {
       return new DocMessage(
         document,
         {
           type: "update",
-          update: update as Update,
+          update,
         },
         context,
       );
@@ -109,12 +112,13 @@ export function getYDocSource<Context extends ClientContext>({
     handler,
     readable: new ReadableStream({
       async start(controller) {
-        onUpdate = ydoc.on("updateV2", async (update, origin) => {
+        onUpdate = ydoc.on("update", async (update: Uint8Array, origin: any) => {
           if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
             return;
           }
           try {
-            controller.enqueue(await handler.onUpdate(update as Update));
+            const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
+            controller.enqueue(await handler.onUpdate(versioned));
           } catch (err: any) {
             // Stream may be closed, ignore the error
             if (
@@ -165,7 +169,7 @@ export function getYDocSource<Context extends ClientContext>({
       },
       cancel() {
         isDestroyed = true;
-        ydoc.off("updateV2", onUpdate);
+        ydoc.off("update", onUpdate);
         ydoc.off("destroy", onDestroy);
         awareness.off("update", onAwarenessUpdate);
         awareness.off("destroy", onAwarenessDestroy);
@@ -205,16 +209,19 @@ export function getYDocSink<Context extends ClientContext>({
         document,
         {
           type: "sync-step-2",
-          update: Y.diffUpdateV2(Y.encodeStateAsUpdateV2(ydoc), stateVector) as SyncStep2Update,
+          update: {
+            version: 2,
+            data: Y.diffUpdateV2(Y.encodeStateAsUpdateV2(ydoc), stateVector) as SyncStep2UpdateV2,
+          },
         },
         context,
       );
     },
     async handleSyncStep2(syncStep2) {
-      Y.applyUpdateV2(ydoc, syncStep2, getSyncTransactionOrigin(ydoc));
+      applyVersionedSyncStep2(ydoc, syncStep2, getSyncTransactionOrigin(ydoc));
     },
     async handleUpdate(update) {
-      Y.applyUpdateV2(ydoc, update, getSyncTransactionOrigin(ydoc));
+      applyVersionedUpdate(ydoc, update, getSyncTransactionOrigin(ydoc));
     },
   },
 }: {
@@ -282,9 +289,8 @@ export function getYDocSink<Context extends ClientContext>({
                 default: {
                   // This should be unreachable due to type checking
                   const _exhaustive: never = chunk.payload;
-                  _exhaustive;
                   throw new Error("Invalid chunk.payload.type", {
-                    cause: { chunk },
+                    cause: { chunk: _exhaustive },
                   });
                 }
               }
@@ -321,9 +327,8 @@ export function getYDocSink<Context extends ClientContext>({
                 default: {
                   // This should be unreachable due to type checking
                   const _exhaustive: never = chunk.payload;
-                  _exhaustive;
                   throw new Error("Invalid chunk.payload.type", {
-                    cause: { chunk },
+                    cause: { chunk: _exhaustive },
                   });
                 }
               }
@@ -348,7 +353,7 @@ export function getYDocSink<Context extends ClientContext>({
             default: {
               // Exhaustive check for message types - all types should be handled above
               const _exhaustive: never = chunk;
-              _exhaustive;
+              void _exhaustive;
               break;
             }
           }

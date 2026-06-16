@@ -58,7 +58,7 @@ describe("TtlDedupe", () => {
       shortTtlDedupe.shouldAccept("doc-1", "msg-1");
 
       // Wait for message to expire
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await new Promise((resolve) => setTimeout(resolve, 52));
 
       // Should accept again after expiration
       const result = shortTtlDedupe.shouldAccept("doc-1", "msg-1");

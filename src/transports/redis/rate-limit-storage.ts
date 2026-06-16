@@ -12,6 +12,8 @@ export class RedisRateLimitStorage implements RateLimitStorage {
     private redis: Redis,
     private prefix: string = "teleportal:ratelimit:",
     private lockTtl: number = 5000,
+    private retryDelay: number = 50,
+    private retryJitter: number = 20,
   ) {}
 
   private getKey(key: string): string {
@@ -61,8 +63,7 @@ export class RedisRateLimitStorage implements RateLimitStorage {
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     const lockKey = `${this.getKey(key)}:lock`;
     const lockValue = Math.random().toString(36).substring(2);
-    const retryDelay = 50;
-    const maxRetries = 20; // 1 second total wait time
+    const maxRetries = 20; // 1 second total wait time at default retryDelay
 
     for (let i = 0; i < maxRetries; i++) {
       // Try to acquire lock
@@ -87,7 +88,7 @@ export class RedisRateLimitStorage implements RateLimitStorage {
       }
 
       // Wait before retrying
-      await new Promise((resolve) => setTimeout(resolve, retryDelay + Math.random() * 20));
+      await new Promise((resolve) => setTimeout(resolve, this.retryDelay + Math.random() * this.retryJitter));
     }
 
     throw new Error(`Failed to acquire rate limit lock for key: ${key}`);

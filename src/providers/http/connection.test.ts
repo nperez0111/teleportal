@@ -198,7 +198,7 @@ class MockFetch {
     this.responseData = data;
   }
 
-  async fetch(url: string, options?: RequestInit): Promise<Response> {
+  async fetch(url: string, _options?: RequestInit): Promise<Response> {
     if (!this.shouldSucceed) {
       throw new Error("Network error");
     }
@@ -511,7 +511,7 @@ describe("HttpConnection", () => {
       url: "http://localhost:8080",
       fetch: createMockFetch(mockFetch),
       EventSource: MockEventSource as any,
-      initialReconnectDelay: 10,
+      initialReconnectDelay: 1,
     });
 
     await client.connected;
@@ -520,7 +520,7 @@ describe("HttpConnection", () => {
     client.disconnect();
 
     // Give a small delay for the disconnect to take effect
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 1));
 
     expect(client.state.type).toBe("disconnected");
   });
@@ -666,7 +666,7 @@ describe("HttpConnection", () => {
           this.readyState = MockEventSource.OPEN;
           this.dispatchEvent(new Event("open"));
           this.simulateClientIdMessage();
-        }, 1000);
+        }, 100);
       }
     }
 
@@ -682,12 +682,12 @@ describe("HttpConnection", () => {
     const connectPromise = client.connect();
 
     // Destroy while connecting
-    setTimeout(() => client.destroy(), 10);
+    setTimeout(() => client.destroy(), 1);
 
     // Should not hang
     await Promise.race([
       connectPromise.catch(() => {}), // Ignore potential rejection
-      new Promise((resolve) => setTimeout(resolve, 20)),
+      new Promise((resolve) => setTimeout(resolve, 5)),
     ]);
 
     expect(client.destroyed).toBe(true);
@@ -717,7 +717,7 @@ describe("HttpConnection", () => {
     const originalGetWriter = WritableStream.prototype.getWriter;
     WritableStream.prototype.getWriter = function () {
       const writer = originalGetWriter.call(this);
-      const originalClose = writer.close.bind(writer);
+      const _originalClose = writer.close.bind(writer);
       writer.close = async () => {
         throw new Error("Writer close failed");
       };
@@ -795,7 +795,7 @@ describe("HttpConnection", () => {
     await client.disconnect();
 
     // Wait a bit for cleanup
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(streamProcessingAborted).toBe(true);
   });

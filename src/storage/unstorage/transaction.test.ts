@@ -91,11 +91,11 @@ describe("withTransaction", () => {
         key,
         async () => {
           executionOrder.push("start-1");
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await new Promise((resolve) => setTimeout(resolve, 1));
           executionOrder.push("end-1");
           return "result-1";
         },
-        { ttl: 1000 },
+        { ttl: 1000, baseDelay: 1 },
       );
 
       const promise2 = withTransaction(
@@ -103,11 +103,11 @@ describe("withTransaction", () => {
         key,
         async () => {
           executionOrder.push("start-2");
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, 1));
           executionOrder.push("end-2");
           return "result-2";
         },
-        { ttl: 1000 },
+        { ttl: 1000, baseDelay: 1 },
       );
 
       const [result1, result2] = await Promise.all([promise1, promise2]);
@@ -138,7 +138,7 @@ describe("withTransaction", () => {
         key1,
         async () => {
           executionOrder.push("start-1");
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await new Promise((resolve) => setTimeout(resolve, 5));
           executionOrder.push("end-1");
           return "result-1";
         },
@@ -150,7 +150,7 @@ describe("withTransaction", () => {
         key2,
         async () => {
           executionOrder.push("start-2");
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, 1));
           executionOrder.push("end-2");
           return "result-2";
         },
@@ -177,7 +177,7 @@ describe("withTransaction", () => {
       let retryCount = 0;
 
       // Manually set a lock
-      await storage.setMeta(key, { ttl: Date.now() + 100 });
+      await storage.setMeta(key, { ttl: Date.now() + 5 });
 
       // Start transaction that will need to retry
       const transactionPromise = withTransaction(
@@ -187,11 +187,13 @@ describe("withTransaction", () => {
           retryCount++;
           return "result";
         },
-        { ttl: 1000, baseDelay: 10, maxDelay: 100 },
+        { ttl: 1000, baseDelay: 1, maxDelay: 100 },
       );
 
-      // Wait a bit for the lock to expire
-      await new Promise((resolve) => setTimeout(resolve, 110));
+      // Poll for lock expiry instead of fixed sleep
+      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       const result = await transactionPromise;
       expect(result).toBe("result");
@@ -204,7 +206,7 @@ describe("withTransaction", () => {
       let attemptCount = 0;
 
       // Manually set a lock that will expire
-      await storage.setMeta(key, { ttl: Date.now() + 100 });
+      await storage.setMeta(key, { ttl: Date.now() + 5 });
 
       const transactionPromise = withTransaction(
         storage,
@@ -213,7 +215,7 @@ describe("withTransaction", () => {
           attemptCount++;
           return "result";
         },
-        { ttl: 1000, baseDelay: 10, maxDelay: 100 },
+        { ttl: 1000, baseDelay: 1, maxDelay: 100 },
       );
 
       // Track when retries happen
@@ -223,7 +225,7 @@ describe("withTransaction", () => {
       // Poll to detect retries
       const checkInterval = setInterval(async () => {
         const now = Date.now();
-        if (now - lastCheck > 5) {
+        if (now - lastCheck > 1) {
           // Check if we're still waiting (lock still held)
           const meta = await storage.getMeta(key);
           if (meta && typeof meta === "object" && "ttl" in meta) {
@@ -234,10 +236,12 @@ describe("withTransaction", () => {
           }
         }
         lastCheck = now;
-      }, 5);
+      }, 1);
 
-      // Wait for lock to expire and transaction to complete
-      await new Promise((resolve) => setTimeout(resolve, 110));
+      // Poll for lock expiry instead of fixed sleep
+      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
       await transactionPromise;
       clearInterval(checkInterval);
 
@@ -259,7 +263,7 @@ describe("withTransaction", () => {
           async () => {
             return "result";
           },
-          { ttl: 1000, maxRetries, baseDelay: 10 },
+          { ttl: 1000, maxRetries, baseDelay: 1 },
         ),
       ).rejects.toThrow(`Transaction lock acquisition failed after ${maxRetries} retries`);
     });
@@ -270,7 +274,7 @@ describe("withTransaction", () => {
       let retryCount = 0;
 
       // Manually set a lock that will expire
-      await storage.setMeta(key, { ttl: Date.now() + 200 });
+      await storage.setMeta(key, { ttl: Date.now() + 5 });
 
       const transactionPromise = withTransaction(
         storage,
@@ -279,11 +283,13 @@ describe("withTransaction", () => {
           retryCount++;
           return "result";
         },
-        { ttl: 1000, baseDelay: 10, maxDelay },
+        { ttl: 1000, baseDelay: 1, maxDelay },
       );
 
-      // Wait for lock to expire
-      await new Promise((resolve) => setTimeout(resolve, 210));
+      // Poll for lock expiry instead of fixed sleep
+      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       const result = await transactionPromise;
       expect(result).toBe("result");
@@ -336,8 +342,8 @@ describe("withTransaction", () => {
   describe("lock safety", () => {
     it("should not release lock if TTL expired and another transaction acquired it", async () => {
       const key = "test-key-lock-safety";
-      const shortTTL = 50; // Very short TTL
-      const executionTime = 150; // Longer than TTL
+      const shortTTL = 15; // Very short TTL
+      const executionTime = 40; // Longer than TTL
 
       let transactionALockId: string | undefined;
       let transactionBLockId: string | undefined;
@@ -359,19 +365,23 @@ describe("withTransaction", () => {
           transactionAFinished = true;
           return "transaction-a";
         },
-        { ttl: shortTTL, baseDelay: 10 },
+        { ttl: shortTTL, baseDelay: 1 },
       );
 
-      // Wait a bit to ensure transaction A has acquired the lock
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Poll until transaction A has acquired the lock
+      while (!transactionALockId) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       // Verify transaction A has the lock
       const metaBeforeTTL = await storage.getMeta(key);
       expect(metaBeforeTTL?.lockId).toBe(transactionALockId);
       expect(metaBeforeTTL?.ttl).toBeGreaterThan(Date.now());
 
-      // Wait for transaction A's TTL to expire
-      await new Promise((resolve) => setTimeout(resolve, shortTTL + 20));
+      // Poll until transaction A's TTL expires
+      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       // Verify transaction A's lock has expired
       const metaAfterTTL = await storage.getMeta(key);
@@ -390,25 +400,22 @@ describe("withTransaction", () => {
           // Verify we have a different lockId than transaction A
           expect(transactionBLockId).not.toBe(transactionALockId);
           // Wait longer than transaction A's remaining execution time to ensure B is still running when A finishes
-          await new Promise((resolve) => setTimeout(resolve, executionTime + 50));
+          await new Promise((resolve) => setTimeout(resolve, executionTime + 5));
           return "transaction-b";
         },
-        { ttl: 1000, baseDelay: 10 },
+        { ttl: 1000, baseDelay: 1 },
       );
 
-      // Wait for transaction B to start and acquire the lock
-      // It may need to retry a few times due to exponential backoff
-      let attempts = 0;
-      while (!transactionBStarted && attempts < 20) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        attempts++;
+      // Poll until transaction B has started and acquired the lock
+      while (!transactionBStarted) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      expect(transactionBStarted).toBe(true);
+      expect(transactionBStarted).toBeTrue();
       expect(transactionBLockId).toBeDefined();
       expect(transactionBLockId).not.toBe(transactionALockId);
 
       // Small delay to ensure lock is properly set
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Wait for transaction A to finish (it should check lockId and not release B's lock)
       await transactionA;
@@ -439,21 +446,26 @@ describe("withTransaction", () => {
       const concurrentRequests = 10;
       const executionOrder: number[] = [];
 
+      let firstAcquired = false;
+
       // Start a long-running transaction
       const longTransaction = withTransaction(
         storage,
         key,
         async () => {
+          firstAcquired = true;
           executionOrder.push(0); // First transaction
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 5));
           executionOrder.push(0); // First transaction ends
           return "first";
         },
-        { ttl: 1000, baseDelay: 10 },
+        { ttl: 1000, baseDelay: 1 },
       );
 
-      // Wait a bit to ensure the first transaction acquires the lock
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // Poll until the first transaction acquires the lock
+      while (!firstAcquired) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       // Start multiple concurrent requests that will need to wait
       const concurrentPromises = Array.from({ length: concurrentRequests }, (_, i) =>
@@ -464,7 +476,7 @@ describe("withTransaction", () => {
             executionOrder.push(i + 1);
             return `result-${i + 1}`;
           },
-          { ttl: 1000, baseDelay: 10 },
+          { ttl: 1000, baseDelay: 1 },
         ),
       );
 
@@ -525,18 +537,18 @@ describe("withTransaction", () => {
           async () => {
             return "result";
           },
-          { ttl: 1000, maxRetries: customMaxRetries, baseDelay: 10 },
+          { ttl: 1000, maxRetries: customMaxRetries, baseDelay: 1 },
         ),
       ).rejects.toThrow(`Transaction lock acquisition failed after ${customMaxRetries} retries`);
     });
 
     it("should use custom baseDelay", async () => {
       const key = "test-key-16";
-      const customBaseDelay = 20;
+      const customBaseDelay = 2;
       let retryCount = 0;
 
       // Manually set a lock that will expire
-      await storage.setMeta(key, { ttl: Date.now() + 100 });
+      await storage.setMeta(key, { ttl: Date.now() + 5 });
 
       const transactionPromise = withTransaction(
         storage,
@@ -548,8 +560,10 @@ describe("withTransaction", () => {
         { ttl: 1000, baseDelay: customBaseDelay, maxDelay: 100 },
       );
 
-      // Wait for lock to expire
-      await new Promise((resolve) => setTimeout(resolve, 110));
+      // Poll for lock expiry instead of fixed sleep
+      while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
 
       const result = await transactionPromise;
       expect(result).toBe("result");

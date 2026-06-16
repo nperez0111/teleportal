@@ -10,7 +10,7 @@ const key = await importEncryptionKey("s1RZEGnuBelCbov-WC6dvddacpT1pzGmhmeVHKr-1
 // create a new encryption key
 // const key = await createEncryptionKey();
 
-const server = new Server({
+const _server = new Server({
   storage: new UnstorageDocumentStorage(
     createStorage({
       // encrypts data before writing it to the driver

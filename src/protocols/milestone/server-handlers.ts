@@ -6,7 +6,6 @@ import {
 } from "teleportal/protocol";
 import type { MilestoneStorage, MilestoneTrigger } from "teleportal/storage";
 import { emitWideEvent } from "../../server/logger";
-import type { Server } from "../../server/server";
 import type { Session } from "../../server/session";
 import type { ServerContext } from "teleportal";
 import {
@@ -27,7 +26,7 @@ interface MilestoneTriggerState {
   unsubscribers: (() => void)[];
 }
 
-const documentTriggerState = new WeakMap<
+const _documentTriggerState = new WeakMap<
   Session<ServerContext>,
   Map<string, MilestoneTriggerState>
 >();
@@ -355,7 +354,7 @@ const restoreMilestoneHandler =
     context: RpcServerContext,
   ): Promise<{ response: RestoreResponse | RpcError }> => {
     try {
-      const userId = typeof context.userId === "string" ? context.userId : undefined;
+      const _userId = typeof context.userId === "string" ? context.userId : undefined;
       await milestoneStorage.restoreMilestone(context.documentId, payload.milestoneId);
       const milestone = await milestoneStorage.getMilestone(
         context.documentId,

@@ -9,6 +9,8 @@ import {
   type StateVector,
   type Transport,
   type Update,
+  type VersionedUpdate,
+  type VersionedSyncStep2Update,
 } from "teleportal";
 import { noopTransport, withPassthrough } from ".";
 
@@ -35,7 +37,10 @@ export function generateTestTransport(type: "doc" | "awareness"): Transport<{ te
               "test",
               {
                 type: "sync-step-2",
-                update: new Uint8Array([0x01, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+                update: {
+                  version: 2,
+                  data: new Uint8Array([0x01, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+                } as VersionedSyncStep2Update,
               },
               { test: "id-2" },
             ),
@@ -48,7 +53,10 @@ export function generateTestTransport(type: "doc" | "awareness"): Transport<{ te
               "test",
               {
                 type: "update",
-                update: new Uint8Array([0x02, 0x00, 0x01, 0x02, 0x03]) as Update,
+                update: {
+                  version: 2,
+                  data: new Uint8Array([0x02, 0x00, 0x01, 0x02, 0x03]) as Update,
+                } as VersionedUpdate,
               },
               { test: "id-3" },
             ),
@@ -174,7 +182,10 @@ describe("transport", () => {
         "test",
         {
           type: "sync-step-2",
-          update: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+          update: {
+            version: 2,
+            data: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+          } as VersionedSyncStep2Update,
         },
         { test: "id-3" },
       ),

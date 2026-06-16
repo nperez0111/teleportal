@@ -3,7 +3,6 @@ import {
   AckMessage,
   DocMessage,
   AwarenessMessage,
-  type ClientContext,
   type ServerContext,
   type StateVector,
 } from "teleportal";

@@ -7,11 +7,69 @@ import {
   type ClientContext,
   type StateVector,
   type Update,
+  type VersionedUpdate,
 } from "teleportal";
 import * as Y from "yjs";
 import { RpcMessage } from "teleportal/protocol";
 import { Connection, type ConnectionState } from "./connection";
 import { Timer } from "./utils";
+
+class FakeTimer implements Timer {
+  private timeouts: Map<number, { callback: () => void; fireAt: number }> = new Map();
+  private intervals: Map<number, { callback: () => void; interval: number; nextFire: number }> =
+    new Map();
+  private nextId = 1;
+  public now = 0;
+
+  setTimeout(callback: () => void, delay: number) {
+    const id = this.nextId++;
+    this.timeouts.set(id, { callback, fireAt: this.now + delay });
+    return id as any;
+  }
+  setInterval(callback: () => void, interval: number) {
+    const id = this.nextId++;
+    this.intervals.set(id, { callback, interval, nextFire: this.now + interval });
+    return id as any;
+  }
+  clearTimeout(id: any) {
+    this.timeouts.delete(id);
+  }
+  clearInterval(id: any) {
+    this.intervals.delete(id);
+  }
+
+  async advance(ms: number) {
+    const target = this.now + ms;
+    while (this.now < target) {
+      // Find the next thing to fire
+      let nextTime = target;
+      for (const [, t] of this.timeouts) {
+        if (t.fireAt < nextTime) nextTime = t.fireAt;
+      }
+      for (const [, i] of this.intervals) {
+        if (i.nextFire < nextTime) nextTime = i.nextFire;
+      }
+      this.now = nextTime;
+
+      // Fire all timeouts at this time
+      for (const [id, t] of this.timeouts) {
+        if (t.fireAt <= this.now) {
+          this.timeouts.delete(id);
+          t.callback();
+        }
+      }
+      // Fire all intervals at this time
+      for (const [id, i] of this.intervals) {
+        if (i.nextFire <= this.now && this.intervals.has(id)) {
+          i.nextFire += i.interval;
+          i.callback();
+        }
+      }
+      // Yield to let async callbacks process
+      await new Promise<void>((r) => queueMicrotask(r));
+    }
+  }
+}
 
 // Mock Connection for testing Connection functionality
 class MockConnection extends Connection<{
@@ -79,7 +137,7 @@ class MockConnection extends Connection<{
       context: {},
     });
     // Simulate connection
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((r) => queueMicrotask(r));
     this.setState({
       type: "connected",
       context: { clientId: "test-client" },
@@ -96,9 +154,9 @@ class MockConnection extends Connection<{
       const response = this.responseHandler(message);
       if (response) {
         // Emit the response asynchronously to simulate network delay
-        setTimeout(() => {
+        queueMicrotask(() => {
           this.call("received-message", response);
-        }, 0);
+        });
       }
     }
   }
@@ -231,11 +289,11 @@ describe("Connection", () => {
         states.push(state.type);
       });
 
-      connection.initDelay = 10;
+      connection.initDelay = 5;
       const connectPromise = connection.connect();
 
-      // Wait a bit to catch the connecting state
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // Wait for the connecting state to appear
+      while (!states.includes("connecting")) await new Promise((r) => setTimeout(r, 1));
 
       await connectPromise;
       expect(states).toContain("connecting");
@@ -284,7 +342,7 @@ describe("Connection", () => {
       );
       const message2 = new DocMessage(
         "test-doc",
-        { type: "update", update: new Uint8Array([1, 2, 3]) as any },
+        { type: "update", update: { version: 2, data: new Uint8Array([1, 2, 3]) } as any },
         { clientId: "test-client" } as ClientContext,
       );
 
@@ -296,7 +354,7 @@ describe("Connection", () => {
 
       // Connect and messages should be sent
       await connection.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      while (connection.sentMessages.length < 2) await new Promise((r) => setTimeout(r, 1));
 
       expect(connection.sentMessages.length).toBe(2);
       expect(connection.sentMessages).toContain(message1);
@@ -331,7 +389,7 @@ describe("Connection", () => {
       await cappedConnection.send(m2);
       await cappedConnection.send(msg(3)); // over cap, should be dropped
       await cappedConnection.connect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      while (cappedConnection.sentMessages.length < 2) await new Promise((r) => setTimeout(r, 1));
       // Only first two should have been buffered and sent
       expect(cappedConnection.sentMessages.length).toBe(2);
       expect(cappedConnection.sentMessages).toContain(m1);
@@ -359,13 +417,20 @@ describe("Connection", () => {
     const makeUpdate = (doc: string, mutate: (d: Y.Doc) => void): DocMessage<any> => {
       const d = new Y.Doc();
       mutate(d);
-      return new DocMessage(doc, { type: "update", update: Y.encodeStateAsUpdateV2(d) as Update }, {
-        clientId: "test-client",
-      } as ClientContext);
+      return new DocMessage(
+        doc,
+        {
+          type: "update",
+          update: { version: 2, data: Y.encodeStateAsUpdateV2(d) as Update } as VersionedUpdate,
+        },
+        {
+          clientId: "test-client",
+        } as ClientContext,
+      );
     };
 
     it("merges multiple updates for the same doc into one valid DocMessage", async () => {
-      const batched = new MockConnection({ connect: false, batchIntervalMs: 30 });
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 10 });
       await batched.connect();
 
       await batched.send(makeUpdate("doc-a", (d) => d.getMap("m").set("a", 1)));
@@ -374,7 +439,7 @@ describe("Connection", () => {
       // Nothing sent yet (still within the batch interval)
       expect(batched.sentMessages.length).toBe(0);
 
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      while (batched.sentMessages.length === 0) await new Promise((r) => setTimeout(r, 1));
 
       // The two updates collapse into a single message
       expect(batched.sentMessages.length).toBe(1);
@@ -391,13 +456,13 @@ describe("Connection", () => {
     });
 
     it("sends a single update as-is, preserving message identity", async () => {
-      const batched = new MockConnection({ connect: false, batchIntervalMs: 30 });
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 10 });
       await batched.connect();
 
       const message = makeUpdate("doc-b", (d) => d.getMap("m").set("a", 1));
       await batched.send(message);
 
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      while (batched.sentMessages.length === 0) await new Promise((r) => setTimeout(r, 1));
 
       expect(batched.sentMessages.length).toBe(1);
       expect(batched.sentMessages[0]).toBe(message);
@@ -406,7 +471,7 @@ describe("Connection", () => {
     });
 
     it("keeps batching enabled after repeated ACKs (AIMD floor)", async () => {
-      const batched = new MockConnection({ connect: false, batchIntervalMs: 30 });
+      const batched = new MockConnection({ connect: false, batchIntervalMs: 10 });
       // Echo an ACK for every sent message to drive the AIMD speed-up.
       batched.responseHandler = (message) =>
         new AckMessage({ type: "ack", messageId: message.id }, undefined);
@@ -415,7 +480,7 @@ describe("Connection", () => {
       // Flush many batches; each ACK decrements the interval by 10.
       for (let i = 0; i < 20; i++) {
         await batched.send(makeUpdate("doc-c", (d) => d.getMap("m").set(`k${i}`, i)));
-        await new Promise((resolve) => setTimeout(resolve, 40));
+        await new Promise((resolve) => setTimeout(resolve, 12));
       }
 
       // Batching must still be active: a fresh update is held, not flushed
@@ -430,10 +495,12 @@ describe("Connection", () => {
 
   describe("Reconnection Logic", () => {
     it("should automatically reconnect after disconnect", async () => {
+      const fakeTimer = new FakeTimer();
       connection = new MockConnection({
         connect: false,
         initialReconnectDelay: 10,
         maxReconnectAttempts: 5,
+        timer: fakeTimer,
       });
 
       await connection.connect();
@@ -446,15 +513,20 @@ describe("Connection", () => {
         context: {},
       });
 
-      // Wait for reconnection attempt
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance past the reconnect delay
+      while (connection.initConnectionCallCount <= 1) await fakeTimer.advance(1);
 
       // Should have attempted reconnection
       expect(connection.initConnectionCallCount).toBeGreaterThan(1);
     });
 
     it("should NOT reconnect after manual disconnect", async () => {
-      connection.initialReconnectDelay = 10;
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        initialReconnectDelay: 10,
+        timer: fakeTimer,
+      });
 
       await connection.connect();
       const initialCallCount = connection.initConnectionCallCount;
@@ -462,35 +534,39 @@ describe("Connection", () => {
       // Manually disconnect
       await connection.disconnect();
 
-      // Wait to ensure no reconnection happens
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance past the reconnect delay to ensure no reconnection happens
+      await fakeTimer.advance(1000);
 
       // Should not have attempted reconnection
       expect(connection.initConnectionCallCount).toBe(initialCallCount);
     });
 
     it("should use exponential backoff for reconnection", async () => {
-      connection.initialReconnectDelay = 10;
-      connection.maxBackoffTime = 1000;
-      connection.maxReconnectAttempts = 5;
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        initialReconnectDelay: 5,
+        maxBackoffTime: 1000,
+        maxReconnectAttempts: 5,
+        timer: fakeTimer,
+      });
 
       await connection.connect();
       await connection.disconnect();
 
-      // Track reconnection attempts
+      // Track reconnection attempts using fakeTimer.now
       const reconnectTimes: number[] = [];
-      let lastTime = Date.now();
+      let lastTime = fakeTimer.now;
 
       connection.on("update", (state) => {
         if (state.type === "connecting") {
-          const now = Date.now();
-          reconnectTimes.push(now - lastTime);
-          lastTime = now;
+          reconnectTimes.push(fakeTimer.now - lastTime);
+          lastTime = fakeTimer.now;
         }
       });
 
-      // Wait for multiple reconnection attempts
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Advance enough time for multiple reconnection attempts
+      await fakeTimer.advance(5000);
 
       // Should have multiple attempts with increasing delays
       if (reconnectTimes.length > 1) {
@@ -503,16 +579,18 @@ describe("Connection", () => {
     });
 
     it("should stop reconnecting after max attempts", async () => {
+      const fakeTimer = new FakeTimer();
       connection = new MockConnection({
         connect: false,
         maxReconnectAttempts: 2,
         initialReconnectDelay: 10,
+        timer: fakeTimer,
       });
       connection.shouldFailInit = true;
 
       try {
         await connection.connect();
-      } catch (error) {
+      } catch {
         // Expected to fail
       }
 
@@ -522,8 +600,8 @@ describe("Connection", () => {
         context: {},
       });
 
-      // Wait for reconnection attempts to exhaust
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Advance past reconnection attempts
+      await fakeTimer.advance(5000);
 
       // Should eventually reach errored state or stop trying
       const finalState = connection.state.type;
@@ -531,21 +609,23 @@ describe("Connection", () => {
     });
 
     it("should reset reconnection state when connect() is called", async () => {
+      const fakeTimer = new FakeTimer();
       connection = new MockConnection({
         connect: false,
         maxReconnectAttempts: 2,
         initialReconnectDelay: 10,
+        timer: fakeTimer,
       });
       connection.shouldFailInit = true;
 
       try {
         await connection.connect();
-      } catch (error) {
+      } catch {
         // Expected to fail
       }
 
-      // Wait for some reconnection attempts
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance past some reconnection attempts
+      await fakeTimer.advance(1000);
 
       // Manually connect again - should reset state
       connection.shouldFailInit = false;
@@ -572,18 +652,23 @@ describe("Connection", () => {
     });
 
     it("should reject when connection errors", async () => {
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        maxReconnectAttempts: 1,
+        initialReconnectDelay: 1,
+        timer: fakeTimer,
+      });
       connection.shouldFailInit = true;
-      connection.maxReconnectAttempts = 1;
-      connection.initialReconnectDelay = 1;
 
       try {
         await connection.connect();
-      } catch (error) {
+      } catch {
         // Expected
       }
 
-      // Wait for error state
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance past reconnection exhaustion
+      await fakeTimer.advance(1000);
 
       if (connection.state.type === "errored") {
         await expect(connection.connected).rejects.toThrow();
@@ -608,37 +693,50 @@ describe("Connection", () => {
 
   describe("Heartbeat", () => {
     it("should send heartbeat at specified interval", async () => {
+      const fakeTimer = new FakeTimer();
       connection = new MockConnection({
         connect: false,
-        heartbeatInterval: 50,
+        heartbeatInterval: 10,
+        timer: fakeTimer,
       });
       await connection.connect();
 
-      // Wait for at least one heartbeat
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Advance past the heartbeat interval
+      while (connection.sendHeartbeatCallCount === 0) await fakeTimer.advance(1);
 
       expect(connection.sendHeartbeatCallCount).toBeGreaterThan(0);
     });
 
     it("should not send heartbeat when disconnected", async () => {
-      connection.heartbeatInterval = 10;
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        heartbeatInterval: 10,
+        timer: fakeTimer,
+      });
       await connection.connect();
       await connection.disconnect();
 
       const callCount = connection.sendHeartbeatCallCount;
 
-      // Wait a bit
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance past several heartbeat intervals to verify no heartbeats fire
+      await fakeTimer.advance(1000);
 
       // Should not have sent more heartbeats
       expect(connection.sendHeartbeatCallCount).toBe(callCount);
     });
 
     it("should not send heartbeat when disabled", async () => {
-      connection.heartbeatInterval = 0;
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        heartbeatInterval: 0,
+        timer: fakeTimer,
+      });
       await connection.connect();
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance time to verify no heartbeats fire
+      await fakeTimer.advance(1000);
 
       expect(connection.sendHeartbeatCallCount).toBe(0);
     });
@@ -646,17 +744,19 @@ describe("Connection", () => {
 
   describe("Connection Timeout", () => {
     it("should timeout if no messages received", async () => {
+      const fakeTimer = new FakeTimer();
       connection = new MockConnection({
         connect: false,
-        messageReconnectTimeout: 50,
+        messageReconnectTimeout: 15,
+        timer: fakeTimer,
       });
       await connection.connect();
 
       // The timeout check compares Date.now() - lastMessageReceived
       // Since lastMessageReceived starts at 0, timeSinceLastMessage will be huge
       // and timeUntilTimeout will be negative, triggering immediate timeout
-      // But we need to wait a bit for the timeout check to run
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Advance FakeTimer well past the timeout to let any scheduled checks fire
+      await fakeTimer.advance(1000);
 
       // Should have disconnected or errored due to timeout
       // Note: The timeout might not trigger if the check isn't scheduled properly,
@@ -665,12 +765,17 @@ describe("Connection", () => {
     });
 
     it("should reset timeout when message is received", async () => {
-      connection.messageReconnectTimeout = 100;
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        messageReconnectTimeout: 30,
+        timer: fakeTimer,
+      });
       await connection.connect();
 
       // Simulate receiving messages periodically
       for (let i = 0; i < 3; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await fakeTimer.advance(10);
         connection.simulatePing();
       }
 
@@ -679,11 +784,16 @@ describe("Connection", () => {
     });
 
     it("should not timeout when disabled", async () => {
-      connection.messageReconnectTimeout = 0;
+      const fakeTimer = new FakeTimer();
+      connection = new MockConnection({
+        connect: false,
+        messageReconnectTimeout: 0,
+        timer: fakeTimer,
+      });
       await connection.connect();
 
-      // Wait longer than default timeout
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Advance time to verify no timeout fires
+      await fakeTimer.advance(1000);
 
       // Should still be connected
       expect(connection.state.type).toBe("connected");
@@ -692,12 +802,14 @@ describe("Connection", () => {
 
   describe("Online/Offline Handling", () => {
     it("should cancel reconnection when going offline", async () => {
+      const fakeTimer = new FakeTimer();
       const eventTarget = new EventTarget();
       connection = new MockConnection({
         connect: false,
         eventTarget,
         isOnline: true,
-        initialReconnectDelay: 100, // Long delay to allow cancellation
+        initialReconnectDelay: 20, // Long delay to allow cancellation
+        timer: fakeTimer,
       });
 
       await connection.connect();
@@ -706,8 +818,8 @@ describe("Connection", () => {
       // Immediately go offline
       eventTarget.dispatchEvent(new Event("offline"));
 
-      // Wait - should not reconnect
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Advance well past the reconnect delay - should not reconnect
+      await fakeTimer.advance(5000);
 
       // Should still be disconnected
       expect(connection.state.type).toBe("disconnected");
@@ -790,17 +902,19 @@ describe("Connection", () => {
       await connection.send(message);
 
       // Wait for error handling
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Message should be removed from in-flight
       expect(connection.inFlightMessageCount).toBe(0);
     });
 
     it("should handle connection errors and schedule reconnection", async () => {
+      const fakeTimer = new FakeTimer();
       connection = new MockConnection({
         connect: false,
         initialReconnectDelay: 10,
         maxReconnectAttempts: 3,
+        timer: fakeTimer,
       });
 
       await connection.connect();
@@ -809,8 +923,8 @@ describe("Connection", () => {
       // This will set errored state and schedule reconnection
       (connection as any).handleConnectionError(new Error("Connection error"));
 
-      // Wait for reconnection attempt
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Advance past the reconnect delay
+      while (connection.initConnectionCallCount <= 1) await fakeTimer.advance(1);
 
       // Should have attempted reconnection
       expect(connection.initConnectionCallCount).toBeGreaterThan(1);
@@ -969,7 +1083,7 @@ describe("Connection", () => {
         connection.simulateMessage(ackMessage);
 
         // Wait a bit for the event to process
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
 
         expect(connection.inFlightMessageCount).toBe(0);
         expect(connection.inFlightMessageCount).toBe(0);
@@ -991,13 +1105,16 @@ describe("Connection", () => {
           "test-doc",
           {
             type: "update",
-            update: new Uint8Array([1, 2, 3]) as any,
+            update: { version: 2, data: new Uint8Array([1, 2, 3]) } as any,
           },
           { clientId: "test-client" } as ClientContext,
         );
 
         await connection.send(message1);
+        // Wait for batch flush
+        await new Promise((resolve) => setTimeout(resolve, 1));
         await connection.send(message2);
+        await new Promise((resolve) => setTimeout(resolve, 1));
 
         expect(connection.inFlightMessageCount).toBeGreaterThan(0);
         expect(connection.inFlightMessageCount).toBe(2);
@@ -1011,7 +1128,7 @@ describe("Connection", () => {
           { clientId: "test-client" } as ClientContext,
         );
         connection.simulateMessage(ack1);
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
 
         expect(connection.inFlightMessageCount).toBeGreaterThan(0);
         expect(connection.inFlightMessageCount).toBe(1);
@@ -1025,7 +1142,7 @@ describe("Connection", () => {
           { clientId: "test-client" } as ClientContext,
         );
         connection.simulateMessage(ack2);
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
 
         expect(connection.inFlightMessageCount).toBe(0);
         expect(connection.inFlightMessageCount).toBe(0);
@@ -1089,12 +1206,12 @@ describe("Connection", () => {
 
         try {
           await connection.send(docMessage);
-        } catch (error) {
+        } catch {
           // Expected
         }
 
         // Wait for error handling
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
 
         // Message should be removed from in-flight on send failure
         expect(connection.inFlightMessageCount).toBe(0);
@@ -1116,7 +1233,7 @@ describe("Connection", () => {
 
         // Should not throw or cause issues
         connection.simulateMessage(ackMessage);
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
 
         expect(connection.inFlightMessageCount).toBe(0);
       });

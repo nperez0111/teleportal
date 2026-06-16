@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { createStorage } from "unstorage";
 import { UnstorageMilestoneStorage } from "./milestone-storage";
-import type { MilestoneSnapshot, StateVector, Update } from "teleportal";
+import type { MilestoneSnapshot } from "teleportal";
 
 describe("UnstorageMilestoneStorage", () => {
   const createTestSnapshot = (): MilestoneSnapshot =>
@@ -120,7 +120,7 @@ describe("UnstorageMilestoneStorage", () => {
   });
 
   it("gets expired milestones", async () => {
-    const id = await storage.createMilestone({
+    const _id = await storage.createMilestone({
       name: "v1",
       documentId: "doc-1",
       createdAt: 1,

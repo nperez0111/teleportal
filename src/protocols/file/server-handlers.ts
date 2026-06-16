@@ -178,7 +178,7 @@ export class FileHandler {
    * Returns an async generator that yields file parts.
    */
   async *streamFileParts(fileId: string): AsyncGenerator<FilePartStream> {
-    const startTime = Date.now();
+    const _startTime = Date.now();
     const file = await this.#fileStorage.getFile(fileId);
     if (!file) {
       emitWideEvent("info", {

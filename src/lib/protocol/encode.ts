@@ -8,8 +8,8 @@ import type {
   SyncDone,
   SyncStep1,
   SyncStep2,
-  Update,
   UpdateStep,
+  UpdateV2,
 } from "teleportal/protocol";
 
 /**
@@ -58,8 +58,6 @@ export function encodeMessage(
             break;
           }
           default: {
-            // @ts-expect-error - this should be unreachable due to type checking
-            message.payload.type;
             throw new Error("Invalid update.payload.type", {
               cause: { update: message },
             });
@@ -83,8 +81,10 @@ export function encodeMessage(
           case "sync-step-2": {
             // message type
             encoding.writeUint8(encoder, message.payload.type === "sync-step-2" ? 1 : 2);
-            // update
-            encoding.writeVarUint8Array(encoder, message.payload.update);
+            // update version
+            encoding.writeUint8(encoder, message.payload.update.version);
+            // update data
+            encoding.writeVarUint8Array(encoder, message.payload.update.data);
             break;
           }
           case "sync-done": {
@@ -145,8 +145,6 @@ export function encodeMessage(
             break;
           }
           default: {
-            // @ts-expect-error - this should be unreachable due to type checking
-            message.payload.type;
             throw new Error("Invalid presence payload.type", {
               cause: { message },
             });
@@ -210,8 +208,6 @@ export function encodeMessage(
         break;
       }
       default: {
-        // @ts-expect-error - this should be unreachable due to type checking
-        message.type;
         throw new Error("Invalid update type", {
           cause: { update: message },
         });
@@ -242,7 +238,7 @@ export function encodeDocStep<
           : never,
 >(
   messageType: T,
-  payload: S extends SyncStep1 ? StateVector : S extends SyncDone ? undefined : Update,
+  payload: S extends SyncStep1 ? StateVector : S extends SyncDone ? undefined : UpdateV2,
 ): S {
   try {
     const encoder = encoding.createEncoder();

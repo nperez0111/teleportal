@@ -8,8 +8,10 @@ import {
   PresenceMessage,
   type PubSub,
   type ServerContext,
-  type SyncStep2Update,
+  type SyncStep2UpdateV2,
   type Update,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
 } from "teleportal";
 import type { MetricsCollector } from "teleportal/monitoring";
 import {
@@ -633,7 +635,11 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   /**
    * Write an update to the storage.
    */
-  async write(update: Update, context?: Context, source: DocumentMessageSource = "client") {
+  async write(
+    update: VersionedUpdate,
+    context?: Context,
+    source: DocumentMessageSource = "client",
+  ) {
     try {
       let attribution: EncodedContentMap | undefined;
       if (source === "client" && context?.userId) {
@@ -683,10 +689,10 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     }
   }
 
-  #computeAttribution(update: Update, context: Context) {
+  #computeAttribution(update: VersionedUpdate, context: Context) {
     let contentIds: ContentIds;
     if (this.encrypted) {
-      const message = decodeEncryptedUpdate(update as unknown as EncryptedUpdatePayload);
+      const message = decodeEncryptedUpdate(update.data as unknown as EncryptedUpdatePayload);
       if (message.type !== "update") {
         contentIds = createContentIdsFromUpdate(update);
       } else {
@@ -820,7 +826,10 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   this.documentId,
                   {
                     type: "sync-step-2",
-                    update: doc.content.update as unknown as SyncStep2Update,
+                    update: {
+                      version: 2,
+                      data: doc.content.update as unknown as SyncStep2UpdateV2,
+                    } as VersionedSyncStep2Update,
                   },
                   message.context,
                   this.encrypted,
@@ -852,7 +861,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
               if (encryptedStorage) {
                 const storedUpdate = await encryptedStorage.handleEncryptedUpdate(
                   this.namespacedDocumentId,
-                  message.payload.update,
+                  message.payload.update.data as EncryptedUpdatePayload,
                 );
                 if (!storedUpdate) {
                   await Promise.all([
@@ -883,7 +892,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   this.documentId,
                   {
                     type: "update",
-                    update: storedUpdate,
+                    update: { version: 2, data: storedUpdate } as VersionedUpdate,
                   },
                   message.context,
                   this.encrypted,
@@ -943,7 +952,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
               if (encryptedStorage) {
                 const payloads = await encryptedStorage.handleEncryptedSyncStep2(
                   this.namespacedDocumentId,
-                  message.payload.update,
+                  message.payload.update.data as SyncStep2UpdateV2,
                 );
                 if (payloads.length > 0) {
                   this.call("document-write", {
@@ -959,7 +968,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                         this.documentId,
                         {
                           type: "update",
-                          update: payload,
+                          update: { version: 2, data: payload } as VersionedUpdate,
                         },
                         message.context,
                         this.encrypted,

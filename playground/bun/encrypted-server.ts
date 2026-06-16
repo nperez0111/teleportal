@@ -32,7 +32,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  storage: async (ctx) => {
+  storage: async (_ctx) => {
     return new UnstorageEncryptedDocumentStorage(storage, {
       keyPrefix: "document",
     });

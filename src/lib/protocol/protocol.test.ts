@@ -20,6 +20,8 @@ import {
   StateVector,
   SyncStep2Update,
   Update,
+  type VersionedSyncStep2Update,
+  type VersionedUpdate,
 } from ".";
 import type { FilePartStream } from "../../protocols/file/methods";
 
@@ -83,7 +85,10 @@ describe("can encode and decode", () => {
       decodeMessage(
         new DocMessage("test", {
           type: "sync-step-2",
-          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+          update: {
+            version: 2,
+            data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+          } as VersionedSyncStep2Update,
         }).encoded,
       ),
     ).toMatchInlineSnapshot(`
@@ -93,12 +98,15 @@ describe("can encode and decode", () => {
         "encrypted": false,
         "payload": {
           "type": "sync-step-2",
-          "update": Uint8Array [
-            0,
-            1,
-            2,
-            3,
-          ],
+          "update": {
+            "data": Uint8Array [
+              0,
+              1,
+              2,
+              3,
+            ],
+            "version": 2,
+          },
         },
         "type": "doc",
       }
@@ -130,7 +138,10 @@ describe("can encode and decode", () => {
       decodeMessage(
         new DocMessage("test", {
           type: "update",
-          update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          update: {
+            version: 2,
+            data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+          } as VersionedUpdate,
         }).encoded,
       ),
     ).toMatchInlineSnapshot(`
@@ -140,12 +151,15 @@ describe("can encode and decode", () => {
         "encrypted": false,
         "payload": {
           "type": "update",
-          "update": Uint8Array [
-            0,
-            1,
-            2,
-            3,
-          ],
+          "update": {
+            "data": Uint8Array [
+              0,
+              1,
+              2,
+              3,
+            ],
+            "version": 2,
+          },
         },
         "type": "doc",
       }
@@ -202,9 +216,12 @@ describe("can encode and decode", () => {
     expect(
       new DocMessage("test", {
         type: "update",
-        update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        update: {
+          version: 2,
+          data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+        } as VersionedUpdate,
       }).id,
-    ).toMatchInlineSnapshot(`"wo8phd40Cygbec6rdBODugYv9Vn4sF5pJreXrb8uYFw="`);
+    ).toMatchInlineSnapshot(`"tvsnXfNwx4Q5+UsxrqYq85wKmZ5r7koUcWnxf5CtEug="`);
   });
 
   it("ack message gets it's id", () => {
@@ -750,13 +767,13 @@ describe("custom serialization", () => {
 
   it("provides decoder in deserializer context", () => {
     let receivedDecoder: any = null;
-    let deserializedValue: any = null;
+    let _deserializedValue: any = null;
     const deserializer = (ctx: any) => {
       if (ctx.type === "rpc") {
         receivedDecoder = ctx.decoder;
         // Use the decoder to read the payload and return a custom value
         const originalPayload = decoding.readAny(ctx.decoder);
-        deserializedValue = originalPayload;
+        _deserializedValue = originalPayload;
         return { method: "testMethod", customData: "deserialized" };
       }
       return undefined;

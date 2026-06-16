@@ -8,7 +8,7 @@
  *   inserts: IdMap { 42 → [{clock: 0, len: 10, attrs: [{name: "insert", val: "user-123"}, {name: "insertAt", val: 1700000000}]}] }
  */
 
-import { type ContentIds, type IdRange, IdRanges, IdSet, type MaybeIdRange } from "./content-ids";
+import { type ContentIds, IdSet } from "./content-ids";
 
 // --- ContentAttribute ---
 

@@ -263,7 +263,7 @@ export class EventManager {
         { withEventTarget: true },
       );
       this.unsubscribers.push(unsubLoadSubdoc);
-    } catch (e) {
+    } catch {
       // Event might not be available
     }
 
@@ -280,14 +280,14 @@ export class EventManager {
         { withEventTarget: true },
       );
       this.unsubscribers.push(unsubUnloadSubdoc);
-    } catch (e) {
+    } catch {
       // Event might not be available
     }
 
     // Listen to connection events
     const unsubConnected = teleportalEventClient.on(
       "teleportal-provider:connected",
-      (event) => {
+      (_event) => {
         const newState = {
           type: "connected" as const,
           transport: "websocket" as const,
@@ -303,7 +303,7 @@ export class EventManager {
 
     const unsubDisconnected = teleportalEventClient.on(
       "teleportal-provider:disconnected",
-      (event) => {
+      (_event) => {
         const newState = {
           type: "disconnected" as const,
           transport: null,

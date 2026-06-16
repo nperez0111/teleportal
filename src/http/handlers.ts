@@ -1,13 +1,5 @@
 import { uuidv4 } from "lib0/random";
-import type {
-  ClientContext,
-  Message,
-  MessageArray,
-  PubSub,
-  PubSubTopic,
-  ServerContext,
-  Transport,
-} from "teleportal";
+import type { PubSubTopic, ServerContext, Transport } from "teleportal";
 import type { Client, Server } from "teleportal/server";
 import {
   compose,
@@ -311,7 +303,7 @@ export function getHTTPEndpoint<Context extends ServerContext>({
  * Returns the health status of the server.
  */
 export function getHealthHandler(server: Server<any>) {
-  return async (request: Request): Promise<Response> => {
+  return async (_request: Request): Promise<Response> => {
     try {
       const health = await server.getHealth();
       return Response.json(health);
@@ -333,7 +325,7 @@ export function getHealthHandler(server: Server<any>) {
  * Returns the metrics of the server.
  */
 export function getMetricsHandler(server: Server<any>) {
-  return async (request: Request): Promise<Response> => {
+  return async (_request: Request): Promise<Response> => {
     try {
       const metrics = await server.getMetrics();
       return new Response(metrics, {
@@ -349,7 +341,7 @@ export function getMetricsHandler(server: Server<any>) {
  * Returns the status of the server.
  */
 export function getStatusHandler(server: Server<any>) {
-  return async (request: Request): Promise<Response> => {
+  return async (_request: Request): Promise<Response> => {
     try {
       const status = await server.getStatus();
       return Response.json(status);

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { getLogger } from "@logtape/logtape";
-import { InMemoryPubSub, type ServerContext, type StateVector, type Update } from "teleportal";
+import {
+  InMemoryPubSub,
+  type ServerContext,
+  type StateVector,
+  type Update,
+  type VersionedUpdate,
+} from "teleportal";
 import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 import { Server } from "../server/server";
 import { getHTTPHandlers } from "./server";
@@ -30,8 +35,8 @@ class MockDocumentStorage implements DocumentStorage {
     return;
   }
 
-  async handleUpdate(_documentId: string, update: Update): Promise<void> {
-    this.storedUpdate = update;
+  async handleUpdate(_documentId: string, update: VersionedUpdate): Promise<void> {
+    this.storedUpdate = update.data as Update;
   }
 
   async getDocument(documentId: string): Promise<Document | null> {
@@ -250,7 +255,7 @@ describe("getHTTPHandler", () => {
       expect(response.status).toBe(200);
 
       // Wait for async operations
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 5));
 
       // Verify session was created with custom document
       const session = await server.getOrOpenSession("custom-doc", {

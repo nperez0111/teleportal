@@ -4,7 +4,7 @@ import memoryDriver from "unstorage/drivers/memory";
 import { Server } from "teleportal/server";
 import { UnstorageDocumentStorage } from "teleportal/storage";
 
-const server = new Server({
+const _server = new Server({
   // There are multiple storage backends available, and you can implement your own.
   storage: new UnstorageDocumentStorage(
     createStorage({

@@ -1,5 +1,5 @@
 import { Message, RawReceivedMessage, type ClientContext } from "teleportal";
-import { getHTTPSink, getSSESource } from "teleportal/transports";
+import { getHTTPSink, getSSESource, type BatchingOptions } from "teleportal/transports";
 import { Connection, ConnectionOptions } from "../connection";
 
 export type HttpConnectContext = {
@@ -32,6 +32,11 @@ export type HttpConnectionOptions = {
    * The EventSource implementation to use
    */
   EventSource?: typeof EventSource;
+  /**
+   * Options for batching outbound HTTP messages.
+   * Controls `maxBatchSize` and `maxBatchDelay` on the HTTP sink.
+   */
+  httpBatchingOptions?: BatchingOptions;
 } & Omit<ConnectionOptions, "heartbeatInterval">;
 
 export class HttpConnection extends Connection<HttpConnectContext> {
@@ -39,6 +44,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
   #url: string;
   #fetch: typeof fetch;
   #EventSource: typeof EventSource;
+  #httpBatchingOptions: BatchingOptions | undefined;
   #source: ReturnType<typeof getSSESource> | undefined;
   #streamAbortController: AbortController | undefined;
   #initInProgress: Promise<void> | null = null;
@@ -48,6 +54,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
     this.#url = options.url;
     this.#fetch = options.fetch ?? fetch.bind(globalThis);
     this.#EventSource = options.EventSource ?? EventSource;
+    this.#httpBatchingOptions = options.httpBatchingOptions;
 
     // Initialize the state with the correct HTTP context
     this._state = {
@@ -123,6 +130,7 @@ export class HttpConnection extends Connection<HttpConnectContext> {
               throw new Error(`HTTP request failed with status ${resp.status}: ${resp.statusText}`);
             }
           },
+          batchingOptions: this.#httpBatchingOptions,
         });
 
         // Set up stream processing with abort controller

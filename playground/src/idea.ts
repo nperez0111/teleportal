@@ -29,7 +29,7 @@ const agentInstance1 = await getTransport("abc-123");
 const agentInstance2 = await getTransport("def-456");
 
 // connection.call("connected");
-agentInstance1.client;
+void agentInstance1.client;
 await new Promise((resolve) => setTimeout(resolve, 100));
 agentInstance1.ydoc.getText("test").insert(0, "hello");
 await new Promise((resolve) => setTimeout(resolve, 100));
@@ -73,7 +73,7 @@ async function addDevtoolsObservability() {
         context: { clientId: "test-client", connectionType: "mock" },
       });
     }
-    async sendMessage(message: Message): Promise<void> {}
+    async sendMessage(_message: Message): Promise<void> {}
     async closeConnection(): Promise<void> {}
   }
 

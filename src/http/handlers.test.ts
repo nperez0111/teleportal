@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { getLogger } from "@logtape/logtape";
 import {
   DocMessage,
   InMemoryPubSub,
   type ServerContext,
   type StateVector,
   type Update,
+  type VersionedUpdate,
   encodeMessageArray,
 } from "teleportal";
 import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
@@ -39,8 +39,8 @@ class MockDocumentStorage implements DocumentStorage {
     return;
   }
 
-  async handleUpdate(_documentId: string, update: Update): Promise<void> {
-    this.storedUpdate = update;
+  async handleUpdate(_documentId: string, update: VersionedUpdate): Promise<void> {
+    this.storedUpdate = update.data as Update;
   }
 
   async getDocument(documentId: string): Promise<Document | null> {
@@ -219,7 +219,7 @@ describe("HTTP Handlers", () => {
       expect(response.status).toBe(200);
 
       // Wait a bit for async operations
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Verify sessions were created
       const session1 = await server.getOrOpenSession("doc-1", {
@@ -248,7 +248,7 @@ describe("HTTP Handlers", () => {
       const response = await endpoint(request);
       expect(response.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       const session = await server.getOrOpenSession("doc-1", {
         encrypted: true,
@@ -295,7 +295,7 @@ describe("HTTP Handlers", () => {
       const response = await endpoint(request);
       expect(response.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       const session = await server.getOrOpenSession("custom-doc", {
         encrypted: true,
@@ -506,7 +506,7 @@ describe("HTTP Handlers", () => {
 
     it("should use context from getContext", async () => {
       let capturedContext: any = null;
-      const customGetContext = async (req: Request) => {
+      const customGetContext = async (_req: Request) => {
         const ctx = {
           userId: "custom-user",
           room: "custom-room",

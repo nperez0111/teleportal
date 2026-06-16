@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { createStorage } from "unstorage";
 import * as Y from "yjs";
-import type { MilestoneSnapshot, StateVector, Update } from "teleportal";
+import type { Update, VersionedUpdate } from "teleportal";
 import { getEmptyStateVector } from "../../lib/protocol/utils";
 import {
   createContentAttribute,
@@ -11,15 +11,18 @@ import {
   encodeContentMap,
 } from "teleportal/attribution";
 import { UnstorageDocumentStorage } from "./unencrypted";
-import { UnstorageMilestoneStorage } from "./milestone-storage";
-import type { EncodedContentMap, FileStorage, MilestoneStorage } from "../types";
+import type { EncodedContentMap, FileStorage } from "../types";
+
+function versionedUpdate(bytes: Uint8Array): VersionedUpdate {
+  return { version: 2, data: bytes as Update } as VersionedUpdate;
+}
 
 describe("UnstorageDocumentStorage", () => {
   let storage: UnstorageDocumentStorage;
-  let mockFileStorage: FileStorage;
+  let _mockFileStorage: FileStorage;
 
   beforeEach(() => {
-    storage = new UnstorageDocumentStorage(createStorage());
+    storage = new UnstorageDocumentStorage(createStorage(), { transactionBaseDelay: 1 });
   });
 
   describe("handleUpdate", () => {
@@ -30,7 +33,7 @@ describe("UnstorageDocumentStorage", () => {
       text.insert(0, "Hello, World!");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const retrieved = await storage.getDocument(key);
       expect(retrieved).not.toBeNull();
@@ -46,7 +49,7 @@ describe("UnstorageDocumentStorage", () => {
       text1.insert(0, "Hello");
       const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
 
-      await storage.handleUpdate(key, update1);
+      await storage.handleUpdate(key, versionedUpdate(update1));
 
       const doc2 = new Y.Doc();
       Y.applyUpdateV2(doc2, update1);
@@ -54,7 +57,7 @@ describe("UnstorageDocumentStorage", () => {
       text2.insert(5, ", World!");
       const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
 
-      await storage.handleUpdate(key, update2);
+      await storage.handleUpdate(key, versionedUpdate(update2));
 
       const retrieved = await storage.getDocument(key);
       expect(retrieved).not.toBeNull();
@@ -69,7 +72,7 @@ describe("UnstorageDocumentStorage", () => {
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
       const beforeTime = Date.now();
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
       const afterTime = Date.now();
 
       const metadata = await storage.getDocumentMetadata(key);
@@ -89,7 +92,7 @@ describe("UnstorageDocumentStorage", () => {
 
       // In scanKeys mode, handleUpdate stores the update but returns early
       // without updating the index. The update is stored with a unique key.
-      await scanStorage.handleUpdate(key, update);
+      await scanStorage.handleUpdate(key, versionedUpdate(update));
 
       // In scanKeys mode, we need to manually update metadata since handleUpdate returns early
       await scanStorage.writeDocumentMetadata(key, {
@@ -123,7 +126,7 @@ describe("UnstorageDocumentStorage", () => {
       text.insert(0, "Test content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const retrieved = await storage.getDocument(key);
       expect(retrieved).not.toBeNull();
@@ -141,7 +144,7 @@ describe("UnstorageDocumentStorage", () => {
       text1.insert(0, "First");
       const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
 
-      await storage.handleUpdate(key, update1);
+      await storage.handleUpdate(key, versionedUpdate(update1));
 
       const doc2 = new Y.Doc();
       Y.applyUpdateV2(doc2, update1);
@@ -149,7 +152,7 @@ describe("UnstorageDocumentStorage", () => {
       text2.insert(5, " Second");
       const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
 
-      await storage.handleUpdate(key, update2);
+      await storage.handleUpdate(key, versionedUpdate(update2));
 
       const retrieved = await storage.getDocument(key);
       expect(retrieved).not.toBeNull();
@@ -213,7 +216,7 @@ describe("UnstorageDocumentStorage", () => {
       const doc = new Y.Doc();
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
       await storage.writeDocumentMetadata(key, {
         createdAt: 1000,
         updatedAt: 2000,
@@ -237,7 +240,7 @@ describe("UnstorageDocumentStorage", () => {
       text.insert(0, "Test content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await scanStorage.handleUpdate(key, update);
+      await scanStorage.handleUpdate(key, versionedUpdate(update));
       // In scanKeys mode, we need to manually update metadata
       await scanStorage.writeDocumentMetadata(key, {
         createdAt: Date.now(),
@@ -271,7 +274,7 @@ describe("UnstorageDocumentStorage", () => {
       text.insert(0, "Full content");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const emptyStateVector = getEmptyStateVector();
       const result = await storage.handleSyncStep1(key, emptyStateVector);
@@ -299,7 +302,7 @@ describe("UnstorageDocumentStorage", () => {
       const doc = new Y.Doc();
       const text = doc.getText("content");
       text.insert(0, "Sync content");
-      const syncStep2 = Y.encodeStateAsUpdateV2(doc) as any;
+      const syncStep2 = { version: 2 as const, data: Y.encodeStateAsUpdateV2(doc) as any };
 
       await storage.handleSyncStep2(key, syncStep2);
 
@@ -340,7 +343,7 @@ describe("UnstorageDocumentStorage", () => {
       // Start first transaction
       const promise1 = storage.transaction(key, async () => {
         executionOrder.push("start-1");
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         executionOrder.push("end-1");
         return "result-1";
       });
@@ -348,7 +351,7 @@ describe("UnstorageDocumentStorage", () => {
       // Start second transaction immediately (should wait for first)
       const promise2 = storage.transaction(key, async () => {
         executionOrder.push("start-2");
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         executionOrder.push("end-2");
         return "result-2";
       });
@@ -373,7 +376,7 @@ describe("UnstorageDocumentStorage", () => {
       text1.insert(0, "First");
       const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
 
-      await storage.handleUpdate(key, update1);
+      await storage.handleUpdate(key, versionedUpdate(update1));
 
       const doc2 = new Y.Doc();
       Y.applyUpdateV2(doc2, update1);
@@ -381,7 +384,7 @@ describe("UnstorageDocumentStorage", () => {
       text2.insert(5, " Second");
       const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
 
-      await storage.handleUpdate(key, update2);
+      await storage.handleUpdate(key, versionedUpdate(update2));
 
       // Unload should compact but not wait for async deletion
       await storage.unload(key);
@@ -397,7 +400,7 @@ describe("UnstorageDocumentStorage", () => {
 
   describe("attribution", () => {
     function makeAttribution(update: Update, userId: string): EncodedContentMap {
-      const contentIds = createContentIdsFromUpdate(update);
+      const contentIds = createContentIdsFromUpdate(versionedUpdate(update));
       return encodeContentMap(
         createContentMapFromContentIds(
           contentIds,
@@ -420,7 +423,7 @@ describe("UnstorageDocumentStorage", () => {
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
       const attribution = makeAttribution(update, "user-1");
 
-      await storage.handleUpdate(key, update, attribution);
+      await storage.handleUpdate(key, versionedUpdate(update), attribution);
 
       const retrieved = await storage.retrieveAttribution(key);
       expect(retrieved).not.toBeNull();
@@ -438,7 +441,7 @@ describe("UnstorageDocumentStorage", () => {
       const doc = new Y.Doc();
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update);
+      await storage.handleUpdate(key, versionedUpdate(update));
 
       const result = await storage.retrieveAttribution(key);
       expect(result).toBeNull();
@@ -450,14 +453,14 @@ describe("UnstorageDocumentStorage", () => {
       doc1.getText("content").insert(0, "Hello");
       const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
 
-      await storage.handleUpdate(key, update1, makeAttribution(update1, "user-1"));
+      await storage.handleUpdate(key, versionedUpdate(update1), makeAttribution(update1, "user-1"));
 
       const doc2 = new Y.Doc();
       Y.applyUpdateV2(doc2, update1);
       doc2.getText("content").insert(5, " World");
       const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
 
-      await storage.handleUpdate(key, update2, makeAttribution(update2, "user-2"));
+      await storage.handleUpdate(key, versionedUpdate(update2), makeAttribution(update2, "user-2"));
 
       const retrieved = await storage.retrieveAttribution(key);
       expect(retrieved).not.toBeNull();
@@ -471,7 +474,7 @@ describe("UnstorageDocumentStorage", () => {
       doc.getText("content").insert(0, "Hello");
       const update = Y.encodeStateAsUpdateV2(doc) as Update;
 
-      await storage.handleUpdate(key, update, makeAttribution(update, "user-1"));
+      await storage.handleUpdate(key, versionedUpdate(update), makeAttribution(update, "user-1"));
       expect(await storage.retrieveAttribution(key)).not.toBeNull();
 
       await storage.deleteDocument(key);

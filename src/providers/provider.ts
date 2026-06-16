@@ -52,7 +52,7 @@ import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { Connection, ConnectionContext, ConnectionState } from "./connection";
 import { FallbackConnection } from "./fallback-connection";
 import { RpcClient, RpcOperationError } from "./rpc-client";
-import type { ClientRpcHandlerRegistry, ClientRpcContext } from "./rpc-handlers";
+import type { ClientRpcHandlerRegistry } from "./rpc-handlers";
 
 /**
  * Error thrown when a milestone operation is denied
@@ -997,7 +997,7 @@ export class Provider<
    */
   async #milestoneContentIds(milestoneId: string): Promise<ContentIds> {
     const snapshot = await this.getMilestoneSnapshot(milestoneId);
-    return createContentIdsFromUpdate(snapshot as unknown as Uint8Array);
+    return createContentIdsFromUpdate({ version: 2, data: snapshot as any });
   }
 
   /**

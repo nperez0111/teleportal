@@ -45,7 +45,7 @@ class MockConnection extends Connection<{
       context: {},
     });
     // Simulate connection
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((r) => queueMicrotask(r));
     this.setState({
       type: "connected",
       context: { clientId: "test-client" },
@@ -59,9 +59,9 @@ class MockConnection extends Connection<{
       const response = this.responseHandler(message);
       if (response) {
         // Emit the response asynchronously to simulate network delay
-        setTimeout(() => {
+        queueMicrotask(() => {
           this.call("received-message", response);
-        }, 0);
+        });
       }
     }
   }
@@ -178,7 +178,7 @@ describe("Provider sync events", () => {
 
     // Start with connection already connected so init() is called immediately
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -189,16 +189,16 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Now trigger another connect event to test the listener set up in init()
     mockConnection.triggerDisconnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     mockConnection.triggerConnect();
 
     // Wait for event to be processed
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     expect(syncEvents.length).toBeGreaterThan(0);
     const connectedEvent = syncEvents.find(([isSynced]) => isSynced === true);
@@ -219,7 +219,7 @@ describe("Provider sync events", () => {
 
     // Connect before creating provider (Provider.create() waits for connection)
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -230,13 +230,13 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Then disconnect
     mockConnection.triggerDisconnect();
 
     // Wait for event to be processed
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     const disconnectedEvent = syncEvents.find(([isSynced]) => isSynced === false);
     expect(disconnectedEvent).toBeDefined();
@@ -256,7 +256,7 @@ describe("Provider sync events", () => {
 
     // Connect before creating provider
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -267,13 +267,13 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Resolve the synced promise
     mockTransport.resolveSynced();
 
     // Wait for promise to resolve and event to be processed
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     const syncedEvent = syncEvents.find(([isSynced]) => isSynced === true);
     expect(syncedEvent).toBeDefined();
@@ -293,7 +293,7 @@ describe("Provider sync events", () => {
 
     // Connect before creating provider
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -304,13 +304,13 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Reject the synced promise
     mockTransport.rejectSynced(new Error("Sync failed"));
 
     // Wait for promise to reject and event to be processed
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     const rejectedEvent = syncEvents.find(([isSynced]) => isSynced === false);
     expect(rejectedEvent).toBeDefined();
@@ -330,7 +330,7 @@ describe("Provider sync events", () => {
 
     // Connect before creating provider
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -341,15 +341,15 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Disconnect
     mockConnection.triggerDisconnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Connect again
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Should have multiple events
     expect(syncEvents.length).toBeGreaterThan(1);
@@ -377,7 +377,7 @@ describe("Provider sync events", () => {
 
     // Connect before creating provider
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -388,11 +388,11 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Resolve synced
     mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Should have at least one true event
     const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
@@ -409,7 +409,7 @@ describe("Provider sync events", () => {
 
     // Start with connection already connected
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     provider = await Provider.create({
       connection: mockConnection,
@@ -420,11 +420,11 @@ describe("Provider sync events", () => {
     });
 
     // Wait for init to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Resolve synced - this should trigger a sync event
     mockTransport.resolveSynced();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Should have at least one true event from synced resolving
     const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
@@ -762,7 +762,7 @@ describe("Provider milestone operations", () => {
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
         if (message.rpcMethod === "milestoneCreate" && message.payload.type === "success") {
-          const payload = message.payload.payload as Record<string, unknown>;
+          const _payload = message.payload.payload as Record<string, unknown>;
           const response: MilestoneCreateResponse = {
             milestone: {
               id: "milestone-1",
@@ -841,7 +841,7 @@ describe("Provider milestone operations", () => {
     mockConnection.responseHandler = (message) => {
       if (message.type === "rpc" && message.requestType === "request") {
         if (message.rpcMethod === "milestoneList" && message.payload.type === "success") {
-          const payload = message.payload.payload as { snapshotIds?: string[] };
+          const _payload = message.payload.payload as { snapshotIds?: string[] };
           return new RpcMessage(
             "test-doc",
             { type: "error", statusCode: 403, details: "Permission denied" },
@@ -903,7 +903,7 @@ describe("Provider milestone operations", () => {
   describe("synced with in-flight messages", () => {
     it("should wait for in-flight messages to be acked before synced resolves", async () => {
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -913,9 +913,9 @@ describe("Provider milestone operations", () => {
         enableOfflinePersistence: false,
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
       mockTransport.resolveSynced();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Send a message that will be tracked as in-flight
       const docMessage = new DocMessage(
@@ -935,7 +935,7 @@ describe("Provider milestone operations", () => {
         syncedResolved = true;
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 5));
       expect(syncedResolved).toBe(false);
       expect(mockConnection.inFlightMessageCount).toBeGreaterThan(0);
 
@@ -951,17 +951,17 @@ describe("Provider milestone operations", () => {
       mockConnection.simulateMessage(ackMessage);
 
       // Wait for ACK to be processed
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      while (!syncedResolved) await new Promise<void>((r) => queueMicrotask(r));
 
       // Now synced should resolve
       await syncedPromise;
-      expect(syncedResolved).toBe(true);
+      expect(syncedResolved).toBeTrue();
       expect(mockConnection.inFlightMessageCount).toBe(0);
     });
 
     it("should resolve synced immediately when no in-flight messages", async () => {
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -971,7 +971,7 @@ describe("Provider milestone operations", () => {
         enableOfflinePersistence: false,
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Ack any initial messages sent during provider creation
       const initialMessages = mockConnection.sentMessages;
@@ -986,11 +986,11 @@ describe("Provider milestone operations", () => {
             mockConnection.simulateMessage(ack);
           }
         }
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise<void>((r) => queueMicrotask(r));
       }
 
       mockTransport.resolveSynced();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // No in-flight messages, synced should resolve quickly
       const startTime = Date.now();
@@ -1003,7 +1003,7 @@ describe("Provider milestone operations", () => {
 
     it("should not wait for awareness messages to be acked", async () => {
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1013,7 +1013,7 @@ describe("Provider milestone operations", () => {
         enableOfflinePersistence: false,
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Ack any initial messages sent during provider creation
       const initialMessages = mockConnection.sentMessages;
@@ -1028,11 +1028,11 @@ describe("Provider milestone operations", () => {
             mockConnection.simulateMessage(ack);
           }
         }
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise<void>((r) => queueMicrotask(r));
       }
 
       mockTransport.resolveSynced();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Send an awareness message (should not be tracked)
       const { AwarenessMessage } = await import("teleportal");
@@ -1046,7 +1046,7 @@ describe("Provider milestone operations", () => {
       );
 
       await mockConnection.send(awarenessMessage);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // synced should resolve even with awareness message sent (not tracked)
       expect(mockConnection.inFlightMessageCount).toBe(0);
@@ -1088,7 +1088,7 @@ describe("Provider events", () => {
       const connectedEvents: boolean[] = [];
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1103,14 +1103,14 @@ describe("Provider events", () => {
       });
 
       // Wait for initial setup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Disconnect and reconnect to trigger event
       mockConnection.triggerDisconnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       expect(connectedEvents.length).toBeGreaterThan(0);
     });
@@ -1121,7 +1121,7 @@ describe("Provider events", () => {
       const disconnectedEvents: boolean[] = [];
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1136,11 +1136,11 @@ describe("Provider events", () => {
       });
 
       // Wait for initial setup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Disconnect to trigger event
       mockConnection.triggerDisconnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       expect(disconnectedEvents.length).toBeGreaterThan(0);
     });
@@ -1151,7 +1151,7 @@ describe("Provider events", () => {
       const updateEvents: ConnectionState<any>[] = [];
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1166,15 +1166,15 @@ describe("Provider events", () => {
       });
 
       // Wait for initial setup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Disconnect to trigger update event
       mockConnection.triggerDisconnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Reconnect to trigger another update event
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       expect(updateEvents.length).toBeGreaterThan(0);
       expect(updateEvents.some((e) => e.type === "disconnected")).toBe(true);
@@ -1187,7 +1187,7 @@ describe("Provider events", () => {
       const receivedMessages: any[] = [];
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1202,7 +1202,7 @@ describe("Provider events", () => {
       });
 
       // Wait for initial setup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Simulate receiving a message
       const { DocMessage } = await import("teleportal");
@@ -1216,7 +1216,7 @@ describe("Provider events", () => {
       );
 
       mockConnection.simulateMessage(testMessage);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       expect(receivedMessages.length).toBeGreaterThan(0);
       expect(receivedMessages[0].type).toBe("doc");
@@ -1228,7 +1228,7 @@ describe("Provider events", () => {
       const sentMessages: Message[] = [];
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1243,7 +1243,7 @@ describe("Provider events", () => {
       });
 
       // Wait for initial setup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Send a message through the provider
       const { DocMessage } = await import("teleportal");
@@ -1257,7 +1257,7 @@ describe("Provider events", () => {
       );
 
       await mockConnection.send(testMessage);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // The sent-message event should be emitted by the connection
       // We need to check if the connection emits it
@@ -1270,7 +1270,7 @@ describe("Provider events", () => {
       const eventLog: Array<{ type: string; data?: any }> = [];
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       provider = await Provider.create({
         connection: mockConnection,
@@ -1301,14 +1301,14 @@ describe("Provider events", () => {
       });
 
       // Wait for initial setup
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Trigger various events
       mockConnection.triggerDisconnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       mockConnection.triggerConnect();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       const { DocMessage } = await import("teleportal");
       const testMessage = new DocMessage(
@@ -1320,7 +1320,7 @@ describe("Provider events", () => {
         { clientId: "test-client" },
       );
       mockConnection.simulateMessage(testMessage);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((r) => queueMicrotask(r));
 
       // Verify we got events
       expect(eventLog.length).toBeGreaterThan(0);
@@ -1352,7 +1352,7 @@ describe("Provider presence", () => {
 
   const createProvider = async () => {
     mockConnection.triggerConnect();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
     provider = await Provider.create({
       connection: mockConnection,
       document: "test-doc",
@@ -1360,7 +1360,7 @@ describe("Provider presence", () => {
       getTransport: () => mockTransport,
       enableOfflinePersistence: false,
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
     return provider;
   };
 
@@ -1404,7 +1404,7 @@ describe("Provider presence", () => {
         data: { userName: "Bob" },
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     // Awareness cleared locally (no key required).
     expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(false);
@@ -1435,7 +1435,7 @@ describe("Provider presence", () => {
         data: { userName: "Carol" },
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((r) => queueMicrotask(r));
 
     expect(joins).toEqual([
       {

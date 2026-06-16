@@ -283,7 +283,7 @@ export namespace FileTransferProtocol {
 
     protected abstract verifyChunk(chunk: FilePartStream, fileId: string): boolean;
 
-    protected async handleFilePart(payload: FilePartStream, context?: Context) {
+    protected async handleFilePart(payload: FilePartStream, _context?: Context) {
       const handler = this.activeDownloads.get(payload.fileId);
       if (!handler) {
         return;
@@ -476,7 +476,7 @@ export namespace FileTransferProtocol {
     }
 
     protected async checkUploadPermission(
-      metadata: {
+      _metadata: {
         fileId: string;
         filename?: string;
         size?: number;
@@ -484,13 +484,13 @@ export namespace FileTransferProtocol {
         lastModified?: number;
         encrypted?: boolean;
       },
-      context: Context,
+      _context: Context,
     ): Promise<{ allowed: boolean; reason?: string }> {
       return { allowed: true };
     }
 
     protected async onUploadStart(
-      metadata: {
+      _metadata: {
         fileId: string;
         filename?: string;
         size?: number;
@@ -498,9 +498,9 @@ export namespace FileTransferProtocol {
         lastModified?: number;
         encrypted?: boolean;
       },
-      context: Context,
-      document: string,
-      encrypted: boolean,
+      _context: Context,
+      _document: string,
+      _encrypted: boolean,
     ): Promise<void> {}
 
     protected async onChunkReceived(

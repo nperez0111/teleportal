@@ -144,15 +144,17 @@ function decodeDocStepWithDecoder<
         } as E;
       }
       case 0x01: {
+        const syncStep2Version = decoding.readUint8(decoder);
         return {
           type: "sync-step-2",
-          update: decoding.readVarUint8Array(decoder),
+          update: { version: syncStep2Version, data: decoding.readVarUint8Array(decoder) },
         } as E;
       }
       case 0x02: {
+        const updateVersion = decoding.readUint8(decoder);
         return {
           type: "update",
-          update: decoding.readVarUint8Array(decoder),
+          update: { version: updateVersion, data: decoding.readVarUint8Array(decoder) },
         } as E;
       }
       case 0x03: {

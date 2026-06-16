@@ -84,7 +84,7 @@ export function buildMerkleTree(chunks: Uint8Array[]): MerkleTree {
 
   while (currentLevelEnd - currentLevelStart > 1) {
     const nextLevelStart = currentLevelEnd;
-    const nextLevelEnd = nextLevelStart;
+    const _nextLevelEnd = nextLevelStart;
 
     // Process pairs of nodes at current level
     for (let i = currentLevelStart; i < currentLevelEnd; i += 2) {
@@ -124,7 +124,7 @@ function buildMerkleStructure(leafCount: number): MerkleNode[] {
     return [];
   }
 
-  const nodes: MerkleNode[] = new Array(leafCount).fill(null).map(() => ({}) as MerkleNode);
+  const nodes: MerkleNode[] = Array.from({ length: leafCount }, () => ({}) as MerkleNode);
   let currentLevelStart = 0;
   let currentLevelEnd = nodes.length;
 
@@ -277,7 +277,7 @@ export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
  */
 export function deserializeMerkleTree(data: Uint8Array, chunkCount: number): MerkleTree {
   const view = new DataView(data.buffer);
-  const nodeSize = 32 + 4; // hash + parent index
+  const _nodeSize = 32 + 4; // hash + parent index
 
   // Read leaf count (should match chunkCount)
   const storedLeafCount = view.getUint32(0, true);

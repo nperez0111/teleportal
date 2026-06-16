@@ -1,4 +1,3 @@
-import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Shell } from "./components/shell";
 import { TanStackDevtools } from "@tanstack/react-devtools";

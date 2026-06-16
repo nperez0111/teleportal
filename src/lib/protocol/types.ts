@@ -25,20 +25,34 @@ export type DecodedAwarenessRequest = {
   type: "awareness-request";
 };
 
+export type UpdateVersion = 1 | 2;
+
+export type UpdateV1 = Tag<Uint8Array, "update-v1">;
+export type UpdateV2 = Tag<Uint8Array, "update-v2">;
+
+export type VersionedUpdate = { version: 1; data: UpdateV1 } | { version: 2; data: UpdateV2 };
+
 /**
- * A Y.js update, always encoded as UpdateV2.
+ * @deprecated Use `UpdateV2` for storage/full-state, or `VersionedUpdate` on the wire.
  */
-export type Update = Tag<Uint8Array, "update">;
+export type Update = UpdateV2;
 
 /**
  * A Y.js state vector.
  */
 export type StateVector = Tag<Uint8Array, "state-vector">;
 
+export type SyncStep2UpdateV1 = Tag<Uint8Array, "sync-step-2-update-v1">;
+export type SyncStep2UpdateV2 = Tag<Uint8Array, "sync-step-2-update-v2">;
+
+export type VersionedSyncStep2Update =
+  | { version: 1; data: SyncStep2UpdateV1 }
+  | { version: 2; data: SyncStep2UpdateV2 };
+
 /**
- * A Y.js SyncStep2 update, as an UpdateV2.
+ * @deprecated Use `SyncStep2UpdateV2` for storage, or `VersionedSyncStep2Update` on the wire.
  */
-export type SyncStep2Update = Tag<Uint8Array, "sync-step-2-update">;
+export type SyncStep2Update = SyncStep2UpdateV2;
 
 /**
  * A Y.js sync step 1 update as encoded by the y-protocols implementation.
@@ -63,7 +77,7 @@ export type SyncStep2 = Tag<Uint8Array, "sync-step-2">;
  */
 export type DecodedSyncStep2 = {
   type: "sync-step-2";
-  update: SyncStep2Update;
+  update: VersionedSyncStep2Update;
 };
 
 /**
@@ -88,7 +102,7 @@ export type UpdateStep = Tag<Uint8Array, "update-step">;
  */
 export type DecodedUpdateStep = {
   type: "update";
-  update: Update;
+  update: VersionedUpdate;
 };
 
 /**

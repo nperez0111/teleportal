@@ -1,5 +1,6 @@
 import { serve } from "crossws/server";
-import { getStateVectorFromUpdate, mergeUpdates, StateVector, Update } from "teleportal";
+import { getStateVectorFromUpdate, mergeUpdates, Update, type VersionedUpdate } from "teleportal";
+import { convertToV2 } from "teleportal/protocol";
 import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
 import { Document, DocumentMetadata, UnencryptedDocumentStorage } from "teleportal/storage";
@@ -10,10 +11,10 @@ class CustomDocumentStorage extends UnencryptedDocumentStorage {
   private docMap = new Map<Document["id"], Update[]>();
   private metadataMap = new Map<Document["id"], DocumentMetadata>();
 
-  async handleUpdate(documentId: Document["id"], update: Update): Promise<void> {
-    // store an update
-    // in this case we are just storing each update in memory and merging them on the fly
-    this.docMap.set(documentId, [...(this.docMap.get(documentId) ?? []), update]);
+  async handleUpdate(documentId: Document["id"], update: VersionedUpdate): Promise<void> {
+    // store an update, converting to V2 for storage
+    const v2 = convertToV2(update);
+    this.docMap.set(documentId, [...(this.docMap.get(documentId) ?? []), v2]);
   }
 
   // This is the main method that is called when a client requests a document.
