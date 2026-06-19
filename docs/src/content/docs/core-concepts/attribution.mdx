@@ -229,17 +229,24 @@ const server = new Server({
 
 ### Permission Control
 
-RPC messages bypass the server's global `checkPermission` hook. To gate attribution access, provide a `checkPermission` callback to the RPC handlers:
+Attribution RPC methods (`attributionActivity`, `attributionGet`) are covered by the server's global `checkPermission` hook. Use the `rpcMethod` field to apply method-level authorization:
 
 ```typescript
-getAttributionRpcHandlers({
-  checkPermission: async (ctx) => {
-    return await canReadAttribution(ctx.userId, ctx.documentId);
+const server = new Server({
+  getStorage: async (ctx) => storage,
+  checkPermission: async ({ context, documentId, rpcMethod }) => {
+    if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
+      return canReadAttribution(context.userId, documentId);
+    }
+    // ... other permission logic
+  },
+  rpcHandlers: {
+    ...getAttributionRpcHandlers(),
   },
 });
 ```
 
-When `checkPermission` returns `false` (or throws), the call fails with a `403`.
+When `checkPermission` returns `false` (or throws), the RPC call fails with a `403`.
 
 ## Encryption Boundary
 

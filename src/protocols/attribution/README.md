@@ -32,16 +32,25 @@ const server = new Server({
 });
 ```
 
-RPC messages bypass the server's global permission check, so attribution-specific
-authorization is supplied here:
+Attribution methods are covered by the server's global `checkPermission` hook.
+Use the `rpcMethod` field for method-level authorization:
 
 ```typescript
-getAttributionRpcHandlers({
-  checkPermission: (ctx) => canReadAttribution(ctx.userId, ctx.documentId),
+const server = new Server({
+  getStorage: async (ctx) => storage,
+  checkPermission: async ({ context, documentId, rpcMethod }) => {
+    if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
+      return canReadAttribution(context.userId, documentId);
+    }
+    // ... other permission logic
+  },
+  rpcHandlers: {
+    ...getAttributionRpcHandlers(),
+  },
 });
 ```
 
-When `checkPermission` returns `false` (or throws), the call fails with a `403`.
+When `checkPermission` returns `false` (or throws), the RPC call fails with a `403`.
 
 ## Client Integration
 

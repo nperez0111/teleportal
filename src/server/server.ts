@@ -49,6 +49,7 @@ export type ServerOptions<Context extends ServerContext> = {
     fileId?: string;
     message: Message<NoInfer<Context>>;
     type: "read" | "write";
+    rpcMethod?: string;
   }) => Promise<boolean>;
 
   /**
@@ -617,6 +618,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
             fileId,
             message,
             type,
+            rpcMethod:
+              message.type === "rpc"
+                ? (message as RpcMessage<Context>).rpcMethod
+                : undefined,
           });
 
           if (!ok) {
@@ -640,7 +645,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
                   {
                     type: "error",
                     statusCode: 403,
-                    details: "Permission denied for file upload",
+                    details: "Permission denied",
                   },
                   message.rpcMethod,
                   "response",

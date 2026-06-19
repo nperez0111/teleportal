@@ -164,21 +164,6 @@ describe("getAttributionRpcHandlers", () => {
       expect(response.activity).toEqual([]);
     });
 
-    it("denies when checkPermission rejects", async () => {
-      const { map } = twoUserDoc();
-      const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers({
-        checkPermission: () => false,
-      }).attributionActivity;
-
-      const { response } = (await handler.handler(
-        {},
-        mockContext(async () => encoded),
-      )) as { response: { type?: string; statusCode?: number } };
-
-      expect(response.type).toBe("error");
-      expect(response.statusCode).toBe(403);
-    });
   });
 
   describe("attributionGet", () => {

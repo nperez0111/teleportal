@@ -1,4 +1,4 @@
-export { getAttributionRpcHandlers, type AttributionRpcOptions } from "./server-handlers";
+export { getAttributionRpcHandlers } from "./server-handlers";
 
 export { collectRangeIds, resolveRangeAttribution, type RangeId } from "./resolve";
 

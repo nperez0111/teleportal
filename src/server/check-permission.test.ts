@@ -18,6 +18,7 @@ describe("checkPermissionWithTokenManager", () => {
     fileId?: string;
     message: any;
     type: "read" | "write";
+    rpcMethod?: string;
   }) => Promise<boolean>;
   let context: ServerContext;
 
@@ -83,28 +84,69 @@ describe("checkPermissionWithTokenManager", () => {
   });
 
   describe("RPC messages", () => {
-    it("should allow RPC messages without permission checks", async () => {
+    it("should allow read RPCs with read permission", async () => {
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) throw new Error("Token verification failed");
+
       const rpcMessage = new RpcMessage(
         "test-doc",
         { type: "success", payload: { snapshotIds: [] } },
         "milestoneList",
         "request",
         undefined,
-        context,
+        { ...context, ...payload.payload } as ServerContext,
       );
 
       const result = await checkPermission({
-        context,
+        context: rpcMessage.context,
         documentId: "test-doc",
         fileId: undefined,
         message: rpcMessage,
         type: "read",
+        rpcMethod: "milestoneList",
       });
 
       expect(result).toBe(true);
     });
 
-    it("should allow fileUpload RPC messages", async () => {
+    it("should deny read RPCs without matching document access", async () => {
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "other-doc", permissions: ["read"] },
+      ]);
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) throw new Error("Token verification failed");
+
+      const rpcMessage = new RpcMessage(
+        "test-doc",
+        { type: "success", payload: {} },
+        "attributionActivity",
+        "request",
+        undefined,
+        { ...context, ...payload.payload } as ServerContext,
+      );
+
+      const result = await checkPermission({
+        context: rpcMessage.context,
+        documentId: "test-doc",
+        fileId: undefined,
+        message: rpcMessage,
+        type: "read",
+        rpcMethod: "attributionActivity",
+      });
+
+      expect(result).toBe(false);
+    });
+
+    it("should allow write RPCs with write permission", async () => {
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["write"] },
+      ]);
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) throw new Error("Token verification failed");
+
       const rpcMessage = new RpcMessage(
         "test-doc",
         {
@@ -114,32 +156,61 @@ describe("checkPermissionWithTokenManager", () => {
             filename: "test.txt",
             size: 100,
             mimeType: "text/plain",
-            lastModified: Date.now(),
+            lastModified: 1700000000,
             encrypted: false,
           },
         },
         "fileUpload",
         "request",
         undefined,
-        context,
+        { ...context, ...payload.payload } as ServerContext,
       );
 
       const result = await checkPermission({
-        context,
+        context: rpcMessage.context,
         documentId: "test-doc",
         fileId: "file-123",
         message: rpcMessage,
         type: "write",
+        rpcMethod: "fileUpload",
       });
 
       expect(result).toBe(true);
     });
 
-    it("should allow fileDownload RPC messages", async () => {
+    it("should deny write RPCs with only read permission", async () => {
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) throw new Error("Token verification failed");
+
       const rpcMessage = new RpcMessage(
         "test-doc",
-        { type: "success", payload: { fileId: "file-123" } },
-        "fileDownload",
+        { type: "success", payload: {} },
+        "milestoneCreate",
+        "request",
+        undefined,
+        { ...context, ...payload.payload } as ServerContext,
+      );
+
+      const result = await checkPermission({
+        context: rpcMessage.context,
+        documentId: "test-doc",
+        fileId: undefined,
+        message: rpcMessage,
+        type: "read",
+        rpcMethod: "milestoneCreate",
+      });
+
+      expect(result).toBe(false);
+    });
+
+    it("should allow RPCs without a documentId", async () => {
+      const rpcMessage = new RpcMessage(
+        undefined,
+        { type: "success", payload: {} },
+        "someGlobalRpc",
         "request",
         undefined,
         context,
@@ -147,10 +218,11 @@ describe("checkPermissionWithTokenManager", () => {
 
       const result = await checkPermission({
         context,
-        documentId: "test-doc",
-        fileId: "file-123",
+        documentId: undefined,
+        fileId: undefined,
         message: rpcMessage,
         type: "read",
+        rpcMethod: "someGlobalRpc",
       });
 
       expect(result).toBe(true);
@@ -362,7 +434,13 @@ describe("checkPermissionWithTokenManager", () => {
   });
 
   describe("RPC stream messages (file-parts)", () => {
-    it("should allow RPC stream messages (file-parts)", async () => {
+    it("should allow RPC stream messages with read permission", async () => {
+      const token = await tokenManager.createToken("user-1", "room-1", [
+        { pattern: "test-doc", permissions: ["read"] },
+      ]);
+      const payload = await tokenManager.verifyToken(token);
+      if (!payload.valid || !payload.payload) throw new Error("Token verification failed");
+
       const message = new RpcMessage<ServerContext>(
         "test-doc",
         {
@@ -380,16 +458,17 @@ describe("checkPermissionWithTokenManager", () => {
         "fileDownload",
         "stream",
         "original-request-id",
-        context,
+        { ...context, ...payload.payload } as ServerContext,
         false,
       );
 
       const result = await checkPermission({
-        context,
+        context: message.context,
         documentId: "test-doc",
         fileId: "file-123",
         message,
         type: "read",
+        rpcMethod: "fileDownload",
       });
 
       expect(result).toBe(true);
