@@ -27,6 +27,10 @@ export function attrsToRecord(attrs: ContentAttribute[]): Record<string, unknown
   return Object.fromEntries(attrs.map((a) => [a.name, a.val]));
 }
 
+export function recordToAttrs(record: Record<string, unknown>): ContentAttribute[] {
+  return Object.entries(record).map(([name, val]) => new ContentAttribute(name, val));
+}
+
 // --- AttrRange ---
 
 export class AttrRange {

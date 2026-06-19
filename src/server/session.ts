@@ -34,6 +34,7 @@ import {
   decodeContentIds,
   encodeContentMap,
   mergeContentIds,
+  recordToAttrs,
 } from "teleportal/attribution";
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
@@ -731,11 +732,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
         server: this.#server,
         clientId,
       });
-      for (const [name, val] of Object.entries(custom)) {
-        const attr = createContentAttribute(name, val);
-        insertAttrs.push(attr);
-        deleteAttrs.push(attr);
-      }
+      const customAttrs = recordToAttrs(custom);
+      insertAttrs.push(...customAttrs);
+      deleteAttrs.push(...customAttrs);
     }
 
     return encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
