@@ -164,6 +164,24 @@ describe("getAttributionRpcHandlers", () => {
       expect(response.activity).toEqual([]);
     });
 
+    it("returns a timeline from content-id-based attribution (encrypted path)", async () => {
+      const ids = createContentIds();
+      ids.inserts.add(100, 0, 10);
+      const map = createContentMapFromContentIds(
+        ids,
+        [createContentAttribute("insert", "enc-user"), createContentAttribute("insertAt", 5000)],
+        [createContentAttribute("delete", "enc-user"), createContentAttribute("deleteAt", 5000)],
+      );
+      const encoded = encodeContentMap(map);
+      const handler = getAttributionRpcHandlers().attributionActivity;
+
+      const { response } = (await handler.handler(
+        {},
+        mockContext(async () => encoded),
+      )) as { response: { activity: { userId: string | null }[] } };
+
+      expect(response.activity.map((e) => e.userId)).toEqual(["enc-user"]);
+    });
   });
 
   describe("attributionGet", () => {

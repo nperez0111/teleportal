@@ -836,6 +836,7 @@ export class Provider<
         this.document,
         "milestoneCreate",
         { name, snapshot },
+        { encrypted: !!this.encryptionKey },
       );
 
       return this.#createMilestoneFromMeta(response.milestone);

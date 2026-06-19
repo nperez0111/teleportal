@@ -4,7 +4,7 @@ import * as Y from "yjs";
 import { Server } from "./server";
 import { checkPermissionWithTokenManager } from "./check-permission";
 import { Client } from "./client";
-import { AckMessage, InMemoryPubSub, DocMessage } from "teleportal";
+import { AckMessage, InMemoryPubSub, DocMessage, RpcMessage } from "teleportal";
 import { createTokenManager } from "teleportal/token";
 import type {
   ServerContext,
@@ -335,6 +335,62 @@ describe("Server", () => {
 
       expect(session).toBe(encryptedSession);
       expect(session.encrypted).toBe(true);
+    });
+
+    it("routes plaintext RPC messages to encrypted sessions", async () => {
+      // The `encrypted` flag on a message describes whether the payload
+      // needs decryption — it is a property of the message, not the
+      // document. A plaintext RPC (e.g. an attribution query) must reach
+      // an encrypted session without triggering an encryption mismatch.
+      const rpcServer = new Server<ServerContext>({
+        storage: mockGetStorage,
+        pubSub,
+        rpcHandlers: {
+          myQuery: {
+            handler: async () => ({ response: { ok: true } }),
+          },
+        },
+      });
+
+      await rpcServer.getOrOpenSession("enc-rpc-doc", {
+        encrypted: true,
+        context: { userId: "user-1", room: "room", clientId: "client-1" },
+      });
+
+      const transport = new MockTransport<ServerContext>();
+      const writtenMessages: Message<ServerContext>[] = [];
+      const customTransport = {
+        readable: transport.readable,
+        writable: new WritableStream({
+          write: (m) => {
+            writtenMessages.push(m);
+          },
+        }),
+      } as Transport<ServerContext>;
+      rpcServer.createClient({ transport: customTransport, id: "client-1" });
+
+      transport.enqueueMessage(
+        new RpcMessage<ServerContext>(
+          "enc-rpc-doc",
+          { type: "success", payload: { method: "myQuery" } },
+          "myQuery",
+          "request",
+          undefined,
+          { clientId: "client-1", userId: "user-1", room: "room" },
+          false, // plaintext RPC payload
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const rpcResponse = writtenMessages.find((m) => m.type === "rpc") as
+        | RpcMessage<ServerContext>
+        | undefined;
+      expect(rpcResponse).toBeDefined();
+      expect(rpcResponse!.payload.type).toBe("success");
+
+      transport.closeReadable();
+      await rpcServer[Symbol.asyncDispose]();
     });
 
     it("should call getStorage with correct parameters", async () => {

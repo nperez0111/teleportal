@@ -817,9 +817,12 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
     replicationMeta?: { sourceNodeId: string; deduped: boolean },
   ) {
-    // Presence messages are always cleartext metadata (they carry no document
-    // content), so they are exempt from the document's encryption requirement.
-    if (message.type !== "presence" && message.encrypted !== this.encrypted) {
+    // The `encrypted` flag describes whether the message payload needs
+    // decryption — it is a property of the message, not the document.
+    // Only `doc` messages must match the session's encryption mode because
+    // the server processes their content differently per mode.  Presence and
+    // RPC payloads are independent of the document's encryption state.
+    if (message.type === "doc" && message.encrypted !== this.encrypted) {
       const error = new Error("Message encryption and document encryption are mismatched");
       emitWideEvent("error", {
         event_type: "encryption_mismatch",
@@ -1154,7 +1157,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                     details?: string;
                   };
                   stream?: AsyncIterable<unknown>;
+                  encrypted?: boolean;
                 };
+                const responseEncrypted = result.encrypted ?? rpcMessage.encrypted;
 
                 if ("stream" in result && result.stream) {
                   for await (const chunk of result.stream) {
@@ -1171,7 +1176,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                       "stream",
                       rpcMessage.id,
                       rpcMessage.context,
-                      rpcMessage.encrypted,
+                      responseEncrypted,
                       undefined,
                       serializer,
                     );
@@ -1208,7 +1213,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   "response",
                   rpcMessage.id,
                   rpcMessage.context,
-                  rpcMessage.encrypted,
+                  responseEncrypted,
                   undefined,
                   serializer,
                 );

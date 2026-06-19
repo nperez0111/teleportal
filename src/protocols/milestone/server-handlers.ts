@@ -182,7 +182,7 @@ const getMilestoneHandler =
   async (
     payload: MilestoneGetRequest,
     context: RpcServerContext,
-  ): Promise<{ response: GetResponse | RpcError }> => {
+  ): Promise<{ response: GetResponse | RpcError; encrypted?: boolean }> => {
     try {
       const milestone = await milestoneStorage.getMilestone(
         context.documentId,
@@ -206,6 +206,7 @@ const getMilestoneHandler =
           milestoneId: payload.milestoneId,
           snapshot: snapshot as Uint8Array,
         },
+        encrypted: context.session.encrypted,
       };
     } catch (error) {
       return {

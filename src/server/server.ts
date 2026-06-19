@@ -619,9 +619,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
             message,
             type,
             rpcMethod:
-              message.type === "rpc"
-                ? (message as RpcMessage<Context>).rpcMethod
-                : undefined,
+              message.type === "rpc" ? (message as RpcMessage<Context>).rpcMethod : undefined,
           });
 
           if (!ok) {
@@ -717,9 +715,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
                 encrypted: message.encrypted,
                 client,
                 context: message.context,
-                // Presence is always cleartext metadata; it must attach to the
-                // existing session regardless of the document's encryption mode.
-                ignoreEncryptionMismatch: message.type === "presence",
+                // The `encrypted` flag on a message describes whether its
+                // payload is encrypted, not which session type it belongs to.
+                // Only `doc` messages use the flag for session routing (they
+                // carry document content processed differently per mode).
+                // Presence and RPC payloads are independent of the document's
+                // encryption state and must route to the existing session
+                // regardless of their own `encrypted` value.
+                ignoreEncryptionMismatch: message.type === "presence" || message.type === "rpc",
               });
               wideEvent.session_id = session.id;
 

@@ -303,6 +303,14 @@ export interface RpcServerRequestHandler<
   ) => Promise<{
     response: Response | RpcError;
     stream?: AsyncIterable<Stream>;
+    /**
+     * Override the `encrypted` flag on the response message.  When omitted
+     * the response inherits the flag from the incoming request.  Set this
+     * when the response payload's encryption state differs from the
+     * request's — e.g. a plaintext request that returns an encrypted
+     * snapshot.
+     */
+    encrypted?: boolean;
   }>;
 
   /**
