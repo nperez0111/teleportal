@@ -16,6 +16,7 @@ export {
 export {
   ContentAttribute,
   createContentAttribute,
+  attrsToRecord,
   AttrRange,
   type MaybeAttrRange,
   AttrRanges,

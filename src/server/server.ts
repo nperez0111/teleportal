@@ -18,7 +18,12 @@ import { type RateLimitRule, withRateLimit } from "teleportal/transports/rate-li
 import { Observable } from "../lib/utils";
 import { register } from "../monitoring/metrics";
 import { Client } from "./client";
-import type { ClientDisconnectReason, PresenceConfig, ServerEvents } from "./events";
+import type {
+  AttributionConfig,
+  ClientDisconnectReason,
+  PresenceConfig,
+  ServerEvents,
+} from "./events";
 import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -77,6 +82,11 @@ export type ServerOptions<Context extends ServerContext> = {
    * a session's peers.
    */
   presenceConfig?: PresenceConfig<NoInfer<Context>>;
+
+  /**
+   * Configuration for custom attribution metadata on document updates.
+   */
+  attributionConfig?: AttributionConfig<NoInfer<Context>>;
 
   /**
    * RPC handlers for the server.
@@ -343,6 +353,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           metricsCollector: this.#metrics,
           documentSizeConfig: this.#options.documentSizeConfig,
           presenceConfig: this.#options.presenceConfig,
+          attributionConfig: this.#options.attributionConfig,
           rpcHandlers: this.#options.rpcHandlers,
           server: this,
         });

@@ -6,6 +6,7 @@ import type { EncodedContentMap } from "teleportal/storage";
 import {
   changesetContentMap,
   createContentAttribute,
+  createContentIds,
   createContentIdsFromUpdate,
   createContentMapFromContentIds,
   decodeContentMap,
@@ -223,6 +224,43 @@ describe("getAttributionRpcHandlers", () => {
       };
       expect(response.contentMap).toBeNull();
     });
+
+    it("narrows the ContentMap by custom attributes", async () => {
+      const ids1 = createContentIds();
+      ids1.inserts.add(1, 0, 5);
+      const map1 = createContentMapFromContentIds(ids1, [
+        createContentAttribute("insert", "user-1"),
+        createContentAttribute("insertAt", 1000),
+        createContentAttribute("source", "ai"),
+      ]);
+
+      const ids2 = createContentIds();
+      ids2.inserts.add(2, 0, 3);
+      const map2 = createContentMapFromContentIds(ids2, [
+        createContentAttribute("insert", "user-1"),
+        createContentAttribute("insertAt", 2000),
+        createContentAttribute("source", "human"),
+      ]);
+
+      const merged = mergeContentMaps([map1, map2]);
+      const encoded = encodeContentMap(merged);
+      const handler = getAttributionRpcHandlers().attributionGet;
+
+      const { response } = (await handler.handler(
+        { filter: { attributes: { source: "ai" } } },
+        mockContext(async () => encoded),
+      )) as { response: { contentMap: EncodedContentMap | null } };
+
+      const decoded = decodeContentMap(response.contentMap!);
+      const sources = [...decoded.inserts.clients.values()].flatMap((r) =>
+        r
+          .getIds()
+          .flatMap((range) =>
+            range.attrs.filter((a) => a.name === "source").map((a) => a.val as string),
+          ),
+      );
+      expect([...new Set(sources)]).toEqual(["ai"]);
+    });
   });
 });
 
@@ -231,19 +269,125 @@ describe("resolveRangeAttribution", () => {
     const { text, map } = twoUserDoc();
 
     const hello = resolveRangeAttribution(text, 0, 6, map);
-    expect(hello).toEqual([{ from: 0, to: 6, userId: "user-1", timestamp: 1000 }]);
+    expect(hello).toEqual([
+      {
+        from: 0,
+        to: 6,
+        userId: "user-1",
+        timestamp: 1000,
+        attributes: { insert: "user-1", insertAt: 1000 },
+      },
+    ]);
 
     const world = resolveRangeAttribution(text, 6, 5, map);
-    expect(world).toEqual([{ from: 6, to: 11, userId: "user-2", timestamp: 2000 }]);
+    expect(world).toEqual([
+      {
+        from: 6,
+        to: 11,
+        userId: "user-2",
+        timestamp: 2000,
+        attributes: { insert: "user-2", insertAt: 2000 },
+      },
+    ]);
   });
 
   it("splits a range spanning both authors", () => {
     const { text, map } = twoUserDoc();
     const all = resolveRangeAttribution(text, 0, 11, map);
     expect(all).toEqual([
-      { from: 0, to: 6, userId: "user-1", timestamp: 1000 },
-      { from: 6, to: 11, userId: "user-2", timestamp: 2000 },
+      {
+        from: 0,
+        to: 6,
+        userId: "user-1",
+        timestamp: 1000,
+        attributes: { insert: "user-1", insertAt: 1000 },
+      },
+      {
+        from: 6,
+        to: 11,
+        userId: "user-2",
+        timestamp: 2000,
+        attributes: { insert: "user-2", insertAt: 2000 },
+      },
     ]);
+  });
+
+  it("includes custom attributes on segments", () => {
+    const doc = new Y.Doc();
+    let u!: Uint8Array;
+    doc.on("updateV2", (update: Uint8Array) => (u = update));
+    doc.getText("t").insert(0, "Hello");
+
+    const map = decodeContentMap(
+      encodeContentMap(
+        createContentMapFromContentIds(
+          createContentIdsFromUpdate({ version: 2, data: u as UpdateV2 }),
+          [
+            createContentAttribute("insert", "user-1"),
+            createContentAttribute("insertAt", 1000),
+            createContentAttribute("source", "ai"),
+          ],
+        ),
+      ),
+    );
+
+    const segments = resolveRangeAttribution(doc.getText("t"), 0, 5, map);
+    expect(segments.length).toBe(1);
+    expect(segments[0].attributes).toEqual({
+      insert: "user-1",
+      insertAt: 1000,
+      source: "ai",
+    });
+  });
+
+  it("does not merge adjacent segments with different custom attributes", () => {
+    const doc = new Y.Doc();
+    const updates: Uint8Array[] = [];
+    doc.on("updateV2", (u: Uint8Array) => updates.push(u));
+    doc.getText("t").insert(0, "AB");
+
+    const doc2 = new Y.Doc();
+    const updates2: Uint8Array[] = [];
+    doc2.on("updateV2", (u: Uint8Array) => updates2.push(u));
+    doc2.getText("t").insert(0, "A");
+
+    const doc3 = new Y.Doc();
+    Y.applyUpdateV2(doc3, Y.encodeStateAsUpdateV2(doc2));
+    const updates3: Uint8Array[] = [];
+    doc3.on("updateV2", (u: Uint8Array) => updates3.push(u));
+    doc3.getText("t").insert(1, "B");
+
+    const splitMap = mergeContentMaps([
+      decodeContentMap(
+        encodeContentMap(
+          createContentMapFromContentIds(
+            createContentIdsFromUpdate({ version: 2, data: updates2[0] as UpdateV2 }),
+            [
+              createContentAttribute("insert", "user-1"),
+              createContentAttribute("insertAt", 1000),
+              createContentAttribute("source", "ai"),
+            ],
+          ),
+        ),
+      ),
+      decodeContentMap(
+        encodeContentMap(
+          createContentMapFromContentIds(
+            createContentIdsFromUpdate({ version: 2, data: updates3[0] as UpdateV2 }),
+            [
+              createContentAttribute("insert", "user-1"),
+              createContentAttribute("insertAt", 1000),
+              createContentAttribute("source", "human"),
+            ],
+          ),
+        ),
+      ),
+    ]);
+
+    const segments = resolveRangeAttribution(doc3.getText("t"), 0, 2, splitMap);
+    expect(segments.length).toBe(2);
+    expect(segments[0].attributes["source"]).toBe("ai");
+    expect(segments[1].attributes["source"]).toBe("human");
   });
 
   it("collectRangeIds skips deleted content", () => {
@@ -291,13 +435,25 @@ describe("milestone-scoped attribution", () => {
     // As of milestone 1 the text is just "Hello " — all user-1.
     const m1Doc = docFromSnapshot(s1);
     expect(resolveRangeAttribution(m1Doc.getText("t"), 0, 6, full)).toEqual([
-      { from: 0, to: 6, userId: "user-1", timestamp: 1000 },
+      {
+        from: 0,
+        to: 6,
+        userId: "user-1",
+        timestamp: 1000,
+        attributes: { insert: "user-1", insertAt: 1000 },
+      },
     ]);
 
     // As of milestone 2, "World" is user-2.
     const m2Doc = docFromSnapshot(s2);
     expect(resolveRangeAttribution(m2Doc.getText("t"), 6, 5, full)).toEqual([
-      { from: 6, to: 11, userId: "user-2", timestamp: 2000 },
+      {
+        from: 6,
+        to: 11,
+        userId: "user-2",
+        timestamp: 2000,
+        attributes: { insert: "user-2", insertAt: 2000 },
+      },
     ]);
   });
 

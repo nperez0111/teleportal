@@ -5,12 +5,14 @@
  * but as pure functions over ContentMap.
  */
 
-import { type ContentMap, filterContentMap } from "./content-map";
+import { equalFlat } from "lib0/object";
+import { type ContentMap, attrsToRecord, filterContentMap } from "./content-map";
 
 export interface ActivityEntry {
   from: number;
   to: number;
   userId: string | null;
+  attributes: Record<string, unknown>;
 }
 
 /**
@@ -23,6 +25,7 @@ export function getActivity(
     from?: number;
     to?: number;
     userId?: string;
+    attributes?: Record<string, unknown>;
   },
 ): ActivityEntry[] {
   const filtered = filterContentMap(contentMap, (attrs) => {
@@ -36,6 +39,12 @@ export function getActivity(
     if (options?.userId !== undefined) {
       const userAttr = attrs.find((a) => a.name === "insert" || a.name === "delete");
       if (!userAttr || userAttr.val !== options.userId) return false;
+    }
+    if (options?.attributes) {
+      for (const [name, val] of Object.entries(options.attributes)) {
+        const attr = attrs.find((a) => a.name === name);
+        if (!attr || attr.val !== val) return false;
+      }
     }
     return true;
   });
@@ -51,6 +60,7 @@ export function getActivity(
         from: t,
         to: t,
         userId: userAttr ? (userAttr.val as string) : null,
+        attributes: attrsToRecord(attrs),
       });
     }
   });
@@ -64,6 +74,7 @@ export function getActivity(
         from: t,
         to: t,
         userId: userAttr ? (userAttr.val as string) : null,
+        attributes: attrsToRecord(attrs),
       });
     }
   });
@@ -74,7 +85,12 @@ export function getActivity(
   const grouped: ActivityEntry[] = [];
   for (const entry of activity) {
     const last = grouped.at(-1);
-    if (last && last.userId === entry.userId && entry.from - last.to < 1000) {
+    if (
+      last &&
+      last.userId === entry.userId &&
+      entry.from - last.to < 1000 &&
+      equalFlat(last.attributes, entry.attributes)
+    ) {
       last.to = entry.to;
     } else {
       grouped.push({ ...entry });
@@ -92,7 +108,7 @@ export function resolveItemAttribution(
   contentMap: ContentMap,
   clientID: number,
   clock: number,
-): { userId: string; timestamp: number } | null {
+): { userId: string; timestamp: number; attributes: Record<string, unknown> } | null {
   const ranges = contentMap.inserts.clients.get(clientID);
   if (!ranges) return null;
 
@@ -105,7 +121,7 @@ export function resolveItemAttribution(
         if (attr.name === "insertAt") timestamp = attr.val as number;
       }
       if (userId !== undefined && timestamp !== undefined) {
-        return { userId, timestamp };
+        return { userId, timestamp, attributes: attrsToRecord(range.attrs) };
       }
       return null;
     }

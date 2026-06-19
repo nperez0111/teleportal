@@ -115,6 +115,7 @@ export default defineConfig({
             { label: "Server", slug: "core-concepts/server" },
             { label: "Transport", slug: "core-concepts/transport" },
             { label: "Provider", slug: "core-concepts/provider" },
+            { label: "Attribution", slug: "core-concepts/attribution" },
             { label: "Milestones", slug: "core-concepts/milestones" },
             { label: "Authentication", slug: "core-concepts/authentication" },
           ],

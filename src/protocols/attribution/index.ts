@@ -3,6 +3,7 @@ export { getAttributionRpcHandlers, type AttributionRpcOptions } from "./server-
 export { collectRangeIds, resolveRangeAttribution, type RangeId } from "./resolve";
 
 export type {
+  ActivityOptions,
   AttributionFilter,
   AttributionActivityRequest,
   AttributionActivityResponse,

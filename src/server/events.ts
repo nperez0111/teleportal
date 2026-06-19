@@ -1,5 +1,6 @@
-import type { Message, ServerContext } from "teleportal";
+import type { Message, ServerContext, VersionedUpdate } from "teleportal";
 import type { EncodedContentMap } from "teleportal/storage";
+import type { Server } from "./server";
 import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
@@ -38,6 +39,18 @@ export type PresenceConfig<Context extends ServerContext = ServerContext> = {
    * 90_000 (90s, ~2 missed heartbeats).
    */
   presenceTtlMs?: number;
+};
+
+/**
+ * Configuration for attribution metadata attached to document updates.
+ */
+export type AttributionConfig<Context extends ServerContext = ServerContext> = {
+  getAttributes?: (ctx: {
+    context: Context;
+    update: VersionedUpdate;
+    server: Server<Context>;
+    clientId: string | undefined;
+  }) => Record<string, unknown> | Promise<Record<string, unknown>>;
 };
 
 export type SessionEvents<Context extends ServerContext = ServerContext> = {

@@ -60,6 +60,12 @@ function matchesFilter(filter: AttributionFilter): (attrs: ContentAttribute[]) =
         if (filter.to !== undefined && t > filter.to) return false;
       }
     }
+    if (filter.attributes) {
+      for (const [name, val] of Object.entries(filter.attributes)) {
+        const attr = attrs.find((a) => a.name === name);
+        if (!attr || attr.val !== val) return false;
+      }
+    }
     return true;
   };
 }
@@ -81,6 +87,7 @@ const activityHandler =
         from: payload.from,
         to: payload.to,
         userId: payload.userId,
+        attributes: payload.attributes,
       });
       return { response: { activity } };
     } catch (error) {
@@ -110,7 +117,10 @@ const getHandler =
       const filter = payload.filter;
       if (
         filter &&
-        (filter.userId !== undefined || filter.from !== undefined || filter.to !== undefined)
+        (filter.userId !== undefined ||
+          filter.from !== undefined ||
+          filter.to !== undefined ||
+          (filter.attributes && Object.keys(filter.attributes).length > 0))
       ) {
         const predicate = matchesFilter(filter);
         const filtered = filterContentMap(decodeContentMap(encoded), predicate);

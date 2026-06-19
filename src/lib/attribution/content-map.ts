@@ -23,6 +23,10 @@ export function createContentAttribute<V>(name: string, val: V): ContentAttribut
   return new ContentAttribute(name, val);
 }
 
+export function attrsToRecord(attrs: ContentAttribute[]): Record<string, unknown> {
+  return Object.fromEntries(attrs.map((a) => [a.name, a.val]));
+}
+
 // --- AttrRange ---
 
 export class AttrRange {

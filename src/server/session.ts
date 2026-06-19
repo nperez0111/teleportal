@@ -26,6 +26,7 @@ import type { EncodedContentMap } from "teleportal/storage";
 import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
 import { decodeEncryptedUpdate } from "teleportal/protocol/encryption";
 import {
+  ContentAttribute,
   type ContentIds,
   createContentAttribute,
   createContentIdsFromUpdate,
@@ -37,7 +38,12 @@ import {
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
-import type { DocumentMessageSource, PresenceConfig, SessionEvents } from "./events";
+import type {
+  AttributionConfig,
+  DocumentMessageSource,
+  PresenceConfig,
+  SessionEvents,
+} from "./events";
 import { emitWideEvent } from "./logger";
 import type { Server } from "./server";
 
@@ -77,6 +83,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   #rpcHandlers: RpcHandlerRegistry;
   #server: Server<Context>;
   #presenceConfig: PresenceConfig<Context> | undefined;
+  #attributionConfig: AttributionConfig<Context> | undefined;
   /**
    * The presence of each connected (local) client, keyed by session client id.
    * Records the numeric awareness clientID a client announced (cleartext, so it
@@ -120,6 +127,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     metricsCollector?: MetricsCollector;
     documentSizeConfig?: { warningThreshold?: number; limit?: number };
     presenceConfig?: PresenceConfig<Context>;
+    attributionConfig?: AttributionConfig<Context>;
     rpcHandlers?: RpcHandlerRegistry;
     server: Server<Context>;
   }) {
@@ -134,6 +142,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     this.#metrics = args.metricsCollector;
     this.#documentSizeConfig = args.documentSizeConfig;
     this.#presenceConfig = args.presenceConfig;
+    this.#attributionConfig = args.attributionConfig;
     this.#heartbeatIntervalMs = args.presenceConfig?.heartbeatIntervalMs ?? 30_000;
     this.#presenceTtlMs = args.presenceConfig?.presenceTtlMs ?? 90_000;
     this.#rpcHandlers = args.rpcHandlers ?? {};
@@ -639,12 +648,13 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     update: VersionedUpdate,
     context?: Context,
     source: DocumentMessageSource = "client",
+    clientId?: string,
   ) {
     try {
       let attribution: EncodedContentMap | undefined;
       if (source === "client" && context?.userId) {
         try {
-          attribution = this.#computeAttribution(update, context);
+          attribution = await this.#computeAttribution(update, context, clientId);
         } catch (error) {
           emitWideEvent("error", {
             event_type: "attribution_compute_failed",
@@ -689,7 +699,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     }
   }
 
-  #computeAttribution(update: VersionedUpdate, context: Context) {
+  async #computeAttribution(update: VersionedUpdate, context: Context, clientId?: string) {
     let contentIds: ContentIds;
     if (this.encrypted) {
       const message = decodeEncryptedUpdate(update.data as unknown as EncryptedUpdatePayload);
@@ -704,13 +714,31 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     }
     const now = Date.now();
     const userId = context.userId;
-    return encodeContentMap(
-      createContentMapFromContentIds(
-        contentIds,
-        [createContentAttribute("insert", userId), createContentAttribute("insertAt", now)],
-        [createContentAttribute("delete", userId), createContentAttribute("deleteAt", now)],
-      ),
-    );
+
+    const insertAttrs: ContentAttribute[] = [
+      createContentAttribute("insert", userId),
+      createContentAttribute("insertAt", now),
+    ];
+    const deleteAttrs: ContentAttribute[] = [
+      createContentAttribute("delete", userId),
+      createContentAttribute("deleteAt", now),
+    ];
+
+    if (this.#attributionConfig?.getAttributes) {
+      const custom = await this.#attributionConfig.getAttributes({
+        context,
+        update,
+        server: this.#server,
+        clientId,
+      });
+      for (const [name, val] of Object.entries(custom)) {
+        const attr = createContentAttribute(name, val);
+        insertAttrs.push(attr);
+        deleteAttrs.push(attr);
+      }
+    }
+
+    return encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
   }
 
   async #updateDocumentSizeMetrics(context?: Context) {
@@ -920,7 +948,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                 return;
               }
 
-              await this.write(message.payload.update, message.context, messageSource);
+              await this.write(message.payload.update, message.context, messageSource, client?.id);
 
               await Promise.all([
                 this.broadcast(message, client?.id),
