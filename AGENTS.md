@@ -39,3 +39,4 @@ There are several sub-packages built with documentation:
 - Type checking: `bun run test:types` (oxlint + tsgo via `vp check`)
 - A goal of this project is to have the minimum number of dependencies and to be as small as possible, so avoid adding dependencies unless otherwise specified
 - When fixing a bug, add a corresponding test case to prevent regression if reasonable to do so
+- Prefer a red-green-refactor cycle: before implementing a fix, write a test that captures the expected behavior and confirm it fails (red). Only then implement the fix to make the test pass (green). This forces you to articulate your expectations upfront rather than acting on a hunch. It doesn't need to slow you down — treat it as a thinking tool that clarifies what "correct" means before you start changing code.
