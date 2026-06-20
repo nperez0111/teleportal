@@ -465,6 +465,30 @@ describe("queries", () => {
     expect(activity.length).toBe(2);
   });
 
+  it("merges adjacent entries from the same user with matching custom attributes despite differing timestamps", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1500),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+    const activity = getActivity(merged);
+    expect(activity.length).toBe(1);
+    expect(activity[0].from).toBe(1000);
+    expect(activity[0].to).toBe(1500);
+  });
+
   it("resolveItemAttribution includes all attributes", () => {
     const ids = createContentIds();
     ids.inserts.add(42, 0, 10);

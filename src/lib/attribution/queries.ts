@@ -16,6 +16,22 @@ export interface ActivityEntry {
 }
 
 /**
+ * The built-in authorship attributes. These are compared via `userId` (insert/
+ * delete) or are per-update timestamps (insertAt/deleteAt), so they are excluded
+ * when deciding whether two adjacent activity entries can be grouped — otherwise
+ * the differing timestamps would defeat the time-window merge below.
+ */
+const BUILTIN_ATTR_NAMES = new Set(["insert", "insertAt", "delete", "deleteAt"]);
+
+function customAttributes(attributes: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, val] of Object.entries(attributes)) {
+    if (!BUILTIN_ATTR_NAMES.has(name)) out[name] = val;
+  }
+  return out;
+}
+
+/**
  * Extract an activity timeline from a ContentMap.
  * Returns a sorted list of time ranges with the user who made changes.
  */
@@ -89,7 +105,7 @@ export function getActivity(
       last &&
       last.userId === entry.userId &&
       entry.from - last.to < 1000 &&
-      equalFlat(last.attributes, entry.attributes)
+      equalFlat(customAttributes(last.attributes), customAttributes(entry.attributes))
     ) {
       last.to = entry.to;
     } else {
