@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import type { Provider } from "teleportal/providers";
 import type { Milestone } from "teleportal";
+import type { PlaygroundProvider } from "../utils/providers";
 
 interface MilestonePanelProps {
   onChangeSelectedMilestone: (milestone: Milestone | null) => void;
   selectedMilestone: Milestone | null;
-  provider: Provider | null;
+  provider: PlaygroundProvider | null;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -119,7 +119,7 @@ export function MilestonePanel({
     setLoading(true);
     setError(null);
     try {
-      const list = await provider.listMilestones();
+      const list = await provider.rpc.milestones.list();
       setMilestones(list.sort((a, b) => b.createdAt - a.createdAt));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load milestones");
@@ -134,7 +134,7 @@ export function MilestonePanel({
     setCreateLoading(true);
     setError(null);
     try {
-      const milestone = await provider.createMilestone(name.trim() || undefined);
+      const milestone = await provider.rpc.milestones.create(name.trim() || undefined);
       setMilestones((prev) => [milestone, ...prev].sort((a, b) => b.createdAt - a.createdAt));
       setShowCreateModal(false);
     } catch (err) {
@@ -162,7 +162,7 @@ export function MilestonePanel({
 
     setEditLoading(true);
     try {
-      const updated = await provider.updateMilestoneName(milestone.id, newName.trim());
+      const updated = await provider.rpc.milestones.updateName(milestone.id, newName.trim());
       setMilestones((prev) => prev.map((m) => (m.id === milestone.id ? updated : m)));
       setShowEditModal(false);
       setEditingMilestone(null);

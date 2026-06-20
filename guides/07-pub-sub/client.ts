@@ -1,5 +1,5 @@
 import { EventSource } from "eventsource";
-import { Provider } from "teleportal/providers";
+import { Provider, websocketTransport, httpTransport } from "teleportal/providers";
 
 // just for illustration, we use a random number to decide which server to use
 const serverPort = Math.random() < 0.5 ? 3000 : 3001;
@@ -9,7 +9,7 @@ console.log("using server on port:", serverPort);
 const provider = await Provider.create({
   url: `http://localhost:${serverPort}`,
   // bun requires a polyfill for EventSource
-  httpOptions: { EventSource },
+  transports: [websocketTransport(), httpTransport({ EventSource })],
   document: "test",
 });
 

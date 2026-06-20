@@ -52,7 +52,7 @@ export class EventManager {
         if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
           const transport =
-            connState.type === "connected" ? connState.context.connectionType : null;
+            connState.type === "connected" ? (connState as any).transport ?? null : null;
           if (
             (connState.type && connState.type !== this.connectionState?.type) ||
             transport !== this.connectionState?.transport

@@ -1,4 +1,6 @@
 export { getMilestoneRpcHandlers } from "./server-handlers";
+export { createMilestoneRpc } from "./client";
+export type { MilestoneRpc } from "./client";
 
 export type {
   MilestoneListRequest,
