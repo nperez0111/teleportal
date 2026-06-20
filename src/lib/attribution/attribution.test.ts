@@ -318,7 +318,11 @@ describe("queries", () => {
     ]);
 
     const result = resolveItemAttribution(map, 42, 5);
-    expect(result).toEqual({ userId: "user-1", timestamp: 1_700_000_000 });
+    expect(result).toEqual({
+      userId: "user-1",
+      timestamp: 1_700_000_000,
+      attributes: { insert: "user-1", insertAt: 1_700_000_000 },
+    });
 
     expect(resolveItemAttribution(map, 42, 10)).toBeNull();
     expect(resolveItemAttribution(map, 99, 0)).toBeNull();
@@ -391,6 +395,172 @@ describe("queries", () => {
 
     expect(activity.length).toBe(1);
     expect(activity[0].userId).toBe("user-2");
+  });
+
+  it("includes all attributes on activity entries", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    const map = createContentMapFromContentIds(ids, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const activity = getActivity(map);
+    expect(activity.length).toBe(1);
+    expect(activity[0].attributes).toEqual({
+      insert: "user-1",
+      insertAt: 1000,
+      source: "ai",
+    });
+  });
+
+  it("filters activity by custom attributes", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 2000),
+      createContentAttribute("source", "human"),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+
+    const aiOnly = getActivity(merged, { attributes: { source: "ai" } });
+    expect(aiOnly.length).toBe(1);
+    expect(aiOnly[0].attributes.source).toBe("ai");
+
+    const humanOnly = getActivity(merged, { attributes: { source: "human" } });
+    expect(humanOnly.length).toBe(1);
+    expect(humanOnly[0].attributes.source).toBe("human");
+  });
+
+  it("filters activity by structured (non-primitive) custom attribute values", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("meta", { kind: "ai", tags: ["a", "b"] }),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 2000),
+      createContentAttribute("meta", { kind: "human", tags: [] }),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+
+    // A fresh filter object (different reference, same value) must still match.
+    const aiOnly = getActivity(merged, { attributes: { meta: { kind: "ai", tags: ["a", "b"] } } });
+    expect(aiOnly.length).toBe(1);
+    expect(aiOnly[0].attributes.meta).toEqual({ kind: "ai", tags: ["a", "b"] });
+  });
+
+  it("does not merge adjacent entries with different structured custom attributes", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("meta", { kind: "ai" }),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1500),
+      createContentAttribute("meta", { kind: "human" }),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+    expect(getActivity(merged).length).toBe(2);
+
+    // Structurally-equal (but distinct-reference) meta should merge.
+    const ids3 = createContentIds();
+    ids3.inserts.add(3, 0, 2);
+    const map3 = createContentMapFromContentIds(ids3, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1200),
+      createContentAttribute("meta", { kind: "ai" }),
+    ]);
+    const sameMeta = mergeContentMaps([map1, map3]);
+    expect(getActivity(sameMeta).length).toBe(1);
+  });
+
+  it("does not merge adjacent entries with different custom attributes", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("source", "human"),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+    const activity = getActivity(merged);
+    expect(activity.length).toBe(2);
+  });
+
+  it("merges adjacent entries from the same user with matching custom attributes despite differing timestamps", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1500),
+      createContentAttribute("source", "ai"),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+    const activity = getActivity(merged);
+    expect(activity.length).toBe(1);
+    expect(activity[0].from).toBe(1000);
+    expect(activity[0].to).toBe(1500);
+  });
+
+  it("resolveItemAttribution includes all attributes", () => {
+    const ids = createContentIds();
+    ids.inserts.add(42, 0, 10);
+    const map = createContentMapFromContentIds(ids, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("model", "claude-4"),
+    ]);
+
+    const result = resolveItemAttribution(map, 42, 5);
+    expect(result).toEqual({
+      userId: "user-1",
+      timestamp: 1000,
+      attributes: { insert: "user-1", insertAt: 1000, model: "claude-4" },
+    });
   });
 });
 
@@ -486,4 +656,225 @@ describe("AttrRanges.getIds overlap flattening", () => {
         u: r.attrs.find((a) => a.name === "delete")?.val,
       }));
   }
+});
+
+describe("attribution insert/delete separation and custom attribute prefixing", () => {
+  function attrsOf(
+    map: ReturnType<typeof createContentMapFromContentIds>,
+    side: "inserts" | "deletes",
+    client: number,
+  ) {
+    const ranges = map[side].clients.get(client);
+    if (!ranges) return [];
+    return ranges.getIds().map((r) => Object.fromEntries(r.attrs.map((a) => [a.name, a.val])));
+  }
+
+  it("insert-only update: attrs land on inserts, deletes side is empty", () => {
+    const doc = new Y.Doc();
+    doc.getText("t").insert(0, "hello");
+    const update = Y.encodeStateAsUpdateV2(doc);
+
+    const ids = createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 });
+
+    expect(ids.inserts.isEmpty()).toBe(false);
+    expect(ids.deletes.isEmpty()).toBe(true);
+
+    const map = createContentMapFromContentIds(
+      ids,
+      [createContentAttribute("insert", "alice"), createContentAttribute("insertAt", 1000)],
+      [createContentAttribute("delete", "alice"), createContentAttribute("deleteAt", 1000)],
+    );
+
+    expect(attrsOf(map, "inserts", doc.clientID)).toEqual([{ insert: "alice", insertAt: 1000 }]);
+    expect(map.deletes.isEmpty()).toBe(true);
+  });
+
+  it("delete-only: attrs land on deletes side only", () => {
+    const ids = createContentIds();
+    ids.deletes.add(1, 0, 3);
+
+    const map = createContentMapFromContentIds(
+      ids,
+      [createContentAttribute("insert", "bob"), createContentAttribute("insertAt", 2000)],
+      [createContentAttribute("delete", "bob"), createContentAttribute("deleteAt", 2000)],
+    );
+
+    expect(map.inserts.isEmpty()).toBe(true);
+    expect(attrsOf(map, "deletes", 1)).toEqual([{ delete: "bob", deleteAt: 2000 }]);
+  });
+
+  it("mixed insert+delete update: each side gets only its own attrs", () => {
+    const doc = new Y.Doc();
+    doc.getText("t").insert(0, "abcde");
+    doc.getText("t").delete(1, 2);
+    const update = Y.encodeStateAsUpdateV2(doc);
+
+    const ids = createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 });
+
+    expect(ids.inserts.isEmpty()).toBe(false);
+    expect(ids.deletes.isEmpty()).toBe(false);
+
+    const map = createContentMapFromContentIds(
+      ids,
+      [createContentAttribute("insert", "carol"), createContentAttribute("insertAt", 3000)],
+      [createContentAttribute("delete", "carol"), createContentAttribute("deleteAt", 3000)],
+    );
+
+    for (const attrs of attrsOf(map, "inserts", doc.clientID)) {
+      expect(attrs).toHaveProperty("insert", "carol");
+      expect(attrs).toHaveProperty("insertAt", 3000);
+      expect(attrs).not.toHaveProperty("delete");
+      expect(attrs).not.toHaveProperty("deleteAt");
+    }
+
+    for (const attrs of attrsOf(map, "deletes", doc.clientID)) {
+      expect(attrs).toHaveProperty("delete", "carol");
+      expect(attrs).toHaveProperty("deleteAt", 3000);
+      expect(attrs).not.toHaveProperty("insert");
+      expect(attrs).not.toHaveProperty("insertAt");
+    }
+  });
+
+  it("custom attributes round-trip through encoding on both sides", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    ids.deletes.add(1, 10, 3);
+
+    const customAttrs = [
+      createContentAttribute("source", "ai"),
+      createContentAttribute("model", "claude-4"),
+    ];
+    const insertAttrs = [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      ...customAttrs,
+    ];
+    const deleteAttrs = [
+      createContentAttribute("delete", "user-1"),
+      createContentAttribute("deleteAt", 1000),
+      ...customAttrs,
+    ];
+
+    const map = createContentMapFromContentIds(ids, insertAttrs, deleteAttrs);
+
+    const encoded = encodeContentMap(map);
+    const decoded = decodeContentMap(encoded);
+
+    expect(attrsOf(decoded, "inserts", 1)).toEqual([
+      { insert: "user-1", insertAt: 1000, source: "ai", model: "claude-4" },
+    ]);
+
+    expect(attrsOf(decoded, "deletes", 1)).toEqual([
+      { delete: "user-1", deleteAt: 1000, source: "ai", model: "claude-4" },
+    ]);
+  });
+
+  it("simulates server #computeAttribution: custom attrs stored flat on both sides", () => {
+    const doc = new Y.Doc();
+    doc.getText("t").insert(0, "hello");
+    doc.getText("t").delete(0, 2);
+    const update = Y.encodeStateAsUpdateV2(doc);
+
+    const contentIds = createContentIdsFromUpdate({ version: 2, data: update as UpdateV2 });
+    const userId = "user-1";
+    const now = 5000;
+
+    const customAttrs = [
+      createContentAttribute("source", "ai"),
+      createContentAttribute("model", "claude-4"),
+    ];
+
+    const insertAttrs = [
+      createContentAttribute("insert", userId),
+      createContentAttribute("insertAt", now),
+      ...customAttrs,
+    ];
+    const deleteAttrs = [
+      createContentAttribute("delete", userId),
+      createContentAttribute("deleteAt", now),
+      ...customAttrs,
+    ];
+
+    const map = createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs);
+    const encoded = encodeContentMap(map);
+    const decoded = decodeContentMap(encoded);
+
+    for (const attrs of attrsOf(decoded, "inserts", doc.clientID)) {
+      expect(attrs).toEqual({
+        insert: "user-1",
+        insertAt: 5000,
+        source: "ai",
+        model: "claude-4",
+      });
+    }
+
+    for (const attrs of attrsOf(decoded, "deletes", doc.clientID)) {
+      expect(attrs).toEqual({
+        delete: "user-1",
+        deleteAt: 5000,
+        source: "ai",
+        model: "claude-4",
+      });
+    }
+
+    const activity = getActivity(decoded);
+    expect(activity.length).toBeGreaterThanOrEqual(1);
+    for (const entry of activity) {
+      expect(entry.userId).toBe("user-1");
+      expect(entry.attributes).toHaveProperty("source", "ai");
+      expect(entry.attributes).toHaveProperty("model", "claude-4");
+    }
+  });
+
+  it("getActivity returns delete-side activity with flat custom attrs", () => {
+    const ids = createContentIds();
+    ids.deletes.add(1, 0, 5);
+
+    const map = createContentMapFromContentIds(
+      ids,
+      [],
+      [
+        createContentAttribute("delete", "user-1"),
+        createContentAttribute("deleteAt", 9000),
+        createContentAttribute("source", "human"),
+      ],
+    );
+
+    const activity = getActivity(map);
+    expect(activity).toEqual([
+      {
+        from: 9000,
+        to: 9000,
+        userId: "user-1",
+        attributes: { delete: "user-1", deleteAt: 9000, source: "human" },
+      },
+    ]);
+  });
+
+  it("resolveItemAttribution only looks at the insert side", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    ids.deletes.add(1, 0, 5);
+
+    const map = createContentMapFromContentIds(
+      ids,
+      [
+        createContentAttribute("insert", "inserter"),
+        createContentAttribute("insertAt", 1000),
+        createContentAttribute("source", "ai"),
+      ],
+      [
+        createContentAttribute("delete", "deleter"),
+        createContentAttribute("deleteAt", 2000),
+        createContentAttribute("source", "human"),
+      ],
+    );
+
+    const result = resolveItemAttribution(map, 1, 2);
+    expect(result).toEqual({
+      userId: "inserter",
+      timestamp: 1000,
+      attributes: { insert: "inserter", insertAt: 1000, source: "ai" },
+    });
+  });
 });

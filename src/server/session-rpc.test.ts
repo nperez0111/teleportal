@@ -430,5 +430,95 @@ describe("Session RPC Integration", () => {
 
       await sessionWithHandlers[Symbol.asyncDispose]();
     });
+
+    it("should use handler's encrypted override on the response message", async () => {
+      await session.load();
+
+      const rpcHandlers = {
+        encryptedResponse: {
+          handler: async (_payload: unknown, _context: unknown) => {
+            return {
+              response: { snapshot: new Uint8Array([1, 2, 3]) },
+              encrypted: true,
+            };
+          },
+        },
+      };
+
+      const sessionWithHandlers = new Session({
+        documentId: "test-doc",
+        namespacedDocumentId: "test-doc",
+        id: "session-enc-override",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {},
+        rpcHandlers,
+        server: mockServer,
+      });
+
+      const rpcMessage = new RpcMessage<ServerContext>(
+        "test-doc",
+        { type: "success", payload: {} },
+        "encryptedResponse",
+        "request",
+        undefined,
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      await sessionWithHandlers.apply(rpcMessage, client as any);
+
+      expect(client.sentMessages.length).toBe(1);
+      const response = client.sentMessages[0];
+      expect(response).toBeInstanceOf(RpcMessage);
+      if (response instanceof RpcMessage) {
+        expect(response.encrypted).toBe(true);
+        expect(response.payload.type).toBe("success");
+      }
+
+      await sessionWithHandlers[Symbol.asyncDispose]();
+    });
+
+    it("should allow plaintext RPC messages on encrypted sessions", async () => {
+      const encryptedSession = new Session({
+        documentId: "enc-doc",
+        namespacedDocumentId: "enc-doc",
+        id: "session-enc",
+        encrypted: true,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {},
+        rpcHandlers: {
+          query: {
+            handler: async () => ({ response: { ok: true } }),
+          },
+        },
+        server: mockServer,
+      });
+
+      const rpcMessage = new RpcMessage<ServerContext>(
+        "enc-doc",
+        { type: "success", payload: {} },
+        "query",
+        "request",
+        undefined,
+        { clientId: "client-1", userId: "user-1", room: "room" },
+        false,
+      );
+
+      await encryptedSession.apply(rpcMessage, client as any);
+
+      expect(client.sentMessages.length).toBe(1);
+      const response = client.sentMessages[0];
+      expect(response).toBeInstanceOf(RpcMessage);
+      if (response instanceof RpcMessage) {
+        expect(response.payload.type).toBe("success");
+      }
+
+      await encryptedSession[Symbol.asyncDispose]();
+    });
   });
 });

@@ -11,8 +11,9 @@
  * to resolve content positions.
  */
 
+import { equalityDeep } from "lib0/function";
 import type * as Y from "yjs";
-import type { ContentMap } from "teleportal/attribution";
+import { attrsToRecord, type ContentMap } from "teleportal/attribution";
 import type { AttributedSegment } from "./methods";
 
 /**
@@ -99,6 +100,7 @@ export function resolveRangeAttribution(
         to: from + (overlapEnd - overlapStart),
         userId: userAttr ? String(userAttr.val) : null,
         timestamp: timeAttr ? Number(timeAttr.val) : null,
+        attributes: attrsToRecord(range.attrs),
       });
     }
   }
@@ -113,7 +115,8 @@ export function resolveRangeAttribution(
       last &&
       last.to === segment.from &&
       last.userId === segment.userId &&
-      last.timestamp === segment.timestamp
+      last.timestamp === segment.timestamp &&
+      equalityDeep(last.attributes, segment.attributes)
     ) {
       last.to = segment.to;
     } else {

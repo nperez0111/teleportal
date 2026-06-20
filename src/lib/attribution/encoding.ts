@@ -7,7 +7,7 @@
  *
  * Format (IdSet):
  *   VarUint: numClients
- *   For each client (sorted by clientID):
+ *   For each client (sorted by clientID descending):
  *     VarUint: clientID
  *     VarUint: numberOfRanges
  *     For each range (delta-encoded):
@@ -15,7 +15,11 @@
  *       VarUint: length - 1
  *
  * Format (IdMap / ContentMap):
- *   Same as IdSet but each range also has:
+ *   VarUint: numClients
+ *   For each client (sorted by clientID ascending):
+ *     VarUint: clientID delta from previous (first client is absolute)
+ *     VarUint: numberOfRanges
+ *     For each range (delta-encoded clock/len as IdSet, plus):
  *     VarUint: numberOfAttributes
  *     For each attribute:
  *       VarUint: attrIndex (into deduplication table)
@@ -41,7 +45,7 @@ import {
 // --- IdSet encoding ---
 
 function writeIdSet(encoder: encoding.Encoder, idSet: IdSet) {
-  const clients = [...idSet.clients.entries()].sort(([a], [b]) => a - b);
+  const clients = [...idSet.clients.entries()].sort(([a], [b]) => b - a);
   encoding.writeVarUint(encoder, clients.length);
 
   for (const [client, ranges] of clients) {
@@ -118,8 +122,10 @@ function writeIdMap(encoder: encoding.Encoder, idMap: IdMap) {
   const clients = [...idMap.clients.entries()].sort(([a], [b]) => a - b);
   encoding.writeVarUint(encoder, clients.length);
 
+  let lastClient = 0;
   for (const [client, ranges] of clients) {
-    encoding.writeVarUint(encoder, client);
+    encoding.writeVarUint(encoder, client - lastClient);
+    lastClient = client;
     const ids = ranges.getIds();
     encoding.writeVarUint(encoder, ids.length);
 
@@ -168,8 +174,10 @@ function readIdMap(decoder: decoding.Decoder): IdMap {
 
   const numClients = decoding.readVarUint(decoder);
 
+  let lastClient = 0;
   for (let i = 0; i < numClients; i++) {
-    const client = decoding.readVarUint(decoder);
+    const client = lastClient + decoding.readVarUint(decoder);
+    lastClient = client;
     const numRanges = decoding.readVarUint(decoder);
     const ranges: AttrRange[] = [];
 

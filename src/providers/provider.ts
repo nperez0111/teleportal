@@ -32,6 +32,7 @@ import {
 } from "../protocols/milestone";
 import {
   resolveRangeAttribution,
+  type ActivityOptions,
   type AttributedSegment,
   type AttributionActivityResponse,
   type AttributionFilter,
@@ -41,7 +42,7 @@ import {
   changesetContentMap,
   createContentIdsFromUpdate,
   decodeContentMap,
-  getActivity,
+  getActivity as getActivityFromMap,
   milestoneContentMap,
   resolveItemAttribution,
   type ActivityEntry,
@@ -835,6 +836,7 @@ export class Provider<
         this.document,
         "milestoneCreate",
         { name, snapshot },
+        { encrypted: !!this.encryptionKey },
       );
 
       return this.#createMilestoneFromMeta(response.milestone);
@@ -913,15 +915,33 @@ export class Provider<
   }
 
   /**
-   * Fetch the attribution activity timeline for the current document.
+   * Attribution activity timeline — the single entrypoint for "who did what, when?"
    *
-   * Works for encrypted documents — the server resolves this from authorship
-   * and timestamps without needing the document content.
+   * All filters compose with AND semantics. Without `milestone` or `changeset`,
+   * the query runs server-side via RPC (efficient, no ContentMap fetch). With
+   * milestone/changeset scoping, the ContentMap is fetched and filtered client-side.
    *
-   * @param options - Optional time range (`from`/`to`, ms) and `userId` filter
-   * @returns A sorted list of activity entries
+   * @example
+   * ```ts
+   * provider.getActivity()                                        // all activity
+   * provider.getActivity({ userId: "alice" })                     // by user
+   * provider.getActivity({ from: hourAgo, to: now })              // time range
+   * provider.getActivity({ milestone: milestoneId })              // scoped to milestone
+   * provider.getActivity({ changeset: [fromId, toId] })           // between milestones
+   * provider.getActivity({ attributes: { source: "ai" } })          // custom attrs
+   * ```
    */
-  async getActivity(options?: AttributionFilter): Promise<ActivityEntry[]> {
+  async getActivity(options?: ActivityOptions): Promise<ActivityEntry[]> {
+    if (options?.milestone && options?.changeset) {
+      throw new Error("getActivity: `milestone` and `changeset` are mutually exclusive");
+    }
+    if (options?.milestone || options?.changeset) {
+      const map = options.milestone
+        ? await this.getMilestoneContentMap(options.milestone)
+        : await this.getChangesetContentMap(options.changeset![0], options.changeset![1]);
+      if (!map) return [];
+      return getActivityFromMap(map, options);
+    }
     const response = await this.#rpcClient.sendRequest<AttributionActivityResponse>(
       this.document,
       "attributionActivity",
@@ -943,8 +963,11 @@ export class Provider<
       "attributionGet",
       filter ? { filter } : {},
     );
-    this.#attributionMap = response.contentMap ? decodeContentMap(response.contentMap) : null;
-    return this.#attributionMap;
+    const decoded = response.contentMap ? decodeContentMap(response.contentMap) : null;
+    if (!filter) {
+      this.#attributionMap = decoded;
+    }
+    return decoded;
   }
 
   /**
@@ -964,7 +987,7 @@ export class Provider<
   async resolveAttribution(
     clientID: number,
     clock: number,
-  ): Promise<{ userId: string; timestamp: number } | null> {
+  ): Promise<{ userId: string; timestamp: number; attributes: Record<string, unknown> } | null> {
     const map = await this.#ensureAttributionMap();
     if (!map) return null;
     return resolveItemAttribution(map, clientID, clock);
@@ -992,23 +1015,21 @@ export class Provider<
   }
 
   /**
+   * Invalidate the cached attribution ContentMap. The next call to
+   * resolveAttribution, getAttributionForRange, or any milestone method
+   * will re-fetch the ContentMap from the server.
+   */
+  invalidateAttributionCache(): void {
+    this.#attributionMap = undefined;
+  }
+
+  /**
    * The operation IDs contained in a milestone, derived from its (decrypted)
    * snapshot. These identify which CRDT operations existed as of the milestone.
    */
   async #milestoneContentIds(milestoneId: string): Promise<ContentIds> {
     const snapshot = await this.getMilestoneSnapshot(milestoneId);
     return createContentIdsFromUpdate({ version: 2, data: snapshot as any });
-  }
-
-  /**
-   * Reconstruct the Y.Doc state captured by a milestone from its (decrypted)
-   * snapshot, for resolving content positions against that historical state.
-   */
-  async #milestoneDoc(milestoneId: string): Promise<Y.Doc> {
-    const snapshot = await this.getMilestoneSnapshot(milestoneId);
-    const doc = new Y.Doc();
-    Y.applyUpdateV2(doc, snapshot as unknown as Uint8Array);
-    return doc;
   }
 
   /**
@@ -1027,19 +1048,6 @@ export class Provider<
   }
 
   /**
-   * Activity timeline for the content present in a milestone.
-   * @param options - Optional time range (`from`/`to`, ms) and `userId` filter
-   */
-  async getMilestoneActivity(
-    milestoneId: string,
-    options?: AttributionFilter,
-  ): Promise<ActivityEntry[]> {
-    const map = await this.getMilestoneContentMap(milestoneId);
-    if (!map) return [];
-    return getActivity(map, options);
-  }
-
-  /**
    * Attribution for the changes made between two milestones — the operations
    * added from `fromMilestoneId` to `toMilestoneId` (both new inserts and new
    * deletes). Returns null when no attribution data exists.
@@ -1055,43 +1063,6 @@ export class Provider<
     ]);
     if (!map) return null;
     return changesetContentMap(map, fromIds, toIds);
-  }
-
-  /**
-   * Activity timeline for the changes made between two milestones.
-   * @param options - Optional time range (`from`/`to`, ms) and `userId` filter
-   */
-  async getChangesetActivity(
-    fromMilestoneId: string,
-    toMilestoneId: string,
-    options?: AttributionFilter,
-  ): Promise<ActivityEntry[]> {
-    const map = await this.getChangesetContentMap(fromMilestoneId, toMilestoneId);
-    if (!map) return [];
-    return getActivity(map, options);
-  }
-
-  /**
-   * Resolve attribution for a content range as it existed in a milestone.
-   * Rebuilds the milestone's document from its (decrypted) snapshot, selects the
-   * target Y type via `select`, and resolves the range against the document's
-   * full ContentMap. Runs entirely client-side, so it works for E2EE documents.
-   *
-   * @param select - Picks the Y type from the rebuilt milestone Y.Doc
-   *   (e.g. `(doc) => doc.getText("body")`)
-   */
-  async getMilestoneAttributionForRange(
-    milestoneId: string,
-    select: (doc: Y.Doc) => Y.AbstractType<any>,
-    index: number,
-    length: number,
-  ): Promise<AttributedSegment[]> {
-    const [map, doc] = await Promise.all([
-      this.#ensureAttributionMap(),
-      this.#milestoneDoc(milestoneId),
-    ]);
-    if (!map) return [];
-    return resolveRangeAttribution(select(doc), index, length, map);
   }
 
   /**

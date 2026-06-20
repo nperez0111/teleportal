@@ -181,14 +181,15 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
   async handleUpdate(
     key: string,
     update: VersionedUpdate,
-    _attribution?: EncodedContentMap,
+    attribution?: EncodedContentMap,
   ): Promise<void> {
-    await this.handleEncryptedUpdate(key, update.data as EncryptedUpdatePayload);
+    await this.handleEncryptedUpdate(key, update.data as EncryptedUpdatePayload, attribution);
   }
 
   async handleEncryptedUpdate(
     key: string,
     update: EncryptedUpdatePayload,
+    attribution?: EncodedContentMap,
   ): Promise<EncryptedUpdatePayload | null> {
     return this.transaction(key, async () => {
       const decoded = decodeEncryptedUpdate(update);
@@ -212,8 +213,18 @@ export abstract class EncryptedDocumentStorage implements DocumentStorage {
         return null;
       }
       const storedUpdates = await this.storeUpdates(key, decoded.updates);
-      return storedUpdates.length > 0 ? encodeEncryptedUpdateMessages(storedUpdates) : null;
+      if (storedUpdates.length === 0) {
+        return null;
+      }
+      if (attribution) {
+        await this.storeAttribution(key, attribution);
+      }
+      return encodeEncryptedUpdateMessages(storedUpdates);
     });
+  }
+
+  protected async storeAttribution(_key: string, _attribution: EncodedContentMap): Promise<void> {
+    // Subclasses override to persist attribution data.
   }
 
   async handleEncryptedSyncStep2(

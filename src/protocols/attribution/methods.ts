@@ -9,6 +9,18 @@ export type AttributionFilter = {
   userId?: string;
   from?: number;
   to?: number;
+  attributes?: Record<string, unknown>;
+};
+
+/**
+ * Options for {@link Provider.getActivity}. Extends {@link AttributionFilter}
+ * with optional milestone/changeset scoping — all filters compose with AND.
+ */
+export type ActivityOptions = AttributionFilter & {
+  /** Scope to operations present in this milestone. */
+  milestone?: string;
+  /** Scope to operations added between two milestones: `[fromId, toId]`. */
+  changeset?: [from: string, to: string];
 };
 
 export type AttributionActivityRequest = AttributionFilter;
@@ -39,4 +51,5 @@ export type AttributedSegment = {
   to: number;
   userId: string | null;
   timestamp: number | null;
+  attributes: Record<string, unknown>;
 };

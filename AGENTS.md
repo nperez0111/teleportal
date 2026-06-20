@@ -21,6 +21,7 @@ There are several sub-packages built with documentation:
 - [`teleportal/http`](./src/http/README.md) - HTTP handlers
 - [`teleportal/protocol`](./src/lib/protocol/README.md) - Protocol encoding/decoding
 - [`teleportal/protocol/encryption`](./src/lib/protocol/encryption/README.md) - Encryption protocol
+- [`teleportal/attribution`](./src/lib/attribution/README.md) - Attribution data model, set operations, and encoding
 - [`teleportal/protocols/attribution`](./src/protocols/attribution/README.md) - Attribution (authorship) read RPC methods
 - [`teleportal/providers`](./src/providers/README.md) - Provider and connection architecture
 - [`teleportal/transports`](./src/transports/README.md) - Transport middleware
@@ -38,3 +39,4 @@ There are several sub-packages built with documentation:
 - Type checking: `bun run test:types` (oxlint + tsgo via `vp check`)
 - A goal of this project is to have the minimum number of dependencies and to be as small as possible, so avoid adding dependencies unless otherwise specified
 - When fixing a bug, add a corresponding test case to prevent regression if reasonable to do so
+- Prefer a red-green-refactor cycle: before implementing a fix, write a test that captures the expected behavior and confirm it fails (red). Only then implement the fix to make the test pass (green). This forces you to articulate your expectations upfront rather than acting on a hunch. It doesn't need to slow you down — treat it as a thinking tool that clarifies what "correct" means before you start changing code.

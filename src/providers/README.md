@@ -399,6 +399,54 @@ await provider.deleteMilestone(milestone.id);
 await provider.restoreMilestone(milestone.id);
 ```
 
+### Attribution
+
+The `Provider` exposes attribution (authorship tracking) via two primary methods and
+a few lower-level helpers. See [`teleportal/attribution`](../lib/attribution/README.md) for
+the data model and [`teleportal/protocols/attribution`](../protocols/attribution/README.md)
+for the RPC protocol.
+
+#### `getActivity` — who did what, when?
+
+Single composable entrypoint for activity timelines. All filters combine with AND:
+
+```typescript
+provider.getActivity(); // all activity
+provider.getActivity({ userId: "alice" }); // by user
+provider.getActivity({ from: hourAgo, to: now }); // time range
+provider.getActivity({ milestone: milestoneId }); // scoped to milestone
+provider.getActivity({ changeset: [fromId, toId] }); // between milestones
+provider.getActivity({ milestone: id, userId: "alice" }); // combine filters
+provider.getActivity({ attributes: { "insert:source": "ai" } }); // custom attrs
+// → [{ from, to, userId, attributes }, ...]
+```
+
+#### `getAttributionForRange` — who wrote this content?
+
+Positional attribution — maps content offsets to authors:
+
+```typescript
+const text = provider.doc.getText("body");
+const segments = await provider.getAttributionForRange(text, 0, 100);
+// → [{ from, to, userId, timestamp, attributes }, ...]
+```
+
+#### Lower-level methods
+
+```typescript
+// Raw ContentMap access (fetched once, cached)
+const map = await provider.getAttributionMap();
+const filtered = await provider.getAttributionMap({ userId: "alice" });
+provider.invalidateAttributionCache();
+
+// Point lookup by CRDT ID
+const author = await provider.resolveAttribution(clientID, clock);
+
+// Milestone-scoped ContentMaps (for advanced use)
+const milestoneMap = await provider.getMilestoneContentMap(milestoneId);
+const changesetMap = await provider.getChangesetContentMap(fromId, toId);
+```
+
 ### Subdocuments
 
 ```typescript

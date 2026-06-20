@@ -18,7 +18,12 @@ import { type RateLimitRule, withRateLimit } from "teleportal/transports/rate-li
 import { Observable } from "../lib/utils";
 import { register } from "../monitoring/metrics";
 import { Client } from "./client";
-import type { ClientDisconnectReason, PresenceConfig, ServerEvents } from "./events";
+import type {
+  AttributionConfig,
+  ClientDisconnectReason,
+  PresenceConfig,
+  ServerEvents,
+} from "./events";
 import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -44,6 +49,7 @@ export type ServerOptions<Context extends ServerContext> = {
     fileId?: string;
     message: Message<NoInfer<Context>>;
     type: "read" | "write";
+    rpcMethod?: string;
   }) => Promise<boolean>;
 
   /**
@@ -77,6 +83,11 @@ export type ServerOptions<Context extends ServerContext> = {
    * a session's peers.
    */
   presenceConfig?: PresenceConfig<NoInfer<Context>>;
+
+  /**
+   * Configuration for custom attribution metadata on document updates.
+   */
+  attributionConfig?: AttributionConfig<NoInfer<Context>>;
 
   /**
    * RPC handlers for the server.
@@ -343,6 +354,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           metricsCollector: this.#metrics,
           documentSizeConfig: this.#options.documentSizeConfig,
           presenceConfig: this.#options.presenceConfig,
+          attributionConfig: this.#options.attributionConfig,
           rpcHandlers: this.#options.rpcHandlers,
           server: this,
         });
@@ -606,6 +618,8 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
             fileId,
             message,
             type,
+            rpcMethod:
+              message.type === "rpc" ? (message as RpcMessage<Context>).rpcMethod : undefined,
           });
 
           if (!ok) {
@@ -629,7 +643,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
                   {
                     type: "error",
                     statusCode: 403,
-                    details: "Permission denied for file upload",
+                    details: "Permission denied",
                   },
                   message.rpcMethod,
                   "response",
@@ -701,9 +715,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
                 encrypted: message.encrypted,
                 client,
                 context: message.context,
-                // Presence is always cleartext metadata; it must attach to the
-                // existing session regardless of the document's encryption mode.
-                ignoreEncryptionMismatch: message.type === "presence",
+                // The `encrypted` flag on a message describes whether its
+                // payload is encrypted, not which session type it belongs to.
+                // Only `doc` messages use the flag for session routing (they
+                // carry document content processed differently per mode).
+                // Presence and RPC payloads are independent of the document's
+                // encryption state and must route to the existing session
+                // regardless of their own `encrypted` value.
+                ignoreEncryptionMismatch: message.type === "presence" || message.type === "rpc",
               });
               wideEvent.session_id = session.id;
 

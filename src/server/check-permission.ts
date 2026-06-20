@@ -1,10 +1,18 @@
 import type { ServerOptions } from "./server";
 import type { TokenManager, TokenPayload } from "teleportal/token";
 
+const WRITE_RPC_METHODS = new Set([
+  "milestoneCreate",
+  "milestoneUpdateName",
+  "milestoneDelete",
+  "milestoneRestore",
+  "fileUpload",
+]);
+
 export function checkPermissionWithTokenManager(
   tokenManager: TokenManager,
 ): ServerOptions<any>["checkPermission"] {
-  return async ({ context, documentId, message }) => {
+  return async ({ context, documentId, message, rpcMethod }) => {
     // ACK messages don't require permission checks - they're acknowledgments
     if (message.type === "ack") {
       return true;
@@ -15,10 +23,12 @@ export function checkPermissionWithTokenManager(
       return true;
     }
 
-    // RPC messages - permission checks are handled by the RPC handlers themselves
-    // based on the method being called
     if (message.type === "rpc") {
-      return true;
+      if (!documentId) return true;
+
+      const tokenPayload = context as unknown as TokenPayload;
+      const requiredPermission = WRITE_RPC_METHODS.has(rpcMethod!) ? "write" : "read";
+      return tokenManager.hasDocumentPermission(tokenPayload, documentId, requiredPermission);
     }
 
     if (message.type === "doc") {

@@ -6,10 +6,11 @@ Read-only RPC methods that surface document **attribution** (authorship) to clie
 
 When attribution storage is enabled, the server records an encoded **ContentMap**
 per document — a mapping from CRDT operation ID ranges `(clientID, clock)` to
-`userId` + `timestamp`. See [`teleportal/attribution`](../../lib/attribution) and the
-`DocumentStorage.retrieveAttribution()` storage hook.
+authorship metadata (userId, timestamp, and optional custom attributes). See
+[`teleportal/attribution`](../../lib/attribution/README.md) for the data model and
+`DocumentStorage.retrieveAttribution()` for the storage hook.
 
-This protocol exposes that latent data on demand (it is **not** synced continuously).
+This protocol exposes that data on demand (it is **not** synced continuously).
 It answers two questions:
 
 - **"What happened, and when?"** — an activity timeline, optionally filtered by user
@@ -31,16 +32,25 @@ const server = new Server({
 });
 ```
 
-RPC messages bypass the server's global permission check, so attribution-specific
-authorization is supplied here:
+Attribution methods are covered by the server's global `checkPermission` hook.
+Use the `rpcMethod` field for method-level authorization:
 
 ```typescript
-getAttributionRpcHandlers({
-  checkPermission: (ctx) => canReadAttribution(ctx.userId, ctx.documentId),
+const server = new Server({
+  storage: async (ctx) => storage,
+  checkPermission: async ({ context, documentId, rpcMethod }) => {
+    if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
+      return canReadAttribution(context.userId, documentId);
+    }
+    // ... other permission logic
+  },
+  rpcHandlers: {
+    ...getAttributionRpcHandlers(),
+  },
 });
 ```
 
-When `checkPermission` returns `false` (or throws), the call fails with a `403`.
+When `checkPermission` returns `false` (or throws), the RPC call fails with a `403`.
 
 ## Client Integration
 
@@ -54,13 +64,15 @@ const provider = await Provider.create({
   document: "my-doc",
 });
 
-// Activity timeline (optionally filtered).
+// Activity timeline — composable filters
 const activity = await provider.getActivity({ userId: "user-1" });
+const milestoneActivity = await provider.getActivity({ milestone: milestoneId });
+const changeset = await provider.getActivity({ changeset: [fromId, toId] });
 
 // Who wrote characters 0..40 of a Y.Text?
 const text = provider.doc.getText("body");
 const segments = await provider.getAttributionForRange(text, 0, 40);
-// -> [{ from, to, userId, timestamp }, ...]
+// -> [{ from, to, userId, timestamp, attributes }, ...]
 
 // Point lookup by CRDT id, or the raw decoded ContentMap.
 const author = await provider.resolveAttribution(clientID, clock);
@@ -76,22 +88,24 @@ helpers reuse that cache, fetching once on first use.
 
 Activity timeline for the document.
 
-**Request:** `{ from?: number; to?: number; userId?: string }` (timestamps in ms)
+**Request:** `{ from?: number; to?: number; userId?: string; attributes?: Record<string, unknown> }`
+(timestamps in ms; `attributes` is an equality-match filter on attribute values by name)
 
-**Response:** `{ activity: Array<{ from: number; to: number; userId: string | null }> }`
+**Response:** `{ activity: Array<{ from, to, userId, attributes }> }` — each entry
+includes an `attributes` record with all standard and custom attributes.
 
-Works for **encrypted** documents — it is derived purely from authorship and
-timestamps and never needs the document content.
+Works for **encrypted** documents — it is derived purely from authorship metadata
+and never needs the document content.
 
 ### attributionGet
 
 The encoded ContentMap for client-side resolution.
 
-**Request:** `{ filter?: { from?: number; to?: number; userId?: string } }`
+**Request:** `{ filter?: { from?: number; to?: number; userId?: string; attributes?: Record<string, unknown> } }`
 
 **Response:** `{ contentMap: Uint8Array | null }` — `null` when the storage has no
-attribution for the document. When a filter is supplied, the map is narrowed
-server-side before encoding.
+attribution for the document. When a filter is supplied (including custom attribute
+filters), the map is narrowed server-side before encoding.
 
 ## Milestones
 
@@ -129,15 +143,65 @@ The underlying pure helpers live in `teleportal/attribution`:
 
 ## Encryption boundary
 
-For end-to-end-encrypted documents the server holds only ciphertext plus the
-plaintext ContentMap. It **can** answer `attributionActivity`, but it **cannot** map
-a content position to a CRDT id — only the client can, against its decrypted
-document. `getAttributionForRange` (and the `resolveRangeAttribution` /
+Attribution works for E2EE documents. The encrypted client extracts CRDT operation
+IDs `(clientID, clock)` from the plaintext update **before** encrypting, and sends
+them alongside the ciphertext in the encrypted wire format. These IDs are structural
+metadata — they reveal which client wrote how many operations, but never the content
+itself. The server tags them with userId/timestamp and stores the resulting ContentMap
+exactly as it does for unencrypted documents.
+
+The server **can** answer `attributionActivity` (derived from metadata only), but it
+**cannot** map a content position to a CRDT id — only the client can, against its
+decrypted document. `getAttributionForRange` (and the `resolveRangeAttribution` /
 `collectRangeIds` utilities behind it) therefore run entirely client-side and work
 identically for encrypted and unencrypted documents.
 
+## Custom Attributes
+
+Attribution supports custom metadata beyond the standard `userId` / `timestamp` fields.
+To attach custom attributes, provide an `attributionConfig` when creating the server.
+The returned attributes are stored as-is on both the insert and delete sides of the
+ContentMap:
+
+```typescript
+import { Server } from "teleportal/server";
+
+const server = new Server({
+  storage: async (ctx) => storage,
+  attributionConfig: {
+    getAttributes: ({ context }) => ({
+      source: context.source ?? "human",
+    }),
+  },
+  rpcHandlers: {
+    ...getAttributionRpcHandlers(),
+  },
+});
+```
+
+Custom attributes are encoded, stored, and transmitted alongside standard attributes.
+They can be used for AI agent tagging, change source tracking, or any domain-specific
+metadata.
+
+## Server Events
+
+The server emits a `document-attribution` event on every attributed update, providing
+a hook for implementations that need to react to attribution changes in real-time:
+
+```typescript
+server.on(
+  "document-attribution",
+  ({ documentId, namespacedDocumentId, sessionId, userId, timestamp, contentMap }) => {
+    // contentMap is the EncodedContentMap for just this update (not the full document)
+  },
+);
+```
+
+This event fires for both encrypted and unencrypted documents.
+
 ## See Also
 
-- [`teleportal/attribution`](../../lib/attribution) - ContentMap types and query helpers
-- [Protocols Overview](../README.md) - Package overview
-- [Milestone Methods](../milestone/README.md) - Milestone CRUD operations via RPC
+- [`teleportal/attribution`](../../lib/attribution/README.md) — ContentMap data model, set operations, and query helpers
+- [Protocols Overview](../README.md) — Package overview
+- [Milestone Methods](../milestone/README.md) — Milestone CRUD operations via RPC
+- [`teleportal/providers`](../../providers/README.md) — Provider API for attribution queries

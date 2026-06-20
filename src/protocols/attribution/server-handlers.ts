@@ -1,3 +1,4 @@
+import { equalityDeep } from "lib0/function";
 import {
   type RpcError,
   type RpcHandlerRegistry,
@@ -19,22 +20,6 @@ import {
   type AttributionGetRequest,
   type AttributionGetResponse,
 } from "./methods";
-
-export interface AttributionRpcOptions {
-  /**
-   * Optional gate for attribution reads. RPC messages bypass the server's
-   * global permission check, so attribution-specific authorization lives here.
-   * Return false (or throw) to deny. When omitted, reads are allowed for any
-   * client with an open session for the document (milestone parity).
-   */
-  checkPermission?: (context: RpcServerContext) => boolean | Promise<boolean>;
-}
-
-const FORBIDDEN: RpcError = {
-  type: "error",
-  statusCode: 403,
-  details: "Attribution access denied",
-};
 
 async function loadContentMap(context: RpcServerContext): Promise<EncodedContentMap | null> {
   const retrieve = context.session.storage.retrieveAttribution;
@@ -60,74 +45,74 @@ function matchesFilter(filter: AttributionFilter): (attrs: ContentAttribute[]) =
         if (filter.to !== undefined && t > filter.to) return false;
       }
     }
+    if (filter.attributes) {
+      for (const [name, val] of Object.entries(filter.attributes)) {
+        const attr = attrs.find((a) => a.name === name);
+        if (!attr || !equalityDeep(attr.val, val)) return false;
+      }
+    }
     return true;
   };
 }
 
-const activityHandler =
-  (options: AttributionRpcOptions) =>
-  async (
-    payload: AttributionActivityRequest,
-    context: RpcServerContext,
-  ): Promise<{ response: AttributionActivityResponse | RpcError }> => {
-    try {
-      if (options.checkPermission && !(await options.checkPermission(context))) {
-        return { response: FORBIDDEN };
-      }
-      const encoded = await loadContentMap(context);
-      if (!encoded) return { response: { activity: [] } };
+const activityHandler = async (
+  payload: AttributionActivityRequest,
+  context: RpcServerContext,
+): Promise<{ response: AttributionActivityResponse | RpcError }> => {
+  try {
+    const encoded = await loadContentMap(context);
+    if (!encoded) return { response: { activity: [] } };
 
-      const activity = getActivity(decodeContentMap(encoded), {
-        from: payload.from,
-        to: payload.to,
-        userId: payload.userId,
-      });
-      return { response: { activity } };
-    } catch (error) {
-      return {
-        response: {
-          type: "error",
-          statusCode: 500,
-          details: error instanceof Error ? error.message : "Failed to read attribution activity",
-        },
-      };
+    const activity = getActivity(decodeContentMap(encoded), {
+      from: payload.from,
+      to: payload.to,
+      userId: payload.userId,
+      attributes: payload.attributes,
+    });
+    return { response: { activity } };
+  } catch (error) {
+    return {
+      response: {
+        type: "error",
+        statusCode: 500,
+        details: error instanceof Error ? error.message : "Failed to read attribution activity",
+      },
+    };
+  }
+};
+
+const getHandler = async (
+  payload: AttributionGetRequest,
+  context: RpcServerContext,
+): Promise<{ response: AttributionGetResponse | RpcError }> => {
+  try {
+    const encoded = await loadContentMap(context);
+    if (!encoded) return { response: { contentMap: null } };
+
+    const filter = payload.filter;
+    if (
+      filter &&
+      (filter.userId !== undefined ||
+        filter.from !== undefined ||
+        filter.to !== undefined ||
+        (filter.attributes && Object.keys(filter.attributes).length > 0))
+    ) {
+      const predicate = matchesFilter(filter);
+      const filtered = filterContentMap(decodeContentMap(encoded), predicate);
+      return { response: { contentMap: encodeContentMap(filtered) } };
     }
-  };
 
-const getHandler =
-  (options: AttributionRpcOptions) =>
-  async (
-    payload: AttributionGetRequest,
-    context: RpcServerContext,
-  ): Promise<{ response: AttributionGetResponse | RpcError }> => {
-    try {
-      if (options.checkPermission && !(await options.checkPermission(context))) {
-        return { response: FORBIDDEN };
-      }
-      const encoded = await loadContentMap(context);
-      if (!encoded) return { response: { contentMap: null } };
-
-      const filter = payload.filter;
-      if (
-        filter &&
-        (filter.userId !== undefined || filter.from !== undefined || filter.to !== undefined)
-      ) {
-        const predicate = matchesFilter(filter);
-        const filtered = filterContentMap(decodeContentMap(encoded), predicate);
-        return { response: { contentMap: encodeContentMap(filtered) } };
-      }
-
-      return { response: { contentMap: encoded } };
-    } catch (error) {
-      return {
-        response: {
-          type: "error",
-          statusCode: 500,
-          details: error instanceof Error ? error.message : "Failed to read attribution",
-        },
-      };
-    }
-  };
+    return { response: { contentMap: encoded } };
+  } catch (error) {
+    return {
+      response: {
+        type: "error",
+        statusCode: 500,
+        details: error instanceof Error ? error.message : "Failed to read attribution",
+      },
+    };
+  }
+};
 
 /**
  * Creates read-only RPC handlers that expose document attribution to clients.
@@ -140,13 +125,13 @@ const getHandler =
  * - `attributionActivity` — activity timeline (works for encrypted documents).
  * - `attributionGet` — the encoded ContentMap for client-side range resolution.
  */
-export function getAttributionRpcHandlers(options: AttributionRpcOptions = {}): RpcHandlerRegistry {
+export function getAttributionRpcHandlers(): RpcHandlerRegistry {
   return {
     ["attributionActivity"]: {
-      handler: activityHandler(options),
+      handler: activityHandler,
     } as RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,
     ["attributionGet"]: {
-      handler: getHandler(options),
+      handler: getHandler,
     } as RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,
   };
 }

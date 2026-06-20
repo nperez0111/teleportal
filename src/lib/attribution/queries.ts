@@ -5,12 +5,30 @@
  * but as pure functions over ContentMap.
  */
 
-import { type ContentMap, filterContentMap } from "./content-map";
+import { equalityDeep } from "lib0/function";
+import { type ContentMap, attrsToRecord, filterContentMap } from "./content-map";
 
 export interface ActivityEntry {
   from: number;
   to: number;
   userId: string | null;
+  attributes: Record<string, unknown>;
+}
+
+/**
+ * The built-in authorship attributes. These are compared via `userId` (insert/
+ * delete) or are per-update timestamps (insertAt/deleteAt), so they are excluded
+ * when deciding whether two adjacent activity entries can be grouped — otherwise
+ * the differing timestamps would defeat the time-window merge below.
+ */
+const BUILTIN_ATTR_NAMES = new Set(["insert", "insertAt", "delete", "deleteAt"]);
+
+function customAttributes(attributes: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, val] of Object.entries(attributes)) {
+    if (!BUILTIN_ATTR_NAMES.has(name)) out[name] = val;
+  }
+  return out;
 }
 
 /**
@@ -23,6 +41,7 @@ export function getActivity(
     from?: number;
     to?: number;
     userId?: string;
+    attributes?: Record<string, unknown>;
   },
 ): ActivityEntry[] {
   const filtered = filterContentMap(contentMap, (attrs) => {
@@ -36,6 +55,12 @@ export function getActivity(
     if (options?.userId !== undefined) {
       const userAttr = attrs.find((a) => a.name === "insert" || a.name === "delete");
       if (!userAttr || userAttr.val !== options.userId) return false;
+    }
+    if (options?.attributes) {
+      for (const [name, val] of Object.entries(options.attributes)) {
+        const attr = attrs.find((a) => a.name === name);
+        if (!attr || !equalityDeep(attr.val, val)) return false;
+      }
     }
     return true;
   });
@@ -51,6 +76,7 @@ export function getActivity(
         from: t,
         to: t,
         userId: userAttr ? (userAttr.val as string) : null,
+        attributes: attrsToRecord(attrs),
       });
     }
   });
@@ -64,6 +90,7 @@ export function getActivity(
         from: t,
         to: t,
         userId: userAttr ? (userAttr.val as string) : null,
+        attributes: attrsToRecord(attrs),
       });
     }
   });
@@ -74,7 +101,12 @@ export function getActivity(
   const grouped: ActivityEntry[] = [];
   for (const entry of activity) {
     const last = grouped.at(-1);
-    if (last && last.userId === entry.userId && entry.from - last.to < 1000) {
+    if (
+      last &&
+      last.userId === entry.userId &&
+      entry.from - last.to < 1000 &&
+      equalityDeep(customAttributes(last.attributes), customAttributes(entry.attributes))
+    ) {
       last.to = entry.to;
     } else {
       grouped.push({ ...entry });
@@ -92,7 +124,7 @@ export function resolveItemAttribution(
   contentMap: ContentMap,
   clientID: number,
   clock: number,
-): { userId: string; timestamp: number } | null {
+): { userId: string; timestamp: number; attributes: Record<string, unknown> } | null {
   const ranges = contentMap.inserts.clients.get(clientID);
   if (!ranges) return null;
 
@@ -105,7 +137,7 @@ export function resolveItemAttribution(
         if (attr.name === "insertAt") timestamp = attr.val as number;
       }
       if (userId !== undefined && timestamp !== undefined) {
-        return { userId, timestamp };
+        return { userId, timestamp, attributes: attrsToRecord(range.attrs) };
       }
       return null;
     }

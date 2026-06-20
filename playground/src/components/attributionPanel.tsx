@@ -183,7 +183,7 @@ export function AttributionPanel({
       return;
     }
     try {
-      const here = await provider.getMilestoneActivity(selectedMilestone.id);
+      const here = await provider.getActivity({ milestone: selectedMilestone.id });
       setMilestoneContributors(toContributions(here));
 
       // Compare against the milestone created immediately before this one.
@@ -191,7 +191,7 @@ export function AttributionPanel({
       const idx = all.findIndex((m) => m.id === selectedMilestone.id);
       const prev = idx > 0 ? all[idx - 1] : null;
       if (prev) {
-        const delta = await provider.getChangesetActivity(prev.id, selectedMilestone.id);
+        const delta = await provider.getActivity({ changeset: [prev.id, selectedMilestone.id] });
         setChangeset(toContributions(delta));
       } else {
         setChangeset(null);

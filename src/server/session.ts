@@ -26,6 +26,7 @@ import type { EncodedContentMap } from "teleportal/storage";
 import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
 import { decodeEncryptedUpdate } from "teleportal/protocol/encryption";
 import {
+  ContentAttribute,
   type ContentIds,
   createContentAttribute,
   createContentIdsFromUpdate,
@@ -33,11 +34,17 @@ import {
   decodeContentIds,
   encodeContentMap,
   mergeContentIds,
+  recordToAttrs,
 } from "teleportal/attribution";
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
-import type { DocumentMessageSource, PresenceConfig, SessionEvents } from "./events";
+import type {
+  AttributionConfig,
+  DocumentMessageSource,
+  PresenceConfig,
+  SessionEvents,
+} from "./events";
 import { emitWideEvent } from "./logger";
 import type { Server } from "./server";
 
@@ -77,6 +84,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   #rpcHandlers: RpcHandlerRegistry;
   #server: Server<Context>;
   #presenceConfig: PresenceConfig<Context> | undefined;
+  #attributionConfig: AttributionConfig<Context> | undefined;
   /**
    * The presence of each connected (local) client, keyed by session client id.
    * Records the numeric awareness clientID a client announced (cleartext, so it
@@ -120,6 +128,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     metricsCollector?: MetricsCollector;
     documentSizeConfig?: { warningThreshold?: number; limit?: number };
     presenceConfig?: PresenceConfig<Context>;
+    attributionConfig?: AttributionConfig<Context>;
     rpcHandlers?: RpcHandlerRegistry;
     server: Server<Context>;
   }) {
@@ -134,6 +143,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     this.#metrics = args.metricsCollector;
     this.#documentSizeConfig = args.documentSizeConfig;
     this.#presenceConfig = args.presenceConfig;
+    this.#attributionConfig = args.attributionConfig;
     this.#heartbeatIntervalMs = args.presenceConfig?.heartbeatIntervalMs ?? 30_000;
     this.#presenceTtlMs = args.presenceConfig?.presenceTtlMs ?? 90_000;
     this.#rpcHandlers = args.rpcHandlers ?? {};
@@ -639,12 +649,13 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     update: VersionedUpdate,
     context?: Context,
     source: DocumentMessageSource = "client",
+    clientId?: string,
   ) {
     try {
       let attribution: EncodedContentMap | undefined;
       if (source === "client" && context?.userId) {
         try {
-          attribution = this.#computeAttribution(update, context);
+          attribution = await this.#computeAttribution(update, context, clientId);
         } catch (error) {
           emitWideEvent("error", {
             event_type: "attribution_compute_failed",
@@ -689,7 +700,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     }
   }
 
-  #computeAttribution(update: VersionedUpdate, context: Context) {
+  async #computeAttribution(update: VersionedUpdate, context: Context, clientId?: string) {
     let contentIds: ContentIds;
     if (this.encrypted) {
       const message = decodeEncryptedUpdate(update.data as unknown as EncryptedUpdatePayload);
@@ -704,13 +715,29 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     }
     const now = Date.now();
     const userId = context.userId;
-    return encodeContentMap(
-      createContentMapFromContentIds(
-        contentIds,
-        [createContentAttribute("insert", userId), createContentAttribute("insertAt", now)],
-        [createContentAttribute("delete", userId), createContentAttribute("deleteAt", now)],
-      ),
-    );
+
+    const insertAttrs: ContentAttribute[] = [
+      createContentAttribute("insert", userId),
+      createContentAttribute("insertAt", now),
+    ];
+    const deleteAttrs: ContentAttribute[] = [
+      createContentAttribute("delete", userId),
+      createContentAttribute("deleteAt", now),
+    ];
+
+    if (this.#attributionConfig?.getAttributes) {
+      const custom = await this.#attributionConfig.getAttributes({
+        context,
+        update,
+        server: this.#server,
+        clientId,
+      });
+      const customAttrs = recordToAttrs(custom);
+      insertAttrs.push(...customAttrs);
+      deleteAttrs.push(...customAttrs);
+    }
+
+    return encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
   }
 
   async #updateDocumentSizeMetrics(context?: Context) {
@@ -790,9 +817,12 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     client?: { id: string; send: (m: Message<Context>) => Promise<void> },
     replicationMeta?: { sourceNodeId: string; deduped: boolean },
   ) {
-    // Presence messages are always cleartext metadata (they carry no document
-    // content), so they are exempt from the document's encryption requirement.
-    if (message.type !== "presence" && message.encrypted !== this.encrypted) {
+    // The `encrypted` flag describes whether the message payload needs
+    // decryption — it is a property of the message, not the document.
+    // Only `doc` messages must match the session's encryption mode because
+    // the server processes their content differently per mode.  Presence and
+    // RPC payloads are independent of the document's encryption state.
+    if (message.type === "doc" && message.encrypted !== this.encrypted) {
       const error = new Error("Message encryption and document encryption are mismatched");
       emitWideEvent("error", {
         event_type: "encryption_mismatch",
@@ -859,9 +889,29 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   : null;
 
               if (encryptedStorage) {
+                let encryptedAttribution: EncodedContentMap | undefined;
+                if (messageSource === "client" && message.context?.userId) {
+                  try {
+                    encryptedAttribution = await this.#computeAttribution(
+                      message.payload.update,
+                      message.context,
+                      client?.id,
+                    );
+                  } catch (error) {
+                    emitWideEvent("error", {
+                      event_type: "attribution_compute_failed",
+                      timestamp: new Date().toISOString(),
+                      document_id: this.documentId,
+                      session_id: this.id,
+                      error,
+                    });
+                  }
+                }
+
                 const storedUpdate = await encryptedStorage.handleEncryptedUpdate(
                   this.namespacedDocumentId,
                   message.payload.update.data as EncryptedUpdatePayload,
+                  encryptedAttribution,
                 );
                 if (!storedUpdate) {
                   await Promise.all([
@@ -880,6 +930,16 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                     replicationMeta?.deduped,
                   );
                   return;
+                }
+                if (encryptedAttribution) {
+                  this.call("document-attribution", {
+                    documentId: this.documentId,
+                    namespacedDocumentId: this.namespacedDocumentId,
+                    sessionId: this.id,
+                    userId: message.context!.userId,
+                    timestamp: Date.now(),
+                    contentMap: encryptedAttribution,
+                  });
                 }
                 this.call("document-write", {
                   documentId: this.documentId,
@@ -920,7 +980,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                 return;
               }
 
-              await this.write(message.payload.update, message.context, messageSource);
+              await this.write(message.payload.update, message.context, messageSource, client?.id);
 
               await Promise.all([
                 this.broadcast(message, client?.id),
@@ -1127,7 +1187,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                     details?: string;
                   };
                   stream?: AsyncIterable<unknown>;
+                  encrypted?: boolean;
                 };
+                const responseEncrypted = result.encrypted ?? rpcMessage.encrypted;
 
                 if ("stream" in result && result.stream) {
                   for await (const chunk of result.stream) {
@@ -1144,7 +1206,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                       "stream",
                       rpcMessage.id,
                       rpcMessage.context,
-                      rpcMessage.encrypted,
+                      responseEncrypted,
                       undefined,
                       serializer,
                     );
@@ -1181,7 +1243,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   "response",
                   rpcMessage.id,
                   rpcMessage.context,
-                  rpcMessage.encrypted,
+                  responseEncrypted,
                   undefined,
                   serializer,
                 );
