@@ -1,3 +1,4 @@
+import { equalityDeep } from "lib0/function";
 import {
   type RpcError,
   type RpcHandlerRegistry,
@@ -47,7 +48,7 @@ function matchesFilter(filter: AttributionFilter): (attrs: ContentAttribute[]) =
     if (filter.attributes) {
       for (const [name, val] of Object.entries(filter.attributes)) {
         const attr = attrs.find((a) => a.name === name);
-        if (!attr || attr.val !== val) return false;
+        if (!attr || !equalityDeep(attr.val, val)) return false;
       }
     }
     return true;

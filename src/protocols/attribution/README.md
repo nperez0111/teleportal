@@ -37,7 +37,7 @@ Use the `rpcMethod` field for method-level authorization:
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => storage,
+  storage: async (ctx) => storage,
   checkPermission: async ({ context, documentId, rpcMethod }) => {
     if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
       return canReadAttribution(context.userId, documentId);
@@ -167,7 +167,7 @@ ContentMap:
 import { Server } from "teleportal/server";
 
 const server = new Server({
-  getStorage: async (ctx) => storage,
+  storage: async (ctx) => storage,
   attributionConfig: {
     getAttributes: ({ context }) => ({
       source: context.source ?? "human",

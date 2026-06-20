@@ -82,7 +82,7 @@ You can attach arbitrary metadata by providing an `attributionConfig` when creat
 import { Server } from "teleportal/server";
 
 const server = new Server({
-  getStorage: async (ctx) => storage,
+  storage: async (ctx) => storage,
   attributionConfig: {
     getAttributes: ({ context }) => ({
       source: context.source ?? "human",
@@ -220,7 +220,7 @@ import { Server } from "teleportal/server";
 import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 
 const server = new Server({
-  getStorage: async (ctx) => storage,
+  storage: async (ctx) => storage,
   rpcHandlers: {
     ...getAttributionRpcHandlers(),
   },
@@ -233,7 +233,7 @@ Attribution RPC methods (`attributionActivity`, `attributionGet`) are covered by
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => storage,
+  storage: async (ctx) => storage,
   checkPermission: async ({ context, documentId, rpcMethod }) => {
     if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
       return canReadAttribution(context.userId, documentId);

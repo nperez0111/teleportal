@@ -11,7 +11,7 @@
  * to resolve content positions.
  */
 
-import { equalFlat } from "lib0/object";
+import { equalityDeep } from "lib0/function";
 import type * as Y from "yjs";
 import { attrsToRecord, type ContentMap } from "teleportal/attribution";
 import type { AttributedSegment } from "./methods";
@@ -116,7 +116,7 @@ export function resolveRangeAttribution(
       last.to === segment.from &&
       last.userId === segment.userId &&
       last.timestamp === segment.timestamp &&
-      equalFlat(last.attributes, segment.attributes)
+      equalityDeep(last.attributes, segment.attributes)
     ) {
       last.to = segment.to;
     } else {

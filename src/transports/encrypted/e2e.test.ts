@@ -1002,14 +1002,35 @@ describe("attribution e2e: full WebSocket transport", () => {
     });
   }
 
+  /**
+   * Poll `fn` until `predicate` holds, returning its result. Replaces fixed
+   * sleeps when waiting for the server to persist attribution asynchronously,
+   * so the tests stay deterministic under slow CI.
+   */
+  async function waitFor<T>(
+    fn: () => Promise<T>,
+    predicate: (value: T) => boolean,
+    timeoutMs = 5000,
+  ): Promise<T> {
+    const start = Date.now();
+    while (true) {
+      const value = await fn();
+      if (predicate(value)) return value;
+      if (Date.now() - start > timeoutMs) return value;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
   it("unencrypted: getActivity returns attributed edits", async () => {
     const { provider } = await createProvider("attr-unenc");
     await waitForSync(provider);
 
     provider.doc.getText("body").insert(0, "hello world");
-    await new Promise((r) => setTimeout(r, 50));
 
-    const activity = await provider.getActivity();
+    const activity = await waitFor(
+      () => provider.getActivity(),
+      (a) => a.length > 0,
+    );
     expect(activity.length).toBeGreaterThan(0);
     expect(activity[0].userId).toBe("test-user");
   });
@@ -1019,9 +1040,11 @@ describe("attribution e2e: full WebSocket transport", () => {
     await waitForSync(provider);
 
     provider.doc.getText("body").insert(0, "encrypted hello");
-    await new Promise((r) => setTimeout(r, 50));
 
-    const activity = await provider.getActivity();
+    const activity = await waitFor(
+      () => provider.getActivity(),
+      (a) => a.length > 0,
+    );
     expect(activity.length).toBeGreaterThan(0);
     expect(activity[0].userId).toBe("test-user");
   });
@@ -1031,10 +1054,15 @@ describe("attribution e2e: full WebSocket transport", () => {
     await waitForSync(provider);
 
     provider.doc.getText("body").insert(0, "hello");
-    await new Promise((r) => setTimeout(r, 50));
 
     const text = provider.doc.getText("body");
-    const segments = await provider.getAttributionForRange(text, 0, 5);
+    const segments = await waitFor(
+      () => {
+        provider.invalidateAttributionCache();
+        return provider.getAttributionForRange(text, 0, 5);
+      },
+      (s) => s.length > 0,
+    );
     expect(segments.length).toBeGreaterThan(0);
     expect(segments[0].userId).toBe("test-user");
     expect(segments[0].from).toBe(0);
@@ -1046,9 +1074,11 @@ describe("attribution e2e: full WebSocket transport", () => {
     await waitForSync(provider);
 
     provider.doc.getText("body").insert(0, "data");
-    await new Promise((r) => setTimeout(r, 50));
 
-    const map = await provider.getAttributionMap();
+    const map = await waitFor(
+      () => provider.getAttributionMap(),
+      (m) => m !== null && m.inserts.clients.size > 0,
+    );
     expect(map).not.toBeNull();
     expect(map!.inserts.clients.size).toBeGreaterThan(0);
   });

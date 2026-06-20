@@ -928,10 +928,13 @@ export class Provider<
    * provider.getActivity({ from: hourAgo, to: now })              // time range
    * provider.getActivity({ milestone: milestoneId })              // scoped to milestone
    * provider.getActivity({ changeset: [fromId, toId] })           // between milestones
-   * provider.getActivity({ attributes: { "insert:source": "ai" } }) // custom attrs
+   * provider.getActivity({ attributes: { source: "ai" } })          // custom attrs
    * ```
    */
   async getActivity(options?: ActivityOptions): Promise<ActivityEntry[]> {
+    if (options?.milestone && options?.changeset) {
+      throw new Error("getActivity: `milestone` and `changeset` are mutually exclusive");
+    }
     if (options?.milestone || options?.changeset) {
       const map = options.milestone
         ? await this.getMilestoneContentMap(options.milestone)

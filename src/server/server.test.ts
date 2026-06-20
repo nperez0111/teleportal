@@ -23,6 +23,25 @@ function createTestUpdate(content = "test"): VersionedUpdate {
   return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
 }
 
+/**
+ * Poll `fn` until `predicate` is satisfied, returning its result. Avoids flaky
+ * fixed-duration sleeps when waiting for asynchronously produced state.
+ */
+async function waitFor<T>(
+  fn: () => T,
+  predicate: (value: T) => boolean,
+  timeoutMs = 2000,
+): Promise<T> {
+  const start = Date.now();
+  let value = fn();
+  while (!predicate(value)) {
+    if (Date.now() - start > timeoutMs) return value;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    value = fn();
+  }
+  return value;
+}
+
 // Mock DocumentStorage for testing
 class MockDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
@@ -381,11 +400,10 @@ describe("Server", () => {
         ),
       );
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const rpcResponse = writtenMessages.find((m) => m.type === "rpc") as
-        | RpcMessage<ServerContext>
-        | undefined;
+      const rpcResponse = (await waitFor(
+        () => writtenMessages.find((m) => m.type === "rpc"),
+        (m) => m !== undefined,
+      )) as RpcMessage<ServerContext> | undefined;
       expect(rpcResponse).toBeDefined();
       expect(rpcResponse!.payload.type).toBe("success");
 

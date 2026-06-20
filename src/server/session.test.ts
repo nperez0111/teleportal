@@ -24,9 +24,20 @@ import {
 } from "y-protocols/awareness";
 import { createEncryptionKey, decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import type { EncryptedBinary } from "teleportal/encryption-key";
-import type { DecodedEncryptedUpdatePayload, EncryptedSnapshot } from "teleportal/protocol/encryption";
-import { encodeEncryptedSnapshot, encodeEncryptedUpdateMessages } from "teleportal/protocol/encryption";
-import { createContentIds, decodeContentMap, encodeContentIds, IdSet } from "teleportal/attribution";
+import type {
+  DecodedEncryptedUpdatePayload,
+  EncryptedSnapshot,
+} from "teleportal/protocol/encryption";
+import {
+  encodeEncryptedSnapshot,
+  encodeEncryptedUpdateMessages,
+} from "teleportal/protocol/encryption";
+import {
+  createContentIds,
+  decodeContentMap,
+  encodeContentIds,
+  IdSet,
+} from "teleportal/attribution";
 import { EncryptedMemoryStorage } from "../storage/in-memory/encrypted";
 import { Session } from "./session";
 import { Server } from "./server";
@@ -698,7 +709,10 @@ describe("Session", () => {
         await encSession.apply(
           new DocMessage(
             "enc-doc",
-            { type: "update", update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate },
+            {
+              type: "update",
+              update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate,
+            },
             { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
             true,
           ),
@@ -719,7 +733,13 @@ describe("Session", () => {
         await encSession.apply(
           new DocMessage(
             "enc-doc",
-            { type: "update", update: { version: 2, data: encodeEncryptedUpdateMessages([updateMsg]) } as VersionedUpdate },
+            {
+              type: "update",
+              update: {
+                version: 2,
+                data: encodeEncryptedUpdateMessages([updateMsg]),
+              } as VersionedUpdate,
+            },
             { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
             true,
           ),
@@ -768,7 +788,10 @@ describe("Session", () => {
         await encSession.apply(
           new DocMessage(
             "enc-doc",
-            { type: "update", update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate },
+            {
+              type: "update",
+              update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate,
+            },
             { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
             true,
           ),
@@ -794,7 +817,13 @@ describe("Session", () => {
         await encSession.apply(
           new DocMessage(
             "enc-doc",
-            { type: "update", update: { version: 2, data: encodeEncryptedUpdateMessages([updateMsg]) } as VersionedUpdate },
+            {
+              type: "update",
+              update: {
+                version: 2,
+                data: encodeEncryptedUpdateMessages([updateMsg]),
+              } as VersionedUpdate,
+            },
             { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
             true,
           ),

@@ -5,7 +5,7 @@
  * but as pure functions over ContentMap.
  */
 
-import { equalFlat } from "lib0/object";
+import { equalityDeep } from "lib0/function";
 import { type ContentMap, attrsToRecord, filterContentMap } from "./content-map";
 
 export interface ActivityEntry {
@@ -59,7 +59,7 @@ export function getActivity(
     if (options?.attributes) {
       for (const [name, val] of Object.entries(options.attributes)) {
         const attr = attrs.find((a) => a.name === name);
-        if (!attr || attr.val !== val) return false;
+        if (!attr || !equalityDeep(attr.val, val)) return false;
       }
     }
     return true;
@@ -105,7 +105,7 @@ export function getActivity(
       last &&
       last.userId === entry.userId &&
       entry.from - last.to < 1000 &&
-      equalFlat(customAttributes(last.attributes), customAttributes(entry.attributes))
+      equalityDeep(customAttributes(last.attributes), customAttributes(entry.attributes))
     ) {
       last.to = entry.to;
     } else {

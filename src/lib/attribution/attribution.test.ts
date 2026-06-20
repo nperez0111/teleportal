@@ -443,6 +443,63 @@ describe("queries", () => {
     expect(humanOnly[0].attributes.source).toBe("human");
   });
 
+  it("filters activity by structured (non-primitive) custom attribute values", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("meta", { kind: "ai", tags: ["a", "b"] }),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 2000),
+      createContentAttribute("meta", { kind: "human", tags: [] }),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+
+    // A fresh filter object (different reference, same value) must still match.
+    const aiOnly = getActivity(merged, { attributes: { meta: { kind: "ai", tags: ["a", "b"] } } });
+    expect(aiOnly.length).toBe(1);
+    expect(aiOnly[0].attributes.meta).toEqual({ kind: "ai", tags: ["a", "b"] });
+  });
+
+  it("does not merge adjacent entries with different structured custom attributes", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+      createContentAttribute("meta", { kind: "ai" }),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1500),
+      createContentAttribute("meta", { kind: "human" }),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+    expect(getActivity(merged).length).toBe(2);
+
+    // Structurally-equal (but distinct-reference) meta should merge.
+    const ids3 = createContentIds();
+    ids3.inserts.add(3, 0, 2);
+    const map3 = createContentMapFromContentIds(ids3, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1200),
+      createContentAttribute("meta", { kind: "ai" }),
+    ]);
+    const sameMeta = mergeContentMaps([map1, map3]);
+    expect(getActivity(sameMeta).length).toBe(1);
+  });
+
   it("does not merge adjacent entries with different custom attributes", () => {
     const ids1 = createContentIds();
     ids1.inserts.add(1, 0, 5);
