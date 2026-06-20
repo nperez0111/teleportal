@@ -705,7 +705,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     if (this.encrypted) {
       const message = decodeEncryptedUpdate(update.data as unknown as EncryptedUpdatePayload);
       if (message.type !== "update") {
-        contentIds = createContentIdsFromUpdate(update);
+        // Non-update encrypted messages (e.g. milestones) don't carry
+        // content IDs we can extract — skip attribution entirely.
+        return;
       } else {
         const decoded = message.updates.map((m) => decodeContentIds(m.contentIds));
         contentIds = decoded.length === 1 ? decoded[0] : mergeContentIds(decoded);
