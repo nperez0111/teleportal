@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { AckMessage, DocMessage, PresenceMessage, RpcMessage } from "teleportal";
+import { DocMessage, PresenceMessage, RpcMessage } from "teleportal";
 import { Connection } from "./connection";
 import { Provider } from "./provider";
-import { createMemoryTransportPair, type MemoryTransportHandle } from "./transports/memory";
+import { createMemoryTransportPair } from "./transports/memory";
 import type { RpcExtension, RpcExtensionContext } from "./rpc-extension";
 
 // ---------------------------------------------------------------------------
@@ -520,7 +520,7 @@ describe("Provider", () => {
       const update = Y.encodeStateAsUpdateV2(doc);
       const docMsg = new DocMessage(
         "test-doc",
-        { type: "update", update: { version: 2, data: update } },
+        { type: "update", update: { version: 2, data: update as any } },
         {},
         false,
       );

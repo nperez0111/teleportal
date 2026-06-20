@@ -441,7 +441,7 @@ export class Connection extends Observable<{
           this.#doTokenRefresh();
         }
       },
-      onClose: (error?) => {
+      onClose: (_error?) => {
         if (attemptId !== this.#connectionAttemptId) return;
         this.#activeTransport = null;
         this.#setState({ type: "disconnected" });

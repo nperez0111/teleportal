@@ -448,9 +448,6 @@ describe("Connection", () => {
       await conn.send(msg1);
       await conn.send(msg2);
 
-      // Before flush interval, nothing sent (besides any initial messages)
-      const sentBefore = clientTransport.sentMessages.length;
-
       // Advance past the batch interval to trigger flush
       await timer.advance(60);
       await flushMicrotasks(10);
@@ -1153,7 +1150,7 @@ describe("Connection", () => {
     it("buffered messages are sent before new messages after reconnect", async () => {
       const sentIds: string[] = [];
 
-      const [ct, st] = createMemoryTransportPair();
+      const [ct] = createMemoryTransportPair();
       const conn = new Connection({
         transports: [ct],
         connect: false,
@@ -1180,7 +1177,7 @@ describe("Connection", () => {
       expect(sentIds).toHaveLength(0);
 
       // Reconnect — need a fresh transport pair since old one is dead
-      const [ct2, st2] = createMemoryTransportPair();
+      const [ct2] = createMemoryTransportPair();
       const conn2 = new Connection({
         transports: [ct2],
         connect: false,
@@ -1197,7 +1194,7 @@ describe("Connection", () => {
     });
 
     it("preserves message order across multiple disconnect/reconnect cycles", async () => {
-      const [ct, st] = createMemoryTransportPair();
+      const [ct] = createMemoryTransportPair();
       const conn = new Connection({
         transports: [ct],
         connect: false,
@@ -1503,8 +1500,7 @@ describe("Connection", () => {
       expect(conn.inFlightMessageCount).toBe(0);
 
       // Awareness
-      const doc = new Y.Doc();
-      const awareness = new AwarenessMessage("test-doc", { added: [], updated: [], removed: [], states: new Map() }, {});
+      const awareness = new AwarenessMessage("test-doc", { type: "awareness-request" } as any, {});
       await conn.send(awareness);
       expect(conn.inFlightMessageCount).toBe(0);
 
@@ -1553,7 +1549,6 @@ describe("Connection", () => {
 
     it("remembers successful transport across auto-reconnects", async () => {
       const timer = new FakeTimer();
-      const slowTransport = createControllableTransport("slow", { failCount: 0 });
       const fastTransport = createControllableTransport("fast", { failCount: 0 });
 
       // First transport fails initially, second succeeds
@@ -1721,7 +1716,9 @@ describe("Connection", () => {
       await flushMicrotasks(10);
 
       expect(conn.state.type).toBe("errored");
-      expect(conn.state.error?.name).toBe("TokenRefreshError");
+      if (conn.state.type === "errored") {
+        expect(conn.state.error?.name).toBe("TokenRefreshError");
+      }
 
       await conn.destroy();
     });
@@ -1982,9 +1979,9 @@ describe("Connection", () => {
       try { await conn.connect(); } catch {}
 
       // Buffer 3 awareness messages — only the last should survive
-      const aw1 = new AwarenessMessage("doc", { added: [1], updated: [], removed: [], states: new Map() }, {});
-      const aw2 = new AwarenessMessage("doc", { added: [2], updated: [], removed: [], states: new Map() }, {});
-      const aw3 = new AwarenessMessage("doc", { added: [3], updated: [], removed: [], states: new Map() }, {});
+      const aw1 = new AwarenessMessage("doc", { added: [1], updated: [], removed: [], states: new Map() } as any, {});
+      const aw2 = new AwarenessMessage("doc", { added: [2], updated: [], removed: [], states: new Map() } as any, {});
+      const aw3 = new AwarenessMessage("doc", { added: [3], updated: [], removed: [], states: new Map() } as any, {});
       await conn.send(aw1);
       await conn.send(aw2);
       await conn.send(aw3);
