@@ -143,10 +143,16 @@ The underlying pure helpers live in `teleportal/attribution`:
 
 ## Encryption boundary
 
-For end-to-end-encrypted documents the server holds only ciphertext plus the
-plaintext ContentMap. It **can** answer `attributionActivity`, but it **cannot** map
-a content position to a CRDT id — only the client can, against its decrypted
-document. `getAttributionForRange` (and the `resolveRangeAttribution` /
+Attribution works for E2EE documents. The encrypted client extracts CRDT operation
+IDs `(clientID, clock)` from the plaintext update **before** encrypting, and sends
+them alongside the ciphertext in the encrypted wire format. These IDs are structural
+metadata — they reveal which client wrote how many operations, but never the content
+itself. The server tags them with userId/timestamp and stores the resulting ContentMap
+exactly as it does for unencrypted documents.
+
+The server **can** answer `attributionActivity` (derived from metadata only), but it
+**cannot** map a content position to a CRDT id — only the client can, against its
+decrypted document. `getAttributionForRange` (and the `resolveRangeAttribution` /
 `collectRangeIds` utilities behind it) therefore run entirely client-side and work
 identically for encrypted and unencrypted documents.
 

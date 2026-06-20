@@ -110,7 +110,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       const message: DecodedEncryptedUpdatePayload = {
         id: messageId,
         snapshotId: attrSnapshotId,
-        timestamp: [1, 0],
+        timestamp: [1, 1],
         payload,
         contentIds: getEmptyEncodedContentIds(),
       };
@@ -138,7 +138,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       const message: DecodedEncryptedUpdatePayload = {
         id: messageId,
         snapshotId: attrSnapshotId,
-        timestamp: [1, 0],
+        timestamp: [1, 1],
         payload,
         contentIds: getEmptyEncodedContentIds(),
       };
@@ -158,14 +158,14 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       const msg1: DecodedEncryptedUpdatePayload = {
         id: toBase64(digest(payload1)),
         snapshotId: attrSnapshotId,
-        timestamp: [1, 0],
+        timestamp: [1, 1],
         payload: payload1,
         contentIds: getEmptyEncodedContentIds(),
       };
       const msg2: DecodedEncryptedUpdatePayload = {
         id: toBase64(digest(payload2)),
         snapshotId: attrSnapshotId,
-        timestamp: [2, 0],
+        timestamp: [2, 1],
         payload: payload2,
         contentIds: getEmptyEncodedContentIds(),
       };
@@ -194,7 +194,7 @@ describe("UnstorageEncryptedDocumentStorage", () => {
       const msg: DecodedEncryptedUpdatePayload = {
         id: toBase64(digest(payload)),
         snapshotId: attrSnapshotId,
-        timestamp: [1, 0],
+        timestamp: [1, 1],
         payload,
         contentIds: getEmptyEncodedContentIds(),
       };

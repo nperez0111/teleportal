@@ -250,7 +250,9 @@ When `checkPermission` returns `false` (or throws), the RPC call fails with a `4
 
 ## Encryption Boundary
 
-For end-to-end-encrypted documents:
+Attribution works for end-to-end-encrypted documents without the server ever seeing content.
+
+Every Y.js operation has a structural ID — `(clientID, clock)` — that is separate from the content it represents. The encrypted client extracts these IDs from the plaintext update **before** encrypting, and sends them alongside the ciphertext in the wire protocol. The server tags them with the authenticated userId and timestamp, exactly as it does for unencrypted documents. The content IDs reveal the shape of the CRDT (which client wrote how many operations), but never the text or data itself.
 
 - The server holds only ciphertext plus the plaintext ContentMap (operation IDs + userId/timestamp — no document content)
 - **`getActivity`** works — it is derived purely from authorship metadata

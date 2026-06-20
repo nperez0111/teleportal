@@ -2,7 +2,6 @@ import { fromBase64, toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
 import type { Storage } from "unstorage";
 
-import type { VersionedUpdate } from "teleportal";
 import { EncryptedBinary } from "teleportal/encryption-key";
 import type { EncryptedSnapshot } from "teleportal/protocol/encryption";
 import {
@@ -194,15 +193,11 @@ export class UnstorageEncryptedDocumentStorage extends EncryptedDocumentStorage 
       .map(deserializeUpdate);
   }
 
-  override async handleUpdate(
+  protected override async storeAttribution(
     key: string,
-    update: VersionedUpdate,
-    attribution?: EncodedContentMap,
+    attribution: EncodedContentMap,
   ): Promise<void> {
-    await super.handleUpdate(key, update);
-    if (attribution) {
-      await this.storage.setItemRaw(this.#getAttributionKey(key), attribution);
-    }
+    await this.storage.setItemRaw(this.#getAttributionKey(key), attribution);
   }
 
   async retrieveAttribution(key: string): Promise<EncodedContentMap | null> {

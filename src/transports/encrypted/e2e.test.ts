@@ -12,6 +12,7 @@ import {
 } from "teleportal";
 import type { EncryptedStateVector } from "teleportal/protocol/encryption";
 import { EncryptedMemoryStorage, YDocStorage } from "teleportal/storage";
+import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 import { Server } from "../../server/server";
 import { Client } from "../../server/client";
 import type { Session } from "../../server/session";
@@ -891,5 +892,164 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     expect(states).toContain("connecting");
     expect(states).toContain("connected");
     expect(states).toContain("disconnected");
+  });
+});
+
+// ─── Attribution e2e: encrypted vs unencrypted ──────────────────────────────
+
+describe("attribution e2e: full WebSocket transport", () => {
+  let pubSub: InMemoryPubSub;
+  let server: Server<Ctx>;
+  let key: CryptoKey;
+  let bunServer: ReturnType<typeof Bun.serve>;
+  let baseUrl: string;
+  const cleanups: Array<() => void | Promise<void>> = [];
+
+  beforeEach(async () => {
+    EncryptedMemoryStorage.docs.clear();
+    EncryptedMemoryStorage.attributionMaps.clear();
+    pubSub = new InMemoryPubSub();
+    key = await createEncryptionKey();
+
+    server = new Server<Ctx>({
+      storage: async (ctx) => {
+        if (ctx.encrypted) {
+          return new EncryptedMemoryStorage();
+        }
+        return new YDocStorage();
+      },
+      pubSub,
+      rpcHandlers: {
+        ...getAttributionRpcHandlers(),
+      },
+    });
+
+    const ws = crossws({
+      hooks: getWebsocketHandlers<Ctx>({
+        server,
+        onUpgrade: async () => ({
+          context: { userId: "test-user", room: "test" },
+        }),
+      }),
+    });
+
+    bunServer = Bun.serve({
+      port: 0,
+      websocket: ws.websocket,
+      async fetch(request, bunSrv) {
+        if (request.headers.get("upgrade") === "websocket") {
+          return ws.handleUpgrade(request, bunSrv);
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    baseUrl = `ws://localhost:${bunServer.port}`;
+  });
+
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0)) {
+      await cleanup();
+    }
+    bunServer.stop(true);
+    await server[Symbol.asyncDispose]();
+    await pubSub[Symbol.asyncDispose]();
+  });
+
+  function createWsConnection() {
+    const conn = new WebSocketConnection({
+      url: baseUrl,
+      connect: true,
+      maxReconnectAttempts: 0,
+      batchIntervalMs: 0,
+    });
+    cleanups.push(() => conn.destroy());
+    return conn;
+  }
+
+  async function createProvider(
+    document: string,
+    opts?: { ydoc?: Y.Doc; encryptionKey?: CryptoKey },
+  ) {
+    const conn = createWsConnection();
+    await conn.connected;
+    const provider = await Provider.create({
+      connection: conn,
+      document,
+      ydoc: opts?.ydoc,
+      encryptionKey: opts?.encryptionKey,
+      enableOfflinePersistence: false,
+    });
+    cleanups.push(() => provider.destroy());
+    return { provider, connection: conn };
+  }
+
+  function waitForSync(provider: Provider, timeoutMs = 5000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Sync timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+      if (provider.transport.synced) {
+        provider.transport.synced.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      } else {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  }
+
+  it("unencrypted: getActivity returns attributed edits", async () => {
+    const { provider } = await createProvider("attr-unenc");
+    await waitForSync(provider);
+
+    provider.doc.getText("body").insert(0, "hello world");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const activity = await provider.getActivity();
+    expect(activity.length).toBeGreaterThan(0);
+    expect(activity[0].userId).toBe("test-user");
+  });
+
+  it("encrypted: getActivity returns attributed edits", async () => {
+    const { provider } = await createProvider("attr-enc", { encryptionKey: key });
+    await waitForSync(provider);
+
+    provider.doc.getText("body").insert(0, "encrypted hello");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const activity = await provider.getActivity();
+    expect(activity.length).toBeGreaterThan(0);
+    expect(activity[0].userId).toBe("test-user");
+  });
+
+  it("encrypted: getAttributionForRange resolves character-level authorship", async () => {
+    const { provider } = await createProvider("attr-enc-range", { encryptionKey: key });
+    await waitForSync(provider);
+
+    provider.doc.getText("body").insert(0, "hello");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const text = provider.doc.getText("body");
+    const segments = await provider.getAttributionForRange(text, 0, 5);
+    expect(segments.length).toBeGreaterThan(0);
+    expect(segments[0].userId).toBe("test-user");
+    expect(segments[0].from).toBe(0);
+    expect(segments[0].to).toBe(5);
+  });
+
+  it("encrypted: getAttributionMap returns non-null ContentMap", async () => {
+    const { provider } = await createProvider("attr-enc-map", { encryptionKey: key });
+    await waitForSync(provider);
+
+    provider.doc.getText("body").insert(0, "data");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const map = await provider.getAttributionMap();
+    expect(map).not.toBeNull();
+    expect(map!.inserts.clients.size).toBeGreaterThan(0);
   });
 });

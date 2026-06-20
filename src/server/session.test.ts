@@ -23,6 +23,11 @@ import {
   removeAwarenessStates,
 } from "y-protocols/awareness";
 import { createEncryptionKey, decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
+import type { EncryptedBinary } from "teleportal/encryption-key";
+import type { DecodedEncryptedUpdatePayload, EncryptedSnapshot } from "teleportal/protocol/encryption";
+import { encodeEncryptedSnapshot, encodeEncryptedUpdateMessages } from "teleportal/protocol/encryption";
+import { createContentIds, decodeContentMap, encodeContentIds, IdSet } from "teleportal/attribution";
+import { EncryptedMemoryStorage } from "../storage/in-memory/encrypted";
 import { Session } from "./session";
 import { Server } from "./server";
 import { Client } from "./client";
@@ -58,6 +63,7 @@ class MockDocumentStorage implements DocumentStorage {
   public mockHandleUpdate = false;
   public mockHandleSyncStep2 = false;
   public storedUpdate: VersionedUpdate | null = null;
+  public storedAttribution: EncodedContentMap | null = null;
   public lastSyncStep2: VersionedSyncStep2Update | null = null;
   public metadata: Map<string, DocumentMetadata> = new Map();
 
@@ -80,10 +86,15 @@ class MockDocumentStorage implements DocumentStorage {
   async handleUpdate(
     _documentId: string,
     update: VersionedUpdate,
-    _attribution?: EncodedContentMap,
+    attribution?: EncodedContentMap,
   ): Promise<void> {
     this.mockHandleUpdate = true;
     this.storedUpdate = update;
+    if (attribution) this.storedAttribution = attribution;
+  }
+
+  async retrieveAttribution(_documentId: string): Promise<EncodedContentMap | null> {
+    return this.storedAttribution;
   }
 
   async getDocument(documentId: string): Promise<Document | null> {
@@ -633,6 +644,166 @@ describe("Session", () => {
         // Message should be published (we can't easily verify this without subscribing)
         await testSession[Symbol.asyncDispose]();
         await testPubSub[Symbol.asyncDispose]();
+      });
+    });
+
+    describe("attribution", () => {
+      it("stores attribution for unencrypted updates", async () => {
+        await session.load();
+        session.addClient(client1 as any);
+
+        const update = createTestUpdate("hello");
+        const context = { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext;
+        const message = new DocMessage("test-doc", { type: "update", update }, context, false);
+
+        await session.apply(message, client1 as any);
+
+        const attribution = await storage.retrieveAttribution("test-doc");
+        expect(attribution).not.toBeNull();
+
+        const map = decodeContentMap(attribution!);
+        const insertClients = [...map.inserts.clients.values()];
+        expect(insertClients.length).toBeGreaterThan(0);
+        const attrs = insertClients.flatMap((r) =>
+          r.getIds().flatMap((range) => range.attrs.filter((a) => a.name === "insert")),
+        );
+        expect(attrs.some((a) => a.val === "user-1")).toBe(true);
+      });
+
+      it("stores attribution for encrypted updates", async () => {
+        EncryptedMemoryStorage.docs.clear();
+        EncryptedMemoryStorage.attributionMaps.clear();
+        const encStorage = new EncryptedMemoryStorage();
+
+        const encSession = new Session({
+          documentId: "enc-doc",
+          namespacedDocumentId: "enc-doc",
+          id: "session-enc-attr",
+          encrypted: true,
+          storage: encStorage,
+          pubSub,
+          nodeId,
+          onCleanupScheduled: () => {},
+          server: mockServer,
+        });
+
+        await encSession.load();
+        encSession.addClient(client1 as any);
+
+        const snapshot: EncryptedSnapshot = {
+          id: "snap-1",
+          parentSnapshotId: null,
+          payload: new Uint8Array([0]) as EncryptedBinary,
+        };
+        await encSession.apply(
+          new DocMessage(
+            "enc-doc",
+            { type: "update", update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate },
+            { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
+            true,
+          ),
+          client1 as any,
+        );
+
+        const inserts = new IdSet();
+        inserts.add(100, 0, 5);
+        const payload = new Uint8Array([10, 20, 30]) as EncryptedBinary;
+        const updateMsg: DecodedEncryptedUpdatePayload = {
+          id: "test-update-id",
+          snapshotId: "snap-1",
+          timestamp: [1, 1],
+          payload,
+          contentIds: encodeContentIds(createContentIds(inserts, new IdSet())),
+        };
+
+        await encSession.apply(
+          new DocMessage(
+            "enc-doc",
+            { type: "update", update: { version: 2, data: encodeEncryptedUpdateMessages([updateMsg]) } as VersionedUpdate },
+            { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
+            true,
+          ),
+          client1 as any,
+        );
+
+        const attribution = await encStorage.retrieveAttribution("enc-doc");
+        expect(attribution).not.toBeNull();
+
+        const map = decodeContentMap(attribution!);
+        const insertClients = [...map.inserts.clients.values()];
+        expect(insertClients.length).toBeGreaterThan(0);
+        const attrs = insertClients.flatMap((r) =>
+          r.getIds().flatMap((range) => range.attrs.filter((a) => a.name === "insert")),
+        );
+        expect(attrs.some((a) => a.val === "user-1")).toBe(true);
+
+        await encSession[Symbol.asyncDispose]();
+      });
+
+      it("emits document-attribution event for encrypted updates", async () => {
+        EncryptedMemoryStorage.docs.clear();
+        EncryptedMemoryStorage.attributionMaps.clear();
+        const encStorage = new EncryptedMemoryStorage();
+
+        const encSession = new Session({
+          documentId: "enc-doc",
+          namespacedDocumentId: "enc-doc",
+          id: "session-enc-evt",
+          encrypted: true,
+          storage: encStorage,
+          pubSub,
+          nodeId,
+          onCleanupScheduled: () => {},
+          server: mockServer,
+        });
+
+        await encSession.load();
+        encSession.addClient(client1 as any);
+
+        const snapshot: EncryptedSnapshot = {
+          id: "snap-1",
+          parentSnapshotId: null,
+          payload: new Uint8Array([0]) as EncryptedBinary,
+        };
+        await encSession.apply(
+          new DocMessage(
+            "enc-doc",
+            { type: "update", update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate },
+            { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
+            true,
+          ),
+          client1 as any,
+        );
+
+        let attributionEventFired = false;
+        encSession.on("document-attribution", () => {
+          attributionEventFired = true;
+        });
+
+        const inserts = new IdSet();
+        inserts.add(200, 0, 3);
+        const payload = new Uint8Array([1, 2, 3]) as EncryptedBinary;
+        const updateMsg: DecodedEncryptedUpdatePayload = {
+          id: "test-update-evt",
+          snapshotId: "snap-1",
+          timestamp: [2, 1],
+          payload,
+          contentIds: encodeContentIds(createContentIds(inserts, new IdSet())),
+        };
+
+        await encSession.apply(
+          new DocMessage(
+            "enc-doc",
+            { type: "update", update: { version: 2, data: encodeEncryptedUpdateMessages([updateMsg]) } as VersionedUpdate },
+            { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
+            true,
+          ),
+          client1 as any,
+        );
+
+        expect(attributionEventFired).toBe(true);
+
+        await encSession[Symbol.asyncDispose]();
       });
     });
 

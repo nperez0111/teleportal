@@ -889,9 +889,29 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   : null;
 
               if (encryptedStorage) {
+                let encryptedAttribution: EncodedContentMap | undefined;
+                if (messageSource === "client" && message.context?.userId) {
+                  try {
+                    encryptedAttribution = await this.#computeAttribution(
+                      message.payload.update,
+                      message.context,
+                      client?.id,
+                    );
+                  } catch (error) {
+                    emitWideEvent("error", {
+                      event_type: "attribution_compute_failed",
+                      timestamp: new Date().toISOString(),
+                      document_id: this.documentId,
+                      session_id: this.id,
+                      error,
+                    });
+                  }
+                }
+
                 const storedUpdate = await encryptedStorage.handleEncryptedUpdate(
                   this.namespacedDocumentId,
                   message.payload.update.data as EncryptedUpdatePayload,
+                  encryptedAttribution,
                 );
                 if (!storedUpdate) {
                   await Promise.all([
@@ -910,6 +930,16 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                     replicationMeta?.deduped,
                   );
                   return;
+                }
+                if (encryptedAttribution) {
+                  this.call("document-attribution", {
+                    documentId: this.documentId,
+                    namespacedDocumentId: this.namespacedDocumentId,
+                    sessionId: this.id,
+                    userId: message.context!.userId,
+                    timestamp: Date.now(),
+                    contentMap: encryptedAttribution,
+                  });
                 }
                 this.call("document-write", {
                   documentId: this.documentId,

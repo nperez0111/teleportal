@@ -34,7 +34,11 @@ import {
   getEncryptedStateVector,
   LamportClock,
 } from "teleportal/protocol/encryption";
-import { getEmptyEncodedContentIds } from "teleportal/attribution";
+import {
+  createContentIdsFromUpdate,
+  encodeContentIds,
+  getEmptyEncodedContentIds,
+} from "teleportal/attribution";
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness.js";
 import * as Y from "yjs";
 import { getSyncTransactionOrigin, YDocSinkHandler, YDocSourceHandler } from "../ydoc";
@@ -295,7 +299,10 @@ export class EncryptionClient
     return snapshot;
   }
 
-  private createUpdatePayload(payload: EncryptedBinary): DecodedEncryptedUpdatePayload {
+  private createUpdatePayload(
+    payload: EncryptedBinary,
+    contentIds = getEmptyEncodedContentIds(),
+  ): DecodedEncryptedUpdatePayload {
     if (!this.activeSnapshotId) {
       throw new Error("Cannot create update without an active snapshot");
     }
@@ -305,7 +312,7 @@ export class EncryptionClient
       snapshotId: this.activeSnapshotId,
       timestamp,
       payload,
-      contentIds: getEmptyEncodedContentIds(),
+      contentIds,
     };
     this.markSeen(update);
     this.pendingUpdates.set(this.getUpdateKey(update.snapshotId, timestamp), update);
@@ -461,8 +468,9 @@ export class EncryptionClient
       return this.createSnapshotMessage();
     }
     const v2 = convertToV2(update);
+    const contentIds = encodeContentIds(createContentIdsFromUpdate(update));
     const encryptedUpdate = await this.encryptUpdate(v2);
-    const updatePayload = this.createUpdatePayload(encryptedUpdate);
+    const updatePayload = this.createUpdatePayload(encryptedUpdate, contentIds);
     return new DocMessage(
       this.document,
       {

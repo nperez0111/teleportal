@@ -1,4 +1,3 @@
-import type { VersionedUpdate } from "teleportal";
 import type { EncryptedSnapshot } from "teleportal/protocol/encryption";
 import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import {
@@ -165,20 +164,16 @@ export class EncryptedMemoryStorage extends EncryptedDocumentStorage {
       .sort((a, b) => a.serverVersion - b.serverVersion);
   }
 
-  override async handleUpdate(
+  protected override async storeAttribution(
     key: string,
-    update: VersionedUpdate,
-    attribution?: EncodedContentMap,
+    attribution: EncodedContentMap,
   ): Promise<void> {
-    await super.handleUpdate(key, update);
-    if (attribution) {
-      let list = EncryptedMemoryStorage.attributionMaps.get(key);
-      if (!list) {
-        list = [];
-        EncryptedMemoryStorage.attributionMaps.set(key, list);
-      }
-      list.push(attribution);
+    let list = EncryptedMemoryStorage.attributionMaps.get(key);
+    if (!list) {
+      list = [];
+      EncryptedMemoryStorage.attributionMaps.set(key, list);
     }
+    list.push(attribution);
   }
 
   async deleteDocument(key: string): Promise<void> {
