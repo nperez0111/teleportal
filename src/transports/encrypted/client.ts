@@ -37,6 +37,8 @@ export class EncryptionClient
   extends Observable<EncryptionClientEvents>
   implements YDocSinkHandler, YDocSourceHandler
 {
+  static COMPACTION_THRESHOLD = 25;
+
   public document: string;
   public ydoc: Y.Doc;
   public awareness: Awareness;
@@ -44,6 +46,7 @@ export class EncryptionClient
   #decryptUpdate: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
   #encryptUpdate: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
   #pendingCompaction: SidecarCompaction | null = null;
+  #receivedSidecars: EncryptedBinary[] = [];
 
   constructor({
     document,
@@ -168,11 +171,36 @@ export class EncryptionClient
   }
 
   /**
+   * Pushes encrypted sidecars onto the accumulator and triggers compaction
+   * when the threshold is reached. Used by both handleUpdate (incoming)
+   * and onUpdate (outgoing) so that single-client edits are compacted too.
+   */
+  async #accumulate(...sidecars: EncryptedBinary[]): Promise<void> {
+    this.#receivedSidecars.push(...sidecars);
+
+    if (this.#receivedSidecars.length >= EncryptionClient.COMPACTION_THRESHOLD) {
+      const compacted = await compactSidecars(this.key, this.#receivedSidecars);
+      if (compacted) {
+        const sourceHashes = this.#receivedSidecars.map(hashSidecar);
+        this.#pendingCompaction = {
+          sidecar: compacted.encrypted,
+          index: compacted.index,
+          hash: compacted.hash,
+          sourceHashes,
+        };
+      }
+      this.#receivedSidecars = [];
+    }
+  }
+
+  /**
    * Applies an incremental update from a peer.
+   * Accumulates encrypted sidecars for incremental compaction.
    */
   public async handleUpdate(update: VersionedUpdate): Promise<void> {
     const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
     await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
+    await this.#accumulate(...decoded.encryptedSidecars);
   }
 
   /**
@@ -188,6 +216,9 @@ export class EncryptionClient
 
   /**
    * Encrypts a local Y.js update and returns a doc message for sending.
+   * Consumes any pending compaction (from sync or incremental accumulation)
+   * and includes it in the outgoing payload. Also accumulates the outgoing
+   * sidecar for future compaction so single-client edits are compacted too.
    */
   public async onUpdate(update: VersionedUpdate): Promise<Message> {
     const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(
@@ -196,12 +227,16 @@ export class EncryptionClient
       update.version,
     );
 
+    const compaction = this.#pendingCompaction;
+    this.#pendingCompaction = null;
+
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
       encryptedSidecars: [encryptedSidecar],
+      compaction: compaction ?? undefined,
     });
 
-    return new DocMessage(
+    const message = new DocMessage(
       this.document,
       {
         type: "update",
@@ -212,6 +247,12 @@ export class EncryptionClient
       },
       true,
     );
+
+    // Accumulate AFTER building the payload — this sidecar will be referenced
+    // by a future compaction, by which time the server will have stored it.
+    await this.#accumulate(encryptedSidecar);
+
+    return message;
   }
 
   public async createCompactedSidecar(

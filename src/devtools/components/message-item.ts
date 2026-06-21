@@ -51,6 +51,12 @@ export function createMessageItem(
   }
   container.append(descriptionEl);
 
+  // Size in bytes
+  const sizeEl = document.createElement("div");
+  sizeEl.className = "devtools-message-size";
+  sizeEl.textContent = `${message.message.encoded.byteLength}`;
+  container.append(sizeEl);
+
   // Timestamp
   const timestampEl = document.createElement("div");
   timestampEl.className = "devtools-message-time";

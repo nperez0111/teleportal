@@ -226,6 +226,9 @@ export class MessageInspector {
       this.createCopyableRow("Document", this.message!.document || "N/A", !!this.message!.document),
     );
 
+    // Size
+    card.append(this.createRow("Size", `${this.message!.message.encoded.byteLength}`));
+
     // Timestamp
     card.append(
       this.createCopyableRow("Timestamp", new Date(this.message!.timestamp).toISOString(), true),

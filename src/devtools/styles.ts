@@ -352,6 +352,18 @@ export const devtoolsStyles = `
   padding: 2px 0;
 }
 
+/* Size */
+.devtools-message-size {
+  flex-shrink: 0;
+  min-width: 50px;
+  text-align: right;
+  font-size: 10px;
+  font-family: var(--dt-font-mono);
+  color: var(--dt-text-muted);
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
 /* Timestamp */
 .devtools-message-time {
   flex-shrink: 0;

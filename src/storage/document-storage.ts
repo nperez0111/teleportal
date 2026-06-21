@@ -148,7 +148,13 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
 
         const svBefore = Y.encodeStateVectorFromUpdateV2(existing.update);
         const svAfter = Y.encodeStateVectorFromUpdateV2(merged);
-        if (arraysEqual(svBefore, svAfter)) return;
+        const isNoOp = arraysEqual(svBefore, svAfter);
+        if (isNoOp && !decoded.compaction) return;
+
+        // When the update adds no new state, keep the existing update unchanged
+        // and don't append a sidecar for the empty diff.
+        if (isNoOp) merged = existing.update;
+        const appendedSidecars = isNoOp ? [] : incomingSidecars;
 
         if (decoded.compaction) {
           const matchedIndices = new Set<number>();
@@ -164,12 +170,12 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
               hash: decoded.compaction.hash,
             };
             const keptSidecars = existing.sidecars.filter((_, i) => !matchedIndices.has(i));
-            newSidecars = [compactedSidecar, ...keptSidecars, ...incomingSidecars];
+            newSidecars = [compactedSidecar, ...keptSidecars, ...appendedSidecars];
           } else {
-            newSidecars = [...existing.sidecars, ...incomingSidecars];
+            newSidecars = [...existing.sidecars, ...appendedSidecars];
           }
         } else {
-          newSidecars = [...existing.sidecars, ...incomingSidecars];
+          newSidecars = [...existing.sidecars, ...appendedSidecars];
         }
       } else {
         merged = decoded.structureUpdate;
