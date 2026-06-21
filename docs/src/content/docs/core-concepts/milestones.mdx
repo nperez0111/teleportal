@@ -138,14 +138,15 @@ To enable milestone operations on the server:
 ```typescript
 import { Server } from "teleportal/server";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
-import { createUnstorage } from "teleportal/storage";
+import { UnstorageDocumentStorage, UnstorageMilestoneStorage } from "teleportal/storage";
 
-const { documentStorage, milestoneStorage } = createUnstorage(storage, {
-  // ... options
+const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+  keyPrefix: "document-milestone",
 });
 
 const server = new Server({
-  getStorage: async (ctx) => documentStorage,
+  storage: async (ctx) =>
+    new UnstorageDocumentStorage(storage, { keyPrefix: "doc", encrypted: ctx.encrypted }),
   rpcHandlers: {
     ...getMilestoneRpcHandlers(milestoneStorage),
   },

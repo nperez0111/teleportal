@@ -12,7 +12,7 @@ Teleportal supports any storage backend through the `DocumentStorage` interface.
 ```typescript
 // Unstorage (production)
 import { createStorage } from "unstorage";
-import { createUnstorage } from "teleportal/storage";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 import redisDriver from "unstorage/drivers/redis";
 
 const storage = createStorage({
@@ -20,22 +20,20 @@ const storage = createStorage({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createUnstorage(storage, {
-      documentKeyPrefix: "doc",
-      fileKeyPrefix: "file",
+  storage: async (ctx) => {
+    return new UnstorageDocumentStorage(storage, {
+      keyPrefix: "doc",
+      encrypted: ctx.encrypted,
     });
-    return documentStorage;
   },
 });
 
 // In-memory (development)
-import { createInMemory } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createInMemory();
-    return documentStorage;
+  storage: async (ctx) => {
+    return new MemoryDocumentStorage(ctx.encrypted);
   },
 });
 ```
@@ -133,7 +131,7 @@ For **single-node** deployments, run one server instance with in-memory or local
 import { RedisPubSub } from "teleportal/pubsub/redis";
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Shared storage
   },
   pubSub: new RedisPubSub({

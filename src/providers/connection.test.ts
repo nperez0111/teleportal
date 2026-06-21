@@ -77,7 +77,7 @@ function makeDocUpdate(docName: string, text = "hello"): DocMessage<any> {
   const doc = new Y.Doc();
   doc.getText("t").insert(0, text);
   const payload = encodeContentEncryptedPayload({
-    structureUpdate: Y.encodeStateAsUpdate(doc),
+    structureUpdate: Y.encodeStateAsUpdateV2(doc),
     encryptedSidecars: [],
   });
   return new DocMessage(
@@ -93,7 +93,7 @@ function makeEncryptedDocUpdate(docName: string): DocMessage<any> {
   const doc = new Y.Doc();
   doc.getText("t").insert(0, "secret");
   const payload = encodeContentEncryptedPayload({
-    structureUpdate: Y.encodeStateAsUpdate(doc),
+    structureUpdate: Y.encodeStateAsUpdateV2(doc),
     encryptedSidecars: [],
   });
   return new DocMessage(

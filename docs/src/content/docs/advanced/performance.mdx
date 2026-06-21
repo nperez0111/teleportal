@@ -61,18 +61,6 @@ Choose storage based on your needs:
 - **PostgreSQL**: Reliable, transactional, good for complex queries
 - **S3**: Scalable, cost-effective, good for large files
 
-### Indexed Keys vs Key Scanning
-
-For unstorage-based storage:
-
-```typescript
-const { documentStorage } = createUnstorage(storage, {
-  scanKeys: false, // Use indexed keys (better for Redis, Memcached)
-  // or
-  scanKeys: true, // Use key scanning (better for PostgreSQL, MySQL)
-});
-```
-
 ## Connection Optimization
 
 ### Connection Reuse

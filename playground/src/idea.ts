@@ -2,10 +2,10 @@ import { Message } from "teleportal";
 import { Agent } from "teleportal/agent";
 import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 
 const server = new Server({
-  storage: new YDocStorage(),
+  storage: new MemoryDocumentStorage(),
 });
 
 const handleRequest = getHTTPHandlers({

@@ -136,22 +136,26 @@ The underlying pure helpers live in `teleportal/attribution`:
 `milestoneContentMap(fullMap, milestoneIds)` and
 `changesetContentMap(fullMap, fromIds, toIds)`.
 
-> Note: for E2EE documents, milestone snapshots are encrypted on the client (see the
-> [milestone README](../milestone/README.md)); `Provider` decrypts them transparently before
-> deriving operation IDs. Server-generated _automatic_ milestones on E2EE documents use a
-> different snapshot format and are not consumed by these methods.
+> Note: for E2EE documents, milestone snapshots are content-encrypted payloads (a plaintext
+> structure update plus encrypted sidecars), whether created on the client or as
+> server-generated _automatic_ milestones — both use the same format. `Provider` decrypts
+> them transparently before deriving operation IDs, so both are consumed uniformly by these
+> methods.
 
 ## Encryption boundary
 
-Attribution works for E2EE documents. The encrypted client extracts CRDT operation
-IDs `(clientID, clock)` from the plaintext update **before** encrypting, and sends
-them alongside the ciphertext in the encrypted wire format. These IDs are structural
-metadata — they reveal which client wrote how many operations, but never the content
-itself. The server tags them with userId/timestamp and stores the resulting ContentMap
-exactly as it does for unencrypted documents.
+Attribution works for E2EE documents without any encryption-specific handling. With
+content-level encryption the CRDT structure (client IDs, clocks, parents, delete sets)
+stays in **plaintext**; only the document content is encrypted into sidecars. The server
+therefore derives the CRDT operation IDs `(clientID, clock)` directly from the plaintext
+structure update — the same code path as unencrypted documents — and tags them with
+userId/timestamp to build the ContentMap. The client does **not** extract or ship
+content IDs separately; nothing extra travels alongside the ciphertext. These IDs are
+structural metadata: they reveal which client wrote how many operations, never the
+content itself.
 
-The server **can** answer `attributionActivity` (derived from metadata only), but it
-**cannot** map a content position to a CRDT id — only the client can, against its
+The server **can** answer `attributionActivity` (derived from the plaintext structure),
+but it **cannot** map a content position to a CRDT id — only the client can, against its
 decrypted document. `getAttributionForRange` (and the `resolveRangeAttribution` /
 `collectRangeIds` utilities behind it) therefore run entirely client-side and work
 identically for encrypted and unencrypted documents.

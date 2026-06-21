@@ -13,7 +13,6 @@ import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import {
   createEncryptedDriver,
   UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
   UnstorageFileStorage,
   UnstorageMilestoneStorage,
   UnstorageRateLimitStorage,
@@ -93,14 +92,9 @@ const rateLimitRules: RateLimitRule<TokenPayload & { clientId: string }>[] = [
 
 const server = new Server<TokenPayload & { clientId: string }>({
   storage: async (ctx) => {
-    if (ctx.encrypted) {
-      return new UnstorageEncryptedDocumentStorage(backingStorage, {
-        keyPrefix: "document",
-      });
-    }
     return new UnstorageDocumentStorage(backingStorage, {
       keyPrefix: "document",
-      scanKeys: false,
+      encrypted: ctx.encrypted,
     });
   },
   rpcHandlers: {

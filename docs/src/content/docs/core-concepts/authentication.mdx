@@ -275,7 +275,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  getStorage: async ({ context }) => {
+  storage: async ({ context }) => {
     // Your storage implementation
     return documentStorage;
   },

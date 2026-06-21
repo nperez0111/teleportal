@@ -92,6 +92,89 @@ describe("content-encrypted payload encoding", () => {
   });
 });
 
+describe("compaction wire format", () => {
+  it("round-trips a payload with compaction section", () => {
+    const payload: ContentEncryptedPayload = {
+      structureUpdate: new Uint8Array([1, 2, 3]),
+      encryptedSidecars: [new Uint8Array([10, 20]) as EncryptedBinary],
+      compaction: {
+        sidecar: new Uint8Array([30, 40, 50]) as EncryptedBinary,
+        index: [
+          { clientId: 1, minClock: 0, maxClock: 5 },
+          { clientId: 2, minClock: 0, maxClock: 3 },
+        ],
+        hash: new Uint8Array(32).fill(0xaa),
+        sourceHashes: [new Uint8Array(32).fill(0xbb), new Uint8Array(32).fill(0xcc)],
+      },
+    };
+    const encoded = encodeContentEncryptedPayload(payload);
+    const decoded = decodeContentEncryptedPayload(encoded);
+
+    expect(decoded.structureUpdate).toEqual(payload.structureUpdate);
+    expect(decoded.encryptedSidecars.length).toBe(1);
+    expect(decoded.compaction).toBeDefined();
+    expect(decoded.compaction!.sidecar).toEqual(payload.compaction!.sidecar);
+    expect(decoded.compaction!.index).toEqual(payload.compaction!.index);
+    expect(decoded.compaction!.hash).toEqual(payload.compaction!.hash);
+    expect(decoded.compaction!.sourceHashes.length).toBe(2);
+    expect(decoded.compaction!.sourceHashes[0]).toEqual(payload.compaction!.sourceHashes[0]);
+    expect(decoded.compaction!.sourceHashes[1]).toEqual(payload.compaction!.sourceHashes[1]);
+  });
+
+  it("round-trips a payload without compaction (explicit undefined)", () => {
+    const payload: ContentEncryptedPayload = {
+      structureUpdate: new Uint8Array([1]),
+      encryptedSidecars: [],
+      compaction: undefined,
+    };
+    const encoded = encodeContentEncryptedPayload(payload);
+    const decoded = decodeContentEncryptedPayload(encoded);
+
+    expect(decoded.compaction).toBeUndefined();
+  });
+
+  it("round-trips compaction with empty sourceHashes and index", () => {
+    const payload: ContentEncryptedPayload = {
+      structureUpdate: new Uint8Array([1]),
+      encryptedSidecars: [],
+      compaction: {
+        sidecar: new Uint8Array([99]) as EncryptedBinary,
+        index: [],
+        hash: new Uint8Array(32).fill(0xff),
+        sourceHashes: [],
+      },
+    };
+    const encoded = encodeContentEncryptedPayload(payload);
+    const decoded = decodeContentEncryptedPayload(encoded);
+
+    expect(decoded.compaction).toBeDefined();
+    expect(decoded.compaction!.sidecar).toEqual(payload.compaction!.sidecar);
+    expect(decoded.compaction!.index).toEqual([]);
+    expect(decoded.compaction!.sourceHashes).toEqual([]);
+  });
+
+  it("decodes payload from before compaction support (no trailing bytes)", () => {
+    // Simulate an old-format payload by encoding without compaction and stripping the trailing 0 byte
+    const payload: ContentEncryptedPayload = {
+      structureUpdate: new Uint8Array([1, 2]),
+      encryptedSidecars: [new Uint8Array([3]) as EncryptedBinary],
+    };
+    const encoded = encodeContentEncryptedPayload(payload);
+
+    // The new encoder always writes hasCompaction byte, but old encoders wouldn't.
+    // Test that a manually truncated payload (simulating old format) still decodes.
+    // Find the position after sidecars and truncate there.
+    // We know our encoder writes a trailing 0x00 for hasCompaction=false.
+    // Remove it to simulate the old format.
+    const truncated = encoded.slice(0, encoded.length - 1) as typeof encoded;
+    const decoded = decodeContentEncryptedPayload(truncated);
+
+    expect(decoded.structureUpdate).toEqual(new Uint8Array([1, 2]));
+    expect(decoded.encryptedSidecars.length).toBe(1);
+    expect(decoded.compaction).toBeUndefined();
+  });
+});
+
 describe("mergeContentEncryptedPayloads", () => {
   it("returns empty payload for empty array", () => {
     const result = mergeContentEncryptedPayloads([]);
@@ -151,7 +234,7 @@ describe("mergeContentEncryptedPayloads", () => {
     const fullUpdate = restoreContent(decoded.structureUpdate, mergeSidecars(sidecars));
 
     const verifyDoc = new Y.Doc();
-    Y.applyUpdate(verifyDoc, fullUpdate);
+    Y.applyUpdateV2(verifyDoc, fullUpdate);
     expect(verifyDoc.getText("t").toString()).toContain("hello");
     expect(verifyDoc.getText("t").toString()).toContain("world");
   });

@@ -170,10 +170,9 @@ async function formatEncryptedPayload(
       const sidecarBytes = await decryptUpdate(provider.encryptionKey, encrypted);
       sidecars.push(decodeSidecar(sidecarBytes));
     }
-    const fullUpdate = restoreContent(payload.structureUpdate, mergeSidecars(sidecars));
-    const v2 = Y.convertUpdateFormatV1ToV2(fullUpdate);
+    const v2 = restoreContent(payload.structureUpdate, mergeSidecars(sidecars));
 
-    return formatMessagePayload(
+    const result = await formatMessagePayload(
       new DocMessage(
         getDocId(message),
         {
@@ -188,9 +187,72 @@ async function formatEncryptedPayload(
       ),
       provider,
     );
+
+    if (result && payload.compaction) {
+      try {
+        const parsed = JSON.parse(result);
+        parsed.compaction = {
+          sidecarBytes: payload.compaction.sidecar.length,
+          index: payload.compaction.index,
+          hash: toBase64(payload.compaction.hash),
+          sourceHashes: payload.compaction.sourceHashes.map((h) => toBase64(h)),
+        };
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return result;
+      }
+    }
+
+    return result;
   } catch {
     return toBase64(data);
   }
+}
+
+export function formatEncryptedDocEnvelope(data: Uint8Array): string | null {
+  try {
+    const payload = decodeContentEncryptedPayload(data as any);
+    const envelope: Record<string, unknown> = {
+      wireVersion: payload.wireVersion ?? 1,
+      totalBytes: data.length,
+      structureUpdate: {
+        bytes: payload.structureUpdate.length,
+        data: toBase64(payload.structureUpdate),
+      },
+      encryptedSidecars: payload.encryptedSidecars.map((s, i) => ({
+        index: i,
+        bytes: s.length,
+        data: toBase64(s),
+      })),
+    };
+
+    if (payload.compaction) {
+      envelope.compaction = {
+        sidecar: {
+          bytes: payload.compaction.sidecar.length,
+          data: toBase64(payload.compaction.sidecar),
+        },
+        index: payload.compaction.index,
+        hash: toBase64(payload.compaction.hash),
+        sourceHashes: payload.compaction.sourceHashes.map((h) => toBase64(h)),
+      };
+    }
+
+    return JSON.stringify(envelope, null, 2);
+  } catch {
+    return toBase64(data);
+  }
+}
+
+export function formatEncryptedAwarenessEnvelope(data: Uint8Array): string {
+  return JSON.stringify(
+    {
+      totalBytes: data.length,
+      data: toBase64(data),
+    },
+    null,
+    2,
+  );
 }
 
 export async function formatMessagePayload(
@@ -236,7 +298,7 @@ export async function formatMessagePayload(
       switch (message.payload.type) {
         case "sync-step-1": {
           const stateVector = message.payload.sv;
-          return JSON.stringify(Y.decodeStateVector(stateVector), null, 2);
+          return JSON.stringify(mapToJSON(Y.decodeStateVector(stateVector)), null, 2);
         }
         case "update":
         case "sync-step-2": {

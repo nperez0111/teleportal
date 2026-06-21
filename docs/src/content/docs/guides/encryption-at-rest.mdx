@@ -16,7 +16,7 @@ This guide demonstrates encrypting documents before storing them in the storage 
 
 ```typescript
 import { Server } from "teleportal/server";
-import { createUnstorage } from "teleportal/storage";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 import { createStorage } from "unstorage";
 import redisDriver from "unstorage/drivers/redis";
 
@@ -28,12 +28,11 @@ const storage = createStorage({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createUnstorage(storage, {
-      documentKeyPrefix: "doc",
-      encrypted: ctx.encrypted, // Enable encryption based on context
+  storage: async (ctx) => {
+    return new UnstorageDocumentStorage(storage, {
+      keyPrefix: "doc",
+      encrypted: ctx.encrypted, // Store content-encrypted (structure + sidecars) based on context
     });
-    return documentStorage;
   },
 });
 ```

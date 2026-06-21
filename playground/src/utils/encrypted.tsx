@@ -1,5 +1,3 @@
-import { fromBase64, toBase64 } from "lib0/buffer";
-import { createMutex } from "lib0/mutex";
 import { useEffect, useState } from "react";
 import {
   createEncryptionKey,
@@ -7,13 +5,18 @@ import {
   importEncryptionKey,
 } from "teleportal/encryption-key";
 import { getEncryptedTransport as getEncryptedTransportBase } from "teleportal/transports";
-import { getEmptyEncodedContentIds } from "teleportal/attribution";
 import { Awareness } from "y-protocols/awareness.js";
 import * as Y from "yjs";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
 
 /**
- * Wraps a transport with encryption secured by the provided key
+ * Wraps a transport with encryption secured by the provided key.
+ *
+ * With content-level encryption the CRDT structure stays in plaintext and only
+ * document content is encrypted into sidecars, so the EncryptionClient syncs
+ * like any other transport — there is no client-side snapshot/update log to
+ * persist.
+ *
  * @param key - The encryption key to use
  */
 export function getEncryptedTransport(key: CryptoKey) {
@@ -26,147 +29,12 @@ export function getEncryptedTransport(key: CryptoKey) {
     ydoc: Y.Doc;
     awareness: Awareness;
   }) => {
-    const prefix = "teleportal-encrypted-" + document;
-    const snapshotKey = prefix + "-snapshot";
-    const updatesKey = prefix + "-updates";
-
-    const readSnapshot = () => {
-      const raw = localStorage.getItem(snapshotKey);
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw) as {
-          id: string;
-          parentSnapshotId?: string | null;
-          payload: string;
-        };
-        return {
-          id: parsed.id,
-          parentSnapshotId: parsed.parentSnapshotId ?? null,
-          payload: fromBase64(parsed.payload),
-        };
-      } catch {
-        return null;
-      }
-    };
-
-    const readUpdates = () => {
-      const raw = localStorage.getItem(updatesKey);
-      if (!raw) return [];
-      try {
-        const parsed = JSON.parse(raw) as Array<{
-          id: string;
-          snapshotId: string;
-          clientId: number;
-          counter: number;
-          payload: string;
-          serverVersion?: number;
-        }>;
-        return parsed.map((update) => ({
-          id: update.id,
-          snapshotId: update.snapshotId,
-          timestamp: [update.clientId, update.counter] as [number, number],
-          payload: fromBase64(update.payload),
-          serverVersion: update.serverVersion,
-          contentIds: getEmptyEncodedContentIds(),
-        }));
-      } catch {
-        return [];
-      }
-    };
-
-    const writeUpdates = (
-      updates: Array<{
-        id: string;
-        snapshotId: string;
-        timestamp: [number, number];
-        payload: Uint8Array;
-        serverVersion?: number;
-      }>,
-    ) => {
-      const serialized = updates.map((update) => ({
-        id: update.id,
-        snapshotId: update.snapshotId,
-        clientId: update.timestamp[0],
-        counter: update.timestamp[1],
-        payload: toBase64(update.payload),
-        serverVersion: update.serverVersion,
-      }));
-      localStorage.setItem(updatesKey, JSON.stringify(serialized));
-    };
-
     const client = new EncryptionClient({
       document,
       ydoc,
       awareness,
       key,
     });
-    const snapshot = readSnapshot();
-    const updates = readUpdates();
-    if (snapshot || updates.length > 0) {
-      client.loadState({ snapshot, updates }).catch((err) => {
-        console.error("Failed to load encrypted state from storage", err);
-        localStorage.removeItem(snapshotKey);
-        localStorage.removeItem(updatesKey);
-      });
-    }
-
-    client.on("snapshot-stored", (snapshot) => {
-      localStorage.setItem(
-        snapshotKey,
-        JSON.stringify({
-          id: snapshot.id,
-          parentSnapshotId: snapshot.parentSnapshotId ?? null,
-          payload: toBase64(snapshot.payload),
-        }),
-      );
-      // New snapshot supersedes all previous updates; clear them so we don't
-      // reload obsolete updates on next startup (which would be queued as
-      // mismatched and grow memory/storage).
-      writeUpdates([]);
-    });
-
-    const toStoredUpdate = (update: {
-      id: string;
-      snapshotId: string;
-      timestamp: [number, number];
-      payload: Uint8Array;
-      serverVersion?: number;
-    }) => ({
-      id: update.id,
-      snapshotId: update.snapshotId,
-      timestamp: update.timestamp,
-      payload: new Uint8Array(update.payload),
-      serverVersion: update.serverVersion,
-      contentIds: getEmptyEncodedContentIds(),
-    });
-
-    const updatesMutex = createMutex();
-    const upsertUpdate = (update: {
-      id: string;
-      snapshotId: string;
-      timestamp: [number, number];
-      payload: Uint8Array;
-      serverVersion?: number;
-    }) => {
-      updatesMutex(() => {
-        const current = readUpdates();
-        const index = current.findIndex((item) => item.id === update.id);
-        if (index >= 0) {
-          current[index] = toStoredUpdate({
-            ...current[index],
-            ...update,
-            serverVersion: update.serverVersion ?? current[index].serverVersion,
-          });
-        } else {
-          current.push(toStoredUpdate({ ...update, serverVersion: update.serverVersion }));
-        }
-        writeUpdates(current);
-      });
-    };
-
-    client.on("update-stored", upsertUpdate);
-    client.on("update-acknowledged", upsertUpdate);
-
     return getEncryptedTransportBase(client);
   };
 }

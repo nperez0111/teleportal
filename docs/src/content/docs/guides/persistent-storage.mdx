@@ -7,7 +7,7 @@ This guide demonstrates using persistent storage instead of in-memory storage. D
 
 ## What it demonstrates
 
-- Using `createUnstorage` for persistent document storage
+- Using `UnstorageDocumentStorage` for persistent document storage
 - Configuring unstorage with different drivers (memory, SQLite, Redis, etc.)
 - Replacing in-memory storage with a persistent storage backend
 
@@ -15,7 +15,7 @@ This guide demonstrates using persistent storage instead of in-memory storage. D
 
 ```typescript
 import { createStorage } from "unstorage";
-import { createUnstorage } from "teleportal/storage";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 import redisDriver from "unstorage/drivers/redis";
 import { Server } from "teleportal/server";
 
@@ -28,13 +28,11 @@ const storage = createStorage({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createUnstorage(storage, {
-      documentKeyPrefix: "doc",
-      fileKeyPrefix: "file",
+  storage: async (ctx) => {
+    return new UnstorageDocumentStorage(storage, {
+      keyPrefix: "doc",
       encrypted: ctx.encrypted,
     });
-    return documentStorage;
   },
 });
 ```

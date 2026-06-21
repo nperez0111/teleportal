@@ -13,7 +13,7 @@ import {
   type VersionedSyncStep2Update,
   type VersionedUpdate,
 } from "teleportal/protocol";
-import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
+import type { EncryptedUpdatePayload, SidecarCompaction } from "teleportal/protocol/encryption";
 import {
   decodeContentEncryptedPayload,
   encodeContentEncryptedPayload,
@@ -22,6 +22,7 @@ import {
   mergeSidecars,
   restoreContent,
   compactSidecars,
+  hashSidecar,
 } from "teleportal/protocol/encryption";
 import type { IndexedSidecar } from "teleportal/protocol/encryption";
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness.js";
@@ -42,6 +43,7 @@ export class EncryptionClient
   public key: CryptoKey;
   #decryptUpdate: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
   #encryptUpdate: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
+  #pendingCompaction: SidecarCompaction | null = null;
 
   constructor({
     document,
@@ -90,7 +92,7 @@ export class EncryptionClient
     }
 
     const fullUpdate = restoreContent(structureUpdate, mergeSidecars(sidecars));
-    Y.applyUpdate(this.ydoc, fullUpdate, getSyncTransactionOrigin(this.ydoc));
+    Y.applyUpdateV2(this.ydoc, fullUpdate, getSyncTransactionOrigin(this.ydoc));
   }
 
   /**
@@ -112,14 +114,19 @@ export class EncryptionClient
 
   /**
    * Responds to the server's sync-step-1 echo with a diff of local-only state.
+   * Includes any pending compaction from handleSyncStep2.
    */
   public async handleSyncStep1(syncStep1: Uint8Array): Promise<DocMessage<ClientContext>> {
-    const diff = Y.encodeStateAsUpdate(this.ydoc, syncStep1);
-    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, diff, 1);
+    const diff = Y.encodeStateAsUpdateV2(this.ydoc, syncStep1);
+    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, diff, 2);
+
+    const compaction = this.#pendingCompaction;
+    this.#pendingCompaction = null;
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
       encryptedSidecars: [encryptedSidecar],
+      compaction: compaction ?? undefined,
     });
 
     return new DocMessage(
@@ -137,12 +144,27 @@ export class EncryptionClient
 
   /**
    * Applies the server's sync-step-2 diff to the local Y.Doc.
+   * If multiple sidecars are received, compacts them for piggy-backing
+   * on the next handleSyncStep1 response.
    */
   public async handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<void> {
     const decoded = decodeContentEncryptedPayload(
       syncStep2.data as unknown as EncryptedUpdatePayload,
     );
     await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
+
+    if (decoded.encryptedSidecars.length >= 2) {
+      const compacted = await compactSidecars(this.key, decoded.encryptedSidecars);
+      if (compacted) {
+        const sourceHashes = decoded.encryptedSidecars.map(hashSidecar);
+        this.#pendingCompaction = {
+          sidecar: compacted.encrypted,
+          index: compacted.index,
+          hash: compacted.hash,
+          sourceHashes,
+        };
+      }
+    }
   }
 
   /**
@@ -168,8 +190,11 @@ export class EncryptionClient
    * Encrypts a local Y.js update and returns a doc message for sending.
    */
   public async onUpdate(update: VersionedUpdate): Promise<Message> {
-    const v1 = update.version === 2 ? Y.convertUpdateFormatV2ToV1(update.data) : update.data;
-    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, v1, 1);
+    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(
+      this.key,
+      update.data,
+      update.version,
+    );
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,

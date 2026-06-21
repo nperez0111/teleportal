@@ -59,9 +59,9 @@ export function getYDocSource<Context extends ClientContext>({
   updateBatchIntervalMs = 0,
   handler = {
     async onUpdate(update: VersionedUpdate) {
-      const v1 = update.version === 2 ? Y.convertUpdateFormatV2ToV1(update.data) : update.data;
+      const v2 = update.version === 2 ? update.data : convertToV2(update);
       const payload = encodeContentEncryptedPayload({
-        structureUpdate: v1,
+        structureUpdate: v2,
         encryptedSidecars: [],
       });
       return new DocMessage(
@@ -274,7 +274,7 @@ export function getYDocSink<Context extends ClientContext>({
       );
     },
     async handleSyncStep1(stateVector) {
-      const diff = Y.encodeStateAsUpdate(ydoc, stateVector);
+      const diff = Y.encodeStateAsUpdateV2(ydoc, stateVector);
       const payload = encodeContentEncryptedPayload({
         structureUpdate: diff,
         encryptedSidecars: [],
@@ -296,13 +296,13 @@ export function getYDocSink<Context extends ClientContext>({
         syncStep2.data as unknown as EncryptedUpdatePayload,
       );
       if (decoded.structureUpdate.length > 0) {
-        Y.applyUpdate(ydoc, decoded.structureUpdate, getSyncTransactionOrigin(ydoc));
+        Y.applyUpdateV2(ydoc, decoded.structureUpdate, getSyncTransactionOrigin(ydoc));
       }
     },
     async handleUpdate(update) {
       const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
       if (decoded.structureUpdate.length > 0) {
-        Y.applyUpdate(ydoc, decoded.structureUpdate, getSyncTransactionOrigin(ydoc));
+        Y.applyUpdateV2(ydoc, decoded.structureUpdate, getSyncTransactionOrigin(ydoc));
       }
     },
   },

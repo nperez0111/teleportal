@@ -167,11 +167,9 @@ export function createMilestoneRpc(): RpcExtension<MilestoneRpc> {
           // milestone content is never stored in plaintext on the server. It uses the
           // same content-encrypted payload format the server uses for automatic
           // milestones, so getSnapshot can decrypt both uniformly.
-          const snapshot = (
-            encryptionKey
-              ? await encryptToContentPayload(encryptionKey, plaintext)
-              : plaintext
-          ) as unknown as MilestoneSnapshot;
+          const snapshot = (encryptionKey
+            ? await encryptToContentPayload(encryptionKey, plaintext)
+            : plaintext) as unknown as MilestoneSnapshot;
 
           try {
             const response = await rpcClient.sendRequest<MilestoneCreateResponse>(

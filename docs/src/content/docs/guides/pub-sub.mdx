@@ -22,12 +22,15 @@ This example demonstrates how each server instance can coordinate with each othe
 ```typescript
 import { Server } from "teleportal/server";
 import { RedisPubSub } from "teleportal/pubsub/redis";
-import { createUnstorage } from "teleportal/storage";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Shared storage backend
-    return documentStorage;
+    return new UnstorageDocumentStorage(storage, {
+      keyPrefix: "doc",
+      encrypted: ctx.encrypted,
+    });
   },
   pubSub: new RedisPubSub({
     url: "redis://localhost:6379",
