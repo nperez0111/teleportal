@@ -27,7 +27,12 @@ export function createMemoryTransportPair(
 }
 
 function createMemoryTransport(latency: number): MemoryTransportHandle & {
-  _setPeer(peer: MemoryTransportHandle & { _deliver(message: RawReceivedMessage): void; _ctx: TransportConnectContext | null }): void;
+  _setPeer(
+    peer: MemoryTransportHandle & {
+      _deliver(message: RawReceivedMessage): void;
+      _ctx: TransportConnectContext | null;
+    },
+  ): void;
   _deliver(message: RawReceivedMessage): void;
   _ctx: TransportConnectContext | null;
 } {

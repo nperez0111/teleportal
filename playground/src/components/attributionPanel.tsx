@@ -191,7 +191,9 @@ export function AttributionPanel({
       const idx = all.findIndex((m) => m.id === selectedMilestone.id);
       const prev = idx > 0 ? all[idx - 1] : null;
       if (prev) {
-        const delta = await provider.rpc.attribution.getActivity({ changeset: [prev.id, selectedMilestone.id] });
+        const delta = await provider.rpc.attribution.getActivity({
+          changeset: [prev.id, selectedMilestone.id],
+        });
         setChangeset(toContributions(delta));
       } else {
         setChangeset(null);

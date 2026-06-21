@@ -8,7 +8,11 @@ import {
 } from "teleportal";
 import { mergeVersionedUpdates } from "teleportal/protocol";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
-import type { ConnectionTransport, TokenOptions, TransportConnectContext } from "./transports/types";
+import type {
+  ConnectionTransport,
+  TokenOptions,
+  TransportConnectContext,
+} from "./transports/types";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
 
 export type ConnectionState =
@@ -197,10 +201,15 @@ export class Connection extends Observable<{
       this.#isOnline = isOnline ?? true;
     } else {
       this.#eventTarget = eventTarget ?? globalThis;
-      this.#isOnline =
-        (isOnline ?? Connection.location?.hostname !== "localhost")
-          ? (navigator.onLine ?? true)
-          : true;
+      // An explicit `isOnline` option always wins. Otherwise treat localhost
+      // (dev) as always online and fall back to navigator.onLine elsewhere.
+      if (isOnline !== undefined) {
+        this.#isOnline = isOnline;
+      } else if (Connection.location?.hostname === "localhost") {
+        this.#isOnline = true;
+      } else {
+        this.#isOnline = navigator.onLine ?? true;
+      }
     }
 
     if (Connection.location?.hostname !== "localhost") {
@@ -236,10 +245,7 @@ export class Connection extends Observable<{
           }
         }
       } else {
-        const ackMessage = new AckMessage(
-          { type: "ack", messageId: message.id },
-          undefined,
-        );
+        const ackMessage = new AckMessage({ type: "ack", messageId: message.id }, undefined);
         queueMicrotask(() => {
           if (this.destroyed) return;
           this.send(ackMessage).catch(() => {});
@@ -416,10 +422,7 @@ export class Connection extends Observable<{
     }
   }
 
-  async #connectTransport(
-    transport: ConnectionTransport,
-    attemptId: number,
-  ): Promise<void> {
+  async #connectTransport(transport: ConnectionTransport, attemptId: number): Promise<void> {
     const timeout = transport.timeout ?? 10_000;
 
     const ctx: TransportConnectContext = {
@@ -495,9 +498,11 @@ export class Connection extends Observable<{
     this.call("update", state);
 
     if (
-      (previousState.type !== state.type) &&
-      (previousState.type === "connected" || previousState.type === "errored" ||
-       state.type === "connected" || state.type === "errored")
+      previousState.type !== state.type &&
+      (previousState.type === "connected" ||
+        previousState.type === "errored" ||
+        state.type === "connected" ||
+        state.type === "errored")
     ) {
       this.#clearConnectedPromise();
     }
@@ -905,7 +910,9 @@ function getTokenExpiry(token: string): number | null {
   try {
     const [, payload] = token.split(".");
     if (!payload) return null;
-    const decoded = JSON.parse(atob(payload));
+    // JWT payloads are base64url-encoded (using - and _), which atob does not
+    // accept; convert to standard base64 before decoding.
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
     return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
   } catch {
     return null;

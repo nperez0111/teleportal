@@ -103,7 +103,11 @@ function createControllableTransport(
     failCount?: number;
     timeout?: number;
   },
-): ConnectionTransport & { connectAttempts: number; closed: boolean; ctx: TransportConnectContext | null } {
+): ConnectionTransport & {
+  connectAttempts: number;
+  closed: boolean;
+  ctx: TransportConnectContext | null;
+} {
   let failsLeft = opts?.failCount ?? 0;
   const transport = {
     name,
@@ -1108,7 +1112,7 @@ describe("Connection", () => {
       const transport = createControllableTransport("ordered", { failCount: 1 });
       const originalSend = transport.send;
       transport.send = async (msg: any) => {
-        sentOrder.push(msg.payload?.type === "ack" ? `ack` : msg.document ?? "unknown");
+        sentOrder.push(msg.payload?.type === "ack" ? `ack` : (msg.document ?? "unknown"));
         return originalSend.call(transport, msg);
       };
 
@@ -1123,7 +1127,9 @@ describe("Connection", () => {
       });
 
       // First connect fails
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer 3 messages while disconnected
       const m1 = new AckMessage({ type: "ack", messageId: "order-1" }, undefined);
@@ -1241,7 +1247,9 @@ describe("Connection", () => {
       });
 
       // First connect fails
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer 4 messages — only last 2 should survive (cap is 2)
       await conn.send(new AckMessage({ type: "ack", messageId: "drop-1" }, undefined));
@@ -1623,6 +1631,17 @@ describe("Connection", () => {
       return `${header}.${payload}.signature`;
     }
 
+    // Real JWTs are base64url-encoded (using - and _), not standard base64.
+    // The `>?` in `sub` forces both characters into the encoded payload.
+    function makeBase64UrlJwt(expSeconds: number): string {
+      const header = btoa(JSON.stringify({ alg: "HS256" }));
+      const payload = btoa(JSON.stringify({ exp: expSeconds, sub: "user>?ff" }))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      return `${header}.${payload}.signature`;
+    }
+
     it("passes token to transport via ctx.token", async () => {
       let receivedToken: string | undefined;
       const transport: ConnectionTransport = {
@@ -1684,6 +1703,44 @@ describe("Connection", () => {
 
       expect(refreshCalled).toBe(true);
       expect(receivedOldToken).toBe(expiresIn60s);
+
+      await conn.destroy();
+    });
+
+    it("schedules proactive refresh for base64url-encoded JWTs", async () => {
+      const timer = new FakeTimer();
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn60s = makeBase64UrlJwt(now + 60);
+      const refreshedToken = makeBase64UrlJwt(now + 3600);
+
+      let refreshCalled = false;
+
+      const transport = createControllableTransport("base64url-refresh");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        timer,
+        token: {
+          token: expiresIn60s,
+          onTokenExpired: async () => {
+            refreshCalled = true;
+            return refreshedToken;
+          },
+          refreshBeforeExpiryMs: 30_000,
+        },
+      });
+
+      await conn.connect();
+      expect(refreshCalled).toBe(false);
+
+      // Token expires in 60s, refresh 30s before = should fire at ~30s.
+      // This only works if the base64url payload was decoded correctly.
+      await timer.advance(35_000);
+      await flushMicrotasks(10);
+
+      expect(refreshCalled).toBe(true);
 
       await conn.destroy();
     });
@@ -1900,7 +1957,9 @@ describe("Connection", () => {
         initialReconnectDelay: 100,
       });
 
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer 3 doc updates for the same document
       await conn.send(makeDocUpdate("merge-doc", "first"));
@@ -1937,7 +1996,9 @@ describe("Connection", () => {
         initialReconnectDelay: 100,
       });
 
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer updates for 2 different documents
       await conn.send(makeDocUpdate("doc-A", "a1"));
@@ -1976,12 +2037,26 @@ describe("Connection", () => {
         initialReconnectDelay: 100,
       });
 
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer 3 awareness messages — only the last should survive
-      const aw1 = new AwarenessMessage("doc", { added: [1], updated: [], removed: [], states: new Map() } as any, {});
-      const aw2 = new AwarenessMessage("doc", { added: [2], updated: [], removed: [], states: new Map() } as any, {});
-      const aw3 = new AwarenessMessage("doc", { added: [3], updated: [], removed: [], states: new Map() } as any, {});
+      const aw1 = new AwarenessMessage(
+        "doc",
+        { added: [1], updated: [], removed: [], states: new Map() } as any,
+        {},
+      );
+      const aw2 = new AwarenessMessage(
+        "doc",
+        { added: [2], updated: [], removed: [], states: new Map() } as any,
+        {},
+      );
+      const aw3 = new AwarenessMessage(
+        "doc",
+        { added: [3], updated: [], removed: [], states: new Map() } as any,
+        {},
+      );
       await conn.send(aw1);
       await conn.send(aw2);
       await conn.send(aw3);
@@ -2017,7 +2092,9 @@ describe("Connection", () => {
         initialReconnectDelay: 100,
       });
 
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer 4 ack messages (not mergeable) — cap is 2
       await conn.send(new AckMessage({ type: "ack", messageId: "a1" }, undefined));
@@ -2055,7 +2132,9 @@ describe("Connection", () => {
         initialReconnectDelay: 100,
       });
 
-      try { await conn.connect(); } catch {}
+      try {
+        await conn.connect();
+      } catch {}
 
       // Buffer 5 doc updates for the same document — they merge into 1 slot
       for (let i = 0; i < 5; i++) {
@@ -2166,7 +2245,9 @@ describe("Connection", () => {
       const tokensUsed: (string | undefined)[] = [];
       const transport: ConnectionTransport = {
         name: "reactive-reconnect",
-        async connect(ctx) { tokensUsed.push(ctx.token); },
+        async connect(ctx) {
+          tokensUsed.push(ctx.token);
+        },
         async send() {},
         async close() {},
       };

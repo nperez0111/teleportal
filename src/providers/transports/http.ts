@@ -176,9 +176,7 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
               )
               .catch((error) => {
                 if (!signal.aborted) {
-                  ctx.onClose(
-                    error instanceof Error ? error : new Error(String(error)),
-                  );
+                  ctx.onClose(error instanceof Error ? error : new Error(String(error)));
                 }
               })
               .finally(() => {
@@ -196,9 +194,7 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
                 connectionTimeout = null;
               }
               cleanup();
-              reject(
-                new Error("Failed to establish SSE connection", { cause: error }),
-              );
+              reject(new Error("Failed to establish SSE connection", { cause: error }));
             }
           });
       });

@@ -153,6 +153,7 @@ export class Provider<
 
   #abortController = new AbortController();
   #initInProgress = false;
+  #syncBridgeRegistered = false;
 
   constructor({
     connection,
@@ -292,6 +293,9 @@ export class Provider<
   // --- RPC Extension initialization ---
 
   #initExtensions(rpcMap: R) {
+    // Re-read the provider's synced getter on each access so extensions get
+    // the current promise (it is re-created after disconnect/reconnect).
+    const getSynced = () => this.synced;
     const ctx: RpcExtensionContext = {
       rpcClient: this.#rpcClient,
       document: this.document,
@@ -300,8 +304,7 @@ export class Provider<
       encryptionKey: this.encryptionKey,
       connection: this.#connection,
       get synced() {
-        // Lazily resolve so extensions always get the fresh promise
-        return Promise.all([]).then(() => undefined);
+        return getSynced();
       },
     };
 
@@ -362,22 +365,28 @@ export class Provider<
         }),
       );
 
-      const signal = this.#abortController.signal;
-      signal.addEventListener(
-        "abort",
-        this.#connection.on("disconnected", () => {
-          this.doc.emit("sync", [false, this.doc]);
-        }),
-      );
-      signal.addEventListener(
-        "abort",
-        this.#connection.on("connected", () => {
-          this.doc.emit("sync", [true, this.doc]);
-        }),
-      );
-      this.transport.synced
-        .then(() => this.doc.emit("sync", [true, this.doc]))
-        .catch(() => this.doc.emit("sync", [false, this.doc]));
+      // Bridge connection state → doc "sync" events. Registered once: #init
+      // runs on every (re)connect, so registering here unguarded would leak a
+      // new listener pair per reconnect and emit duplicate "sync" events.
+      if (!this.#syncBridgeRegistered) {
+        this.#syncBridgeRegistered = true;
+        const signal = this.#abortController.signal;
+        signal.addEventListener(
+          "abort",
+          this.#connection.on("disconnected", () => {
+            this.doc.emit("sync", [false, this.doc]);
+          }),
+        );
+        signal.addEventListener(
+          "abort",
+          this.#connection.on("connected", () => {
+            this.doc.emit("sync", [true, this.doc]);
+          }),
+        );
+        this.transport.synced
+          .then(() => this.doc.emit("sync", [true, this.doc]))
+          .catch(() => this.doc.emit("sync", [false, this.doc]));
+      }
     } catch (error) {
       console.error("Failed to send sync-step-1", error);
     } finally {
@@ -589,16 +598,14 @@ export class Provider<
           transports?: ConnectionTransport[];
         }
       | { url?: undefined; connection: Connection }
-    ) & Omit<ProviderOptions<T, R>, "connection">,
+    ) &
+      Omit<ProviderOptions<T, R>, "connection">,
   ): Promise<Provider<T, R>> {
     const connection =
       options.connection ??
       new Connection({
         url: options.url!,
-        transports: options.transports ?? [
-          websocketTransport({ timeout: 5000 }),
-          httpTransport(),
-        ],
+        transports: options.transports ?? [websocketTransport({ timeout: 5000 }), httpTransport()],
         token: "token" in options ? options.token : undefined,
       });
 

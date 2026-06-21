@@ -1,9 +1,6 @@
 import * as Y from "yjs";
 import { mergeUpdates, type MilestoneSnapshot, type Update } from "teleportal";
-import {
-  decodeEncryptedUpdate,
-  type EncryptedUpdatePayload,
-} from "teleportal/protocol/encryption";
+import { decodeEncryptedUpdate, type EncryptedUpdatePayload } from "teleportal/protocol/encryption";
 import { decryptUpdate } from "teleportal/encryption-key";
 import {
   changesetContentMap,
@@ -59,18 +56,13 @@ export function createAttributionRpc(): RpcExtension<AttributionRpc> {
       /**
        * Fetch and decode the attribution ContentMap, caching when unfiltered.
        */
-      async function getMap(
-        filter?: AttributionFilter,
-      ): Promise<ContentMap | null> {
-        const response =
-          await ctx.rpcClient.sendRequest<AttributionGetResponse>(
-            ctx.document,
-            "attributionGet",
-            filter ? { filter } : {},
-          );
-        const decoded = response.contentMap
-          ? decodeContentMap(response.contentMap)
-          : null;
+      async function getMap(filter?: AttributionFilter): Promise<ContentMap | null> {
+        const response = await ctx.rpcClient.sendRequest<AttributionGetResponse>(
+          ctx.document,
+          "attributionGet",
+          filter ? { filter } : {},
+        );
+        const decoded = response.contentMap ? decodeContentMap(response.contentMap) : null;
         if (!filter) {
           cachedMap = decoded;
         }
@@ -90,15 +82,12 @@ export function createAttributionRpc(): RpcExtension<AttributionRpc> {
       /**
        * Fetch and decrypt a milestone snapshot, returning its content IDs.
        */
-      async function milestoneContentIds(
-        milestoneId: string,
-      ): Promise<ContentIds> {
-        const response =
-          await ctx.rpcClient.sendRequest<MilestoneGetResponse>(
-            ctx.document,
-            "milestoneGet",
-            { milestoneId },
-          );
+      async function milestoneContentIds(milestoneId: string): Promise<ContentIds> {
+        const response = await ctx.rpcClient.sendRequest<MilestoneGetResponse>(
+          ctx.document,
+          "milestoneGet",
+          { milestoneId },
+        );
 
         const snapshot = response.snapshot as unknown as Uint8Array;
         let plaintext: MilestoneSnapshot;
@@ -109,25 +98,16 @@ export function createAttributionRpc(): RpcExtension<AttributionRpc> {
           // For E2EE documents the snapshot is an encrypted-update-message
           // container. Decrypt each message's payload and merge them back
           // into a single plaintext Y.js update.
-          const decoded = decodeEncryptedUpdate(
-            snapshot as unknown as EncryptedUpdatePayload,
-          );
-          const encryptedUpdates =
-            decoded.type === "update" ? decoded.updates : [];
+          const decoded = decodeEncryptedUpdate(snapshot as unknown as EncryptedUpdatePayload);
+          const encryptedUpdates = decoded.type === "update" ? decoded.updates : [];
           const updates = await Promise.all(
             encryptedUpdates.map(
-              (message) =>
-                decryptUpdate(
-                  ctx.encryptionKey!,
-                  message.payload,
-                ) as Promise<Update>,
+              (message) => decryptUpdate(ctx.encryptionKey!, message.payload) as Promise<Update>,
             ),
           );
-          plaintext = (
-            updates.length === 0
-              ? Y.encodeStateAsUpdateV2(new Y.Doc())
-              : mergeUpdates(updates)
-          ) as unknown as MilestoneSnapshot;
+          plaintext = (updates.length === 0
+            ? Y.encodeStateAsUpdateV2(new Y.Doc())
+            : mergeUpdates(updates)) as unknown as MilestoneSnapshot;
         }
 
         return createContentIdsFromUpdate({
@@ -141,13 +121,8 @@ export function createAttributionRpc(): RpcExtension<AttributionRpc> {
        * Computed client-side by intersecting the full ContentMap with
        * the milestone's operation IDs.
        */
-      async function getMilestoneContentMap(
-        milestoneId: string,
-      ): Promise<ContentMap | null> {
-        const [map, ids] = await Promise.all([
-          ensureMap(),
-          milestoneContentIds(milestoneId),
-        ]);
+      async function getMilestoneContentMap(milestoneId: string): Promise<ContentMap | null> {
+        const [map, ids] = await Promise.all([ensureMap(), milestoneContentIds(milestoneId)]);
         if (!map) return null;
         return milestoneContentMap(map, ids);
       }
@@ -179,26 +154,20 @@ export function createAttributionRpc(): RpcExtension<AttributionRpc> {
          */
         async getActivity(options?: ActivityOptions): Promise<ActivityEntry[]> {
           if (options?.milestone && options?.changeset) {
-            throw new Error(
-              "getActivity: `milestone` and `changeset` are mutually exclusive",
-            );
+            throw new Error("getActivity: `milestone` and `changeset` are mutually exclusive");
           }
           if (options?.milestone || options?.changeset) {
             const map = options.milestone
               ? await getMilestoneContentMap(options.milestone)
-              : await getChangesetContentMap(
-                  options.changeset![0],
-                  options.changeset![1],
-                );
+              : await getChangesetContentMap(options.changeset![0], options.changeset![1]);
             if (!map) return [];
             return getActivityFromMap(map, options);
           }
-          const response =
-            await ctx.rpcClient.sendRequest<AttributionActivityResponse>(
-              ctx.document,
-              "attributionActivity",
-              { ...options },
-            );
+          const response = await ctx.rpcClient.sendRequest<AttributionActivityResponse>(
+            ctx.document,
+            "attributionActivity",
+            { ...options },
+          );
           return response.activity;
         },
 

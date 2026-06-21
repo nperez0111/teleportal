@@ -230,8 +230,7 @@ describe("Provider", () => {
     });
 
     it("emits disconnected event when connection disconnects", async () => {
-      const { provider, clientConn, serverConn, clientTransport } =
-        await createTestProvider();
+      const { provider, clientConn, serverConn, clientTransport } = await createTestProvider();
 
       let disconnectedFired = false;
       provider.on("disconnected", () => {
@@ -392,8 +391,7 @@ describe("Provider", () => {
     });
 
     it("invalidates when connection disconnects", async () => {
-      const { provider, clientConn, serverConn, clientTransport } =
-        await createTestProvider();
+      const { provider, clientConn, serverConn, clientTransport } = await createTestProvider();
 
       // Resolve synced first
       await sendSyncDone(serverConn, "test-doc");
@@ -447,7 +445,12 @@ describe("Provider", () => {
       expect(ctx.awareness).toBe(awareness);
       expect(ctx.rpcClient).toBeDefined();
       expect(ctx.connection).toBeDefined();
-      expect(ctx.synced).toBeInstanceOf(Promise);
+      // ctx.synced mirrors provider.synced, which is rejectable (e.g. the
+      // transport's synced rejects on destroy). Swallow it here so teardown
+      // doesn't surface as an unhandled rejection.
+      const syncedPromise = ctx.synced;
+      expect(syncedPromise).toBeInstanceOf(Promise);
+      syncedPromise.catch(() => {});
 
       provider.destroy();
     });
@@ -481,9 +484,7 @@ describe("Provider", () => {
       await serverConn.send(rpcMsg);
       await flush();
 
-      const rpcMessages = mock.handledMessages.filter(
-        (m: any) => m.type === "rpc",
-      );
+      const rpcMessages = mock.handledMessages.filter((m: any) => m.type === "rpc");
       expect(rpcMessages.length).toBeGreaterThanOrEqual(1);
 
       provider.destroy();
@@ -529,9 +530,7 @@ describe("Provider", () => {
 
       // The server connection auto-acks non-ack messages. So the client should
       // receive an ack, which should be routed to the extension.
-      const ackMessages = mock.handledMessages.filter(
-        (m: any) => m.type === "ack",
-      );
+      const ackMessages = mock.handledMessages.filter((m: any) => m.type === "ack");
       expect(ackMessages.length).toBeGreaterThanOrEqual(1);
 
       provider.destroy();
@@ -755,10 +754,7 @@ describe("Provider", () => {
       });
 
       // Start connection + factory concurrently
-      const connectPromise = Promise.all([
-        clientConn.connect(),
-        serverConn.connect(),
-      ]);
+      const connectPromise = Promise.all([clientConn.connect(), serverConn.connect()]);
 
       const providerPromise = Provider.create({
         connection: clientConn,
@@ -869,8 +865,7 @@ describe("Provider", () => {
   // -----------------------------------------------------------------------
   describe("public getters", () => {
     it("state reflects connection state", async () => {
-      const { provider, clientConn, serverConn, clientTransport } =
-        await createTestProvider();
+      const { provider, clientConn, serverConn, clientTransport } = await createTestProvider();
 
       expect(provider.state.type).toBe("connected");
 

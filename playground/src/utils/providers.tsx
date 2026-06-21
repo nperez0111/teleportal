@@ -81,10 +81,7 @@ class ProviderManager {
     return this.websocketConnection;
   }
 
-  async getProvider(
-    documentId: string,
-    key: CryptoKey | undefined,
-  ): Promise<PlaygroundProvider> {
+  async getProvider(documentId: string, key: CryptoKey | undefined): Promise<PlaygroundProvider> {
     if (!this.provider) {
       const connection = await this.getProviderConnection();
       this.provider = (await Provider.create({

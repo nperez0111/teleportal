@@ -174,9 +174,7 @@ export function websocketTransport(options?: WebSocketTransportOptions): Connect
             if (!settled) {
               settled = true;
               cleanup();
-              reject(
-                new Error("WebSocket connection closed before opening", { cause: event }),
-              );
+              reject(new Error("WebSocket connection closed before opening", { cause: event }));
               return;
             }
 

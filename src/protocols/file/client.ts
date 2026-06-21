@@ -60,7 +60,7 @@ export interface FileRpc {
  * const provider = await Provider.create({
  *   url: "wss://...",
  *   document: "my-doc",
- *   rpcExtensions: {
+ *   rpc: {
  *     file: () => createFileRpc({ encryptionKey }),
  *   },
  * });
@@ -92,11 +92,7 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
       });
 
       return {
-        async upload(
-          file: File,
-          fileId?: string,
-          encryptionKey?: CryptoKey,
-        ): Promise<string> {
+        async upload(file: File, fileId?: string, encryptionKey?: CryptoKey): Promise<string> {
           try {
             return await handler.uploadFile(
               file,
@@ -112,11 +108,7 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
           }
         },
 
-        async download(
-          fileId: string,
-          encryptionKey?: CryptoKey,
-          timeout?: number,
-        ): Promise<File> {
+        async download(fileId: string, encryptionKey?: CryptoKey, timeout?: number): Promise<File> {
           try {
             return await handler.downloadFile(
               fileId,

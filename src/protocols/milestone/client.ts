@@ -67,7 +67,7 @@ export interface MilestoneRpc {
  * const provider = await Provider.create({
  *   url: "wss://...",
  *   document: "my-doc",
- *   rpcExtensions: {
+ *   rpc: {
  *     milestones: createMilestoneRpc,
  *   },
  * });
@@ -104,9 +104,10 @@ export function createMilestoneRpc(): RpcExtension<MilestoneRpc> {
       }
 
       const api: MilestoneRpc = {
-        async list(
-          options?: { includeDeleted?: boolean; snapshotIds?: string[] },
-        ): Promise<Milestone[]> {
+        async list(options?: {
+          includeDeleted?: boolean;
+          snapshotIds?: string[];
+        }): Promise<Milestone[]> {
           const snapshotIds = options?.snapshotIds ?? [];
           const includeDeleted = options?.includeDeleted ?? false;
 
