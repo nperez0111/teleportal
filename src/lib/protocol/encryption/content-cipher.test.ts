@@ -25,19 +25,9 @@ function getV1Update(doc: Y.Doc): Uint8Array {
   return Y.encodeStateAsUpdate(doc);
 }
 
-function getV2Update(doc: Y.Doc): Uint8Array {
-  return Y.encodeStateAsUpdateV2(doc);
-}
-
 function applyAndReadV1(update: Uint8Array, reader: (doc: Y.Doc) => unknown): unknown {
   const doc = new Y.Doc();
   Y.applyUpdate(doc, update);
-  return reader(doc);
-}
-
-function applyAndReadV2(update: Uint8Array, reader: (doc: Y.Doc) => unknown): unknown {
-  const doc = new Y.Doc();
-  Y.applyUpdateV2(doc, update);
   return reader(doc);
 }
 

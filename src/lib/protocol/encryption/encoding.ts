@@ -158,7 +158,12 @@ export function mergeContentEncryptedPayloads(
   if (payloads.length === 1) return payloads[0];
 
   const decoded = payloads.map(decodeContentEncryptedPayload);
-  const mergedStructure = Y.mergeUpdatesV2(decoded.map((d) => d.structureUpdate));
+  // Y.mergeUpdatesV2 cannot parse a zero-length update (the form produced by
+  // getEmptyContentEncryptedPayload), so drop empty structure updates before
+  // merging. Sidecars are preserved regardless of structure-update length.
+  const structures = decoded.map((d) => d.structureUpdate).filter((u) => u.length > 0);
+  const mergedStructure =
+    structures.length === 0 ? new Uint8Array(0) : Y.mergeUpdatesV2(structures);
   const allSidecars = decoded.flatMap((d) => d.encryptedSidecars);
 
   return encodeContentEncryptedPayload({
