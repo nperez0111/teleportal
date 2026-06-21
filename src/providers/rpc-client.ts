@@ -148,6 +148,7 @@ export class RpcClient {
     }
     this.#pendingRequests.forEach((pending) => {
       clearTimeout(pending.timeoutId);
+      pending.reject(new Error("RpcClient destroyed"));
     });
     this.#pendingRequests.clear();
   }

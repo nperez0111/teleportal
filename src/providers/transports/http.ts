@@ -174,13 +174,18 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
                 }),
                 { signal },
               )
+              .then(() => {
+                // Normal stream completion.
+                ctx.onClose();
+              })
               .catch((error) => {
-                if (!signal.aborted) {
+                // On abort (deliberate close) report a clean close; otherwise
+                // surface the error. Exactly one onClose per teardown.
+                if (signal.aborted) {
+                  ctx.onClose();
+                } else {
                   ctx.onClose(error instanceof Error ? error : new Error(String(error)));
                 }
-              })
-              .finally(() => {
-                ctx.onClose();
               });
 
             settled = true;

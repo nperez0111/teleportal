@@ -84,9 +84,9 @@ export function websocketTransport(options?: WebSocketTransportOptions): Connect
           return;
         }
 
-        // Convert http(s) to ws(s)
+        // Convert http(s)/ws(s) to ws(s), preserving secure protocols.
         const url = new URL(ctx.url);
-        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
 
         // Append token as query parameter if provided
         if (ctx.token) {

@@ -622,6 +622,10 @@ describe("Provider", () => {
         leaveEvent = peer;
       });
 
+      // Seed an awareness state for the peer so the leave can actually clear it.
+      provider.awareness.states.set(42, { name: "Alice" });
+      expect(provider.awareness.getStates().has(42)).toBe(true);
+
       const leaveMsg = new PresenceMessage("test-doc", {
         type: "presence-leave",
         awarenessId: 42,

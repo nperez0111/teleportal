@@ -762,8 +762,12 @@ export class Connection extends Observable<{
     const handleOnline = () => {
       this.#isOnline = true;
       if (this.#connectionIntent === "auto" && this.#state.type === "disconnected") {
+        // Coming back online is a fresh start: reset both backoff and the
+        // attempt counter (#initConnection doesn't read the counter; only
+        // #scheduleReconnect does, so leaving it incremented just shrinks the
+        // future reconnect budget).
         this.#backoff.reset();
-        this.#reconnectAttempt++;
+        this.#reconnectAttempt = 0;
         this.#initConnection();
       }
     };

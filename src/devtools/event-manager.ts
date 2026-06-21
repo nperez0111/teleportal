@@ -161,7 +161,8 @@ export class EventManager {
           if (connState.type && connState.type !== this.connectionState?.type) {
             const newState: ConnectionStateInfo = {
               type: connState.type,
-              transport: connState.type === "connected" ? "websocket" : null,
+              transport:
+                connState.type === "connected" ? ((connState as any).transport ?? null) : null,
               error:
                 connState.type === "errored"
                   ? connState.error?.message || String(connState.error)
@@ -287,10 +288,12 @@ export class EventManager {
     // Listen to connection events
     const unsubConnected = teleportalEventClient.on(
       "teleportal-provider:connected",
-      (_event) => {
-        const newState = {
-          type: "connected" as const,
-          transport: "websocket" as const,
+      (event) => {
+        const connState = event.payload.connection?.state;
+        const newState: ConnectionStateInfo = {
+          type: "connected",
+          transport:
+            connState?.type === "connected" ? ((connState as any).transport ?? null) : null,
           timestamp: Date.now(),
         };
         this.connectionState = newState;
@@ -323,7 +326,7 @@ export class EventManager {
         const { state } = event.payload;
         const newState: ConnectionStateInfo = {
           type: state.type,
-          transport: state.type === "connected" ? "websocket" : null,
+          transport: state.type === "connected" ? ((state as any).transport ?? null) : null,
           error: state.type === "errored" ? state.error?.message || String(state.error) : undefined,
           timestamp: Date.now(),
         };

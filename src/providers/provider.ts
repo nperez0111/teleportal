@@ -515,8 +515,8 @@ export class Provider<
   }
 
   public openDocument(options: Omit<ProviderOptions<T, R>, "connection">): Provider<T, R> {
-    const doc = new Y.Doc();
-    const awareness = new Awareness(doc);
+    const doc = options.ydoc ?? new Y.Doc();
+    const awareness = options.awareness ?? new Awareness(doc);
     return new Provider<T, R>({
       connection: this.#connection,
       ydoc: doc,
