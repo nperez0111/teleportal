@@ -3,7 +3,8 @@ import * as Y from "yjs";
 import { Connection } from "./connection";
 import { createMemoryTransportPair, type MemoryTransportHandle } from "./transports/memory";
 import { AckMessage, AwarenessMessage, DocMessage } from "teleportal";
-import type { UpdateV2, VersionedUpdate } from "teleportal/protocol";
+import type { VersionedUpdate } from "teleportal/protocol";
+import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
 import type { Timer } from "./utils";
 import type { ConnectionTransport, TransportConnectContext } from "./transports/types";
 
@@ -67,27 +68,37 @@ class FakeTimer implements Timer {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a simple V2 update DocMessage for the given document name. */
+/**
+ * Create a simple update DocMessage for the given document name. Updates flow
+ * through the connection as content-encrypted payloads (structure update +
+ * sidecars); unencrypted updates simply carry empty sidecars.
+ */
 function makeDocUpdate(docName: string, text = "hello"): DocMessage<any> {
   const doc = new Y.Doc();
   doc.getText("t").insert(0, text);
-  const update = Y.encodeStateAsUpdateV2(doc) as UpdateV2;
+  const payload = encodeContentEncryptedPayload({
+    structureUpdate: Y.encodeStateAsUpdate(doc),
+    encryptedSidecars: [],
+  });
   return new DocMessage(
     docName,
-    { type: "update", update: { version: 2, data: update } as VersionedUpdate },
+    { type: "update", update: { version: 2, data: payload } as unknown as VersionedUpdate },
     {},
     false,
   );
 }
 
-/** Create an encrypted DocMessage (not batchable). */
+/** Create an encrypted DocMessage (content-encrypted payload, batchable). */
 function makeEncryptedDocUpdate(docName: string): DocMessage<any> {
   const doc = new Y.Doc();
   doc.getText("t").insert(0, "secret");
-  const update = Y.encodeStateAsUpdateV2(doc) as UpdateV2;
+  const payload = encodeContentEncryptedPayload({
+    structureUpdate: Y.encodeStateAsUpdate(doc),
+    encryptedSidecars: [],
+  });
   return new DocMessage(
     docName,
-    { type: "update", update: { version: 2, data: update } as VersionedUpdate },
+    { type: "update", update: { version: 2, data: payload } as unknown as VersionedUpdate },
     {},
     true, // encrypted
   );
@@ -493,7 +504,7 @@ describe("Connection", () => {
       await conn.destroy();
     });
 
-    it("does not merge encrypted updates", async () => {
+    it("merges encrypted updates for the same doc", async () => {
       const timer = new FakeTimer();
 
       const conn = new Connection({
@@ -506,17 +517,19 @@ describe("Connection", () => {
       await timer.advance(0);
       await conn.connect();
 
-      // Encrypted messages bypass batching and are sent immediately
+      // Content-encrypted updates are mergeable, so they batch like any other.
       const msg1 = makeEncryptedDocUpdate("doc-enc");
       const msg2 = makeEncryptedDocUpdate("doc-enc");
       await conn.send(msg1);
       await conn.send(msg2);
 
-      // Encrypted messages should be sent immediately (not batched)
+      await timer.advance(60);
+      await flushMicrotasks(10);
+
       const docMessages = clientTransport.sentMessages.filter(
         (m) => m.type === "doc" && (m as DocMessage<any>).encrypted,
       );
-      expect(docMessages.length).toBe(2);
+      expect(docMessages.length).toBe(1);
 
       await conn.destroy();
     });
@@ -1397,7 +1410,7 @@ describe("Connection", () => {
       await serverConn.destroy();
     });
 
-    it("does not batch encrypted updates", async () => {
+    it("batches encrypted updates", async () => {
       const timer = new FakeTimer();
       const sentMessages: any[] = [];
       const transport = createControllableTransport("enc-test");
@@ -1420,8 +1433,10 @@ describe("Connection", () => {
       await conn.send(makeEncryptedDocUpdate("enc-doc"));
       await conn.send(makeEncryptedDocUpdate("enc-doc"));
 
-      // Encrypted messages bypass batching and send immediately
-      expect(sentMessages.length).toBe(3);
+      // Content-encrypted updates are mergeable, so they batch into one message.
+      await timer.advance(120);
+      await flushMicrotasks(10);
+      expect(sentMessages.length).toBe(1);
 
       await conn.destroy();
     });

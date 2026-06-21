@@ -1,7 +1,10 @@
 import * as Y from "yjs";
-import { mergeUpdates, type MilestoneSnapshot, type Update } from "teleportal";
-import { decodeEncryptedUpdate, type EncryptedUpdatePayload } from "teleportal/protocol/encryption";
-import { decryptUpdate } from "teleportal/encryption-key";
+import { type MilestoneSnapshot } from "teleportal";
+import {
+  decodeContentEncryptedPayload,
+  decryptContentPayload,
+  type EncryptedUpdatePayload,
+} from "teleportal/protocol/encryption";
 import {
   changesetContentMap,
   createContentIdsFromUpdate,
@@ -95,19 +98,18 @@ export function createAttributionRpc(): RpcExtension<AttributionRpc> {
         if (!ctx.encryptionKey) {
           plaintext = snapshot as unknown as MilestoneSnapshot;
         } else {
-          // For E2EE documents the snapshot is an encrypted-update-message
-          // container. Decrypt each message's payload and merge them back
-          // into a single plaintext Y.js update.
-          const decoded = decodeEncryptedUpdate(snapshot as unknown as EncryptedUpdatePayload);
-          const encryptedUpdates = decoded.type === "update" ? decoded.updates : [];
-          const updates = await Promise.all(
-            encryptedUpdates.map(
-              (message) => decryptUpdate(ctx.encryptionKey!, message.payload) as Promise<Update>,
-            ),
+          // For E2EE documents the snapshot is a content-encrypted payload
+          // (structure update + encrypted sidecars). Decrypt it back into a
+          // single plaintext Y.js update.
+          const payload = decodeContentEncryptedPayload(
+            snapshot as unknown as EncryptedUpdatePayload,
           );
-          plaintext = (updates.length === 0
-            ? Y.encodeStateAsUpdateV2(new Y.Doc())
-            : mergeUpdates(updates)) as unknown as MilestoneSnapshot;
+          plaintext = (await decryptContentPayload(
+            ctx.encryptionKey,
+            payload.structureUpdate,
+            payload.encryptedSidecars,
+            2,
+          )) as unknown as MilestoneSnapshot;
         }
 
         return createContentIdsFromUpdate({

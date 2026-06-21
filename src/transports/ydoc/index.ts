@@ -18,12 +18,12 @@ import {
   type VersionedSyncStep2Update,
   type VersionedUpdate,
 } from "teleportal";
+import { convertToV2, mergeUpdates } from "teleportal/protocol";
 import {
-  applyVersionedSyncStep2,
-  applyVersionedUpdate,
-  convertToV2,
-  mergeUpdates,
-} from "teleportal/protocol";
+  decodeContentEncryptedPayload,
+  encodeContentEncryptedPayload,
+  type EncryptedUpdatePayload,
+} from "teleportal/protocol/encryption";
 import { compose } from "teleportal/transports";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
@@ -59,11 +59,16 @@ export function getYDocSource<Context extends ClientContext>({
   updateBatchIntervalMs = 0,
   handler = {
     async onUpdate(update: VersionedUpdate) {
+      const v1 = update.version === 2 ? Y.convertUpdateFormatV2ToV1(update.data) : update.data;
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v1,
+        encryptedSidecars: [],
+      });
       return new DocMessage(
         document,
         {
           type: "update",
-          update,
+          update: { version: 2, data: payload } as unknown as VersionedUpdate,
         },
         context,
       );
@@ -269,23 +274,36 @@ export function getYDocSink<Context extends ClientContext>({
       );
     },
     async handleSyncStep1(stateVector) {
+      const diff = Y.encodeStateAsUpdate(ydoc, stateVector);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: diff,
+        encryptedSidecars: [],
+      });
       return new DocMessage(
         document,
         {
           type: "sync-step-2",
           update: {
             version: 2,
-            data: Y.diffUpdateV2(Y.encodeStateAsUpdateV2(ydoc), stateVector) as SyncStep2UpdateV2,
+            data: payload as unknown as SyncStep2UpdateV2,
           },
         },
         context,
       );
     },
     async handleSyncStep2(syncStep2) {
-      applyVersionedSyncStep2(ydoc, syncStep2, getSyncTransactionOrigin(ydoc));
+      const decoded = decodeContentEncryptedPayload(
+        syncStep2.data as unknown as EncryptedUpdatePayload,
+      );
+      if (decoded.structureUpdate.length > 0) {
+        Y.applyUpdate(ydoc, decoded.structureUpdate, getSyncTransactionOrigin(ydoc));
+      }
     },
     async handleUpdate(update) {
-      applyVersionedUpdate(ydoc, update, getSyncTransactionOrigin(ydoc));
+      const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
+      if (decoded.structureUpdate.length > 0) {
+        Y.applyUpdate(ydoc, decoded.structureUpdate, getSyncTransactionOrigin(ydoc));
+      }
     },
   },
 }: {

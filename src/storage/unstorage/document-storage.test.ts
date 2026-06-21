@@ -1,0 +1,1028 @@
+import { beforeEach, describe, expect, it } from "bun:test";
+import { createStorage } from "unstorage";
+import * as Y from "yjs";
+import { EncryptedBinary } from "teleportal/encryption-key";
+import type {
+  StateVector,
+  Update,
+  VersionedUpdate,
+  VersionedSyncStep2Update,
+  SyncStep2UpdateV2,
+} from "teleportal";
+import { getEmptyStateVector } from "../../lib/protocol/utils";
+import {
+  encodeContentEncryptedPayload,
+  decodeContentEncryptedPayload,
+  stripContent,
+  encodeSidecar,
+  decodeSidecar,
+  mergeSidecars,
+  type EncryptedUpdatePayload,
+} from "teleportal/protocol/encryption";
+import {
+  createContentAttribute,
+  createContentIds,
+  createContentIdsFromUpdate,
+  createContentMapFromContentIds,
+  decodeContentMap,
+  encodeContentMap,
+  IdSet,
+} from "teleportal/attribution";
+import type { EncodedContentMap } from "../types";
+import { UnstorageDocumentStorage } from "./document-storage";
+
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+function versionedUpdate(bytes: Uint8Array): VersionedUpdate {
+  const v1 = Y.convertUpdateFormatV2ToV1(bytes);
+  const payload = encodeContentEncryptedPayload({
+    structureUpdate: v1,
+    encryptedSidecars: [],
+  });
+  return { version: 2, data: payload as Update } as VersionedUpdate;
+}
+
+/** Decode a content-encrypted payload to get the structure update (V1). */
+function getStructureUpdate(update: Uint8Array): Uint8Array {
+  return decodeContentEncryptedPayload(update as EncryptedUpdatePayload).structureUpdate;
+}
+
+/** Apply a content-encrypted payload from storage to a fresh Y.Doc and return it. */
+function docFromUpdate(update: Uint8Array): Y.Doc {
+  const structureUpdate = getStructureUpdate(update);
+  const doc = new Y.Doc();
+  if (structureUpdate.length > 0) {
+    Y.applyUpdate(doc, structureUpdate);
+  }
+  return doc;
+}
+
+/**
+ * Wrap an already-encoded content-encrypted payload into a VersionedUpdate.
+ * Use this for encrypted tests where makeContentEncryptedUpdate() already produces
+ * the envelope payload and it should NOT be re-encoded by versionedUpdate().
+ */
+function envelopeUpdate(payload: Uint8Array): VersionedUpdate {
+  return { version: 2, data: payload as Update } as VersionedUpdate;
+}
+
+/**
+ * Build a content-encrypted update payload from a Y.js V1 update.
+ *
+ * Strips content from the update into a sidecar (treated as an opaque
+ * encrypted blob in tests) and encodes the result as a
+ * ContentEncryptedPayload.
+ */
+function makeContentEncryptedUpdate(v1Update: Uint8Array): EncryptedUpdatePayload {
+  const { update: structureUpdate, sidecar } = stripContent(v1Update);
+  const sidecarBytes = encodeSidecar(sidecar);
+  return encodeContentEncryptedPayload({
+    structureUpdate,
+    encryptedSidecars: [sidecarBytes as EncryptedBinary],
+  }) as EncryptedUpdatePayload;
+}
+
+/**
+ * Create a Y.js document with some text content so we get a real V1 update
+ * with CRDT metadata + content.
+ */
+function makeYjsUpdate(text: string, clientID?: number): Uint8Array {
+  const doc = new Y.Doc();
+  if (clientID !== undefined) doc.clientID = clientID;
+  doc.getText("content").insert(0, text);
+  return Y.encodeStateAsUpdate(doc);
+}
+
+// ── Unencrypted ─────────────────────────────────────────────────────────────
+
+describe("UnstorageDocumentStorage (unencrypted)", () => {
+  let storage: UnstorageDocumentStorage;
+
+  beforeEach(() => {
+    storage = new UnstorageDocumentStorage(createStorage());
+  });
+
+  describe("handleUpdate", () => {
+    it("should create and store update with unique key", async () => {
+      const key = "test-doc-1";
+      const doc = new Y.Doc();
+      const text = doc.getText("content");
+      text.insert(0, "Hello, World!");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update));
+
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      const newDoc = docFromUpdate(retrieved!.content.update);
+      expect(newDoc.getText("content").toString()).toBe("Hello, World!");
+    });
+
+    it("should apply multiple updates to existing document", async () => {
+      const key = "test-doc-2";
+      const doc1 = new Y.Doc();
+      const text1 = doc1.getText("content");
+      text1.insert(0, "Hello");
+      const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update1));
+
+      const doc2 = new Y.Doc();
+      Y.applyUpdateV2(doc2, update1);
+      const text2 = doc2.getText("content");
+      text2.insert(5, ", World!");
+      const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update2));
+
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      const newDoc = docFromUpdate(retrieved!.content.update);
+      expect(newDoc.getText("content").toString()).toBe("Hello, World!");
+    });
+
+    it("should update metadata updatedAt timestamp", async () => {
+      const key = "test-doc-3";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "test");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      const beforeTime = Date.now();
+      await storage.handleUpdate(key, versionedUpdate(update));
+      const afterTime = Date.now();
+
+      const metadata = await storage.getDocumentMetadata(key);
+      expect(metadata.updatedAt).toBeGreaterThanOrEqual(beforeTime);
+      expect(metadata.updatedAt).toBeLessThanOrEqual(afterTime);
+    });
+
+    it("multi-client updates merge correctly", async () => {
+      const key = "test-doc-multi-client";
+
+      // Client A creates an update
+      const docA = new Y.Doc();
+      docA.getText("content").insert(0, "Hello");
+      const updateA = Y.encodeStateAsUpdateV2(docA) as Update;
+
+      // Client B creates an independent update
+      const docB = new Y.Doc();
+      docB.getText("content").insert(0, "World");
+      const updateB = Y.encodeStateAsUpdateV2(docB) as Update;
+
+      // Both updates are stored
+      await storage.handleUpdate(key, versionedUpdate(updateA));
+      await storage.handleUpdate(key, versionedUpdate(updateB));
+
+      // Verify the merged state includes both contributions
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      const mergedDoc = docFromUpdate(retrieved!.content.update);
+      const text = mergedDoc.getText("content").toString();
+      // Both clients' text should be present in the merged result
+      expect(text).toContain("Hello");
+      expect(text).toContain("World");
+    });
+
+    it("duplicate update is deduped", async () => {
+      const key = "test-doc-dedup";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "Hello");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      // First write
+      await storage.handleUpdate(key, versionedUpdate(update));
+      const stateAfterFirst = await storage.getDocument(key);
+      expect(stateAfterFirst).not.toBeNull();
+      const svAfterFirst = Y.encodeStateVectorFromUpdate(
+        getStructureUpdate(stateAfterFirst!.content.update),
+      );
+
+      // Second write with same update -- should be a no-op
+      await storage.handleUpdate(key, versionedUpdate(update));
+      const stateAfterSecond = await storage.getDocument(key);
+      const svAfterSecond = Y.encodeStateVectorFromUpdate(
+        getStructureUpdate(stateAfterSecond!.content.update),
+      );
+
+      // State vector should not have changed
+      expect(new Uint8Array(svAfterSecond)).toEqual(new Uint8Array(svAfterFirst));
+    });
+  });
+
+  describe("getDocument", () => {
+    it("should return null for non-existent document", async () => {
+      const doc = await storage.getDocument("non-existent");
+      expect(doc).toBeNull();
+    });
+
+    it("should return document with correct structure", async () => {
+      const key = "test-doc-5";
+      const doc = new Y.Doc();
+      const text = doc.getText("content");
+      text.insert(0, "Test content");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update));
+
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.id).toBe(key);
+      expect(retrieved!.metadata).toBeDefined();
+      expect(retrieved!.content).toBeDefined();
+      expect(retrieved!.content.update).toBeInstanceOf(Uint8Array);
+      expect(retrieved!.content.stateVector).toBeInstanceOf(Uint8Array);
+    });
+
+    it("should merge multiple updates into one on retrieval", async () => {
+      const key = "test-doc-6";
+      const doc1 = new Y.Doc();
+      const text1 = doc1.getText("content");
+      text1.insert(0, "First");
+      const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update1));
+
+      const doc2 = new Y.Doc();
+      Y.applyUpdateV2(doc2, update1);
+      const text2 = doc2.getText("content");
+      text2.insert(5, " Second");
+      const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update2));
+
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      const newDoc = docFromUpdate(retrieved!.content.update);
+      expect(newDoc.getText("content").toString()).toBe("First Second");
+    });
+
+    it("getDocument returns full state after multiple updates", async () => {
+      const key = "test-doc-full-state";
+
+      // First update
+      const doc1 = new Y.Doc();
+      doc1.getText("content").insert(0, "Alpha");
+      const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
+      await storage.handleUpdate(key, versionedUpdate(update1));
+
+      // Second update building on the first
+      const doc2 = new Y.Doc();
+      Y.applyUpdateV2(doc2, update1);
+      doc2.getText("content").insert(5, " Beta");
+      const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
+      await storage.handleUpdate(key, versionedUpdate(update2));
+
+      // getDocument should return a document containing both updates
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      const fullDoc = docFromUpdate(retrieved!.content.update);
+      expect(fullDoc.getText("content").toString()).toBe("Alpha Beta");
+    });
+  });
+
+  describe("writeDocumentMetadata and getDocumentMetadata", () => {
+    it("should write and retrieve metadata", async () => {
+      const key = "test-doc-7";
+      const metadata = {
+        createdAt: 1000,
+        updatedAt: 2000,
+        encrypted: false,
+      };
+
+      await storage.writeDocumentMetadata(key, metadata);
+      const retrieved = await storage.getDocumentMetadata(key);
+
+      expect(retrieved.createdAt).toBe(1000);
+      expect(retrieved.updatedAt).toBe(2000);
+      expect(retrieved.encrypted).toBe(false);
+    });
+
+    it("should return default metadata for non-existent document", async () => {
+      const key = "test-doc-8";
+      const metadata = await storage.getDocumentMetadata(key);
+
+      expect(metadata.createdAt).toBeGreaterThan(0);
+      expect(metadata.updatedAt).toBeGreaterThan(0);
+      expect(metadata.encrypted).toBe(false);
+    });
+
+    it("should normalize invalid metadata values", async () => {
+      const key = "test-doc-9";
+      // Manually set invalid metadata
+      const unstorage = createStorage();
+      await unstorage.setItem(key + ":meta", {
+        createdAt: "invalid",
+        updatedAt: "invalid",
+        encrypted: "invalid",
+      });
+
+      const testStorage = new UnstorageDocumentStorage(unstorage);
+      const metadata = await testStorage.getDocumentMetadata(key);
+
+      expect(typeof metadata.createdAt).toBe("number");
+      expect(metadata.createdAt).toBeGreaterThan(0);
+      expect(typeof metadata.updatedAt).toBe("number");
+      expect(metadata.updatedAt).toBeGreaterThan(0);
+      expect(typeof metadata.encrypted).toBe("boolean");
+      expect(metadata.encrypted).toBe(false);
+    });
+  });
+
+  describe("deleteDocument", () => {
+    it("should delete document and all updates", async () => {
+      const key = "test-doc-10";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "test");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update));
+      await storage.writeDocumentMetadata(key, {
+        createdAt: 1000,
+        updatedAt: 2000,
+        encrypted: false,
+      });
+
+      expect(await storage.getDocument(key)).not.toBeNull();
+
+      await storage.deleteDocument(key);
+
+      expect(await storage.getDocument(key)).toBeNull();
+    });
+  });
+
+  describe("handleSyncStep1", () => {
+    it("should return document with diff update", async () => {
+      const key = "test-doc-13";
+      const doc = new Y.Doc();
+      const text = doc.getText("content");
+      text.insert(0, "Full content");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update));
+
+      const emptyStateVector = getEmptyStateVector();
+      const result = await storage.handleSyncStep1(key, emptyStateVector);
+
+      expect(result).not.toBeNull();
+      expect(result.id).toBe(key);
+      expect(result.content.update).toBeInstanceOf(Uint8Array);
+      expect(result.content.stateVector).toBeInstanceOf(Uint8Array);
+    });
+
+    it("should return empty document for non-existent document", async () => {
+      const key = "test-doc-14";
+      const emptyStateVector = getEmptyStateVector();
+
+      const result = await storage.handleSyncStep1(key, emptyStateVector);
+
+      expect(result).not.toBeNull();
+      expect(result.id).toBe(key);
+    });
+
+    it("sync step 1 with partial client returns only missing ops", async () => {
+      const key = "test-doc-sync-partial";
+
+      // First update
+      const doc1 = new Y.Doc();
+      doc1.getText("content").insert(0, "Hello");
+      const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
+      await storage.handleUpdate(key, versionedUpdate(update1));
+
+      // Record the state vector after first update (the "partial" client)
+      const partialSV = Y.encodeStateVector(doc1) as StateVector;
+
+      // Second update building on the first
+      const doc2 = new Y.Doc();
+      Y.applyUpdateV2(doc2, update1);
+      doc2.getText("content").insert(5, " World");
+      const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
+      await storage.handleUpdate(key, versionedUpdate(update2));
+
+      // Client sends partial state vector -- should get only the second update's ops
+      const result = await storage.handleSyncStep1(key, partialSV);
+      expect(result.content.update.length).toBeGreaterThan(0);
+
+      // Apply the diff to a doc that already has update1
+      const clientDoc = new Y.Doc();
+      Y.applyUpdateV2(clientDoc, update1);
+      Y.applyUpdate(clientDoc, getStructureUpdate(result.content.update));
+      expect(clientDoc.getText("content").toString()).toBe("Hello World");
+    });
+  });
+
+  describe("handleSyncStep2", () => {
+    it("should apply sync step 2 update", async () => {
+      const key = "test-doc-15";
+      const doc = new Y.Doc();
+      const text = doc.getText("content");
+      text.insert(0, "Sync content");
+      const v1 = Y.encodeStateAsUpdate(doc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v1,
+        encryptedSidecars: [],
+      });
+      const syncStep2: VersionedSyncStep2Update = {
+        version: 2 as const,
+        data: payload as unknown as SyncStep2UpdateV2,
+      };
+
+      await storage.handleSyncStep2(key, syncStep2);
+
+      const retrieved = await storage.getDocument(key);
+      expect(retrieved).not.toBeNull();
+      const newDoc = docFromUpdate(retrieved!.content.update);
+      expect(newDoc.getText("content").toString()).toBe("Sync content");
+    });
+  });
+
+  describe("transaction", () => {
+    it("should execute transaction callback", async () => {
+      const key = "test-doc-16";
+      let executed = false;
+
+      await storage.transaction(key, async () => {
+        executed = true;
+        return "result";
+      });
+
+      expect(executed).toBe(true);
+    });
+
+    it("should return transaction result", async () => {
+      const key = "test-doc-17";
+      const result = await storage.transaction(key, async () => {
+        return "test-result";
+      });
+
+      expect(result).toBe("test-result");
+    });
+
+    it("should handle concurrent transactions with locking", async () => {
+      const key = "test-doc-18";
+      const executionOrder: string[] = [];
+
+      // Start first transaction
+      const promise1 = storage.transaction(key, async () => {
+        executionOrder.push("start-1");
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        executionOrder.push("end-1");
+        return "result-1";
+      });
+
+      // Start second transaction immediately (should wait for first)
+      const promise2 = storage.transaction(key, async () => {
+        executionOrder.push("start-2");
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        executionOrder.push("end-2");
+        return "result-2";
+      });
+
+      const [result1, result2] = await Promise.all([promise1, promise2]);
+
+      expect(result1).toBe("result-1");
+      expect(result2).toBe("result-2");
+      // Verify transactions executed (locking may cause reordering, but both should complete)
+      expect(executionOrder).toContain("start-1");
+      expect(executionOrder).toContain("end-1");
+      expect(executionOrder).toContain("start-2");
+      expect(executionOrder).toContain("end-2");
+    });
+  });
+
+  describe("attribution", () => {
+    function makeAttribution(update: Update, userId: string): EncodedContentMap {
+      // The server extracts content IDs from the V1 structure update inside the envelope.
+      // For unencrypted, the structure update is the full V1 update.
+      const v1 = Y.convertUpdateFormatV2ToV1(update);
+      const contentIds = createContentIdsFromUpdate({
+        version: 1,
+        data: v1,
+      } as unknown as VersionedUpdate);
+      return encodeContentMap(
+        createContentMapFromContentIds(
+          contentIds,
+          [
+            createContentAttribute("insert", userId),
+            createContentAttribute("insertAt", Date.now()),
+          ],
+          [
+            createContentAttribute("delete", userId),
+            createContentAttribute("deleteAt", Date.now()),
+          ],
+        ),
+      );
+    }
+
+    it("should store and retrieve attribution via handleUpdate", async () => {
+      const key = "attr-doc-1";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "Hello");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+      const attribution = makeAttribution(update, "user-1");
+
+      await storage.handleUpdate(key, versionedUpdate(update), attribution);
+
+      const retrieved = await storage.retrieveAttribution(key);
+      expect(retrieved).not.toBeNull();
+      const map = decodeContentMap(retrieved!);
+      expect(map.inserts.clients.size).toBeGreaterThan(0);
+    });
+
+    it("should return null when no attribution exists", async () => {
+      const result = await storage.retrieveAttribution("nonexistent");
+      expect(result).toBeNull();
+    });
+
+    it("should not store attribution when param is undefined", async () => {
+      const key = "attr-doc-2";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "test");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update));
+
+      const result = await storage.retrieveAttribution(key);
+      expect(result).toBeNull();
+    });
+
+    it("should merge multiple attributions on retrieve", async () => {
+      const key = "attr-doc-3";
+      const doc1 = new Y.Doc();
+      doc1.getText("content").insert(0, "Hello");
+      const update1 = Y.encodeStateAsUpdateV2(doc1) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update1), makeAttribution(update1, "user-1"));
+
+      const doc2 = new Y.Doc();
+      Y.applyUpdateV2(doc2, update1);
+      doc2.getText("content").insert(5, " World");
+      const update2 = Y.encodeStateAsUpdateV2(doc2) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update2), makeAttribution(update2, "user-2"));
+
+      const retrieved = await storage.retrieveAttribution(key);
+      expect(retrieved).not.toBeNull();
+      const map = decodeContentMap(retrieved!);
+      expect(map.inserts.clients.size).toBeGreaterThan(0);
+    });
+
+    it("should clean up attribution on deleteDocument", async () => {
+      const key = "attr-doc-4";
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "Hello");
+      const update = Y.encodeStateAsUpdateV2(doc) as Update;
+
+      await storage.handleUpdate(key, versionedUpdate(update), makeAttribution(update, "user-1"));
+      expect(await storage.retrieveAttribution(key)).not.toBeNull();
+
+      await storage.deleteDocument(key);
+      expect(await storage.retrieveAttribution(key)).toBeNull();
+    });
+  });
+});
+
+// ── Encrypted ───────────────────────────────────────────────────────────────
+
+describe("UnstorageDocumentStorage (encrypted)", () => {
+  let storage: UnstorageDocumentStorage;
+
+  beforeEach(() => {
+    storage = new UnstorageDocumentStorage(createStorage(), { encrypted: true });
+  });
+
+  // ── Metadata ───────────────────────────────────────────────────────────────
+
+  it("returns default metadata for a missing document", async () => {
+    const metadata = await storage.getDocumentMetadata("doc-1");
+    expect(metadata.encrypted).toBe(true);
+    expect(typeof metadata.createdAt).toBe("number");
+    expect(typeof metadata.updatedAt).toBe("number");
+  });
+
+  // ── Store & retrieve state ─────────────────────────────────────────────────
+
+  it("stores a content-encrypted update and retrieves state", async () => {
+    const v1 = makeYjsUpdate("hello");
+    const payload = makeContentEncryptedUpdate(v1);
+
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+    const state = await storage.getDocumentState("doc-1");
+    expect(state).not.toBeNull();
+    // Internally stored as V2; verify it has content
+    expect(state!.update.length).toBeGreaterThan(0);
+    expect(state!.sidecars.length).toBe(1);
+  });
+
+  it("merges multiple updates into consolidated state", async () => {
+    const update1 = makeContentEncryptedUpdate(makeYjsUpdate("hello", 1));
+    const update2 = makeContentEncryptedUpdate(makeYjsUpdate("world", 2));
+
+    await storage.handleUpdate("doc-1", envelopeUpdate(update1));
+    await storage.handleUpdate("doc-1", envelopeUpdate(update2));
+
+    const state = await storage.getDocumentState("doc-1");
+    expect(state).not.toBeNull();
+    // Sidecars accumulate (one per update)
+    expect(state!.sidecars.length).toBe(2);
+
+    // The merged structure update is V2 internally; convert to V1 to inspect state vector
+    const v1Update = Y.convertUpdateFormatV2ToV1(state!.update);
+    const sv = Y.encodeStateVectorFromUpdate(v1Update);
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, v1Update);
+    // Both clients contributed, so the state vector covers both
+    expect(Y.decodeStateVector(sv).size).toBe(2);
+  });
+
+  // ── Sync step 1 ────────────────────────────────────────────────────────────
+
+  describe("handleSyncStep1", () => {
+    it("returns empty payload when no document exists", async () => {
+      const result = await storage.handleSyncStep1("doc-1", getEmptyStateVector());
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+      expect(decoded.structureUpdate.length).toBe(0);
+      expect(decoded.encryptedSidecars.length).toBe(0);
+    });
+
+    it("returns full state for an empty client state vector", async () => {
+      const v1 = makeYjsUpdate("hello");
+      const payload = makeContentEncryptedUpdate(v1);
+      await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+      const result = await storage.handleSyncStep1("doc-1", getEmptyStateVector());
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+      expect(decoded.structureUpdate.length).toBeGreaterThan(0);
+      expect(decoded.encryptedSidecars.length).toBe(1);
+    });
+
+    it("returns empty diff when client is already up-to-date", async () => {
+      const v1 = makeYjsUpdate("hello");
+      const payload = makeContentEncryptedUpdate(v1);
+      await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+      // Get the server's state vector from the V2 update
+      const state = await storage.getDocumentState("doc-1");
+      const serverSV = Y.encodeStateVectorFromUpdateV2(state!.update) as StateVector;
+
+      const result = await storage.handleSyncStep1("doc-1", serverSV);
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+      // Diff of identical state vectors produces a minimal (empty structs) update
+      const diffDoc = new Y.Doc();
+      Y.applyUpdate(diffDoc, decoded.structureUpdate);
+      expect(diffDoc.getText("content").toString()).toBe("");
+    });
+
+    it("returns only the diff for a partially synced client", async () => {
+      // First update from client 1
+      const doc1 = new Y.Doc();
+      doc1.clientID = 1;
+      doc1.getText("content").insert(0, "hello");
+      const update1 = Y.encodeStateAsUpdate(doc1);
+      const sv1 = Y.encodeStateVector(doc1) as StateVector;
+
+      await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(update1)));
+
+      // Second update from client 2
+      const doc2 = new Y.Doc();
+      doc2.clientID = 2;
+      doc2.getText("content").insert(0, "world");
+      const update2 = Y.encodeStateAsUpdate(doc2);
+
+      await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(update2)));
+
+      // Client knows about client 1 but not client 2
+      const result = await storage.handleSyncStep1("doc-1", sv1);
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+
+      // The diff should only contain client 2's changes
+      const diffDoc = new Y.Doc();
+      Y.applyUpdate(diffDoc, decoded.structureUpdate);
+      // Apply to a doc that already has client 1's data
+      const fullDoc = new Y.Doc();
+      Y.applyUpdate(fullDoc, update1);
+      Y.applyUpdate(fullDoc, decoded.structureUpdate);
+      // The full doc should have both contributions
+      expect(fullDoc.getText("content").toString().length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── Sidecar filtering ──────────────────────────────────────────────────────
+
+  describe("sidecar filtering on sync", () => {
+    it("filters sidecars to only those needed for a partial sync", async () => {
+      const docA = new Y.Doc();
+      docA.clientID = 100;
+      docA.getText("content").insert(0, "hello");
+      const updateA = Y.encodeStateAsUpdate(docA);
+      await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(updateA)));
+
+      const docB = new Y.Doc();
+      docB.clientID = 200;
+      docB.getText("content").insert(0, "world");
+      const updateB = Y.encodeStateAsUpdate(docB);
+      await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(updateB)));
+
+      // Client knows A but not B
+      const svA = Y.encodeStateVector(docA) as StateVector;
+      const result = await storage.handleSyncStep1("doc-1", svA);
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+
+      // Only B's sidecar should be returned
+      expect(decoded.encryptedSidecars.length).toBe(1);
+    });
+
+    it("returns all sidecars for empty client state vector", async () => {
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("hello", 1))),
+      );
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("world", 2))),
+      );
+
+      const result = await storage.handleSyncStep1("doc-1", getEmptyStateVector());
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+
+      expect(decoded.encryptedSidecars.length).toBe(2);
+    });
+
+    it("returns no sidecars for up-to-date client", async () => {
+      const doc = new Y.Doc();
+      doc.getText("content").insert(0, "hello");
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(Y.encodeStateAsUpdate(doc))),
+      );
+
+      const serverSV = Y.encodeStateVector(doc) as StateVector;
+      const result = await storage.handleSyncStep1("doc-1", serverSV);
+      const decoded = decodeContentEncryptedPayload(
+        result.content.update as unknown as EncryptedUpdatePayload,
+      );
+
+      expect(decoded.encryptedSidecars.length).toBe(0);
+    });
+  });
+
+  // ── Dedup ──────────────────────────────────────────────────────────────────
+
+  it("deduplicates identical updates (no-op on second write)", async () => {
+    const v1 = makeYjsUpdate("hello");
+    const payload = makeContentEncryptedUpdate(v1);
+
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+    // Get state after first write
+    const stateAfterFirst = await storage.getDocumentState("doc-1");
+    expect(stateAfterFirst).not.toBeNull();
+
+    // Sending the exact same update again -- state vector won't advance, so it's a no-op
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+    // State should be unchanged (same sidecars count)
+    const stateAfterDup = await storage.getDocumentState("doc-1");
+    expect(stateAfterDup!.sidecars.length).toBe(stateAfterFirst!.sidecars.length);
+  });
+
+  it("accepts a new update after a duplicate is rejected", async () => {
+    const v1 = makeYjsUpdate("hello", 1);
+    const payload = makeContentEncryptedUpdate(v1);
+
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+    // Duplicate -- no-op
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+    // Genuinely new update from a different client
+    const v2 = makeYjsUpdate("world", 2);
+    const payload2 = makeContentEncryptedUpdate(v2);
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload2));
+
+    const state = await storage.getDocumentState("doc-1");
+    // Should have 2 sidecars (one from first + one from third, duplicate was skipped)
+    expect(state!.sidecars.length).toBe(2);
+  });
+
+  // ── getDocument ────────────────────────────────────────────────────────────
+
+  it("returns null for a document that does not exist", async () => {
+    const doc = await storage.getDocument("nonexistent");
+    expect(doc).toBeNull();
+  });
+
+  it("returns full document with encoded payload and state vector", async () => {
+    const v1 = makeYjsUpdate("hello");
+    const payload = makeContentEncryptedUpdate(v1);
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+    const doc = await storage.getDocument("doc-1");
+    expect(doc).not.toBeNull();
+    expect(doc!.id).toBe("doc-1");
+    expect(doc!.metadata.encrypted).toBe(true);
+
+    // Decode the update payload
+    const decoded = decodeContentEncryptedPayload(
+      doc!.content.update as unknown as EncryptedUpdatePayload,
+    );
+    expect(decoded.structureUpdate.length).toBeGreaterThan(0);
+    expect(decoded.encryptedSidecars.length).toBe(1);
+
+    // State vector should be non-empty
+    const sv = Y.decodeStateVector(doc!.content.stateVector);
+    expect(sv.size).toBeGreaterThan(0);
+  });
+
+  // ── Attribution ────────────────────────────────────────────────────────────
+
+  describe("attribution", () => {
+    function makeAttribution(userId: string, clientId = 1, clock = 0, len = 1): EncodedContentMap {
+      const inserts = new IdSet();
+      inserts.add(clientId, clock, len);
+      const contentIds = createContentIds(inserts, new IdSet());
+      return encodeContentMap(
+        createContentMapFromContentIds(
+          contentIds,
+          [
+            createContentAttribute("insert", userId),
+            createContentAttribute("insertAt", Date.now()),
+          ],
+          [],
+        ),
+      );
+    }
+
+    it("stores and retrieves attribution via handleUpdate", async () => {
+      const v1 = makeYjsUpdate("hello");
+      const payload = makeContentEncryptedUpdate(v1);
+      const attribution = makeAttribution("user-1");
+
+      await storage.handleUpdate("doc-1", envelopeUpdate(payload), attribution);
+
+      const retrieved = await storage.retrieveAttribution("doc-1");
+      expect(retrieved).not.toBeNull();
+      const map = decodeContentMap(retrieved!);
+      expect(map.inserts.clients.size).toBeGreaterThan(0);
+    });
+
+    it("returns null when no attribution exists", async () => {
+      const result = await storage.retrieveAttribution("nonexistent");
+      expect(result).toBeNull();
+    });
+
+    it("does not store attribution when param is undefined", async () => {
+      const v1 = makeYjsUpdate("hello");
+      const payload = makeContentEncryptedUpdate(v1);
+
+      await storage.handleUpdate("doc-1", envelopeUpdate(payload));
+
+      const result = await storage.retrieveAttribution("doc-1");
+      expect(result).toBeNull();
+    });
+
+    it("merges multiple attributions on retrieve", async () => {
+      const v1a = makeYjsUpdate("hello", 10);
+      const v1b = makeYjsUpdate("world", 20);
+      const payloadA = makeContentEncryptedUpdate(v1a);
+      const payloadB = makeContentEncryptedUpdate(v1b);
+
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(payloadA),
+        makeAttribution("user-1", 1, 0, 5),
+      );
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(payloadB),
+        makeAttribution("user-2", 2, 0, 3),
+      );
+
+      const retrieved = await storage.retrieveAttribution("doc-1");
+      expect(retrieved).not.toBeNull();
+      const map = decodeContentMap(retrieved!);
+      expect(map.inserts.clients.size).toBe(2);
+    });
+
+    it("cleans up attribution on deleteDocument", async () => {
+      const v1 = makeYjsUpdate("hello");
+      const payload = makeContentEncryptedUpdate(v1);
+
+      await storage.handleUpdate("doc-1", envelopeUpdate(payload), makeAttribution("user-1"));
+      expect(await storage.retrieveAttribution("doc-1")).not.toBeNull();
+
+      await storage.deleteDocument("doc-1");
+      expect(await storage.retrieveAttribution("doc-1")).toBeNull();
+    });
+  });
+
+  // ── Compaction ─────────────────────────────────────────────────────────────
+
+  describe("compaction", () => {
+    it("replaces multiple sidecars with a single compacted sidecar", async () => {
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("hello", 1))),
+      );
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("world", 2))),
+      );
+
+      let state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(2);
+
+      // State is V2 internally; use V2 state vector for baseSV
+      const baseSV = Y.encodeStateVectorFromUpdateV2(state!.update);
+      const { buildSidecarIndex } =
+        await import("teleportal/protocol/encryption");
+
+      const allDecoded = state!.sidecars.map((s) =>
+        decodeSidecar(s.encrypted as unknown as Uint8Array),
+      );
+      const merged = mergeSidecars(allDecoded);
+      const compactedSidecar = {
+        encrypted: encodeSidecar(merged) as EncryptedBinary,
+        index: buildSidecarIndex(merged.entries),
+      };
+
+      const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
+      expect(accepted).toBe(true);
+
+      state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(1);
+    });
+
+    it("rejects compaction when state has changed", async () => {
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("hello", 1))),
+      );
+
+      const state = await storage.getDocumentState("doc-1");
+      const baseSV = Y.encodeStateVectorFromUpdateV2(state!.update);
+
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("world", 2))),
+      );
+
+      const compactedSidecar = {
+        encrypted: encodeSidecar({ entries: [], dictionary: new Map() }) as EncryptedBinary,
+        index: [],
+      };
+
+      const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
+      expect(accepted).toBe(false);
+      expect((await storage.getDocumentState("doc-1"))!.sidecars.length).toBe(2);
+    });
+  });
+
+  // ── Delete document ────────────────────────────────────────────────────────
+
+  it("deleteDocument removes state, metadata, and attribution", async () => {
+    const v1 = makeYjsUpdate("hello");
+    const payload = makeContentEncryptedUpdate(v1);
+
+    function makeAttribution(userId: string, clientId = 1, clock = 0, len = 1): EncodedContentMap {
+      const inserts = new IdSet();
+      inserts.add(clientId, clock, len);
+      const contentIds = createContentIds(inserts, new IdSet());
+      return encodeContentMap(
+        createContentMapFromContentIds(
+          contentIds,
+          [
+            createContentAttribute("insert", userId),
+            createContentAttribute("insertAt", Date.now()),
+          ],
+          [],
+        ),
+      );
+    }
+
+    await storage.handleUpdate("doc-1", envelopeUpdate(payload), makeAttribution("user-1"));
+
+    // Verify everything exists
+    expect(await storage.getDocumentState("doc-1")).not.toBeNull();
+    expect(await storage.getDocument("doc-1")).not.toBeNull();
+    expect(await storage.retrieveAttribution("doc-1")).not.toBeNull();
+
+    await storage.deleteDocument("doc-1");
+
+    // All data should be gone
+    expect(await storage.getDocumentState("doc-1")).toBeNull();
+    expect(await storage.getDocument("doc-1")).toBeNull();
+    expect(await storage.retrieveAttribution("doc-1")).toBeNull();
+  });
+});

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ServerContext } from "teleportal";
 import { InMemoryPubSub } from "teleportal";
 import { Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { Agent } from "./index";
@@ -16,8 +16,8 @@ describe("Agent", () => {
   beforeEach(() => {
     pubSub = new InMemoryPubSub();
     // Clear any existing docs from previous tests
-    YDocStorage.docs.clear();
-    mockGetStorage = () => Promise.resolve(new YDocStorage());
+    MemoryDocumentStorage.docs.clear();
+    mockGetStorage = () => Promise.resolve(new MemoryDocumentStorage());
 
     server = new Server({
       storage: mockGetStorage,

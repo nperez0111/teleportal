@@ -1,6 +1,5 @@
 export * from "./types";
-export * from "./unencrypted";
-export * from "./encrypted";
+export * from "./document-storage";
 export * from "./unstorage";
 export * from "./in-memory";
 export * from "./virtual-storage";

@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { createEncryptionKey } from "teleportal/encryption-key";
-import { decodeEncryptedUpdate, decodeFromSyncStep2 } from "teleportal/protocol/encryption";
-import type {
-  DecodedEncryptedUpdatePayload,
-  EncryptedSyncStep2,
+import {
+  decodeContentEncryptedPayload,
+  encodeContentEncryptedPayload,
 } from "teleportal/protocol/encryption";
 import type {
   Message,
@@ -12,260 +11,455 @@ import type {
   VersionedUpdate,
   VersionedSyncStep2Update,
 } from "teleportal/protocol";
-import { EncryptedMemoryStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
 import { EncryptionClient } from "./client";
 
 describe("encrypted client integration", () => {
-  let storage: EncryptedMemoryStorage;
+  let storage: MemoryDocumentStorage;
 
   beforeEach(() => {
-    EncryptedMemoryStorage.docs.clear();
-    storage = new EncryptedMemoryStorage();
+    MemoryDocumentStorage.docs.clear();
+    storage = new MemoryDocumentStorage(true);
   });
 
-  it("acknowledges server-versioned updates after snapshot", async () => {
+  // ── Encrypt / decrypt round-trip ──────────────────────────────────────────
+
+  it("encrypts and decrypts an update round-trip", async () => {
     const key = await createEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
-    const stateUpdates: Array<{
-      snapshotId: string | null;
-      serverVersion: number;
-    }> = [];
-    let acknowledged: DecodedEncryptedUpdatePayload | null = null;
+    ydoc.getText("body").insert(0, "hello world");
+    const update = Y.encodeStateAsUpdate(ydoc);
 
-    client.on("state-updated", (state) => {
-      stateUpdates.push(state);
-    });
-    client.on("update-acknowledged", (update) => {
-      acknowledged = update as DecodedEncryptedUpdatePayload;
-    });
+    const encrypted = await client.encryptUpdate(update);
+    expect(encrypted).not.toEqual(update);
+    expect(encrypted.byteLength).toBeGreaterThan(0);
 
-    ydoc.getText("body").insert(0, "hello");
-    const initialUpdate = {
-      version: 2,
-      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
-    } as VersionedUpdate;
-    const snapshotMessage = await client.onUpdate(initialUpdate);
-
-    if (snapshotMessage.type !== "doc" || snapshotMessage.payload.type !== "update") {
-      throw new Error("Expected snapshot update message");
-    }
-
-    const storedSnapshotPayload = await storage.handleEncryptedUpdate(
-      "doc-1",
-      snapshotMessage.payload.update.data as Update,
-    );
-    expect(storedSnapshotPayload).not.toBeNull();
-    await client.handleUpdate({
-      version: 2,
-      data: storedSnapshotPayload! as Update,
-    } as VersionedUpdate);
-
-    const decodedSnapshot = decodeEncryptedUpdate(storedSnapshotPayload!);
-    if (decodedSnapshot.type !== "snapshot") {
-      throw new Error("Expected snapshot payload");
-    }
-    const snapshotId = decodedSnapshot.snapshot.id;
-    expect(snapshotId).toBeTruthy();
-
-    ydoc.getText("body").insert(5, " world");
-    const secondUpdate = {
-      version: 2,
-      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
-    } as VersionedUpdate;
-    const updateMessage = await client.onUpdate(secondUpdate);
-
-    if (updateMessage.type !== "doc" || updateMessage.payload.type !== "update") {
-      throw new Error("Expected update message");
-    }
-
-    const storedUpdatePayload = await storage.handleEncryptedUpdate(
-      "doc-1",
-      updateMessage.payload.update.data as Update,
-    );
-    expect(storedUpdatePayload).not.toBeNull();
-
-    const decodedUpdate = decodeEncryptedUpdate(storedUpdatePayload!);
-    if (decodedUpdate.type !== "update") {
-      throw new Error("Expected update payload");
-    }
-    expect(decodedUpdate.updates[0].serverVersion).toBe(1);
-    expect(decodedUpdate.updates[0].snapshotId).toBe(snapshotId);
-
-    await client.handleUpdate({
-      version: 2,
-      data: storedUpdatePayload! as Update,
-    } as VersionedUpdate);
-
-    const ack = acknowledged as DecodedEncryptedUpdatePayload | null;
-    expect(ack?.serverVersion).toBe(1);
-    expect(ack?.snapshotId).toBe(snapshotId);
-
-    const lastState = stateUpdates[stateUpdates.length - 1];
-    expect(lastState?.snapshotId).toBe(snapshotId);
-    expect(lastState?.serverVersion).toBe(1);
-
-    expect(ydoc.getText("body").toString()).toBe("hello world");
+    const decrypted = await client.decryptUpdate(encrypted);
+    expect(new Uint8Array(decrypted)).toEqual(new Uint8Array(update));
   });
 
-  it("returns compaction snapshot after initial sync (sync-step-2 with snapshot + updates)", async () => {
+  it("onUpdate produces a content-encrypted doc message", async () => {
     const key = await createEncryptionKey();
-    const ydocA = new Y.Doc();
-    const clientA = new EncryptionClient({
-      document: "doc-1",
-      ydoc: ydocA,
-      key,
-    });
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
-    ydocA.getText("body").insert(0, "hello");
-    const snapshotMsg = await clientA.onUpdate({
+    ydoc.getText("body").insert(0, "hello");
+    const versionedUpdate = {
       version: 2,
-      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
-    } as VersionedUpdate);
-    if (snapshotMsg.type !== "doc" || snapshotMsg.payload.type !== "update") {
-      throw new Error("Expected doc update");
-    }
-    await storage.handleEncryptedUpdate("doc-1", snapshotMsg.payload.update.data as Update);
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate;
 
-    ydocA.getText("body").insert(5, " world");
+    const msg = await client.onUpdate(versionedUpdate);
+    expect(msg.type).toBe("doc");
+    if (msg.type !== "doc") throw new Error("Expected doc message");
+    expect(msg.payload.type).toBe("update");
+
+    if (msg.payload.type !== "update") throw new Error("Expected update payload");
+    const decoded = decodeContentEncryptedPayload(msg.payload.update.data as Update);
+    expect(decoded.structureUpdate.byteLength).toBeGreaterThan(0);
+    expect(decoded.encryptedSidecars.length).toBe(1);
+  });
+
+  // ── Sync handshake ────────────────────────────────────────────────────────
+
+  it("start() returns a sync-step-1 message with the state vector", async () => {
+    const key = await createEncryptionKey();
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({ document: "doc-1", ydoc, key });
+
+    const msg = await client.start();
+    expect(msg.type).toBe("doc");
+    if (msg.type !== "doc") throw new Error("Expected doc message");
+    expect(msg.payload.type).toBe("sync-step-1");
+
+    if (msg.payload.type !== "sync-step-1") throw new Error("Expected sync-step-1");
+    const sv = msg.payload.sv;
+    expect(sv).toBeInstanceOf(Uint8Array);
+    // The state vector from an empty Y.Doc should equal Y.encodeStateVector(ydoc)
+    expect(new Uint8Array(sv)).toEqual(new Uint8Array(Y.encodeStateVector(ydoc)));
+  });
+
+  it("handleSyncStep1 responds with a content-encrypted sync-step-2", async () => {
+    const key = await createEncryptionKey();
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({ document: "doc-1", ydoc, key });
+
+    ydoc.getText("body").insert(0, "local content");
+
+    // Simulate the server echoing back an empty state vector (new doc)
+    const emptyStateVector = Y.encodeStateVector(new Y.Doc());
+    const response = await client.handleSyncStep1(emptyStateVector);
+
+    expect(response.type).toBe("doc");
+    if (response.type !== "doc") throw new Error("Expected doc message");
+    expect(response.payload.type).toBe("sync-step-2");
+
+    if (response.payload.type !== "sync-step-2") throw new Error("Expected sync-step-2");
+    const decoded = decodeContentEncryptedPayload(
+      response.payload.update.data as unknown as Update,
+    );
+    expect(decoded.structureUpdate.byteLength).toBeGreaterThan(0);
+    expect(decoded.encryptedSidecars.length).toBe(1);
+  });
+
+  // ── handleSyncStep2: apply server diff ────────────────────────────────────
+
+  it("handleSyncStep2 decrypts and applies the server diff", async () => {
+    const key = await createEncryptionKey();
+
+    // Client A produces content
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
+
+    ydocA.getText("body").insert(0, "from server");
     const updateMsg = await clientA.onUpdate({
       version: 2,
       data: Y.encodeStateAsUpdateV2(ydocA) as Update,
     } as VersionedUpdate);
+
     if (updateMsg.type !== "doc" || updateMsg.payload.type !== "update") {
       throw new Error("Expected doc update");
     }
-    await storage.handleEncryptedUpdate("doc-1", updateMsg.payload.update.data as Update);
 
-    const doc = await storage.getDocument("doc-1");
-    expect(doc).not.toBeNull();
-    const syncStep2Payload = doc!.content.update as unknown as EncryptedSyncStep2;
-    const decoded = decodeFromSyncStep2(syncStep2Payload);
-    expect(decoded.snapshot).not.toBeNull();
-    expect(decoded.updates.length).toBeGreaterThan(0);
-
-    const ydocB = new Y.Doc();
-    const clientB = new EncryptionClient({
-      document: "doc-1",
-      ydoc: ydocB,
-      key,
-    });
-    const compaction = await clientB.handleSyncStep2({
+    // Store update on server
+    await storage.handleUpdate("doc-1", {
       version: 2,
-      data: syncStep2Payload,
+      data: updateMsg.payload.update.data,
+    } as unknown as VersionedUpdate);
+
+    // Client B connects and receives sync-step-2 from storage
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({ document: "doc-1", ydoc: ydocB, key });
+
+    const doc = await storage.handleSyncStep1("doc-1", Y.encodeStateVector(ydocB) as any);
+    await clientB.handleSyncStep2({
+      version: 2,
+      data: doc.content.update,
     } as unknown as VersionedSyncStep2Update);
 
-    expect(compaction).toBeDefined();
-    if (!compaction || compaction.type !== "doc") {
-      throw new Error("Expected doc message");
+    expect(ydocB.getText("body").toString()).toBe("from server");
+  });
+
+  // ── handleUpdate: apply peer update ───────────────────────────────────────
+
+  it("handleUpdate decrypts and applies an incremental peer update", async () => {
+    const key = await createEncryptionKey();
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({ document: "doc-1", ydoc: ydocB, key });
+
+    ydocA.getText("body").insert(0, "peer update");
+    const msg = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
+
+    if (msg.type !== "doc" || msg.payload.type !== "update") {
+      throw new Error("Expected doc update");
     }
-    if (compaction.payload.type !== "update") {
-      throw new Error("Expected update payload");
-    }
-    expect(compaction.payload.type).toBe("update");
-    const compactionDecoded = decodeEncryptedUpdate(compaction.payload.update.data as Update);
-    expect(compactionDecoded.type).toBe("snapshot");
+
+    // Simulate server broadcast: B receives the raw encrypted update
+    await clientB.handleUpdate(msg.payload.update as unknown as VersionedUpdate);
+    expect(ydocB.getText("body").toString()).toBe("peer update");
+  });
+
+  // ── Multiple sequential updates ──────────────────────────────────────────
+
+  it("handles multiple sequential updates correctly", async () => {
+    const key = await createEncryptionKey();
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({ document: "doc-1", ydoc: ydocB, key });
+
+    // First edit
+    ydocA.getText("body").insert(0, "hello");
+    const msg1 = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
+
+    if (msg1.type !== "doc" || msg1.payload.type !== "update") throw new Error("bad msg");
+    await clientB.handleUpdate(msg1.payload.update as unknown as VersionedUpdate);
+    expect(ydocB.getText("body").toString()).toBe("hello");
+
+    // Second edit
+    ydocA.getText("body").insert(5, " world");
+    const msg2 = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
+
+    if (msg2.type !== "doc" || msg2.payload.type !== "update") throw new Error("bad msg");
+    await clientB.handleUpdate(msg2.payload.update as unknown as VersionedUpdate);
     expect(ydocB.getText("body").toString()).toBe("hello world");
+  });
 
-    const stored = await storage.handleEncryptedUpdate(
-      "doc-1",
-      compaction.payload.update.data as Update,
+  // ── send-message event ────────────────────────────────────────────────────
+
+  it("emits send-message only when explicitly invoked (no automatic snapshots)", async () => {
+    const key = await createEncryptionKey();
+    const ydoc = new Y.Doc();
+    const client = new EncryptionClient({ document: "doc-1", ydoc, key });
+
+    const sent: Message[] = [];
+    client.on("send-message", (message) => {
+      sent.push(message);
+    });
+
+    ydoc.getText("body").insert(0, "some text");
+    await client.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+    } as VersionedUpdate);
+
+    // The client should not auto-emit send-message events; onUpdate returns messages
+    // synchronously rather than emitting them (no snapshot timer, no auto-send).
+    await new Promise<void>((r) => setTimeout(r, 50));
+    expect(sent.length).toBe(0);
+  });
+
+  // ── Storage round-trip ────────────────────────────────────────────────────
+
+  it("encrypted update survives storage round-trip and restores content", async () => {
+    const key = await createEncryptionKey();
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
+
+    ydocA.getText("body").insert(0, "stored content");
+    const msg = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
+
+    if (msg.type !== "doc" || msg.payload.type !== "update") throw new Error("bad msg");
+
+    // Store in encrypted storage
+    await storage.handleUpdate("doc-1", {
+      version: 2,
+      data: msg.payload.update.data,
+    } as unknown as VersionedUpdate);
+    // Verify state was persisted
+    const storedState = await storage.getDocumentState("doc-1");
+    expect(storedState).not.toBeNull();
+
+    // New client retrieves document from storage
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({ document: "doc-1", ydoc: ydocB, key });
+
+    const doc = await storage.handleSyncStep1("doc-1", Y.encodeStateVector(ydocB) as any);
+    await clientB.handleSyncStep2({
+      version: 2,
+      data: doc.content.update,
+    } as unknown as VersionedSyncStep2Update);
+
+    expect(ydocB.getText("body").toString()).toBe("stored content");
+  });
+
+  // ── Constructor defaults ──────────────────────────────────────────────────
+
+  it("creates a default Y.Doc and Awareness when not provided", async () => {
+    const key = await createEncryptionKey();
+    const client = new EncryptionClient({ document: "doc-1", key });
+
+    expect(client.ydoc).toBeDefined();
+    expect(client.awareness).toBeDefined();
+    expect(client.document).toBe("doc-1");
+
+    // Should be usable
+    client.ydoc.getText("body").insert(0, "test");
+    const msg = await client.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(client.ydoc) as Update,
+    } as VersionedUpdate);
+    expect(msg.type).toBe("doc");
+  });
+
+  it("destroy is safe to call multiple times", async () => {
+    const key = await createEncryptionKey();
+    const client = new EncryptionClient({ document: "doc-1", key });
+    client.destroy();
+    client.destroy(); // should not throw
+  });
+
+  // ── Custom encrypt/decrypt functions ──────────────────────────────────────
+
+  it("supports custom encryptUpdate and decryptUpdate functions", async () => {
+    const key = await createEncryptionKey();
+    let encryptCalled = false;
+    let decryptCalled = false;
+
+    const { encryptUpdate, decryptUpdate } = await import("teleportal/encryption-key");
+
+    const client = new EncryptionClient({
+      document: "doc-1",
+      key,
+      encryptUpdate: async (k, data) => {
+        encryptCalled = true;
+        return encryptUpdate(k, data);
+      },
+      decryptUpdate: async (k, data) => {
+        decryptCalled = true;
+        return decryptUpdate(k, data);
+      },
+    });
+
+    // The custom encryptUpdate/decryptUpdate are used via the public
+    // encryptUpdate()/decryptUpdate() helpers, not by onUpdate internally.
+    const plaintext = new Uint8Array([1, 2, 3]);
+    const encrypted = await client.encryptUpdate(plaintext);
+    expect(encryptCalled).toBe(true);
+
+    const decrypted = await client.decryptUpdate(encrypted);
+    expect(decryptCalled).toBe(true);
+    expect(new Uint8Array(decrypted)).toEqual(new Uint8Array(plaintext));
+  });
+
+  // ── Client-side compaction ────────────────────────────────────────────────
+
+  it("createCompactedSidecar merges multiple sidecars into one", async () => {
+    const key = await createEncryptionKey();
+
+    // Use two independent clients so sidecars have distinct (clientId, clock) entries
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({ document: "doc-1", ydoc: ydocB, key });
+
+    // Client A writes "hello"
+    ydocA.getText("body").insert(0, "hello");
+    const msg1 = await clientA.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
+    } as VersionedUpdate);
+    if (msg1.type !== "doc" || msg1.payload.type !== "update") throw new Error("bad msg");
+    await storage.handleUpdate("doc-1", {
+      version: 2,
+      data: msg1.payload.update.data,
+    } as unknown as VersionedUpdate);
+
+    // Client B writes "world" (independent update, different client ID)
+    ydocB.getText("body").insert(0, "world");
+    const msg2 = await clientB.onUpdate({
+      version: 2,
+      data: Y.encodeStateAsUpdateV2(ydocB) as Update,
+    } as VersionedUpdate);
+    if (msg2.type !== "doc" || msg2.payload.type !== "update") throw new Error("bad msg");
+    await storage.handleUpdate("doc-1", {
+      version: 2,
+      data: msg2.payload.update.data,
+    } as unknown as VersionedUpdate);
+
+    // Server has 2 sidecars
+    let state = await storage.getDocumentState("doc-1");
+    expect(state!.sidecars.length).toBe(2);
+
+    // Client C syncs and compacts
+    const ydocC = new Y.Doc();
+    const clientC = new EncryptionClient({ document: "doc-1", ydoc: ydocC, key });
+
+    const doc = await storage.handleSyncStep1("doc-1", Y.encodeStateVector(ydocC) as any);
+    const decoded = decodeContentEncryptedPayload(doc.content.update as unknown as Update);
+
+    // Compact the sidecars
+    const compacted = await clientC.createCompactedSidecar(
+      decoded.encryptedSidecars,
+      decoded.structureUpdate,
     );
-    expect(stored).not.toBeNull();
-    const docAfter = await storage.getDocument("doc-1");
-    expect(docAfter).not.toBeNull();
-    if (compactionDecoded.type === "snapshot") {
-      expect(docAfter!.metadata.activeSnapshotId).toBe(compactionDecoded.snapshot.id);
-    }
+    expect(compacted).not.toBeNull();
+
+    // Apply to storage
+    const baseSV = Y.encodeStateVectorFromUpdateV2(state!.update);
+    const accepted = await storage.handleCompaction("doc-1", compacted!, baseSV);
+    expect(accepted).toBe(true);
+
+    // Server now has 1 sidecar
+    state = await storage.getDocumentState("doc-1");
+    expect(state!.sidecars.length).toBe(1);
+
+    // A new client can still sync and get the correct content
+    const ydocD = new Y.Doc();
+    const clientD = new EncryptionClient({ document: "doc-1", ydoc: ydocD, key });
+    const doc2 = await storage.handleSyncStep1("doc-1", Y.encodeStateVector(ydocD) as any);
+    await clientD.handleSyncStep2({
+      version: 2,
+      data: doc2.content.update,
+    } as unknown as VersionedSyncStep2Update);
+
+    // Both contributions should be present (order depends on Y.js conflict resolution)
+    const text = ydocD.getText("body").toString();
+    expect(text).toContain("hello");
+    expect(text).toContain("world");
+    expect(text.length).toBe(10); // "hello" + "world"
   });
 
-  it("sends compaction snapshot periodically when snapshotIntervalMs > 0", async () => {
+  it("createCompactedSidecar returns null for a single sidecar", async () => {
     const key = await createEncryptionKey();
-    const ydoc = new Y.Doc();
-    const client = new EncryptionClient({
-      document: "doc-1",
-      ydoc,
+    const client = new EncryptionClient({ document: "doc-1", key });
+    const { encryptUpdate } = await import("teleportal/encryption-key");
+    const { encodeSidecar } = await import("teleportal/protocol/encryption");
+
+    const singleSidecar = await encryptUpdate(
       key,
-      snapshotIntervalMs: 50,
-    });
+      encodeSidecar({ entries: [{ clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]) }], dictionary: new Map() }),
+    );
 
-    const sent: Message[] = [];
-    client.on("send-message", (message) => {
-      sent.push(message);
-    });
-
-    ydoc.getText("body").insert(0, "hello");
-    await client.onUpdate({
-      version: 2,
-      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
-    } as VersionedUpdate);
-    expect(sent.length).toBe(0);
-
-    ydoc.getText("body").insert(5, "!");
-    {
-      const deadline = Date.now() + 5000;
-      while (sent.length === 0) {
-        if (Date.now() > deadline) throw new Error("Polling timed out");
-        await new Promise<void>((r) => setTimeout(r, 5));
-      }
-    }
-    expect(sent[0].type).toBe("doc");
-    if (sent[0].type === "doc" && sent[0].payload.type === "update") {
-      expect(sent[0].payload.type).toBe("update");
-      const decoded = decodeEncryptedUpdate(sent[0].payload.update.data as Update);
-      expect(decoded.type).toBe("snapshot");
-    }
-
-    client.destroy();
+    const result = await client.createCompactedSidecar([singleSidecar], new Uint8Array(0));
+    expect(result).toBeNull();
   });
 
-  it("does not send periodic snapshot when there are no changes since last snapshot", async () => {
-    const key = await createEncryptionKey();
-    const ydoc = new Y.Doc();
-    const client = new EncryptionClient({
-      document: "doc-1",
-      ydoc,
-      key,
-      snapshotIntervalMs: 50,
-    });
+  // ── Wrong-key rejection ───────────────────────────────────────────────────
 
-    const sent: Message[] = [];
-    client.on("send-message", (message) => {
-      sent.push(message);
-    });
+  it("handleUpdate rejects when decrypting with a different key", async () => {
+    const keyA = await createEncryptionKey();
+    const keyB = await createEncryptionKey();
 
-    ydoc.getText("body").insert(0, "hello");
-    await client.onUpdate({
+    const ydocA = new Y.Doc();
+    const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key: keyA });
+
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({ document: "doc-1", ydoc: ydocB, key: keyB });
+
+    ydocA.getText("body").insert(0, "secret content");
+    const msg = await clientA.onUpdate({
       version: 2,
-      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
     } as VersionedUpdate);
-    await new Promise<void>((r) => setTimeout(r, 55));
-    expect(sent.length).toBe(0);
-    client.destroy();
+
+    if (msg.type !== "doc" || msg.payload.type !== "update") {
+      throw new Error("Expected doc update");
+    }
+
+    // Client B (wrong key) should throw, not silently produce garbage
+    await expect(
+      clientB.handleUpdate(msg.payload.update as unknown as VersionedUpdate),
+    ).rejects.toThrow();
+
+    // The Y.Doc should remain empty — no garbage applied
+    expect(ydocB.getText("body").toString()).toBe("");
   });
 
-  it("does not schedule periodic snapshot when snapshotIntervalMs is 0", async () => {
+  // ── Empty update handling ─────────────────────────────────────────────────
+
+  it("handleUpdate with empty structure update does not crash", async () => {
     const key = await createEncryptionKey();
     const ydoc = new Y.Doc();
-    const client = new EncryptionClient({
-      document: "doc-1",
-      ydoc,
-      key,
-      snapshotIntervalMs: 0,
+    const client = new EncryptionClient({ document: "doc-1", ydoc, key });
+
+    // Encode an empty content-encrypted payload
+    const emptyPayload = encodeContentEncryptedPayload({
+      structureUpdate: new Uint8Array(0),
+      encryptedSidecars: [],
     });
 
-    const sent: Message[] = [];
-    client.on("send-message", (message) => {
-      sent.push(message);
-    });
-
-    ydoc.getText("body").insert(0, "x");
-    await client.onUpdate({
+    await client.handleUpdate({
       version: 2,
-      data: Y.encodeStateAsUpdateV2(ydoc) as Update,
-    } as VersionedUpdate);
-    await new Promise<void>((r) => setTimeout(r, 10));
-    expect(sent.length).toBe(0);
+      data: emptyPayload,
+    } as unknown as VersionedUpdate);
+
+    expect(ydoc.getText("body").toString()).toBe("");
   });
 });

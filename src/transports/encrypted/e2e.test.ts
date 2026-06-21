@@ -10,8 +10,7 @@ import {
   type VersionedUpdate,
   type VersionedSyncStep2Update,
 } from "teleportal";
-import type { EncryptedStateVector } from "teleportal/protocol/encryption";
-import { EncryptedMemoryStorage, YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 import { Server } from "../../server/server";
 import { Client } from "../../server/client";
@@ -37,14 +36,14 @@ function createServerClient(id: string, onMessage: (msg: Message<Ctx>) => void):
 // ─── Unit-level encrypted sync tests (no real transport) ───────────────────
 
 describe("encrypted sync e2e: two clients via server", () => {
-  let storage: EncryptedMemoryStorage;
+  let storage: MemoryDocumentStorage;
   let pubSub: InMemoryPubSub;
   let server: Server<Ctx>;
   let key: CryptoKey;
 
   beforeEach(async () => {
-    EncryptedMemoryStorage.docs.clear();
-    storage = new EncryptedMemoryStorage();
+    MemoryDocumentStorage.docs.clear();
+    storage = new MemoryDocumentStorage(true);
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
 
@@ -72,17 +71,9 @@ describe("encrypted sync e2e: two clients via server", () => {
     for (const msg of inbox) {
       if (msg.type !== "doc") continue;
       if (msg.payload.type === "sync-step-2") {
-        const compaction = await encClient.handleSyncStep2(
-          msg.payload.update as unknown as VersionedSyncStep2Update,
-        );
-        if (compaction) {
-          inbox.length = 0;
-          await session.apply(compaction as Message<Ctx>, serverClient);
-        }
+        await encClient.handleSyncStep2(msg.payload.update as unknown as VersionedSyncStep2Update);
       } else if (msg.payload.type === "sync-step-1") {
-        const resp = await encClient.handleSyncStep1(
-          msg.payload.sv as unknown as EncryptedStateVector,
-        );
+        const resp = await encClient.handleSyncStep1(msg.payload.sv as unknown as Uint8Array);
         inbox.length = 0;
         await session.apply(resp as Message<Ctx>, serverClient);
       }
@@ -115,7 +106,6 @@ describe("encrypted sync e2e: two clients via server", () => {
       document: "doc-1",
       ydoc: ydocA,
       key,
-      snapshotIntervalMs: 0,
     });
     const inboxA: Message<Ctx>[] = [];
     const serverClientA = createServerClient("client-a", (msg) => inboxA.push(msg));
@@ -137,7 +127,6 @@ describe("encrypted sync e2e: two clients via server", () => {
       document: "doc-1",
       ydoc: ydocB,
       key,
-      snapshotIntervalMs: 0,
     });
     const inboxB: Message<Ctx>[] = [];
     const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
@@ -157,14 +146,12 @@ describe("encrypted sync e2e: two clients via server", () => {
       document: "doc-1",
       ydoc: ydocA,
       key,
-      snapshotIntervalMs: 0,
     });
     const ydocB = new Y.Doc();
     const clientB = new EncryptionClient({
       document: "doc-1",
       ydoc: ydocB,
       key,
-      snapshotIntervalMs: 0,
     });
 
     const inboxA: Message<Ctx>[] = [];
@@ -219,14 +206,12 @@ describe("encrypted sync e2e: two clients via server", () => {
       document: "doc-1",
       ydoc: ydocA,
       key,
-      snapshotIntervalMs: 0,
     });
     const ydocB = new Y.Doc();
     const clientB = new EncryptionClient({
       document: "doc-1",
       ydoc: ydocB,
       key,
-      snapshotIntervalMs: 0,
     });
 
     const inboxA: Message<Ctx>[] = [];
@@ -276,53 +261,17 @@ describe("encrypted sync e2e: two clients via server", () => {
     clientA.destroy();
     clientB.destroy();
   });
-});
 
-// ─── Full-stack WebSocket e2e tests ────────────────────────────────────────
-
-describe("encrypted sync: snapshot ID mismatch", () => {
-  let storage: EncryptedMemoryStorage;
-  let pubSub: InMemoryPubSub;
-  let server: Server<Ctx>;
-  let key: CryptoKey;
-
-  beforeEach(async () => {
-    EncryptedMemoryStorage.docs.clear();
-    storage = new EncryptedMemoryStorage();
-    pubSub = new InMemoryPubSub();
-    key = await createEncryptionKey();
-
-    server = new Server<Ctx>({
-      storage: async () => storage,
-      pubSub,
-    });
-  });
-
-  afterEach(async () => {
-    await server[Symbol.asyncDispose]();
-    await pubSub[Symbol.asyncDispose]();
-  });
-
-  it("updates propagate even when receiver has a newer snapshot", async () => {
+  it("late-joining client receives document state after a single batch edit", async () => {
     const ydocA = new Y.Doc();
     const clientA = new EncryptionClient({
       document: "doc-1",
       ydoc: ydocA,
       key,
-      snapshotIntervalMs: 0,
-    });
-    const ydocB = new Y.Doc();
-    const clientB = new EncryptionClient({
-      document: "doc-1",
-      ydoc: ydocB,
-      key,
-      snapshotIntervalMs: 0,
     });
 
     const inboxA: Message<Ctx>[] = [];
-    const inboxB: Message<Ctx>[] = [];
     const serverClientA = createServerClient("client-a", (msg) => inboxA.push(msg));
-    const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
 
     const session = await server.getOrOpenSession("doc-1", {
       encrypted: true,
@@ -330,106 +279,34 @@ describe("encrypted sync: snapshot ID mismatch", () => {
       context: { userId: "client-a", room: "default", clientId: "client-a" },
     });
     await session.load();
+    await performSyncHandshake(clientA, session, serverClientA, inboxA);
 
-    // Both clients sync
-    const syncStep1A = await clientA.start();
-    await session.apply(syncStep1A as Message<Ctx>, serverClientA);
-    for (const msg of inboxA) {
-      if (msg.type !== "doc") continue;
-      if (msg.payload.type === "sync-step-2") {
-        const compaction = await clientA.handleSyncStep2(
-          msg.payload.update as unknown as VersionedSyncStep2Update,
-        );
-        if (compaction) {
-          inboxA.length = 0;
-          await session.apply(compaction as Message<Ctx>, serverClientA);
-        }
-      } else if (msg.payload.type === "sync-step-1") {
-        const resp = await clientA.handleSyncStep1(
-          msg.payload.sv as unknown as EncryptedStateVector,
-        );
-        inboxA.length = 0;
-        await session.apply(resp as Message<Ctx>, serverClientA);
-      }
-    }
+    // Client A makes edits (single transaction batch) then sends one update
+    ydocA.getText("body").insert(0, "hello from A");
+    ydocA.getText("title").insert(0, "My Title");
+    await sendUpdateToServer(clientA, ydocA, session, serverClientA);
 
-    // Client A writes initial content
-    ydocA.getText("body").insert(0, "base");
-    const baseUpdate = {
-      version: 2,
-      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
-    } as VersionedUpdate;
-    const baseMsg = await clientA.onUpdate(baseUpdate);
-    inboxA.length = 0;
-    inboxB.length = 0;
-    await session.apply(baseMsg as Message<Ctx>, serverClientA);
-
-    // Client B connects and syncs
-    session.addClient(serverClientB);
-    const syncStep1B = await clientB.start();
-    inboxB.length = 0;
-    await session.apply(syncStep1B as Message<Ctx>, serverClientB);
-    for (const msg of inboxB) {
-      if (msg.type !== "doc") continue;
-      if (msg.payload.type === "sync-step-2") {
-        const compaction = await clientB.handleSyncStep2(
-          msg.payload.update as unknown as VersionedSyncStep2Update,
-        );
-        if (compaction) {
-          inboxB.length = 0;
-          await session.apply(compaction as Message<Ctx>, serverClientB);
-        }
-      } else if (msg.payload.type === "sync-step-1") {
-        const resp = await clientB.handleSyncStep1(
-          msg.payload.sv as unknown as EncryptedStateVector,
-        );
-        inboxB.length = 0;
-        await session.apply(resp as Message<Ctx>, serverClientB);
-      }
-    }
-    expect(ydocB.getText("body").toString()).toBe("base");
-
-    // Client B creates a NEW snapshot (simulating periodic compaction).
-    // This changes B's activeSnapshotId, diverging it from A's.
-    // The internal createSnapshotMessage method is private, so we trigger
-    // it by calling handleSyncStep2 with a snapshot to force a new snapshot chain.
-    // Instead, we can just directly call the public loadState with a new snapshot
-    // by encoding B's current state as a fresh snapshot.
-    const snapshotPayload = await clientB.encryptUpdate(Y.encodeStateAsUpdateV2(ydocB));
-    await clientB.loadState({
-      snapshot: {
-        id: crypto.randomUUID(),
-        parentSnapshotId: null,
-        payload: snapshotPayload,
-      },
+    // Client B joins late
+    const ydocB = new Y.Doc();
+    const clientB = new EncryptionClient({
+      document: "doc-1",
+      ydoc: ydocB,
+      key,
     });
+    const inboxB: Message<Ctx>[] = [];
+    const serverClientB = createServerClient("client-b", (msg) => inboxB.push(msg));
+    session.addClient(serverClientB);
+    await performSyncHandshake(clientB, session, serverClientB, inboxB);
 
-    // Now A and B have DIFFERENT snapshot IDs.
-    // Client A writes — this update has A's old snapshot ID.
-    ydocA.getText("body").insert(4, " updated");
-    const updateAfterSnapshot = {
-      version: 2,
-      data: Y.encodeStateAsUpdateV2(ydocA) as Update,
-    } as VersionedUpdate;
-    const updateMsg = await clientA.onUpdate(updateAfterSnapshot);
-    inboxA.length = 0;
-    inboxB.length = 0;
-    await session.apply(updateMsg as Message<Ctx>, serverClientA);
-
-    // Client B should receive and apply the update despite snapshot ID mismatch
-    for (const msg of inboxB) {
-      if (msg.type !== "doc") continue;
-      if (msg.payload.type === "update") {
-        await clientB.handleUpdate(msg.payload.update as unknown as VersionedUpdate);
-      }
-    }
-
-    expect(ydocB.getText("body").toString()).toBe("base updated");
+    expect(ydocB.getText("body").toString()).toBe("hello from A");
+    expect(ydocB.getText("title").toString()).toBe("My Title");
 
     clientA.destroy();
     clientB.destroy();
   });
 });
+
+// ─── Full-stack WebSocket e2e tests ────────────────────────────────────────
 
 describe("encrypted sync e2e: full WebSocket transport", () => {
   let pubSub: InMemoryPubSub;
@@ -440,16 +317,16 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
   const cleanups: Array<() => void | Promise<void>> = [];
 
   beforeEach(async () => {
-    EncryptedMemoryStorage.docs.clear();
+    MemoryDocumentStorage.docs.clear();
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
 
     server = new Server<Ctx>({
       storage: async (ctx) => {
         if (ctx.encrypted) {
-          return new EncryptedMemoryStorage();
+          return new MemoryDocumentStorage(true);
         }
-        return new YDocStorage();
+        return new MemoryDocumentStorage(false);
       },
       pubSub,
     });
@@ -478,12 +355,23 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
   });
 
   afterEach(async () => {
-    for (const cleanup of cleanups.splice(0)) {
-      await cleanup();
-    }
+    // Bun does not isolate state between tests, so teardown must be ordered so
+    // that no message reaches a torn-down client transport (which would surface
+    // as a spurious "YDoc is destroyed" / closed-controller error in a later
+    // test). First cut off the server so no new messages are broadcast...
     bunServer.stop(true);
     await server[Symbol.asyncDispose]();
     await pubSub[Symbol.asyncDispose]();
+    // ...then let any in-flight messages settle while clients are still alive...
+    await new Promise((r) => setTimeout(r, 0));
+    // ...and only then destroy the client providers/connections.
+    for (const cleanup of cleanups.splice(0)) {
+      try {
+        await cleanup();
+      } catch {
+        // Best-effort teardown; ignore errors from already-closed resources.
+      }
+    }
   });
 
   function createWsConnection(opts?: { connect?: boolean }) {
@@ -713,6 +601,65 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     expect(reconnectedText).toBe("before disconnect + after");
   });
 
+  // --- Encrypted reconnection ---
+
+  it("encrypted client reconnects after disconnect and resumes sync", async () => {
+    const docId = "doc-ws-enc-reconnect";
+
+    // Client A connects with encryption
+    const { provider: pA } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pA);
+
+    // Client A writes content before B connects
+    pA.doc.getText("body").insert(0, "before disconnect");
+    await new Promise((r) => setTimeout(r, 1));
+
+    // Client B connects with encryption and auto-reconnect enabled
+    const conn2 = new Connection({
+      transports: [websocketTransport()],
+      url: baseUrl,
+      connect: true,
+      maxReconnectAttempts: 5,
+      initialReconnectDelay: 100,
+      maxBackoffTime: 500,
+      batchIntervalMs: 0,
+    });
+    cleanups.push(() => conn2.destroy());
+    await conn2.connected;
+
+    const p2 = await Provider.create({
+      connection: conn2,
+      document: docId,
+      encryptionKey: key,
+      enableOfflinePersistence: false,
+    });
+    cleanups.push(() => p2.destroy());
+    await waitForSync(p2);
+    await waitForContent(p2.doc, "body", (t) => t === "before disconnect");
+
+    // Client B disconnects
+    await conn2.disconnect();
+
+    // Client A writes more content while B is disconnected
+    pA.doc.getText("body").insert(17, " + after");
+    await new Promise((r) => setTimeout(r, 1));
+
+    // Client B reconnects
+    await conn2.connect();
+    await conn2.connected;
+
+    // Client B should have all content (both before and after disconnect)
+    const reconnectedText = await waitForContent(
+      p2.doc,
+      "body",
+      (t) => t.includes("+ after"),
+      10_000,
+    );
+    expect(reconnectedText).toBe("before disconnect + after");
+  });
+
   // --- Server response timing ---
 
   it("server responds to sync-step-1 within timeout", async () => {
@@ -758,7 +705,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     expect(types).toContain("sync-step-1");
   });
 
-  // --- No-op update doesn't hang ---
+  // --- Empty document sync ---
 
   it("client can sync an empty document without getting stuck", async () => {
     const docId = "doc-ws-empty";
@@ -766,7 +713,6 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const { provider: p1 } = await createProvider(docId);
     await waitForSync(p1);
 
-    // Just syncing an empty doc should complete without hanging
     const { provider: p2 } = await createProvider(docId);
     await waitForSync(p2);
 
@@ -791,7 +737,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     expect(p2.doc.getText("body").toString()).toBe("");
   });
 
-  // --- Rapid updates don't hang ---
+  // --- Rapid updates ---
 
   it("rapid successive edits all propagate to peer", async () => {
     const docId = "doc-ws-rapid";
@@ -868,6 +814,131 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     expect(text2).toBe("doc two");
   });
 
+  // --- Encrypted rapid updates ---
+
+  it("rapid successive encrypted edits all propagate to peer", async () => {
+    const docId = "doc-ws-enc-rapid";
+
+    const { provider: pA } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pA);
+
+    const { provider: pB } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pB);
+
+    // Fire 20 rapid edits
+    for (let i = 0; i < 20; i++) {
+      pA.doc.getText("body").insert(pA.doc.getText("body").length, `${i} `);
+    }
+
+    const expected = Array.from({ length: 20 }, (_, i) => `${i} `).join("");
+    const text = await waitForContent(pB.doc, "body", (t) => t === expected, 10_000);
+    expect(text).toBe(expected);
+  });
+
+  // --- Encrypted multiple documents ---
+
+  it("encrypted single connection handles multiple documents", async () => {
+    const conn = createWsConnection();
+    await conn.connected;
+
+    const p1 = await Provider.create({
+      connection: conn,
+      document: "enc-multi-doc-1",
+      encryptionKey: key,
+      enableOfflinePersistence: false,
+    });
+    cleanups.push(() => p1.destroy());
+
+    const p2 = await Provider.create({
+      connection: conn,
+      document: "enc-multi-doc-2",
+      encryptionKey: key,
+      enableOfflinePersistence: false,
+    });
+    cleanups.push(() => p2.destroy());
+
+    await waitForSync(p1);
+    await waitForSync(p2);
+
+    p1.doc.getText("body").insert(0, "encrypted doc one");
+    p2.doc.getText("body").insert(0, "encrypted doc two");
+
+    await new Promise((r) => setTimeout(r, 1));
+
+    // Verify via a second connection
+    const conn2 = createWsConnection();
+    await conn2.connected;
+
+    const p1b = await Provider.create({
+      connection: conn2,
+      document: "enc-multi-doc-1",
+      encryptionKey: key,
+      enableOfflinePersistence: false,
+    });
+    cleanups.push(() => p1b.destroy());
+
+    const p2b = await Provider.create({
+      connection: conn2,
+      document: "enc-multi-doc-2",
+      encryptionKey: key,
+      enableOfflinePersistence: false,
+    });
+    cleanups.push(() => p2b.destroy());
+
+    await waitForSync(p1b);
+    await waitForSync(p2b);
+
+    const text1 = await waitForContent(p1b.doc, "body", (t) => t === "encrypted doc one");
+    const text2 = await waitForContent(p2b.doc, "body", (t) => t === "encrypted doc two");
+
+    expect(text1).toBe("encrypted doc one");
+    expect(text2).toBe("encrypted doc two");
+  });
+
+  // --- Three encrypted clients converge ---
+
+  it("three encrypted clients converge to same document state", async () => {
+    const docId = "doc-ws-enc-3client";
+
+    const { provider: pA } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pA);
+
+    const { provider: pB } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pB);
+
+    const { provider: pC } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pC);
+
+    // Each client writes different content
+    pA.doc.getText("body").insert(0, "AAA");
+    pB.doc.getText("body").insert(0, "BBB");
+    pC.doc.getText("body").insert(0, "CCC");
+
+    // Wait for all three to converge - each should see all three contributions
+    const predicate = (t: string) => t.includes("AAA") && t.includes("BBB") && t.includes("CCC");
+
+    const textA = await waitForContent(pA.doc, "body", predicate, 10_000);
+    const textB = await waitForContent(pB.doc, "body", predicate, 10_000);
+    const textC = await waitForContent(pC.doc, "body", predicate, 10_000);
+
+    // All three must have converged to the exact same state
+    expect(textA).toBe(textB);
+    expect(textB).toBe(textC);
+    expect(textA).toContain("AAA");
+    expect(textA).toContain("BBB");
+    expect(textA).toContain("CCC");
+  });
+
   // --- Connection state transitions ---
 
   it("connection reports correct state transitions", async () => {
@@ -911,17 +982,17 @@ describe("attribution e2e: full WebSocket transport", () => {
   const cleanups: Array<() => void | Promise<void>> = [];
 
   beforeEach(async () => {
-    EncryptedMemoryStorage.docs.clear();
-    EncryptedMemoryStorage.attributionMaps.clear();
+    MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.attributionMaps.clear();
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
 
     server = new Server<Ctx>({
       storage: async (ctx) => {
         if (ctx.encrypted) {
-          return new EncryptedMemoryStorage();
+          return new MemoryDocumentStorage(true);
         }
-        return new YDocStorage();
+        return new MemoryDocumentStorage(false);
       },
       pubSub,
       rpcHandlers: {
@@ -953,12 +1024,23 @@ describe("attribution e2e: full WebSocket transport", () => {
   });
 
   afterEach(async () => {
-    for (const cleanup of cleanups.splice(0)) {
-      await cleanup();
-    }
+    // Bun does not isolate state between tests, so teardown must be ordered so
+    // that no message reaches a torn-down client transport (which would surface
+    // as a spurious "YDoc is destroyed" / closed-controller error in a later
+    // test). First cut off the server so no new messages are broadcast...
     bunServer.stop(true);
     await server[Symbol.asyncDispose]();
     await pubSub[Symbol.asyncDispose]();
+    // ...then let any in-flight messages settle while clients are still alive...
+    await new Promise((r) => setTimeout(r, 0));
+    // ...and only then destroy the client providers/connections.
+    for (const cleanup of cleanups.splice(0)) {
+      try {
+        await cleanup();
+      } catch {
+        // Best-effort teardown; ignore errors from already-closed resources.
+      }
+    }
   });
 
   function createWsConnection() {

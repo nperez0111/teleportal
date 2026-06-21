@@ -1,36 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { InMemoryPubSub } from "teleportal";
-import type { Update, ServerContext, VersionedUpdate } from "teleportal";
+import type { ServerContext, VersionedUpdate } from "teleportal";
 import type { MilestoneTrigger } from "teleportal/storage";
+import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
 import { getMilestoneRpcHandlers } from "./index";
 import { Session } from "../../server/session";
 import { Server } from "../../server/server";
 import { InMemoryMilestoneStorage } from "../../storage/in-memory/milestone-storage";
-import { YDocStorage } from "../../storage/in-memory/ydoc";
+import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
 
-/**
- * Creates a valid Y.js update from a simple text content
- */
 function createYjsUpdate(text: string = "initial"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, text);
-  return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
+  const v1 = Y.encodeStateAsUpdate(doc);
+  const payload = encodeContentEncryptedPayload({ structureUpdate: v1, encryptedSidecars: [] });
+  return { version: 2, data: payload } as unknown as VersionedUpdate;
 }
 
 describe("Automatic Milestones via Handler Factory", () => {
   let session: Session<ServerContext>;
-  let storage: YDocStorage;
+  let storage: MemoryDocumentStorage;
   let milestoneStorage: InMemoryMilestoneStorage;
   let pubSub: InMemoryPubSub;
   let server: Server<ServerContext>;
 
   beforeEach(() => {
     // Clear static maps to ensure test isolation
-    YDocStorage.docs.clear();
-    YDocStorage.metadata.clear();
+    MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.attributionMaps.clear();
 
-    storage = new YDocStorage();
+    storage = new MemoryDocumentStorage();
     milestoneStorage = new InMemoryMilestoneStorage();
     pubSub = new InMemoryPubSub();
   });

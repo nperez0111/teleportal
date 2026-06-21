@@ -1,57 +1,34 @@
-import { toBase64 } from "lib0/buffer";
-import { digest } from "lib0/hash/sha256";
-import { ClientContext, Observable } from "teleportal";
-import { convertToV2 } from "teleportal/protocol";
+import { ClientContext, Observable, type StateVector } from "teleportal";
 import {
   type DecryptedBinary,
   decryptUpdate as defaultDecryptUpdate,
-  encryptUpdate as defaultEncryptUpdate,
   type EncryptedBinary,
+  encryptUpdate as defaultEncryptUpdate,
 } from "teleportal/encryption-key";
 import {
   AwarenessMessage,
   AwarenessUpdateMessage,
   DocMessage,
   Message,
-  Update,
   type VersionedSyncStep2Update,
   type VersionedUpdate,
 } from "teleportal/protocol";
-import type {
-  DecodedEncryptedUpdatePayload,
-  EncryptedSnapshot,
-  EncryptedStateVector,
-  EncryptedSyncStep2,
-  EncryptedUpdatePayload,
-} from "teleportal/protocol/encryption";
+import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
 import {
-  decodeEncryptedUpdate,
-  decodeFromStateVector,
-  decodeFromSyncStep2,
-  encodeEncryptedSnapshot,
-  encodeEncryptedUpdateMessages,
-  encodeToSyncStep2,
-  getEncryptedStateVector,
-  LamportClock,
+  decodeContentEncryptedPayload,
+  encodeContentEncryptedPayload,
+  encryptUpdateContent,
+  decodeSidecar,
+  mergeSidecars,
+  restoreContent,
+  compactSidecars,
 } from "teleportal/protocol/encryption";
-import {
-  createContentIdsFromUpdate,
-  encodeContentIds,
-  getEmptyEncodedContentIds,
-} from "teleportal/attribution";
+import type { IndexedSidecar } from "teleportal/protocol/encryption";
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness.js";
 import * as Y from "yjs";
 import { getSyncTransactionOrigin, YDocSinkHandler, YDocSourceHandler } from "../ydoc";
 
-/** Default interval for periodic snapshot compaction (5 minutes). Use 0 to disable. */
-export const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
-
 type EncryptionClientEvents = {
-  "snapshot-stored": (snapshot: EncryptedSnapshot) => void;
-  "update-stored": (update: DecodedEncryptedUpdatePayload) => void;
-  "update-acknowledged": (update: DecodedEncryptedUpdatePayload) => void;
-  "state-updated": (state: { snapshotId: string | null; serverVersion: number }) => void;
-  /** Emitted when the client wants to send a message (e.g. periodic compaction snapshot). */
   "send-message": (message: Message) => void;
 };
 
@@ -59,19 +36,6 @@ export class EncryptionClient
   extends Observable<EncryptionClientEvents>
   implements YDocSinkHandler, YDocSourceHandler
 {
-  /**
-   * A {@link LamportClock} to keep track of the message order
-   */
-  private clock: LamportClock;
-
-  private activeSnapshot: EncryptedSnapshot | null = null;
-  private serverVersion = 0;
-  private pendingUpdates = new Map<string, DecodedEncryptedUpdatePayload>();
-  private seenUpdates = new Map<string, Set<string>>();
-  private loadingPromise: Promise<void> | null = null;
-  #snapshotIntervalMs: number;
-  #snapshotTimer: ReturnType<typeof setInterval> | null = null;
-
   public document: string;
   public ydoc: Y.Doc;
   public awareness: Awareness;
@@ -86,7 +50,6 @@ export class EncryptionClient
     key,
     decryptUpdate,
     encryptUpdate,
-    snapshotIntervalMs = DEFAULT_SNAPSHOT_INTERVAL_MS,
   }: {
     document: string;
     ydoc?: Y.Doc;
@@ -94,263 +57,51 @@ export class EncryptionClient
     key: CryptoKey;
     decryptUpdate?: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
     encryptUpdate?: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
-    /** Interval in ms to create a compaction snapshot. Default 5 minutes. Set to 0 to disable. */
-    snapshotIntervalMs?: number;
   }) {
     super();
     this.ydoc = ydoc ?? new Y.Doc();
     this.awareness = awareness ?? new Awareness(this.ydoc);
-    this.clock = new LamportClock(this.awareness.clientID);
     this.document = document;
     this.key = key;
     this.#decryptUpdate = decryptUpdate ?? defaultDecryptUpdate;
     this.#encryptUpdate = encryptUpdate ?? defaultEncryptUpdate;
-    this.#snapshotIntervalMs = snapshotIntervalMs;
   }
 
-  /**
-   * Clears the periodic snapshot timer and any other resources. Call when the client is no longer used.
-   */
-  public destroy(): void {
-    this.#clearSnapshotTimer();
-  }
+  public destroy(): void {}
 
-  #clearSnapshotTimer(): void {
-    if (this.#snapshotTimer !== null) {
-      clearInterval(this.#snapshotTimer);
-      this.#snapshotTimer = null;
-    }
-  }
-
-  #scheduleNextSnapshot(): void {
-    this.#clearSnapshotTimer();
-    if (this.#snapshotIntervalMs <= 0 || !this.activeSnapshotId) {
-      return;
-    }
-    this.#snapshotTimer = setInterval(() => {
-      void (async () => {
-        if (!this.activeSnapshotId) return;
-        const currentState = Y.encodeStateAsUpdateV2(this.ydoc);
-        const snapshotState = await this.decryptUpdate(this.activeSnapshot!.payload);
-        if (
-          currentState.length === snapshotState.length &&
-          currentState.every((b, i) => b === snapshotState[i])
-        ) {
-          return;
-        }
-        try {
-          const message = await this.createSnapshotMessage();
-          this.call("send-message", message);
-        } finally {
-          this.#scheduleNextSnapshot();
-        }
-      })();
-    }, this.#snapshotIntervalMs);
-  }
-
-  /**
-   * Encrypts a {@link DecryptedBinary} using the {@link CryptoKey}.
-   */
   public encryptUpdate(update: DecryptedBinary): Promise<EncryptedBinary> {
     return this.#encryptUpdate(this.key, update);
   }
 
-  /**
-   * Decrypts an {@link EncryptedBinary} using the {@link CryptoKey}.
-   */
   public decryptUpdate(encryptedUpdate: EncryptedBinary): Promise<DecryptedBinary> {
     return this.#decryptUpdate(this.key, encryptedUpdate);
   }
 
-  private get activeSnapshotId(): string | null {
-    return this.activeSnapshot?.id ?? null;
-  }
+  private async decryptAndApply(
+    structureUpdate: Uint8Array,
+    encryptedSidecars: EncryptedBinary[],
+  ): Promise<void> {
+    if (structureUpdate.length === 0) return;
 
-  private getUpdateKey(snapshotId: string, timestamp: [number, number]): string {
-    return `${snapshotId}:${timestamp[0]}-${timestamp[1]}`;
-  }
-
-  private markSeen(update: DecodedEncryptedUpdatePayload) {
-    const snapshotId = update.snapshotId;
-    const key = this.getUpdateKey(snapshotId, update.timestamp);
-    if (!this.seenUpdates.has(snapshotId)) {
-      this.seenUpdates.set(snapshotId, new Set());
-    }
-    this.seenUpdates.get(snapshotId)!.add(key);
-  }
-
-  private hasSeen(update: DecodedEncryptedUpdatePayload): boolean {
-    const snapshotId = update.snapshotId;
-    const key = this.getUpdateKey(snapshotId, update.timestamp);
-    return this.seenUpdates.get(snapshotId)?.has(key) ?? false;
-  }
-
-  private async applyUpdatesToDoc(updates: DecryptedBinary[]): Promise<void> {
-    if (updates.length === 0) {
-      return;
-    }
-    this.ydoc.transact((tr) => {
-      for (const update of updates) {
-        Y.applyUpdateV2(tr.doc, update, getSyncTransactionOrigin(this.ydoc));
-      }
-    });
-  }
-
-  private handleAcknowledgement(update: DecodedEncryptedUpdatePayload) {
-    if (typeof update.serverVersion !== "number") {
-      return;
-    }
-    if (update.serverVersion > this.serverVersion) {
-      this.serverVersion = update.serverVersion;
-      this.call("state-updated", {
-        snapshotId: this.activeSnapshotId,
-        serverVersion: this.serverVersion,
-      });
-    }
-    const key = this.getUpdateKey(update.snapshotId, update.timestamp);
-    const pending = this.pendingUpdates.get(key);
-    if (pending) {
-      this.pendingUpdates.delete(key);
-      this.call("update-acknowledged", {
-        ...pending,
-        serverVersion: update.serverVersion,
-      });
-    }
-  }
-
-  /** Decrypt and apply in chunks to yield to the event loop and keep UI responsive. */
-  private static readonly DECRYPT_BATCH_SIZE = 100;
-
-  private async applyUpdates(updates: DecodedEncryptedUpdatePayload[]): Promise<void> {
-    const toDecrypt: DecodedEncryptedUpdatePayload[] = [];
-    for (const update of updates) {
-      if (this.hasSeen(update)) {
-        this.handleAcknowledgement(update);
-        continue;
-      }
-
-      toDecrypt.push(update);
-      this.markSeen(update);
-      if (!update.id) {
-        update.id = toBase64(digest(update.payload));
-      }
-      this.call("update-stored", update);
-      if (update.snapshotId === this.activeSnapshotId) {
-        this.handleAcknowledgement(update);
-      }
+    const sidecars = [];
+    for (const encrypted of encryptedSidecars) {
+      const sidecarBytes = await this.decryptUpdate(encrypted);
+      sidecars.push(decodeSidecar(sidecarBytes));
     }
 
-    const batchSize = EncryptionClient.DECRYPT_BATCH_SIZE;
-    for (let i = 0; i < toDecrypt.length; i += batchSize) {
-      const batch = toDecrypt.slice(i, i + batchSize);
-      const decrypted = await Promise.all(
-        batch.map((update) => this.decryptUpdate(update.payload)),
-      );
-      await this.applyUpdatesToDoc(decrypted);
-      if (i + batchSize < toDecrypt.length) {
-        await new Promise<void>((r) => setTimeout(r, 0));
-      }
-    }
+    const fullUpdate = restoreContent(structureUpdate, mergeSidecars(sidecars));
+    Y.applyUpdate(this.ydoc, fullUpdate, getSyncTransactionOrigin(this.ydoc));
   }
 
-  private async applySnapshot(snapshot: EncryptedSnapshot): Promise<void> {
-    if (this.activeSnapshot?.id === snapshot.id) {
-      return;
-    }
-    const decrypted = await this.decryptUpdate(snapshot.payload);
-    await this.applyUpdatesToDoc([decrypted]);
-
-    this.activeSnapshot = snapshot;
-    this.serverVersion = 0;
-    this.clock = new LamportClock(this.awareness.clientID);
-    this.pendingUpdates.clear();
-    this.seenUpdates.clear();
-
-    this.call("snapshot-stored", snapshot);
-    this.call("state-updated", {
-      snapshotId: snapshot.id,
-      serverVersion: this.serverVersion,
-    });
-    this.#scheduleNextSnapshot();
-  }
-
-  private async createSnapshot(): Promise<EncryptedSnapshot> {
-    const snapshotId = crypto.randomUUID();
-    const parentSnapshotId = this.activeSnapshotId ?? null;
-    const update = Y.encodeStateAsUpdateV2(this.ydoc) as Update;
-    const encryptedUpdate = await this.encryptUpdate(update);
-    const snapshot: EncryptedSnapshot = {
-      id: snapshotId,
-      parentSnapshotId,
-      payload: encryptedUpdate,
-    };
-    this.activeSnapshot = snapshot;
-    this.serverVersion = 0;
-    this.clock = new LamportClock(this.awareness.clientID);
-    this.pendingUpdates.clear();
-    this.seenUpdates.clear();
-
-    this.call("snapshot-stored", snapshot);
-    this.call("state-updated", {
-      snapshotId: snapshot.id,
-      serverVersion: this.serverVersion,
-    });
-    this.#scheduleNextSnapshot();
-    return snapshot;
-  }
-
-  private createUpdatePayload(
-    payload: EncryptedBinary,
-    contentIds = getEmptyEncodedContentIds(),
-  ): DecodedEncryptedUpdatePayload {
-    if (!this.activeSnapshotId) {
-      throw new Error("Cannot create update without an active snapshot");
-    }
-    const timestamp = this.clock.tick();
-    const update: DecodedEncryptedUpdatePayload = {
-      id: toBase64(digest(payload)),
-      snapshotId: this.activeSnapshotId,
-      timestamp,
-      payload,
-      contentIds,
-    };
-    this.markSeen(update);
-    this.pendingUpdates.set(this.getUpdateKey(update.snapshotId, timestamp), update);
-    this.call("update-stored", update);
-    return update;
-  }
-
-  public async loadState({
-    snapshot,
-    updates,
-  }: {
-    snapshot?: EncryptedSnapshot | null;
-    updates?: DecodedEncryptedUpdatePayload[];
-  }): Promise<void> {
-    this.loadingPromise = (async () => {
-      if (snapshot) {
-        await this.applySnapshot(snapshot);
-      }
-      if (updates && updates.length > 0) {
-        await this.applyUpdates(updates);
-      }
-    })();
-    try {
-      await this.loadingPromise;
-    } finally {
-      this.loadingPromise = null;
-    }
-  }
-
+  /**
+   * Sends sync-step-1 with the local Y.js state vector.
+   */
   public async start(): Promise<Message> {
-    if (this.loadingPromise) {
-      await this.loadingPromise;
-    }
     return new DocMessage(
       this.document,
       {
         type: "sync-step-1",
-        sv: getEncryptedStateVector(this.activeSnapshotId ?? "", this.serverVersion),
+        sv: Y.encodeStateVector(this.ydoc) as StateVector,
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -360,36 +111,22 @@ export class EncryptionClient
   }
 
   /**
-   * Handles an {@link EncryptedStateVector} by getting the {@link EncryptedSyncStep2}
-   * and returning a {@link DocMessage} with the {@link EncryptedSyncStep2}.
+   * Responds to the server's sync-step-1 echo with a diff of local-only state.
    */
-  public async handleSyncStep1(
-    syncStep1: EncryptedStateVector,
-  ): Promise<DocMessage<ClientContext>> {
-    const decoded = decodeFromStateVector(syncStep1);
-    let snapshot: EncryptedSnapshot | null = null;
-    let updates: DecodedEncryptedUpdatePayload[] = [];
+  public async handleSyncStep1(syncStep1: Uint8Array): Promise<DocMessage<ClientContext>> {
+    const diff = Y.encodeStateAsUpdate(this.ydoc, syncStep1);
+    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, diff, 1);
 
-    if (!decoded.snapshotId && this.activeSnapshot) {
-      snapshot = this.activeSnapshot;
-    }
-
-    if (decoded.snapshotId === this.activeSnapshotId) {
-      updates = Array.from(this.pendingUpdates.values()).filter(
-        (update) => update.snapshotId === decoded.snapshotId,
-      );
-    }
-
-    const encryptedSyncStep2 = encodeToSyncStep2({
-      snapshot: snapshot ?? undefined,
-      updates,
+    const payload = encodeContentEncryptedPayload({
+      structureUpdate,
+      encryptedSidecars: [encryptedSidecar],
     });
 
     return new DocMessage(
       this.document,
       {
         type: "sync-step-2",
-        update: { version: 2, data: encryptedSyncStep2 } as unknown as VersionedSyncStep2Update,
+        update: { version: 2, data: payload } as unknown as VersionedSyncStep2Update,
       },
       {
         clientId: this.awareness.clientID.toString(),
@@ -399,38 +136,25 @@ export class EncryptionClient
   }
 
   /**
-   * Handles an {@link EncryptedSyncStep2} by decrypting the updates and applying them to the {@link Y.Doc}.
-   * When this was an initial sync (server sent snapshot + updates), returns a compaction snapshot message
-   * so the server can store it as the new active snapshot and avoid replaying the update log for future syncs.
+   * Applies the server's sync-step-2 diff to the local Y.Doc.
    */
-  public async handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<Message | void> {
-    const decodedSyncStep2 = decodeFromSyncStep2(syncStep2.data as EncryptedSyncStep2);
-    const hadSnapshot = !!decodedSyncStep2.snapshot;
-    const hadUpdates = decodedSyncStep2.updates.length > 0;
-    if (decodedSyncStep2.snapshot) {
-      await this.applySnapshot(decodedSyncStep2.snapshot);
-    }
-    await this.applyUpdates(decodedSyncStep2.updates);
-
-    if (hadSnapshot && hadUpdates) {
-      return this.createSnapshotMessage();
-    }
+  public async handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<void> {
+    const decoded = decodeContentEncryptedPayload(
+      syncStep2.data as unknown as EncryptedUpdatePayload,
+    );
+    await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
   }
 
   /**
-   * Handles an {@link EncryptedUpdatePayload} by decrypting the updates and applying them to the {@link Y.Doc}.
+   * Applies an incremental update from a peer.
    */
   public async handleUpdate(update: VersionedUpdate): Promise<void> {
-    const decoded = decodeEncryptedUpdate(update.data as EncryptedUpdatePayload);
-    if (decoded.type === "snapshot") {
-      await this.applySnapshot(decoded.snapshot);
-      return;
-    }
-    await this.applyUpdates(decoded.updates);
+    const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
+    await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
   }
 
   /**
-   * Handles an {@link AwarenessUpdateMessage} by decrypting it and applying it to the {@link Awareness}.
+   * Decrypts and applies an encrypted awareness update.
    */
   public async handleAwarenessUpdate(update: AwarenessUpdateMessage): Promise<void> {
     applyAwarenessUpdate(
@@ -441,8 +165,37 @@ export class EncryptionClient
   }
 
   /**
-   * Handles an {@link AwarenessRequestMessage} by encrypting the {@link AwarenessUpdateMessage} and returning a {@link AwarenessMessage}.
+   * Encrypts a local Y.js update and returns a doc message for sending.
    */
+  public async onUpdate(update: VersionedUpdate): Promise<Message> {
+    const v1 = update.version === 2 ? Y.convertUpdateFormatV2ToV1(update.data) : update.data;
+    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, v1, 1);
+
+    const payload = encodeContentEncryptedPayload({
+      structureUpdate,
+      encryptedSidecars: [encryptedSidecar],
+    });
+
+    return new DocMessage(
+      this.document,
+      {
+        type: "update",
+        update: { version: 2, data: payload } as unknown as VersionedUpdate,
+      },
+      {
+        clientId: this.awareness.clientID.toString(),
+      },
+      true,
+    );
+  }
+
+  public async createCompactedSidecar(
+    sidecars: EncryptedBinary[],
+    _structureUpdate: Uint8Array,
+  ): Promise<IndexedSidecar | null> {
+    return compactSidecars(this.key, sidecars);
+  }
+
   public async handleAwarenessRequest(): Promise<AwarenessMessage<ClientContext>> {
     return new AwarenessMessage(
       this.document,
@@ -459,61 +212,8 @@ export class EncryptionClient
     );
   }
 
-  /**
-   * Handles an update by encrypting it and returning a {@link DocMessage}.
-   * Converts to V2 before encrypting so the decryption side can always use applyUpdateV2.
-   */
-  public async onUpdate(update: VersionedUpdate): Promise<Message> {
-    if (!this.activeSnapshotId) {
-      return this.createSnapshotMessage();
-    }
-    const v2 = convertToV2(update);
-    const contentIds = encodeContentIds(createContentIdsFromUpdate(update));
-    const encryptedUpdate = await this.encryptUpdate(v2);
-    const updatePayload = this.createUpdatePayload(encryptedUpdate, contentIds);
-    return new DocMessage(
-      this.document,
-      {
-        type: "update",
-        update: {
-          version: 2,
-          data: encodeEncryptedUpdateMessages([updatePayload]),
-        } as unknown as VersionedUpdate,
-      },
-      {
-        clientId: this.awareness.clientID.toString(),
-      },
-      true,
-    );
-  }
-
-  /**
-   * Creates a snapshot message for the current document state.
-   */
-  public async createSnapshotMessage(): Promise<Message> {
-    const snapshot = await this.createSnapshot();
-    return new DocMessage(
-      this.document,
-      {
-        type: "update",
-        update: {
-          version: 2,
-          data: encodeEncryptedSnapshot(snapshot),
-        } as unknown as VersionedUpdate,
-      },
-      {
-        clientId: this.awareness.clientID.toString(),
-      },
-      true,
-    );
-  }
-
-  /**
-   * Handles an {@link AwarenessUpdateMessage} by encrypting it and returning a {@link AwarenessMessage}.
-   */
   public async onAwarenessUpdate(update: AwarenessUpdateMessage): Promise<Message> {
     const encryptedUpdate = await this.encryptUpdate(update);
-
     return new AwarenessMessage(
       this.document,
       {

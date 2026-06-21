@@ -10,7 +10,6 @@ import { checkPermissionWithTokenManager, Server } from "teleportal/server";
 import {
   createEncryptedDriver,
   UnstorageDocumentStorage,
-  UnstorageEncryptedDocumentStorage,
   UnstorageFileStorage,
   UnstorageMilestoneStorage,
   UnstorageRateLimitStorage,
@@ -41,14 +40,14 @@ const server = new Server({
   storage(ctx) {
     // if the document is encrypted, use the encrypted storage
     if (ctx.encrypted) {
-      return new UnstorageEncryptedDocumentStorage(backingStorage, {
+      return new UnstorageDocumentStorage(backingStorage, {
         keyPrefix: "document",
+        encrypted: true,
       });
     }
     // otherwise, use the unencrypted storage
     return new UnstorageDocumentStorage(backingStorage, {
       keyPrefix: "document",
-      scanKeys: false,
     });
   },
   // add rpc handlers to the protocol

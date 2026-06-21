@@ -2,7 +2,7 @@ import { serve } from "crossws/server";
 
 import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 import { checkPermissionWithTokenManager, Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { createTokenManager } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
@@ -14,7 +14,7 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  storage: new YDocStorage(),
+  storage: new MemoryDocumentStorage(),
   // every message is verified against the token's permissions to the document
   checkPermission: checkPermissionWithTokenManager(tokenManager),
 });

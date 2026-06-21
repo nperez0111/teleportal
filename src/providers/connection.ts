@@ -6,7 +6,10 @@ import {
   RawReceivedMessage,
   type VersionedUpdate,
 } from "teleportal";
-import { mergeVersionedUpdates } from "teleportal/protocol";
+import {
+  mergeContentEncryptedPayloads,
+  type EncryptedUpdatePayload,
+} from "teleportal/protocol/encryption";
 import { createFanOutWriter, FanOutReader } from "teleportal/transports";
 import type {
   ConnectionTransport,
@@ -606,8 +609,7 @@ export class Connection extends Observable<{
     return (
       message.type === "doc" &&
       (message.payload as { type?: string })?.type === "update" &&
-      message.document != null &&
-      !(message as DocMessage<any>).encrypted
+      message.document != null
     );
   }
 
@@ -635,7 +637,15 @@ export class Connection extends Observable<{
           ? message
           : new DocMessage(
               message.document,
-              { type: "update", update: mergeVersionedUpdates(updates) },
+              {
+                type: "update",
+                update: {
+                  version: 2,
+                  data: mergeContentEncryptedPayloads(
+                    updates.map((u) => u.data as EncryptedUpdatePayload),
+                  ),
+                } as VersionedUpdate,
+              },
               message.context,
               message.encrypted,
             );
@@ -733,7 +743,15 @@ export class Connection extends Observable<{
         const existingUpdate = (existing.payload as { update: VersionedUpdate }).update;
         this.#messageBuffer[existingIndex] = new DocMessage(
           docMessage.document,
-          { type: "update", update: mergeVersionedUpdates([existingUpdate, update]) },
+          {
+            type: "update",
+            update: {
+              version: 2,
+              data: mergeContentEncryptedPayloads(
+                [existingUpdate, update].map((u) => u.data as EncryptedUpdatePayload),
+              ),
+            } as VersionedUpdate,
+          },
           docMessage.context,
           docMessage.encrypted,
         );

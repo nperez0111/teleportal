@@ -2,11 +2,11 @@ import { serve } from "crossws/server";
 
 import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 const server = new Server({
-  storage: new YDocStorage(),
+  storage: new MemoryDocumentStorage(),
 });
 
 serve({

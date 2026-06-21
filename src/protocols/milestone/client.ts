@@ -1,11 +1,11 @@
 import * as Y from "yjs";
-import { Milestone, mergeUpdates, type MilestoneSnapshot, type Update } from "teleportal";
+import { Milestone, type MilestoneSnapshot } from "teleportal";
 import {
-  decodeEncryptedUpdate,
-  encodeEncryptedUpdate,
+  decodeContentEncryptedPayload,
+  decryptContentPayload,
+  encryptToContentPayload,
   type EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
-import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcOperationError } from "../../providers/rpc-client";
 import type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";
 import type {
@@ -139,19 +139,19 @@ export function createMilestoneRpc(): RpcExtension<MilestoneRpc> {
             if (!encryptionKey) {
               return snapshot as unknown as MilestoneSnapshot;
             }
-            // For E2EE documents the snapshot is an encrypted-update-message container
-            // (see create for client snapshots; the server uses the same
-            // format for automatic milestones). Decrypt each message's payload and
-            // merge them back into a single plaintext Y.js update.
-            const decoded = decodeEncryptedUpdate(snapshot as unknown as EncryptedUpdatePayload);
-            const encryptedUpdates = decoded.type === "update" ? decoded.updates : [];
-            const updates = await Promise.all(
-              encryptedUpdates.map(
-                (message) => decryptUpdate(encryptionKey, message.payload) as Promise<Update>,
-              ),
+            // For E2EE documents the snapshot is a content-encrypted payload
+            // (structure update + encrypted sidecars). The server uses the same
+            // format for automatic milestones, so getSnapshot can decrypt both
+            // uniformly back into a single plaintext Y.js update.
+            const payload = decodeContentEncryptedPayload(
+              snapshot as unknown as EncryptedUpdatePayload,
             );
-            const plaintext =
-              updates.length === 0 ? Y.encodeStateAsUpdateV2(new Y.Doc()) : mergeUpdates(updates);
+            const plaintext = await decryptContentPayload(
+              encryptionKey,
+              payload.structureUpdate,
+              payload.encryptedSidecars,
+              2,
+            );
             return plaintext as unknown as MilestoneSnapshot;
           } catch (error) {
             if (error instanceof RpcOperationError) {
@@ -164,20 +164,14 @@ export function createMilestoneRpc(): RpcExtension<MilestoneRpc> {
         async create(name?: string): Promise<Milestone> {
           const plaintext = Y.encodeStateAsUpdateV2(doc);
           // For E2EE documents, encrypt the snapshot before it leaves the client so
-          // milestone content is never stored in plaintext on the server. It is wrapped
-          // in the same encrypted-update-message container the server uses for
-          // automatic milestones, so getSnapshot can decrypt both uniformly.
-          let snapshot: MilestoneSnapshot;
-          if (encryptionKey) {
-            const encrypted = await encryptUpdate(encryptionKey, plaintext);
-            snapshot = encodeEncryptedUpdate(
-              encrypted,
-              "milestone",
-              [0, 0],
-            ) as unknown as MilestoneSnapshot;
-          } else {
-            snapshot = plaintext as unknown as MilestoneSnapshot;
-          }
+          // milestone content is never stored in plaintext on the server. It uses the
+          // same content-encrypted payload format the server uses for automatic
+          // milestones, so getSnapshot can decrypt both uniformly.
+          const snapshot = (
+            encryptionKey
+              ? await encryptToContentPayload(encryptionKey, plaintext)
+              : plaintext
+          ) as unknown as MilestoneSnapshot;
 
           try {
             const response = await rpcClient.sendRequest<MilestoneCreateResponse>(

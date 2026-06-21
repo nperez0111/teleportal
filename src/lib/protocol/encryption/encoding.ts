@@ -1,397 +1,102 @@
-import { toBase64 } from "lib0/buffer";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
-import { digest } from "lib0/hash/sha256";
+import * as Y from "yjs";
 
-import type { StateVector, SyncStep2Update, Update } from "teleportal";
+import type { Update } from "teleportal";
 import { EncryptedBinary } from "teleportal/encryption-key";
-import { type EncodedContentIds, getEmptyEncodedContentIds } from "teleportal/attribution";
-import type { LamportClockValue } from "./lamport-clock";
 
 /**
- * Represents a message identifier in the encryption state vector
+ * A content-encrypted update payload. The structure update is a valid Y.js V1
+ * update with placeholder content (CRDT metadata intact). The encrypted
+ * sidecars contain the original content encrypted with AES-256-GCM.
  */
-export type EncryptedMessageId = string;
-
-/**
- * Represents a snapshot identifier in the encryption protocol
- */
-export type EncryptedSnapshotId = string;
-
-/**
- * The binary representation of a {@link DecodedEncryptedStateVector}
- */
-export type EncryptedStateVector = StateVector;
-
-/**
- * The decoded representation of a {@link EncryptedStateVector}
- */
-export type DecodedEncryptedStateVector = {
-  snapshotId: EncryptedSnapshotId;
-  serverVersion: number;
+export type ContentEncryptedPayload = {
+  structureUpdate: Uint8Array;
+  encryptedSidecars: EncryptedBinary[];
 };
 
-/**
- * Encodes a {@link DecodedEncryptedStateVector} to a {@link EncryptedStateVector}
- * The format is:
- *  - version: 0
- *  - snapshot id: string (empty if none)
- *  - server version: number
- *
- * Can be decoded with {@link decodeFromStateVector}
- */
-export function encodeToStateVector(state: DecodedEncryptedStateVector): EncryptedStateVector {
-  return encoding.encode((encoder) => {
-    // version
-    encoding.writeVarUint(encoder, 0);
-    // snapshot id (empty string for none)
-    encoding.writeVarString(encoder, state.snapshotId ?? "");
-    // server version
-    encoding.writeVarUint(encoder, Number.isFinite(state.serverVersion) ? state.serverVersion : 0);
-  }) as EncryptedStateVector;
-}
-
-/**
- * Decodes a {@link EncryptedStateVector} to a {@link DecodedEncryptedStateVector} (originally created by {@link encodeToStateVector})
- */
-export function decodeFromStateVector(
-  stateVector: EncryptedStateVector,
-): DecodedEncryptedStateVector {
-  try {
-    const decoder = decoding.createDecoder(stateVector);
-    // version
-    const version = decoding.readVarUint(decoder);
-    if (version !== 0) {
-      throw new Error("Invalid version");
-    }
-    const snapshotId = decoding.readVarString(decoder);
-    const serverVersion = decoding.readVarUint(decoder);
-    return {
-      snapshotId,
-      serverVersion,
-    };
-  } catch (e) {
-    throw new Error("Failed to decode encrypted state vector", {
-      cause: {
-        error: e,
-        message: stateVector,
-      },
-    });
-  }
-}
-
-/**
- * The decoded representation of a {@link EncryptedUpdatePayload}
- */
-export type DecodedEncryptedUpdatePayload = {
-  id: EncryptedMessageId;
-  snapshotId: EncryptedSnapshotId;
-  timestamp: LamportClockValue;
-  payload: EncryptedBinary;
-  serverVersion?: number;
-  contentIds: EncodedContentIds;
-};
-
-/**
- * The binary representation of a {@link DecodedEncryptedUpdatePayload}
- */
 export type EncryptedUpdatePayload = Update;
 
-/**
- * A versioned wrapper for encrypted updates, ensuring encrypted and cleartext
- * updates cannot be confused at the type level.
- */
 export type EncryptedVersionedUpdate =
   | { version: 1; data: EncryptedUpdatePayload }
   | { version: 2; data: EncryptedUpdatePayload };
 
-export type EncryptedSnapshot = {
-  id: EncryptedSnapshotId;
-  parentSnapshotId?: EncryptedSnapshotId | null;
-  payload: EncryptedBinary;
-};
-
-export type DecodedEncryptedDocumentMessage =
-  | { type: "snapshot"; snapshot: EncryptedSnapshot }
-  | { type: "update"; updates: DecodedEncryptedUpdatePayload[] };
+const CONTENT_ENCRYPTED_VERSION = 1;
 
 /**
- * Encodes a {@link DecodedEncryptedUpdatePayload} to a {@link EncryptedUpdatePayload}
- */
-export function encodeEncryptedUpdateMessages(
-  updates: DecodedEncryptedUpdatePayload[],
-): EncryptedUpdatePayload {
-  return encoding.encode((encoder) => {
-    // version
-    encoding.writeVarUint(encoder, 0);
-    // kind (0 = updates)
-    encoding.writeUint8(encoder, 0);
-    // length
-    encoding.writeVarUint(encoder, updates.length);
-    // updates
-    for (const update of updates) {
-      if (typeof update.snapshotId !== "string") {
-        throw new Error("Encrypted update is missing snapshotId");
-      }
-      encoding.writeVarString(encoder, update.snapshotId);
-      // timestamp
-      // client id
-      encoding.writeVarUint(encoder, update.timestamp[0]);
-      // counter
-      encoding.writeVarUint(encoder, update.timestamp[1]);
-      const hasServerVersion = typeof update.serverVersion === "number";
-      encoding.writeUint8(encoder, hasServerVersion ? 1 : 0);
-      if (hasServerVersion) {
-        encoding.writeVarUint(encoder, update.serverVersion!);
-      }
-      // payload
-      encoding.writeVarUint8Array(encoder, update.payload);
-      // contentIds
-      encoding.writeVarUint8Array(encoder, update.contentIds);
-    }
-  }) as EncryptedUpdatePayload;
-}
-
-/**
- * Encodes a {@link EncryptedBinary} to a {@link EncryptedUpdatePayload}
- */
-export function encodeEncryptedUpdate(
-  update: EncryptedBinary,
-  snapshotId: EncryptedSnapshotId,
-  timestamp: LamportClockValue,
-  serverVersion?: number,
-  contentIds: EncodedContentIds = getEmptyEncodedContentIds(),
-): EncryptedUpdatePayload {
-  return encodeEncryptedUpdateMessages([
-    {
-      id: toBase64(digest(update)),
-      snapshotId,
-      timestamp,
-      payload: update,
-      serverVersion,
-      contentIds,
-    },
-  ]);
-}
-
-export function encodeEncryptedSnapshot(snapshot: EncryptedSnapshot): EncryptedUpdatePayload {
-  return encoding.encode((encoder) => {
-    // version
-    encoding.writeVarUint(encoder, 0);
-    // kind (1 = snapshot)
-    encoding.writeUint8(encoder, 1);
-    // snapshot id
-    encoding.writeVarString(encoder, snapshot.id);
-    // parent snapshot id
-    encoding.writeVarString(encoder, snapshot.parentSnapshotId ?? "");
-    // payload
-    encoding.writeVarUint8Array(encoder, snapshot.payload);
-  }) as EncryptedUpdatePayload;
-}
-
-/**
- * Decodes a {@link EncryptedUpdatePayload} to a {@link DecodedEncryptedUpdatePayload} (originally created by {@link encodeEncryptedUpdate})
- */
-export function decodeEncryptedUpdate(
-  update: EncryptedUpdatePayload,
-): DecodedEncryptedDocumentMessage {
-  try {
-    const decoder = decoding.createDecoder(update);
-    // version
-    const version = decoding.readVarUint(decoder);
-    if (version !== 0) {
-      throw new Error("Invalid version");
-    }
-    const kind = decoding.readUint8(decoder);
-    if (kind === 1) {
-      const snapshotId = decoding.readVarString(decoder);
-      const parentSnapshotId = decoding.readVarString(decoder);
-      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
-      return {
-        type: "snapshot",
-        snapshot: {
-          id: snapshotId,
-          parentSnapshotId: parentSnapshotId || null,
-          payload,
-        },
-      };
-    }
-    if (kind !== 0) {
-      throw new Error("Invalid encrypted update kind");
-    }
-    const messages: DecodedEncryptedUpdatePayload[] = [];
-    const length = decoding.readVarUint(decoder);
-    for (let i = 0; i < length; i++) {
-      const snapshotId = decoding.readVarString(decoder);
-      // timestamp
-      const clientId = decoding.readVarUint(decoder);
-      const counter = decoding.readVarUint(decoder);
-      const hasServerVersion = decoding.readUint8(decoder) === 1;
-      const serverVersion = hasServerVersion ? decoding.readVarUint(decoder) : undefined;
-      // payload
-      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
-      // contentIds
-      const contentIds = decoding.readVarUint8Array(decoder) as EncodedContentIds;
-
-      messages.push({
-        id: toBase64(digest(payload)),
-        snapshotId,
-        timestamp: [clientId, counter],
-        payload,
-        serverVersion,
-        contentIds,
-      });
-    }
-    return { type: "update", updates: messages };
-  } catch (err) {
-    throw new Error("Failed to decode encrypted update", {
-      cause: {
-        error: err,
-        message: update,
-      },
-    });
-  }
-}
-
-/**
- * The binary representation of a {@link DecodedEncryptedSyncStep2}
- */
-export type EncryptedSyncStep2 = SyncStep2Update;
-
-/**
- * A versioned wrapper for encrypted sync-step-2 payloads, ensuring encrypted
- * and cleartext types cannot be confused.
- */
-export type EncryptedVersionedSyncStep2Update =
-  | { version: 1; data: EncryptedSyncStep2 }
-  | { version: 2; data: EncryptedSyncStep2 };
-
-/**
- * The decoded representation of a {@link EncryptedSyncStep2}
- */
-export type DecodedEncryptedSyncStep2 = {
-  snapshot?: EncryptedSnapshot | null;
-  updates: DecodedEncryptedUpdatePayload[];
-};
-
-/**
- * Encodes a {@link DecodedEncryptedSyncStep2} to a {@link EncryptedSyncStep2}
- * The format is:
- *  - version: 0
- *  - snapshot flag: boolean
- *  - optional snapshot payload (id, parent id, ciphertext)
- *  - updates:
- *    - snapshot id: string
- *    - client id: number
- *    - counter: number
- *    - server version: number
- *    - payload: ciphertext
+ * Encodes a {@link ContentEncryptedPayload} to binary.
  *
- * Can be decoded with {@link decodeFromSyncStep2}
+ * Wire format (v1):
+ *   [version=1]
+ *   [structureUpdate as varUint8Array]
+ *   [numSidecars as varUint]
+ *   per sidecar: [sidecar as varUint8Array]
  */
-export function encodeToSyncStep2(syncStep2: DecodedEncryptedSyncStep2): EncryptedSyncStep2 {
+export function encodeContentEncryptedPayload(
+  payload: ContentEncryptedPayload,
+): EncryptedUpdatePayload {
   return encoding.encode((encoder) => {
-    // version
-    encoding.writeVarUint(encoder, 0);
-    // snapshot flag
-    const snapshot = syncStep2.snapshot ?? null;
-    encoding.writeUint8(encoder, snapshot ? 1 : 0);
-    if (snapshot) {
-      encoding.writeVarString(encoder, snapshot.id);
-      encoding.writeVarString(encoder, snapshot.parentSnapshotId ?? "");
-      encoding.writeVarUint8Array(encoder, snapshot.payload);
+    encoding.writeVarUint(encoder, CONTENT_ENCRYPTED_VERSION);
+    encoding.writeVarUint8Array(encoder, payload.structureUpdate);
+    encoding.writeVarUint(encoder, payload.encryptedSidecars.length);
+    for (const sidecar of payload.encryptedSidecars) {
+      encoding.writeVarUint8Array(encoder, sidecar);
     }
-    // updates length
-    encoding.writeVarUint(encoder, syncStep2.updates.length);
-    for (const update of syncStep2.updates) {
-      encoding.writeVarString(encoder, update.snapshotId);
-      encoding.writeVarUint(encoder, update.timestamp[0]);
-      encoding.writeVarUint(encoder, update.timestamp[1]);
-      const hasServerVersion = typeof update.serverVersion === "number";
-      encoding.writeUint8(encoder, hasServerVersion ? 1 : 0);
-      if (hasServerVersion) {
-        encoding.writeVarUint(encoder, update.serverVersion!);
-      }
-      encoding.writeVarUint8Array(encoder, update.payload);
-    }
-  }) as EncryptedSyncStep2;
+  }) as EncryptedUpdatePayload;
 }
 
 /**
- * Decodes a {@link EncryptedSyncStep2} to a {@link DecodedEncryptedSyncStep2} (originally created by {@link encodeToSyncStep2})
+ * Decodes binary into a {@link ContentEncryptedPayload}.
  */
-export function decodeFromSyncStep2(syncStep2: EncryptedSyncStep2): DecodedEncryptedSyncStep2 {
+export function decodeContentEncryptedPayload(
+  data: EncryptedUpdatePayload,
+): ContentEncryptedPayload {
   try {
-    const decoder = decoding.createDecoder(syncStep2);
-    const updates: DecodedEncryptedUpdatePayload[] = [];
-    // version
+    const decoder = decoding.createDecoder(data);
     const version = decoding.readVarUint(decoder);
-    if (version !== 0) {
-      throw new Error("Invalid version");
+    if (version !== CONTENT_ENCRYPTED_VERSION) {
+      throw new Error(`Unsupported content-encrypted version: ${version}`);
     }
-    const hasSnapshot = decoding.readUint8(decoder) === 1;
-    let snapshot: EncryptedSnapshot | null = null;
-    if (hasSnapshot) {
-      const snapshotId = decoding.readVarString(decoder);
-      const parentSnapshotId = decoding.readVarString(decoder);
-      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
-      snapshot = {
-        id: snapshotId,
-        parentSnapshotId: parentSnapshotId || null,
-        payload,
-      };
+    const structureUpdate = decoding.readVarUint8Array(decoder);
+    const numSidecars = decoding.readVarUint(decoder);
+    const encryptedSidecars: EncryptedBinary[] = [];
+    for (let i = 0; i < numSidecars; i++) {
+      encryptedSidecars.push(decoding.readVarUint8Array(decoder) as EncryptedBinary);
     }
-    const length = decoding.readVarUint(decoder);
-    for (let i = 0; i < length; i++) {
-      const snapshotId = decoding.readVarString(decoder);
-      const clientId = decoding.readVarUint(decoder);
-      const lamportClock = decoding.readVarUint(decoder);
-      const hasServerVersion = decoding.readUint8(decoder) === 1;
-      const serverVersion = hasServerVersion ? decoding.readVarUint(decoder) : undefined;
-      const payload = decoding.readVarUint8Array(decoder) as EncryptedBinary;
-      updates.push({
-        id: toBase64(digest(payload)),
-        snapshotId,
-        timestamp: [clientId, lamportClock],
-        payload,
-        serverVersion,
-        contentIds: getEmptyEncodedContentIds(),
-      });
-    }
-    return { snapshot, updates };
+    return { structureUpdate, encryptedSidecars };
   } catch (e) {
-    throw new Error("Failed to decode encrypted sync step 2 message", {
-      cause: {
-        error: e,
-        message: syncStep2,
-      },
-    });
+    throw new Error("Failed to decode content-encrypted payload", { cause: e });
   }
 }
 
-export function getEmptyEncryptedStateVector(): EncryptedStateVector {
-  return encodeToStateVector({ snapshotId: "", serverVersion: 0 });
+export function getEmptyContentEncryptedPayload(): EncryptedUpdatePayload {
+  return encodeContentEncryptedPayload({
+    structureUpdate: new Uint8Array(0),
+    encryptedSidecars: [],
+  });
 }
 
-export function getEmptyEncryptedSyncStep2(): EncryptedSyncStep2 {
-  return encodeToSyncStep2({ updates: [] });
+export function isEmptyContentEncryptedPayload(payload: EncryptedUpdatePayload): boolean {
+  try {
+    const decoded = decodeContentEncryptedPayload(payload);
+    return decoded.structureUpdate.length === 0 && decoded.encryptedSidecars.length === 0;
+  } catch {
+    return false;
+  }
 }
 
-export function getEmptyEncryptedUpdate(): EncryptedUpdatePayload {
-  return encodeEncryptedUpdateMessages([]);
-}
+export function mergeContentEncryptedPayloads(
+  payloads: EncryptedUpdatePayload[],
+): EncryptedUpdatePayload {
+  if (payloads.length === 0) return getEmptyContentEncryptedPayload();
+  if (payloads.length === 1) return payloads[0];
 
-export function isEmptyEncryptedStateVector(stateVector: EncryptedStateVector): boolean {
-  const empty = getEmptyEncryptedStateVector();
-  return stateVector.every((value, index) => value === empty[index]);
-}
+  const decoded = payloads.map(decodeContentEncryptedPayload);
+  const mergedStructure = Y.mergeUpdates(decoded.map((d) => d.structureUpdate));
+  const allSidecars = decoded.flatMap((d) => d.encryptedSidecars);
 
-export function isEmptyEncryptedSyncStep2(syncStep2: EncryptedSyncStep2): boolean {
-  const empty = getEmptyEncryptedSyncStep2();
-  return syncStep2.every((value, index) => value === empty[index]);
-}
-
-export function isEmptyEncryptedUpdate(update: EncryptedUpdatePayload): boolean {
-  const empty = getEmptyEncryptedUpdate();
-  return update.every((value, index) => value === empty[index]);
+  return encodeContentEncryptedPayload({
+    structureUpdate: mergedStructure,
+    encryptedSidecars: allSidecars,
+  });
 }

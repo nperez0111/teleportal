@@ -1,59 +1,35 @@
 import { serve } from "crossws/server";
-import { getStateVectorFromUpdate, mergeUpdates, Update, type VersionedUpdate } from "teleportal";
-import { convertToV2 } from "teleportal/protocol";
 import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
-import { Document, DocumentMetadata, UnencryptedDocumentStorage } from "teleportal/storage";
+import { AbstractDocumentStorage, type DocumentState, DocumentMetadata } from "teleportal/storage";
+import type { IndexedSidecar } from "teleportal/protocol/encryption";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
-// A custom document storage implementation, this is just for illustration purposes, it only stores updates in memory and merges them on the fly.
-class CustomDocumentStorage extends UnencryptedDocumentStorage {
-  private docMap = new Map<Document["id"], Update[]>();
-  private metadataMap = new Map<Document["id"], DocumentMetadata>();
+// A custom document storage implementation, this is just for illustration purposes,
+// it stores the merged V2 update + sidecars in memory.
+class CustomDocumentStorage extends AbstractDocumentStorage {
+  private stateMap = new Map<string, DocumentState>();
+  private metadataMap = new Map<string, DocumentMetadata>();
 
-  async handleUpdate(documentId: Document["id"], update: VersionedUpdate): Promise<void> {
-    // store an update, converting to V2 for storage
-    const v2 = convertToV2(update);
-    this.docMap.set(documentId, [...(this.docMap.get(documentId) ?? []), v2]);
+  async getDocumentState(key: string): Promise<DocumentState | null> {
+    return this.stateMap.get(key) ?? null;
   }
 
-  // This is the main method that is called when a client requests a document.
-  async getDocument(documentId: Document["id"]): Promise<Document | null> {
-    // get all the updates for the document
-    const updates = this.docMap.get(documentId) ?? [];
-
-    // merge them into a single update
-    const update = mergeUpdates(updates);
-
-    // derive the current state vector from that merged update
-    const stateVector = getStateVectorFromUpdate(update);
-
-    // store the merged update in memory for next time
-    this.docMap.set(documentId, [update]);
-
-    return {
-      id: documentId,
-      // fetch current metadata
-      metadata: await this.getDocumentMetadata(documentId),
-      content: {
-        update,
-        stateVector,
-      },
-    };
-  }
-
-  async writeDocumentMetadata(
-    documentId: Document["id"],
-    metadata: DocumentMetadata,
+  async replaceDocumentState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
   ): Promise<void> {
-    // store metadata
-    this.metadataMap.set(documentId, metadata);
+    this.stateMap.set(key, { update, sidecars });
   }
 
-  async getDocumentMetadata(documentId: Document["id"]): Promise<DocumentMetadata> {
-    // fetch metadata
+  async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
+    this.metadataMap.set(key, metadata);
+  }
+
+  async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
     return (
-      this.metadataMap.get(documentId) ?? {
+      this.metadataMap.get(key) ?? {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         encrypted: false,
@@ -61,10 +37,9 @@ class CustomDocumentStorage extends UnencryptedDocumentStorage {
     );
   }
 
-  async deleteDocument(documentId: Document["id"]): Promise<void> {
-    // delete document
-    this.docMap.delete(documentId);
-    this.metadataMap.delete(documentId);
+  async deleteDocument(key: string): Promise<void> {
+    this.stateMap.delete(key);
+    this.metadataMap.delete(key);
   }
 }
 
