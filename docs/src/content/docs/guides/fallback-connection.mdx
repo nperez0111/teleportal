@@ -24,7 +24,7 @@ import { getWebsocketHandlers } from "teleportal/websocket-server";
 import { getHttpHandlers } from "teleportal/http";
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Your storage implementation
     return documentStorage;
   },

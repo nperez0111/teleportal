@@ -252,9 +252,9 @@ When `checkPermission` returns `false` (or throws), the RPC call fails with a `4
 
 Attribution works for end-to-end-encrypted documents without the server ever seeing content.
 
-Every Y.js operation has a structural ID — `(clientID, clock)` — that is separate from the content it represents. The encrypted client extracts these IDs from the plaintext update **before** encrypting, and sends them alongside the ciphertext in the wire protocol. The server tags them with the authenticated userId and timestamp, exactly as it does for unencrypted documents. The content IDs reveal the shape of the CRDT (which client wrote how many operations), but never the text or data itself.
+Every Y.js operation has a structural ID — `(clientID, clock)` — that is separate from the content it represents. With content-level encryption the CRDT structure stays in **plaintext** and only the content is encrypted into sidecars, so the server reads these IDs directly from the plaintext structure update — the same code path as unencrypted documents — and tags them with the authenticated userId and timestamp. The client does not extract or ship IDs separately. The structure reveals the shape of the CRDT (which client wrote how many operations), but never the text or data itself.
 
-- The server holds only ciphertext plus the plaintext ContentMap (operation IDs + userId/timestamp — no document content)
+- The server holds only the encrypted content sidecars plus the plaintext structure and ContentMap (operation IDs + userId/timestamp — no document content)
 - **`getActivity`** works — it is derived purely from authorship metadata
 - **`getAttributionForRange`** works — it resolves content positions against the local decrypted document, entirely client-side
 - **Milestone attribution** works — the client decrypts the milestone snapshot locally before extracting operation IDs

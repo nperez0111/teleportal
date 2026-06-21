@@ -14,12 +14,12 @@ Here's a complete example of a Teleportal server and client that syncs a simple 
 ```typescript
 import { serve } from "crossws/server";
 import { Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 // Create a Teleportal server with in-memory storage
 const server = new Server({
-  storage: new YDocStorage(),
+  storage: new MemoryDocumentStorage(),
 });
 
 // Set up WebSocket handlers
@@ -41,7 +41,7 @@ serve({
 **What's happening:**
 
 1. **`Server`**: The core Teleportal server that manages document sessions and client connections
-2. **`YDocStorage`**: In-memory storage for documents (data is lost on restart)
+2. **`MemoryDocumentStorage`**: In-memory storage for documents (data is lost on restart)
 3. **`getWebsocketHandlers`**: Creates WebSocket upgrade and message handlers
 4. **`onUpgrade`**: Called when a client connects - returns the user context for authentication
 

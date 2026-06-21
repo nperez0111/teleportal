@@ -6,6 +6,7 @@ import type { EncryptedUpdatePayload } from "../lib/protocol/encryption/encoding
 import type { IndexedSidecar } from "../lib/protocol/encryption/content-cipher";
 import {
   buildSidecarIndexFromUpdateMeta,
+  hashSidecar,
   sidecarOverlapsDiff,
 } from "../lib/protocol/encryption/content-cipher";
 import {
@@ -46,7 +47,7 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
  * Document storage base class.
  *
  * All updates arrive and leave in content-encrypted envelope format
- * (structure update V1 + sidecars). Internally stores as V2 + sidecars.
+ * (structure update V2 + sidecars). Internally stores as V2 + sidecars.
  * For unencrypted documents, sidecars are empty and the structure update
  * is the full Y.js update.
  */
@@ -97,12 +98,11 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     const diff = Y.diffUpdateV2(state.update, syncStep1);
     const serverSV = Y.encodeStateVectorFromUpdateV2(state.update) as StateVector;
 
-    const v1Diff = Y.convertUpdateFormatV2ToV1(diff);
-    const diffMeta = Y.parseUpdateMeta(v1Diff);
+    const diffMeta = Y.parseUpdateMetaV2(diff);
     const relevantSidecars = state.sidecars.filter((s) => sidecarOverlapsDiff(s.index, diffMeta));
 
     const update = encodeContentEncryptedPayload({
-      structureUpdate: v1Diff,
+      structureUpdate: diff,
       encryptedSidecars: relevantSidecars.map((s) => s.encrypted),
     }) as unknown as UpdateV2;
 
@@ -129,12 +129,12 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
       if (decoded.structureUpdate.length === 0) return;
 
-      const v2Update = Y.convertUpdateFormatV1ToV2(decoded.structureUpdate);
-      const incomingMeta = Y.parseUpdateMeta(decoded.structureUpdate);
+      const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
       const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
       const incomingSidecars: IndexedSidecar[] = decoded.encryptedSidecars.map((encrypted) => ({
         encrypted,
         index,
+        hash: hashSidecar(encrypted),
       }));
 
       const now = Date.now();
@@ -144,15 +144,35 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       let newSidecars: IndexedSidecar[];
 
       if (existing) {
-        merged = Y.mergeUpdatesV2([existing.update, v2Update]);
+        merged = Y.mergeUpdatesV2([existing.update, decoded.structureUpdate]);
 
         const svBefore = Y.encodeStateVectorFromUpdateV2(existing.update);
         const svAfter = Y.encodeStateVectorFromUpdateV2(merged);
         if (arraysEqual(svBefore, svAfter)) return;
 
-        newSidecars = [...existing.sidecars, ...incomingSidecars];
+        if (decoded.compaction) {
+          const matchedIndices = new Set<number>();
+          for (const sourceHash of decoded.compaction.sourceHashes) {
+            const idx = existing.sidecars.findIndex((s) => arraysEqual(s.hash, sourceHash));
+            if (idx !== -1) matchedIndices.add(idx);
+          }
+
+          if (matchedIndices.size === decoded.compaction.sourceHashes.length) {
+            const compactedSidecar: IndexedSidecar = {
+              encrypted: decoded.compaction.sidecar,
+              index: decoded.compaction.index,
+              hash: decoded.compaction.hash,
+            };
+            const keptSidecars = existing.sidecars.filter((_, i) => !matchedIndices.has(i));
+            newSidecars = [compactedSidecar, ...keptSidecars, ...incomingSidecars];
+          } else {
+            newSidecars = [...existing.sidecars, ...incomingSidecars];
+          }
+        } else {
+          newSidecars = [...existing.sidecars, ...incomingSidecars];
+        }
       } else {
-        merged = v2Update;
+        merged = decoded.structureUpdate;
         newSidecars = [...incomingSidecars];
       }
 
@@ -196,9 +216,8 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     const metadata = normalizeMetadata(await this.getDocumentMetadata(key), now, this.encrypted);
     const serverSV = Y.encodeStateVectorFromUpdateV2(state.update) as StateVector;
 
-    const v1 = Y.convertUpdateFormatV2ToV1(state.update);
     const update = encodeContentEncryptedPayload({
-      structureUpdate: v1,
+      structureUpdate: state.update,
       encryptedSidecars: state.sidecars.map((s) => s.encrypted),
     }) as unknown as UpdateV2;
 

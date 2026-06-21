@@ -34,7 +34,6 @@ const serverInstance = new Server({
   storage: async (_ctx: { documentId: string; context: ServerContext; encrypted: boolean }) => {
     return new UnstorageDocumentStorage(storage, {
       keyPrefix: "document",
-      scanKeys: false,
     });
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager) as any,

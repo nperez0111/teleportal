@@ -969,6 +969,213 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     expect(states).toContain("connected");
     expect(states).toContain("disconnected");
   });
+
+  // --- Encrypted integration: persistence, opacity, rich types ---
+
+  function containsSubarray(haystack: Uint8Array, needle: Uint8Array): boolean {
+    if (needle.length === 0) return true;
+    outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
+      for (let j = 0; j < needle.length; j++) {
+        if (haystack[i + j] !== needle[j]) continue outer;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  it("encrypted client writes and reads back after full provider teardown", async () => {
+    const docId = "doc-ws-enc-persistence";
+
+    const { provider: p1, connection: c1 } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(p1);
+
+    p1.doc.getText("body").insert(0, "persisted secret");
+    await new Promise((r) => setTimeout(r, 50));
+
+    p1.destroy();
+    await c1.disconnect();
+
+    const { provider: p2 } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(p2);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(p2.doc.getText("body").toString()).toBe("persisted secret");
+  });
+
+  it("server storage does not contain plaintext user content", async () => {
+    const docId = "doc-ws-enc-opacity";
+    const secretText = "SUPER_SECRET_CONTENT_xyz123";
+
+    const { provider: pA } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pA);
+
+    pA.doc.getText("body").insert(0, secretText);
+
+    // Poll until the update reaches server storage (key is namespaced as room/docId)
+    const storageKey = `test/${docId}`;
+    const deadline = Date.now() + 5000;
+    let state: NonNullable<
+      NonNullable<ReturnType<typeof MemoryDocumentStorage.docs.get>>["state"]
+    > | null = null;
+    while (Date.now() < deadline) {
+      const record = MemoryDocumentStorage.docs.get(storageKey);
+      if (record?.state && record.state.sidecars.length > 0) {
+        state = record.state;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(state).not.toBeNull();
+    if (!state) throw new Error("unreachable");
+
+    const secretBytes = new TextEncoder().encode(secretText);
+
+    // The V2 structure update must not contain the plaintext
+    expect(containsSubarray(new Uint8Array(state.update), secretBytes)).toBe(false);
+
+    // Encrypted sidecars must not contain the plaintext
+    for (const sidecar of state.sidecars) {
+      expect(containsSubarray(new Uint8Array(sidecar.encrypted), secretBytes)).toBe(false);
+    }
+
+    // Applying only the structure update (without sidecars) must not reveal the text
+    const stripped = new Y.Doc();
+    Y.applyUpdateV2(stripped, state.update);
+    expect(stripped.getText("body").toString()).not.toBe(secretText);
+
+    // But a client with the correct key can still read the content
+    const { provider: pB } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pB);
+    const text = await waitForContent(pB.doc, "body", (t) => t === secretText);
+    expect(text).toBe(secretText);
+  });
+
+  it("rich Y.js content types survive encrypted sync", async () => {
+    const docId = "doc-ws-enc-rich-types";
+
+    const { provider: pA } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pA);
+
+    // YMap with nested structure
+    const settings = pA.doc.getMap("settings");
+    settings.set("theme", "dark");
+    settings.set("fontSize", 14);
+    const nested = new Y.Map<string>();
+    nested.set("key", "value");
+    settings.set("nested", nested);
+
+    // YArray
+    pA.doc.getArray("items").push(["item1", "item2", "item3"]);
+
+    // YText with formatting
+    const body = pA.doc.getText("body");
+    body.insert(0, "formatted text");
+    body.format(0, 9, { bold: true });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // New client with same key receives all content types
+    const { provider: pB } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pB);
+    await waitForContent(pB.doc, "body", (t) => t === "formatted text");
+
+    expect(pB.doc.getMap("settings").get("theme")).toBe("dark");
+    expect(pB.doc.getMap("settings").get("fontSize")).toBe(14);
+    expect((pB.doc.getMap("settings").get("nested") as Y.Map<string>).get("key")).toBe("value");
+    expect(pB.doc.getArray("items").toArray()).toEqual(["item1", "item2", "item3"]);
+
+    const delta = pB.doc.getText("body").toDelta();
+    expect(delta).toEqual([
+      { insert: "formatted", attributes: { bold: true } },
+      { insert: " text" },
+    ]);
+  });
+
+  it("multiple incremental encrypted updates from multiple clients merge for late joiner", async () => {
+    const docId = "doc-ws-enc-multi-incremental";
+
+    const { provider: pA } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pA);
+
+    pA.doc.getText("body").insert(0, "hello");
+    await new Promise((r) => setTimeout(r, 10));
+
+    const { provider: pB } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pB);
+    await waitForContent(pB.doc, "body", (t) => t === "hello");
+
+    pA.doc.getText("body").insert(5, " world");
+    await waitForContent(pB.doc, "body", (t) => t === "hello world");
+
+    pB.doc.getText("body").insert(11, "!!!");
+    await waitForContent(pA.doc, "body", (t) => t.includes("!!!"));
+
+    // Tear down both original clients
+    pA.destroy();
+    pB.destroy();
+
+    // Late joiner must see all accumulated content from storage
+    const { provider: pC } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(pC);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const finalText = pC.doc.getText("body").toString();
+    expect(finalText).toContain("hello");
+    expect(finalText).toContain("world");
+    expect(finalText).toContain("!!!");
+  });
+
+  it("encrypted content survives multiple disconnect/reconnect cycles with new providers", async () => {
+    const docId = "doc-ws-enc-multi-lifecycle";
+
+    // Round 1: write initial content
+    const { provider: p1, connection: c1 } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(p1);
+    p1.doc.getText("body").insert(0, "round1");
+    await new Promise((r) => setTimeout(r, 50));
+    p1.destroy();
+    await c1.disconnect();
+
+    // Round 2: new client reads previous content and appends
+    const { provider: p2, connection: c2 } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(p2);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(p2.doc.getText("body").toString()).toBe("round1");
+    p2.doc.getText("body").insert(6, " round2");
+    await new Promise((r) => setTimeout(r, 50));
+    p2.destroy();
+    await c2.disconnect();
+
+    // Round 3: verify all content accumulated correctly
+    const { provider: p3 } = await createProvider(docId, {
+      encryptionKey: key,
+    });
+    await waitForSync(p3);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(p3.doc.getText("body").toString()).toBe("round1 round2");
+  });
 });
 
 // ─── Attribution e2e: encrypted vs unencrypted ──────────────────────────────

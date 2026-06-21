@@ -2,6 +2,8 @@ import type { DevtoolsMessage } from "../types";
 import {
   formatLogEntry,
   formatMessagePayload,
+  formatEncryptedDocEnvelope,
+  formatEncryptedAwarenessEnvelope,
   getMessageTypeLabel,
   getMessageTypeColor,
 } from "../utils/message-utils";
@@ -133,21 +135,60 @@ export class MessageInspector {
     const content = document.createElement("div");
     content.className = "devtools-inspector-content";
 
-    // Metadata section
     content.append(this.renderMetadataSection());
 
-    // ACK section (if applicable)
     if (this.message.ackedBy) {
       content.append(this.renderAckSection());
     }
 
-    // Payload section
-    const payload = formatMessagePayload(this.message.message, this.message.provider);
-    if (payload) {
-      content.append(this.renderPayloadSection(payload));
+    const msg = this.message.message;
+    if (msg.encrypted) {
+      const hasKey = !!this.message.provider.encryptionKey;
+      const decrypted = formatMessagePayload(msg, this.message.provider);
+      content.append(
+        this.renderPayloadSection(
+          decrypted,
+          hasKey ? "Decrypted Payload" : "Raw Payload",
+          hasKey
+            ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`
+            : undefined,
+        ),
+      );
+
+      const envelope = this.getEncryptedEnvelopePayload();
+      if (envelope) {
+        content.append(
+          this.renderPayloadSection(
+            Promise.resolve(envelope),
+            "Encrypted Envelope",
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+          ),
+        );
+      }
+    } else {
+      const payload = formatMessagePayload(msg, this.message.provider);
+      if (payload) {
+        content.append(this.renderPayloadSection(payload));
+      }
     }
 
     this.element.append(content);
+  }
+
+  private getEncryptedEnvelopePayload(): string | null {
+    if (!this.message?.message.encrypted) return null;
+
+    const msg = this.message.message;
+    if (msg.type === "doc") {
+      const payloadType = msg.payload.type;
+      if (payloadType === "update" || payloadType === "sync-step-2") {
+        return formatEncryptedDocEnvelope(msg.payload.update.data as Uint8Array);
+      }
+    }
+    if (msg.type === "awareness" && msg.payload.type === "awareness-update") {
+      return formatEncryptedAwarenessEnvelope(msg.payload.update);
+    }
+    return null;
   }
 
   private renderMetadataSection(): HTMLElement {
@@ -428,7 +469,11 @@ export class MessageInspector {
     return row;
   }
 
-  private renderPayloadSection(payload: Promise<string | null>): HTMLElement {
+  private renderPayloadSection(
+    payload: Promise<string | null>,
+    sectionTitle = "Payload",
+    iconSvg?: string,
+  ): HTMLElement {
     const section = document.createElement("div");
     section.className = "devtools-inspector-section";
 
@@ -437,11 +482,13 @@ export class MessageInspector {
 
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-section-icon";
-    icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+    icon.innerHTML =
+      iconSvg ??
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
     titleContainer.append(icon);
 
     const title = document.createElement("span");
-    title.textContent = "Payload";
+    title.textContent = sectionTitle;
     titleContainer.append(title);
 
     section.append(titleContainer);

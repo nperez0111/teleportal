@@ -10,9 +10,9 @@ import {
 import { withPassthrough } from "../passthrough";
 import { getYDocSink, getYDocSource, getYTransportFromYDoc } from ".";
 
-function wrapUpdate(v1: Uint8Array): VersionedUpdate {
+function wrapUpdate(v2: Uint8Array): VersionedUpdate {
   const payload = encodeContentEncryptedPayload({
-    structureUpdate: v1,
+    structureUpdate: v2,
     encryptedSidecars: [],
   });
   return { version: 2, data: payload } as unknown as VersionedUpdate;
@@ -41,11 +41,11 @@ describe("ydoc source", () => {
           expect(payload.type).toBe("update");
           expect(payload.update.version).toBe(2);
 
-          // Verify round-trip: decode envelope and apply V1 structure update
+          // Verify round-trip: decode envelope and apply V2 structure update
           const decoded = decodeContentEncryptedPayload(payload.update.data as any);
           expect(decoded.encryptedSidecars).toHaveLength(0);
           const verify = new Y.Doc();
-          Y.applyUpdate(verify, decoded.structureUpdate);
+          Y.applyUpdateV2(verify, decoded.structureUpdate);
 
           if (count++ === 0) {
             expect(verify.getText("test").toString()).toBe("hello");
@@ -147,11 +147,11 @@ describe("ydoc source batching", () => {
     expect(payload.type).toBe("update");
     expect(payload.update.version).toBe(2);
 
-    // Decode the content-encrypted envelope and verify the V1 structure update
+    // Decode the content-encrypted envelope and verify the V2 structure update
     const decoded = decodeContentEncryptedPayload(payload.update.data as any);
     expect(decoded.encryptedSidecars).toHaveLength(0);
     const verify = new Y.Doc();
-    Y.applyUpdate(verify, decoded.structureUpdate);
+    Y.applyUpdateV2(verify, decoded.structureUpdate);
     expect(verify.getText("t").toString()).toBe("abc");
   });
 
@@ -210,7 +210,7 @@ describe("ydoc source batching", () => {
     const payload = messages[0].payload as { type: string; update: VersionedUpdate };
     const decoded = decodeContentEncryptedPayload(payload.update.data as any);
     const verify = new Y.Doc();
-    Y.applyUpdate(verify, decoded.structureUpdate);
+    Y.applyUpdateV2(verify, decoded.structureUpdate);
     expect(verify.getText("t").toString()).toBe("hello");
   });
 
@@ -261,7 +261,7 @@ describe("ydoc sink", () => {
     const srcDoc1 = new Y.Doc();
     srcDoc1.clientID = 200;
     srcDoc1.getText("test").insert(0, "hello");
-    const update1 = Y.encodeStateAsUpdate(srcDoc1);
+    const update1 = Y.encodeStateAsUpdateV2(srcDoc1);
 
     await writer.write(
       new DocMessage("test", { type: "update", update: wrapUpdate(update1) }, { clientId: "200" }),
@@ -272,9 +272,9 @@ describe("ydoc sink", () => {
     // Create second update: insert " world" at position 4
     const srcDoc2 = new Y.Doc();
     srcDoc2.clientID = 200;
-    Y.applyUpdate(srcDoc2, update1);
+    Y.applyUpdateV2(srcDoc2, update1);
     srcDoc2.getText("test").insert(4, " world");
-    const update2 = Y.encodeStateAsUpdate(srcDoc2, Y.encodeStateVector(srcDoc1));
+    const update2 = Y.encodeStateAsUpdateV2(srcDoc2, Y.encodeStateVector(srcDoc1));
 
     await writer.write(
       new DocMessage("test", { type: "update", update: wrapUpdate(update2) }, { clientId: "200" }),
@@ -328,7 +328,7 @@ describe("ydoc transport", () => {
     const srcDoc = new Y.Doc();
     srcDoc.clientID = 200;
     srcDoc.getText("test").insert(0, "hello");
-    const helloUpdate = Y.encodeStateAsUpdate(srcDoc);
+    const helloUpdate = Y.encodeStateAsUpdateV2(srcDoc);
 
     await writer.write(
       new DocMessage(
@@ -361,8 +361,8 @@ describe("ydoc transport", () => {
     expect(decoded.encryptedSidecars).toHaveLength(0);
     // Apply structure update to verify content
     const verify = new Y.Doc();
-    Y.applyUpdate(verify, helloUpdate); // apply base first
-    Y.applyUpdate(verify, decoded.structureUpdate);
+    Y.applyUpdateV2(verify, helloUpdate); // apply base first
+    Y.applyUpdateV2(verify, decoded.structureUpdate);
     expect(verify.getText("test").toString()).toBe("hello world");
 
     expect(doc.getText("test").toString()).toBe("hello world");
@@ -376,7 +376,7 @@ describe("ydoc transport", () => {
     const srcDoc = new Y.Doc();
     srcDoc.clientID = 200;
     srcDoc.getText("test").insert(0, "hello");
-    const helloUpdate = Y.encodeStateAsUpdate(srcDoc);
+    const helloUpdate = Y.encodeStateAsUpdateV2(srcDoc);
 
     let readCalled = false;
     let writeCalled = false;

@@ -6,7 +6,7 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
 import { Server, checkPermissionWithTokenManager } from "teleportal/server";
-import { UnstorageEncryptedDocumentStorage } from "teleportal/storage";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import { createTokenManager } from "teleportal/token";
@@ -33,8 +33,9 @@ const tokenManager = createTokenManager({
 
 const server = new Server({
   storage: async (_ctx) => {
-    return new UnstorageEncryptedDocumentStorage(storage, {
+    return new UnstorageDocumentStorage(storage, {
       keyPrefix: "document",
+      encrypted: true,
     });
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),

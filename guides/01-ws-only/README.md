@@ -5,6 +5,6 @@ This guide demonstrates a minimal Teleportal server setup using only WebSocket c
 ## What it demonstrates
 
 - Setting up a basic Teleportal server with WebSocket transport only
-- Using in-memory `YDocStorage` for document storage
+- Using in-memory `MemoryDocumentStorage` for document storage
 - Handling WebSocket upgrades with context extraction
 - Client connection using the `Provider` API with WebSocket transport

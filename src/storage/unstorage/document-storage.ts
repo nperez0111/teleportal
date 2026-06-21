@@ -12,6 +12,7 @@ import { withTransaction } from "./transaction";
 type StoredIndexedSidecar = {
   encrypted: string;
   index: SidecarIndex;
+  hash: string;
 };
 
 type StoredState = {
@@ -25,6 +26,7 @@ function serializeState(state: DocumentState): StoredState {
     sidecars: state.sidecars.map((s) => ({
       encrypted: toBase64(s.encrypted),
       index: s.index,
+      hash: toBase64(s.hash),
     })),
   };
 }
@@ -35,6 +37,7 @@ function deserializeState(record: StoredState): DocumentState {
     sidecars: record.sidecars.map((s) => ({
       encrypted: fromBase64(s.encrypted) as EncryptedBinary,
       index: s.index,
+      hash: fromBase64(s.hash),
     })),
   };
 }

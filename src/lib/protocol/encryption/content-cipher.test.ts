@@ -25,9 +25,19 @@ function getV1Update(doc: Y.Doc): Uint8Array {
   return Y.encodeStateAsUpdate(doc);
 }
 
-function applyAndRead(update: Uint8Array, reader: (doc: Y.Doc) => unknown): unknown {
+function getV2Update(doc: Y.Doc): Uint8Array {
+  return Y.encodeStateAsUpdateV2(doc);
+}
+
+function applyAndReadV1(update: Uint8Array, reader: (doc: Y.Doc) => unknown): unknown {
   const doc = new Y.Doc();
   Y.applyUpdate(doc, update);
+  return reader(doc);
+}
+
+function applyAndReadV2(update: Uint8Array, reader: (doc: Y.Doc) => unknown): unknown {
+  const doc = new Y.Doc();
+  Y.applyUpdateV2(doc, update);
   return reader(doc);
 }
 
@@ -96,9 +106,9 @@ function describeContent(content: any): ServerItem {
 }
 
 function serverView(doc: Y.Doc): Record<string, ServerTypeView> {
-  const { update: stripped } = stripContent(getV1Update(doc));
+  const { update: stripped } = stripContent(getV1Update(doc), 1);
   const serverDoc = new Y.Doc();
-  Y.applyUpdate(serverDoc, stripped);
+  Y.applyUpdateV2(serverDoc, stripped);
 
   const view: Record<string, ServerTypeView> = {};
   for (const [key, type] of serverDoc.share) {
@@ -113,7 +123,7 @@ describe("content-cipher", () => {
       const doc = makeDoc((d) => d.getText("t").insert(0, "Hello World"));
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
+      const { update: stripped, sidecar } = stripContent(original, 1);
       expect(sidecar.entries.length).toBe(1);
       expect(sidecar.entries[0].contentRef).toBe(4); // ContentString
 
@@ -122,8 +132,8 @@ describe("content-cipher", () => {
       expect(strippedStr).not.toContain("Hello World");
 
       // Restoring produces the original update
-      const restored = restoreContent(stripped, sidecar);
-      const restoredText = applyAndRead(restored, (d) => d.getText("t").toString());
+      const restored = restoreContent(stripped, sidecar, 1);
+      const restoredText = applyAndReadV1(restored, (d) => d.getText("t").toString());
       expect(restoredText).toBe("Hello World");
     });
 
@@ -136,11 +146,11 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
+      const { update: stripped, sidecar } = stripContent(original, 1);
       expect(sidecar.entries.length).toBeGreaterThan(0);
 
-      const restored = restoreContent(stripped, sidecar);
-      const result = applyAndRead(restored, (d) => {
+      const restored = restoreContent(stripped, sidecar, 1);
+      const result = applyAndReadV1(restored, (d) => {
         const map = d.getMap("m");
         return { name: map.get("name"), age: map.get("age"), active: map.get("active") };
       });
@@ -155,11 +165,11 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
+      const { update: stripped, sidecar } = stripContent(original, 1);
       const formatEntries = sidecar.entries.filter((e) => e.contentRef === 6);
       expect(formatEntries.length).toBeGreaterThan(0);
 
-      const restored = restoreContent(stripped, sidecar);
+      const restored = restoreContent(stripped, sidecar, 1);
       const doc2 = new Y.Doc();
       Y.applyUpdate(doc2, restored);
       const delta = doc2.getText("t").toDelta();
@@ -175,11 +185,11 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
+      const { update: stripped, sidecar } = stripContent(original, 1);
       const embedEntries = sidecar.entries.filter((e) => e.contentRef === 5);
       expect(embedEntries.length).toBe(1);
 
-      const restored = restoreContent(stripped, sidecar);
+      const restored = restoreContent(stripped, sidecar, 1);
       const doc2 = new Y.Doc();
       Y.applyUpdate(doc2, restored);
       const delta = doc2.getText("t").toDelta();
@@ -195,9 +205,9 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
-      const result = applyAndRead(restored, (d) => {
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
+      const result = applyAndReadV1(restored, (d) => {
         const arr = d.getArray("a");
         return (arr.get(0) as Y.Map<string>).get("key");
       });
@@ -212,9 +222,9 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
-      const restoredText = applyAndRead(restored, (d) => d.getText("t").toString());
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
+      const restoredText = applyAndReadV1(restored, (d) => d.getText("t").toString());
       expect(restoredText).toBe("Hello");
     });
 
@@ -224,9 +234,9 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
-      const result = applyAndRead(restored, (d) => d.getArray("a").toArray());
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
+      const result = applyAndReadV1(restored, (d) => d.getArray("a").toArray());
       expect(result).toEqual(["item1", "item2", 42, true, null]);
     });
 
@@ -241,10 +251,10 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
+      const { update: stripped, sidecar } = stripContent(original, 1);
       expect(sidecar.entries.length).toBeGreaterThan(0);
 
-      const restored = restoreContent(stripped, sidecar);
+      const restored = restoreContent(stripped, sidecar, 1);
       const doc2 = new Y.Doc();
       Y.applyUpdate(doc2, restored);
 
@@ -257,46 +267,34 @@ describe("content-cipher", () => {
   });
 
   describe("structure update validity", () => {
-    it("produces a valid Y.js update that can be applied", () => {
+    it("produces a valid V2 Y.js update that can be applied", () => {
       const doc = makeDoc((d) => d.getText("t").insert(0, "Secret text"));
-      const { update: stripped } = stripContent(getV1Update(doc));
+      const { update: stripped } = stripContent(getV1Update(doc), 1);
 
       const doc2 = new Y.Doc();
-      expect(() => Y.applyUpdate(doc2, stripped)).not.toThrow();
-      const strippedStr = Buffer.from(stripped).toString("utf-8");
-      expect(strippedStr).not.toContain("Secret text");
+      expect(() => Y.applyUpdateV2(doc2, stripped)).not.toThrow();
     });
 
-    it("structure updates can be merged by Y.js", () => {
+    it("structure updates can be merged by Y.js (V2)", () => {
       const doc1 = makeDoc((d) => d.getText("t").insert(0, "Hello"));
       const doc2 = makeDoc((d) => d.getText("t").insert(0, "World"));
 
-      const { update: s1 } = stripContent(getV1Update(doc1));
-      const { update: s2 } = stripContent(getV1Update(doc2));
+      const { update: s1 } = stripContent(getV1Update(doc1), 1);
+      const { update: s2 } = stripContent(getV1Update(doc2), 1);
 
-      expect(() => Y.mergeUpdates([s1, s2])).not.toThrow();
-    });
-
-    it("structure update can be converted to V2", () => {
-      const doc = makeDoc((d) => d.getText("t").insert(0, "Test"));
-      const { update: stripped } = stripContent(getV1Update(doc));
-
-      const v2 = Y.convertUpdateFormatV1ToV2(stripped);
-      expect(v2).toBeInstanceOf(Uint8Array);
-      expect(v2.length).toBeGreaterThan(0);
+      expect(() => Y.mergeUpdatesV2([s1, s2])).not.toThrow();
     });
 
     it("state vectors work correctly with structure updates", () => {
       const doc = makeDoc((d) => d.getText("t").insert(0, "Hello"));
-      const { update: stripped } = stripContent(getV1Update(doc));
+      const { update: stripped } = stripContent(getV1Update(doc), 1);
 
       const doc2 = new Y.Doc();
-      Y.applyUpdate(doc2, stripped);
+      Y.applyUpdateV2(doc2, stripped);
 
       const sv = Y.encodeStateVector(doc2);
       expect(sv.length).toBeGreaterThan(0);
 
-      // State vector from stripped update matches original
       const originalDoc = new Y.Doc();
       Y.applyUpdate(originalDoc, getV1Update(doc));
       const originalSv = Y.encodeStateVector(originalDoc);
@@ -388,7 +386,7 @@ describe("content-cipher", () => {
 
       // Decryption restores the original content
       const decrypted = await decryptUpdateContent(key, encrypted, 1);
-      const restoredText = applyAndRead(decrypted, (d) => d.getText("t").toString());
+      const restoredText = applyAndReadV1(decrypted, (d) => d.getText("t").toString());
       expect(restoredText).toBe("Secret message");
     });
 
@@ -420,7 +418,7 @@ describe("content-cipher", () => {
     it("text content is replaced with null bytes", () => {
       const secretText = "This is a very secret message that must not leak";
       const doc = makeDoc((d) => d.getText("t").insert(0, secretText));
-      const { update: stripped } = stripContent(getV1Update(doc));
+      const { update: stripped } = stripContent(getV1Update(doc), 1);
 
       const strippedHex = Buffer.from(stripped).toString("hex");
       const secretHex = Buffer.from(secretText).toString("hex");
@@ -438,7 +436,7 @@ describe("content-cipher", () => {
         d.getMap("m").set("password", "hunter2");
         d.getMap("m").set("ssn", "123-45-6789");
       });
-      const { update: stripped } = stripContent(getV1Update(doc));
+      const { update: stripped } = stripContent(getV1Update(doc), 1);
       const strippedStr = Buffer.from(stripped).toString("utf-8");
       expect(strippedStr).not.toContain("hunter2");
       expect(strippedStr).not.toContain("123-45-6789");
@@ -448,7 +446,7 @@ describe("content-cipher", () => {
       const doc = makeDoc((d) => {
         d.getText("t").insertEmbed(0, { secret: "classified-url" });
       });
-      const { update: stripped } = stripContent(getV1Update(doc));
+      const { update: stripped } = stripContent(getV1Update(doc), 1);
       const strippedStr = Buffer.from(stripped).toString("utf-8");
       expect(strippedStr).not.toContain("classified-url");
     });
@@ -460,7 +458,7 @@ describe("content-cipher", () => {
         d.getMap("m").set("password", "hunter2");
         d.getMap("m").set("ssn", "123-45-6789");
       });
-      const { update: stripped, sidecar } = stripContent(getV1Update(doc));
+      const { update: stripped, sidecar } = stripContent(getV1Update(doc), 1);
       const strippedStr = Buffer.from(stripped).toString("utf-8");
       expect(strippedStr).not.toContain("password");
       expect(strippedStr).not.toContain("ssn");
@@ -473,7 +471,7 @@ describe("content-cipher", () => {
         d.getText("patient-records").insert(0, "sensitive");
         d.getMap("medical-history").set("key", "value");
       });
-      const { update: stripped, sidecar } = stripContent(getV1Update(doc));
+      const { update: stripped, sidecar } = stripContent(getV1Update(doc), 1);
       const strippedStr = Buffer.from(stripped).toString("utf-8");
       expect(strippedStr).not.toContain("patient-records");
       expect(strippedStr).not.toContain("medical-history");
@@ -486,7 +484,7 @@ describe("content-cipher", () => {
       const frag = doc.getXmlFragment("xml");
       const el = new Y.XmlElement("secret-component");
       frag.insert(0, [el]);
-      const { update: stripped, sidecar } = stripContent(getV1Update(doc));
+      const { update: stripped, sidecar } = stripContent(getV1Update(doc), 1);
       const strippedStr = Buffer.from(stripped).toString("utf-8");
       expect(strippedStr).not.toContain("secret-component");
       expect([...sidecar.dictionary.values()]).toContain("secret-component");
@@ -498,7 +496,7 @@ describe("content-cipher", () => {
       const el = new Y.XmlElement("div");
       frag.insert(0, [el]);
       el.setAttribute("data-secret-attr", "value123");
-      const { update: stripped, sidecar } = stripContent(getV1Update(doc));
+      const { update: stripped, sidecar } = stripContent(getV1Update(doc), 1);
       const strippedStr = Buffer.from(stripped).toString("utf-8");
       expect(strippedStr).not.toContain("data-secret-attr");
       expect(strippedStr).not.toContain("value123");
@@ -508,8 +506,8 @@ describe("content-cipher", () => {
     it("tokens are deterministic across separate stripContent calls", () => {
       const doc1 = makeDoc((d) => d.getMap("m").set("password", "abc"));
       const doc2 = makeDoc((d) => d.getMap("m").set("password", "xyz"));
-      const { sidecar: s1 } = stripContent(getV1Update(doc1));
-      const { sidecar: s2 } = stripContent(getV1Update(doc2));
+      const { sidecar: s1 } = stripContent(getV1Update(doc1), 1);
+      const { sidecar: s2 } = stripContent(getV1Update(doc2), 1);
       const token1 = [...s1.dictionary.entries()].find(([, v]) => v === "password")?.[0];
       const token2 = [...s2.dictionary.entries()].find(([, v]) => v === "password")?.[0];
       expect(token1).toBeDefined();
@@ -624,8 +622,8 @@ describe("content-cipher", () => {
       const doc = makeDoc((d) => d.getText("t").insert(0, "Test"));
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
 
       // Both should produce the same state vectors
       const doc1 = new Y.Doc();
@@ -644,8 +642,8 @@ describe("content-cipher", () => {
       });
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
 
       const doc1 = new Y.Doc();
       Y.applyUpdate(doc1, original);
@@ -660,15 +658,13 @@ describe("content-cipher", () => {
       const doc1 = makeDoc((d) => d.getText("t").insert(0, "Hello"));
       const doc2 = makeDoc((d) => d.getText("t").insert(0, "World"));
 
-      const { update: s1 } = stripContent(getV1Update(doc1));
-      const { update: s2 } = stripContent(getV1Update(doc2));
+      const { update: s1 } = stripContent(getV1Update(doc1), 1);
+      const { update: s2 } = stripContent(getV1Update(doc2), 1);
 
-      // Server merges the structure updates
-      const merged = Y.mergeUpdates([s1, s2]);
+      const merged = Y.mergeUpdatesV2([s1, s2]);
 
-      // Merged update is valid
       const serverDoc = new Y.Doc();
-      expect(() => Y.applyUpdate(serverDoc, merged)).not.toThrow();
+      expect(() => Y.applyUpdateV2(serverDoc, merged)).not.toThrow();
     });
   });
 
@@ -683,11 +679,11 @@ describe("content-cipher", () => {
       doc.getText("t").insert(5, " World");
       const incrementalUpdate = Y.encodeStateAsUpdate(doc, sv);
 
-      const { update: stripped, sidecar } = stripContent(incrementalUpdate);
+      const { update: stripped, sidecar } = stripContent(incrementalUpdate, 1);
       expect(sidecar.entries.length).toBe(1);
       expect(sidecar.entries[0].contentRef).toBe(4);
 
-      const restored = restoreContent(stripped, sidecar);
+      const restored = restoreContent(stripped, sidecar, 1);
 
       // Apply full state first (same doc, same client IDs), then incremental
       const doc2 = new Y.Doc();
@@ -702,17 +698,17 @@ describe("content-cipher", () => {
       const doc = makeDoc((d) => d.getText("t").insert(0, "Hello 🌍 World 日本語"));
       const original = getV1Update(doc);
 
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
-      const restoredText = applyAndRead(restored, (d) => d.getText("t").toString());
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
+      const restoredText = applyAndReadV1(restored, (d) => d.getText("t").toString());
       expect(restoredText).toBe("Hello 🌍 World 日本語");
     });
   });
 
   describe("byte-for-byte round-trip fidelity", () => {
     function expectByteExact(label: string, original: Uint8Array) {
-      const { update: stripped, sidecar } = stripContent(original);
-      const restored = restoreContent(stripped, sidecar);
+      const { update: stripped, sidecar } = stripContent(original, 1);
+      const restored = restoreContent(stripped, sidecar, 1);
       expect(Buffer.from(restored).equals(Buffer.from(original))).toBe(true);
     }
 
@@ -1228,7 +1224,7 @@ describe("content-cipher", () => {
         docA.clientID = 1;
         docA.getText("t").insert(0, "Hello");
         const updateA = Y.encodeStateAsUpdate(docA);
-        const { sidecar: sidecarA } = stripContent(updateA);
+        const { sidecar: sidecarA } = stripContent(updateA, 1);
         const indexA = buildSidecarIndex(sidecarA.entries);
 
         // Client B writes "World"
@@ -1236,18 +1232,18 @@ describe("content-cipher", () => {
         docB.clientID = 2;
         docB.getText("t").insert(0, "World");
         const updateB = Y.encodeStateAsUpdate(docB);
-        const { sidecar: sidecarB } = stripContent(updateB);
+        const { sidecar: sidecarB } = stripContent(updateB, 1);
         const indexB = buildSidecarIndex(sidecarB.entries);
 
         // Server merges both structure updates
-        const { update: strippedA } = stripContent(updateA);
-        const { update: strippedB } = stripContent(updateB);
-        const merged = Y.mergeUpdates([strippedA, strippedB]);
+        const { update: strippedA } = stripContent(updateA, 1);
+        const { update: strippedB } = stripContent(updateB, 1);
+        const merged = Y.mergeUpdatesV2([strippedA, strippedB]);
 
         // A client that already has A's state requests sync
         const svA = Y.encodeStateVector(docA);
-        const diff = Y.diffUpdate(merged, svA);
-        const diffMeta = Y.parseUpdateMeta(diff);
+        const diff = Y.diffUpdateV2(merged, svA);
+        const diffMeta = Y.parseUpdateMetaV2(diff);
 
         // Only B's sidecar should be relevant
         expect(sidecarOverlapsDiff(indexA, diffMeta)).toBe(false);
@@ -1259,24 +1255,24 @@ describe("content-cipher", () => {
         docA.clientID = 1;
         docA.getText("t").insert(0, "Hello");
         const updateA = Y.encodeStateAsUpdate(docA);
-        const { sidecar: sidecarA } = stripContent(updateA);
+        const { sidecar: sidecarA } = stripContent(updateA, 1);
         const indexA = buildSidecarIndex(sidecarA.entries);
 
         const docB = new Y.Doc();
         docB.clientID = 2;
         docB.getText("t").insert(0, "World");
         const updateB = Y.encodeStateAsUpdate(docB);
-        const { sidecar: sidecarB } = stripContent(updateB);
+        const { sidecar: sidecarB } = stripContent(updateB, 1);
         const indexB = buildSidecarIndex(sidecarB.entries);
 
-        const { update: strippedA } = stripContent(updateA);
-        const { update: strippedB } = stripContent(updateB);
-        const merged = Y.mergeUpdates([strippedA, strippedB]);
+        const { update: strippedA } = stripContent(updateA, 1);
+        const { update: strippedB } = stripContent(updateB, 1);
+        const merged = Y.mergeUpdatesV2([strippedA, strippedB]);
 
         // Empty client → full diff
         const emptySV = Y.encodeStateVector(new Y.Doc());
-        const diff = Y.diffUpdate(merged, emptySV);
-        const diffMeta = Y.parseUpdateMeta(diff);
+        const diff = Y.diffUpdateV2(merged, emptySV);
+        const diffMeta = Y.parseUpdateMetaV2(diff);
 
         expect(sidecarOverlapsDiff(indexA, diffMeta)).toBe(true);
         expect(sidecarOverlapsDiff(indexB, diffMeta)).toBe(true);

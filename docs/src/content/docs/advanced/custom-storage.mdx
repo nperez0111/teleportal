@@ -5,111 +5,95 @@ description: Guide on how to implement a custom document storage backend
 
 Teleportal was designed to decouple storage from the compute layer, so you can use any storage backend that you want. There are two layers of abstraction when it comes to storage:
 
-- **Layer 1**: `DocumentStorage` - The interface that the server uses to store & retrieve documents & document metadata
-- **Layer 2**:
-  - `UnencryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving document content (which has different constraints than encrypted documents)
-  - `EncryptedDocumentStorage` - An implementation of the `DocumentStorage` interface that offers a more convenient API for storing & retrieving encrypted document content (which has different constraints than unencrypted documents)
+- **Layer 1**: `DocumentStorage` - The low-level interface that the server uses to handle raw protocol messages (sync, updates) and store them as they come in.
+- **Layer 2**: `AbstractDocumentStorage` - A convenient base class that implements the whole `DocumentStorage` protocol for you (sync-step-1/2, update merging, the content-encryption envelope, and attribution) and delegates only persistence to a small set of methods you implement.
 
-These layers differ because the `DocumentStorage` interface is designed to essentially handle raw messages & store them as they come in. Whereas, the `UnencryptedDocumentStorage` and `EncryptedDocumentStorage` interfaces are designed to store documents & document metadata via a more convenient API.
+The same `AbstractDocumentStorage` handles both **encrypted** and **unencrypted** documents — there are no longer separate classes. Pass `encrypted: true` (or override the constructor) and the base class stores the plaintext **structure update** alongside the encrypted **sidecars** that hold the document content. For unencrypted documents the sidecars are simply empty and the structure update is the full Y.js update.
 
-## Storage Interface
+## What you implement
 
-The `DocumentStorage` interface defines the methods you need to implement:
+When extending `AbstractDocumentStorage`, you only implement persistence for a `DocumentState` (the merged V2 update plus its sidecars) and the document metadata:
 
 ```typescript
-interface DocumentStorage {
-  readonly type: "document-storage";
+type DocumentState = {
+  update: Uint8Array; // merged Y.js V2 update (CRDT structure, content stripped when encrypted)
+  sidecars: IndexedSidecar[]; // encrypted content sidecars (empty for unencrypted docs)
+};
 
-  handleUpdate(documentId: string, update: Update): Promise<void>;
-  getDocument(documentId: string): Promise<Document | null>;
-  writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void>;
-  getDocumentMetadata(documentId: string): Promise<DocumentMetadata>;
-  deleteDocument(documentId: string): Promise<void>;
-  transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T>;
+abstract class AbstractDocumentStorage {
+  getDocumentState(key: string): Promise<DocumentState | null>;
+  replaceDocumentState(key: string, update: Uint8Array, sidecars: IndexedSidecar[]): Promise<void>;
+  getDocumentMetadata(key: string): Promise<DocumentMetadata>;
+  writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void>;
+  deleteDocument(key: string): Promise<void>;
+  // optional: transaction(key, cb) and storeAttribution(key, attribution)
 }
 ```
+
+The base class takes care of decoding the content-encrypted payload, merging updates, computing state vectors, filtering the relevant sidecars on sync, and writing size/attribution metadata — so your backend never has to understand the wire protocol.
 
 ## Example: Custom DocumentStorage
 
 ```typescript
-import type { DocumentStorage, Document, DocumentMetadata, Update } from "teleportal/storage";
-import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
-import { mergeUpdates, getStateVectorFromUpdate } from "teleportal/storage";
+import {
+  AbstractDocumentStorage,
+  type DocumentState,
+  type DocumentMetadata,
+} from "teleportal/storage";
+import type { IndexedSidecar } from "teleportal/protocol/encryption";
 
-export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
-  readonly type = "document-storage" as const;
-  storageType: "unencrypted" = "unencrypted";
+// Illustrative in-memory implementation: stores the merged V2 update + sidecars.
+export class MyCustomDocumentStorage extends AbstractDocumentStorage {
+  private stateMap = new Map<string, DocumentState>();
+  private metadataMap = new Map<string, DocumentMetadata>();
 
-  async handleUpdate(documentId: string, update: Update): Promise<void> {
-    // Store update in your backend
-    // You might want to merge with existing updates
-    const existing = await this.getDocument(documentId);
-    if (existing) {
-      const merged = mergeUpdates([existing.content.update, update]);
-      await myBackend.storeUpdate(documentId, merged);
-    } else {
-      await myBackend.storeUpdate(documentId, update);
-    }
+  async getDocumentState(key: string): Promise<DocumentState | null> {
+    return this.stateMap.get(key) ?? null;
   }
 
-  async getDocument(documentId: string): Promise<Document | null> {
-    // Retrieve from your backend
-    const update = await myBackend.getUpdate(documentId);
-    if (!update) return null;
-
-    // Build document from your storage
-    return {
-      id: documentId,
-      metadata: await this.getDocumentMetadata(documentId),
-      content: {
-        update,
-        stateVector: getStateVectorFromUpdate(update),
-      },
-    };
+  async replaceDocumentState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
+    this.stateMap.set(key, { update, sidecars });
   }
 
-  async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
-    await myBackend.storeMetadata(documentId, metadata);
+  async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
+    this.metadataMap.set(key, metadata);
   }
 
-  async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
+  async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
     return (
-      (await myBackend.getMetadata(documentId)) ?? {
-        files: [],
-        milestones: [],
+      this.metadataMap.get(key) ?? {
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        encrypted: false,
       }
     );
   }
 
-  async deleteDocument(documentId: string): Promise<void> {
-    await myBackend.deleteDocument(documentId);
-  }
-
-  async transaction<T>(documentId: string, cb: () => Promise<T>): Promise<T> {
-    // Implement transaction logic for your backend
-    // This might use database transactions, distributed locks, etc.
-    return await myBackend.transaction(documentId, cb);
+  async deleteDocument(key: string): Promise<void> {
+    this.stateMap.delete(key);
+    this.metadataMap.delete(key);
   }
 }
 ```
 
-## Utility Functions
+Wire it into a server like any other storage:
 
-Teleportal provides utility functions to help with storage implementation:
-
-- **`mergeUpdates(updates: Update[]): Update`**: Merge multiple Y.js updates into one
-- **`getStateVectorFromUpdate(update: Update): Uint8Array`**: Extract state vector from an update
-- **`applyUpdate(ydoc: Y.Doc, update: Update): void`**: Apply an update to a Y.js document
+```typescript
+const server = new Server({
+  storage: new MyCustomDocumentStorage(),
+});
+```
 
 ## Best Practices
 
-1. **Handle Updates Efficiently**: Consider merging updates to reduce storage operations
-2. **Implement Transactions**: Use transactions for atomic operations when possible
-3. **Cache State Vectors**: State vectors can be computed from updates, but caching improves performance
-4. **Handle Errors Gracefully**: Storage operations can fail, handle errors appropriately
-5. **Support Metadata**: Store document metadata separately from content for efficient queries
+1. **Persist state atomically**: `replaceDocumentState` is called with the already-merged update + sidecars — store both together.
+2. **Implement `transaction`** if your backend supports it, so concurrent writes to the same document are serialized.
+3. **Store metadata separately** from content for efficient listing and size queries.
+4. **Handle errors gracefully**: storage operations can fail; let them reject so the server can surface the error.
 
 ## Next Steps
 

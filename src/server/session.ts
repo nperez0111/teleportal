@@ -698,7 +698,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
   async #computeAttribution(update: VersionedUpdate, context: Context, clientId?: string) {
     const payload = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
-    const attrUpdate = { version: 1, data: payload.structureUpdate } as unknown as VersionedUpdate;
+    const attrUpdate = { version: 2, data: payload.structureUpdate } as unknown as VersionedUpdate;
     const contentIds = createContentIdsFromUpdate(attrUpdate);
     const now = Date.now();
     const userId = context.userId;

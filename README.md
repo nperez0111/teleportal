@@ -91,10 +91,9 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 ### End-to-End Encryption (E2EE)
 
 - **AES-GCM Encryption:** Industry-standard encryption for document updates
-- **Encrypted Transport:** Optional encryption layer for all document messages
+- **Content-Level Encryption:** Only user content is encrypted (into sidecars); CRDT metadata stays in plaintext so the server can still merge, sync, and attribute edits without decrypting
 - **Key Management:** Utilities for creating, importing, and exporting encryption keys
 - **Encrypted File Support:** Files can be encrypted before chunking and transfer
-- **Lamport Clock:** Vector clocks for encrypted message ordering
 
 ### Security & Authentication
 
@@ -157,13 +156,12 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 ```typescript
 import { Server } from "teleportal/server";
-import { createInMemory } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createInMemory();
-    return documentStorage;
+  storage: async (ctx) => {
+    return new MemoryDocumentStorage(ctx.encrypted);
   },
 });
 

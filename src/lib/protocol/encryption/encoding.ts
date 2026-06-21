@@ -4,15 +4,30 @@ import * as Y from "yjs";
 
 import type { Update } from "teleportal";
 import { EncryptedBinary } from "teleportal/encryption-key";
+import type { SidecarIndex } from "./content-cipher";
 
 /**
- * A content-encrypted update payload. The structure update is a valid Y.js V1
+ * Compaction data piggy-backed on a content-encrypted payload.
+ * Carries the compacted sidecar and the hashes of the source sidecars
+ * it was built from, so the server can match and replace them.
+ */
+export type SidecarCompaction = {
+  sidecar: EncryptedBinary;
+  index: SidecarIndex;
+  hash: Uint8Array;
+  sourceHashes: Uint8Array[];
+};
+
+/**
+ * A content-encrypted update payload. The structure update is a valid Y.js V2
  * update with placeholder content (CRDT metadata intact). The encrypted
  * sidecars contain the original content encrypted with AES-256-GCM.
  */
 export type ContentEncryptedPayload = {
+  wireVersion?: number;
   structureUpdate: Uint8Array;
   encryptedSidecars: EncryptedBinary[];
+  compaction?: SidecarCompaction;
 };
 
 export type EncryptedUpdatePayload = Update;
@@ -31,6 +46,14 @@ const CONTENT_ENCRYPTED_VERSION = 1;
  *   [structureUpdate as varUint8Array]
  *   [numSidecars as varUint]
  *   per sidecar: [sidecar as varUint8Array]
+ *   [hasCompaction as uint8]
+ *   if hasCompaction == 1:
+ *     [compactedSidecar as varUint8Array]
+ *     [numIndexEntries as varUint]
+ *     per entry: [clientId as varUint, minClock as varUint, maxClock as varUint]
+ *     [compactedHash as varUint8Array]
+ *     [numSourceHashes as varUint]
+ *     per sourceHash: [hash as varUint8Array]
  */
 export function encodeContentEncryptedPayload(
   payload: ContentEncryptedPayload,
@@ -41,6 +64,24 @@ export function encodeContentEncryptedPayload(
     encoding.writeVarUint(encoder, payload.encryptedSidecars.length);
     for (const sidecar of payload.encryptedSidecars) {
       encoding.writeVarUint8Array(encoder, sidecar);
+    }
+
+    if (payload.compaction) {
+      encoding.writeUint8(encoder, 1);
+      encoding.writeVarUint8Array(encoder, payload.compaction.sidecar);
+      encoding.writeVarUint(encoder, payload.compaction.index.length);
+      for (const entry of payload.compaction.index) {
+        encoding.writeVarUint(encoder, entry.clientId);
+        encoding.writeVarUint(encoder, entry.minClock);
+        encoding.writeVarUint(encoder, entry.maxClock);
+      }
+      encoding.writeVarUint8Array(encoder, payload.compaction.hash);
+      encoding.writeVarUint(encoder, payload.compaction.sourceHashes.length);
+      for (const h of payload.compaction.sourceHashes) {
+        encoding.writeVarUint8Array(encoder, h);
+      }
+    } else {
+      encoding.writeUint8(encoder, 0);
     }
   }) as EncryptedUpdatePayload;
 }
@@ -63,7 +104,32 @@ export function decodeContentEncryptedPayload(
     for (let i = 0; i < numSidecars; i++) {
       encryptedSidecars.push(decoding.readVarUint8Array(decoder) as EncryptedBinary);
     }
-    return { structureUpdate, encryptedSidecars };
+
+    let compaction: SidecarCompaction | undefined;
+    if (decoder.pos < data.length) {
+      const hasCompaction = decoding.readUint8(decoder);
+      if (hasCompaction === 1) {
+        const sidecar = decoding.readVarUint8Array(decoder) as EncryptedBinary;
+        const numIndexEntries = decoding.readVarUint(decoder);
+        const index: SidecarIndex = [];
+        for (let i = 0; i < numIndexEntries; i++) {
+          index.push({
+            clientId: decoding.readVarUint(decoder),
+            minClock: decoding.readVarUint(decoder),
+            maxClock: decoding.readVarUint(decoder),
+          });
+        }
+        const hash = decoding.readVarUint8Array(decoder);
+        const numSourceHashes = decoding.readVarUint(decoder);
+        const sourceHashes: Uint8Array[] = [];
+        for (let i = 0; i < numSourceHashes; i++) {
+          sourceHashes.push(decoding.readVarUint8Array(decoder));
+        }
+        compaction = { sidecar, index, hash, sourceHashes };
+      }
+    }
+
+    return { wireVersion: version, structureUpdate, encryptedSidecars, compaction };
   } catch (e) {
     throw new Error("Failed to decode content-encrypted payload", { cause: e });
   }
@@ -92,7 +158,7 @@ export function mergeContentEncryptedPayloads(
   if (payloads.length === 1) return payloads[0];
 
   const decoded = payloads.map(decodeContentEncryptedPayload);
-  const mergedStructure = Y.mergeUpdates(decoded.map((d) => d.structureUpdate));
+  const mergedStructure = Y.mergeUpdatesV2(decoded.map((d) => d.structureUpdate));
   const allSidecars = decoded.flatMap((d) => d.encryptedSidecars);
 
   return encodeContentEncryptedPayload({

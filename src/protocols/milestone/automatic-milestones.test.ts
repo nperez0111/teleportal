@@ -13,8 +13,8 @@ import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage"
 function createYjsUpdate(text: string = "initial"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, text);
-  const v1 = Y.encodeStateAsUpdate(doc);
-  const payload = encodeContentEncryptedPayload({ structureUpdate: v1, encryptedSidecars: [] });
+  const v2 = Y.encodeStateAsUpdateV2(doc);
+  const payload = encodeContentEncryptedPayload({ structureUpdate: v2, encryptedSidecars: [] });
   return { version: 2, data: payload } as unknown as VersionedUpdate;
 }
 

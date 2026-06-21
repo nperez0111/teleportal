@@ -17,6 +17,7 @@ import {
   encodeSidecar,
   decodeSidecar,
   mergeSidecars,
+  hashSidecar,
   type EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
 import {
@@ -34,15 +35,14 @@ import { UnstorageDocumentStorage } from "./document-storage";
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 function versionedUpdate(bytes: Uint8Array): VersionedUpdate {
-  const v1 = Y.convertUpdateFormatV2ToV1(bytes);
   const payload = encodeContentEncryptedPayload({
-    structureUpdate: v1,
+    structureUpdate: bytes,
     encryptedSidecars: [],
   });
   return { version: 2, data: payload as Update } as VersionedUpdate;
 }
 
-/** Decode a content-encrypted payload to get the structure update (V1). */
+/** Decode a content-encrypted payload to get the structure update (V2). */
 function getStructureUpdate(update: Uint8Array): Uint8Array {
   return decodeContentEncryptedPayload(update as EncryptedUpdatePayload).structureUpdate;
 }
@@ -52,7 +52,7 @@ function docFromUpdate(update: Uint8Array): Y.Doc {
   const structureUpdate = getStructureUpdate(update);
   const doc = new Y.Doc();
   if (structureUpdate.length > 0) {
-    Y.applyUpdate(doc, structureUpdate);
+    Y.applyUpdateV2(doc, structureUpdate);
   }
   return doc;
 }
@@ -67,14 +67,14 @@ function envelopeUpdate(payload: Uint8Array): VersionedUpdate {
 }
 
 /**
- * Build a content-encrypted update payload from a Y.js V1 update.
+ * Build a content-encrypted update payload from a Y.js V2 update.
  *
  * Strips content from the update into a sidecar (treated as an opaque
  * encrypted blob in tests) and encodes the result as a
  * ContentEncryptedPayload.
  */
-function makeContentEncryptedUpdate(v1Update: Uint8Array): EncryptedUpdatePayload {
-  const { update: structureUpdate, sidecar } = stripContent(v1Update);
+function makeContentEncryptedUpdate(v2Update: Uint8Array): EncryptedUpdatePayload {
+  const { update: structureUpdate, sidecar } = stripContent(v2Update, 2);
   const sidecarBytes = encodeSidecar(sidecar);
   return encodeContentEncryptedPayload({
     structureUpdate,
@@ -83,14 +83,14 @@ function makeContentEncryptedUpdate(v1Update: Uint8Array): EncryptedUpdatePayloa
 }
 
 /**
- * Create a Y.js document with some text content so we get a real V1 update
+ * Create a Y.js document with some text content so we get a real V2 update
  * with CRDT metadata + content.
  */
 function makeYjsUpdate(text: string, clientID?: number): Uint8Array {
   const doc = new Y.Doc();
   if (clientID !== undefined) doc.clientID = clientID;
   doc.getText("content").insert(0, text);
-  return Y.encodeStateAsUpdate(doc);
+  return Y.encodeStateAsUpdateV2(doc);
 }
 
 // ── Unencrypted ─────────────────────────────────────────────────────────────
@@ -193,14 +193,14 @@ describe("UnstorageDocumentStorage (unencrypted)", () => {
       await storage.handleUpdate(key, versionedUpdate(update));
       const stateAfterFirst = await storage.getDocument(key);
       expect(stateAfterFirst).not.toBeNull();
-      const svAfterFirst = Y.encodeStateVectorFromUpdate(
+      const svAfterFirst = Y.encodeStateVectorFromUpdateV2(
         getStructureUpdate(stateAfterFirst!.content.update),
       );
 
       // Second write with same update -- should be a no-op
       await storage.handleUpdate(key, versionedUpdate(update));
       const stateAfterSecond = await storage.getDocument(key);
-      const svAfterSecond = Y.encodeStateVectorFromUpdate(
+      const svAfterSecond = Y.encodeStateVectorFromUpdateV2(
         getStructureUpdate(stateAfterSecond!.content.update),
       );
 
@@ -405,7 +405,7 @@ describe("UnstorageDocumentStorage (unencrypted)", () => {
       // Apply the diff to a doc that already has update1
       const clientDoc = new Y.Doc();
       Y.applyUpdateV2(clientDoc, update1);
-      Y.applyUpdate(clientDoc, getStructureUpdate(result.content.update));
+      Y.applyUpdateV2(clientDoc, getStructureUpdate(result.content.update));
       expect(clientDoc.getText("content").toString()).toBe("Hello World");
     });
   });
@@ -416,9 +416,9 @@ describe("UnstorageDocumentStorage (unencrypted)", () => {
       const doc = new Y.Doc();
       const text = doc.getText("content");
       text.insert(0, "Sync content");
-      const v1 = Y.encodeStateAsUpdate(doc);
+      const v2 = Y.encodeStateAsUpdateV2(doc);
       const payload = encodeContentEncryptedPayload({
-        structureUpdate: v1,
+        structureUpdate: v2,
         encryptedSidecars: [],
       });
       const syncStep2: VersionedSyncStep2Update = {
@@ -491,12 +491,11 @@ describe("UnstorageDocumentStorage (unencrypted)", () => {
 
   describe("attribution", () => {
     function makeAttribution(update: Update, userId: string): EncodedContentMap {
-      // The server extracts content IDs from the V1 structure update inside the envelope.
-      // For unencrypted, the structure update is the full V1 update.
-      const v1 = Y.convertUpdateFormatV2ToV1(update);
+      // The server extracts content IDs from the V2 structure update inside the envelope.
+      // For unencrypted, the structure update is the full V2 update.
       const contentIds = createContentIdsFromUpdate({
-        version: 1,
-        data: v1,
+        version: 2,
+        data: update,
       } as unknown as VersionedUpdate);
       return encodeContentMap(
         createContentMapFromContentIds(
@@ -626,11 +625,10 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
     // Sidecars accumulate (one per update)
     expect(state!.sidecars.length).toBe(2);
 
-    // The merged structure update is V2 internally; convert to V1 to inspect state vector
-    const v1Update = Y.convertUpdateFormatV2ToV1(state!.update);
-    const sv = Y.encodeStateVectorFromUpdate(v1Update);
+    // The merged structure update is V2 internally
+    const sv = Y.encodeStateVectorFromUpdateV2(state!.update);
     const doc = new Y.Doc();
-    Y.applyUpdate(doc, v1Update);
+    Y.applyUpdateV2(doc, state!.update);
     // Both clients contributed, so the state vector covers both
     expect(Y.decodeStateVector(sv).size).toBe(2);
   });
@@ -675,7 +673,7 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
       );
       // Diff of identical state vectors produces a minimal (empty structs) update
       const diffDoc = new Y.Doc();
-      Y.applyUpdate(diffDoc, decoded.structureUpdate);
+      Y.applyUpdateV2(diffDoc, decoded.structureUpdate);
       expect(diffDoc.getText("content").toString()).toBe("");
     });
 
@@ -684,7 +682,7 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
       const doc1 = new Y.Doc();
       doc1.clientID = 1;
       doc1.getText("content").insert(0, "hello");
-      const update1 = Y.encodeStateAsUpdate(doc1);
+      const update1 = Y.encodeStateAsUpdateV2(doc1);
       const sv1 = Y.encodeStateVector(doc1) as StateVector;
 
       await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(update1)));
@@ -693,7 +691,7 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
       const doc2 = new Y.Doc();
       doc2.clientID = 2;
       doc2.getText("content").insert(0, "world");
-      const update2 = Y.encodeStateAsUpdate(doc2);
+      const update2 = Y.encodeStateAsUpdateV2(doc2);
 
       await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(update2)));
 
@@ -705,11 +703,11 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
 
       // The diff should only contain client 2's changes
       const diffDoc = new Y.Doc();
-      Y.applyUpdate(diffDoc, decoded.structureUpdate);
+      Y.applyUpdateV2(diffDoc, decoded.structureUpdate);
       // Apply to a doc that already has client 1's data
       const fullDoc = new Y.Doc();
-      Y.applyUpdate(fullDoc, update1);
-      Y.applyUpdate(fullDoc, decoded.structureUpdate);
+      Y.applyUpdateV2(fullDoc, update1);
+      Y.applyUpdateV2(fullDoc, decoded.structureUpdate);
       // The full doc should have both contributions
       expect(fullDoc.getText("content").toString().length).toBeGreaterThan(0);
     });
@@ -722,13 +720,13 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
       const docA = new Y.Doc();
       docA.clientID = 100;
       docA.getText("content").insert(0, "hello");
-      const updateA = Y.encodeStateAsUpdate(docA);
+      const updateA = Y.encodeStateAsUpdateV2(docA);
       await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(updateA)));
 
       const docB = new Y.Doc();
       docB.clientID = 200;
       docB.getText("content").insert(0, "world");
-      const updateB = Y.encodeStateAsUpdate(docB);
+      const updateB = Y.encodeStateAsUpdateV2(docB);
       await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(updateB)));
 
       // Client knows A but not B
@@ -765,7 +763,7 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
       doc.getText("content").insert(0, "hello");
       await storage.handleUpdate(
         "doc-1",
-        envelopeUpdate(makeContentEncryptedUpdate(Y.encodeStateAsUpdate(doc))),
+        envelopeUpdate(makeContentEncryptedUpdate(Y.encodeStateAsUpdateV2(doc))),
       );
 
       const serverSV = Y.encodeStateVector(doc) as StateVector;
@@ -945,16 +943,17 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
 
       // State is V2 internally; use V2 state vector for baseSV
       const baseSV = Y.encodeStateVectorFromUpdateV2(state!.update);
-      const { buildSidecarIndex } =
-        await import("teleportal/protocol/encryption");
+      const { buildSidecarIndex } = await import("teleportal/protocol/encryption");
 
       const allDecoded = state!.sidecars.map((s) =>
         decodeSidecar(s.encrypted as unknown as Uint8Array),
       );
       const merged = mergeSidecars(allDecoded);
+      const compactedEncrypted = encodeSidecar(merged) as EncryptedBinary;
       const compactedSidecar = {
-        encrypted: encodeSidecar(merged) as EncryptedBinary,
+        encrypted: compactedEncrypted,
         index: buildSidecarIndex(merged.entries),
+        hash: hashSidecar(compactedEncrypted),
       };
 
       const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
@@ -978,14 +977,158 @@ describe("UnstorageDocumentStorage (encrypted)", () => {
         envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("world", 2))),
       );
 
+      const dummyEncrypted = encodeSidecar({
+        entries: [],
+        dictionary: new Map(),
+      }) as EncryptedBinary;
       const compactedSidecar = {
-        encrypted: encodeSidecar({ entries: [], dictionary: new Map() }) as EncryptedBinary,
+        encrypted: dummyEncrypted,
         index: [],
+        hash: hashSidecar(dummyEncrypted),
       };
 
       const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
       expect(accepted).toBe(false);
       expect((await storage.getDocumentState("doc-1"))!.sidecars.length).toBe(2);
+    });
+  });
+
+  // ── Inline compaction (compaction piggy-backed on update) ─────────────────
+
+  describe("inline compaction via handleUpdate", () => {
+    function makeCompactionPayload(
+      v2Update: Uint8Array,
+      compaction: import("teleportal/protocol/encryption").SidecarCompaction,
+    ): EncryptedUpdatePayload {
+      const { update: structureUpdate, sidecar } = stripContent(v2Update, 2);
+      const sidecarBytes = encodeSidecar(sidecar);
+      return encodeContentEncryptedPayload({
+        structureUpdate,
+        encryptedSidecars: [sidecarBytes as EncryptedBinary],
+        compaction,
+      }) as EncryptedUpdatePayload;
+    }
+
+    function buildCompaction(
+      sidecars: { encrypted: EncryptedBinary }[],
+    ): import("teleportal/protocol/encryption").SidecarCompaction {
+      const allDecoded = sidecars.map((s) => decodeSidecar(s.encrypted as unknown as Uint8Array));
+      const merged = mergeSidecars(allDecoded);
+      const compactedBytes = encodeSidecar(merged);
+      const encrypted = compactedBytes as EncryptedBinary;
+      const { buildSidecarIndex } =
+        require("teleportal/protocol/encryption") as typeof import("teleportal/protocol/encryption");
+      return {
+        sidecar: encrypted,
+        index: buildSidecarIndex(merged.entries),
+        hash: hashSidecar(encrypted),
+        sourceHashes: sidecars.map((s) => hashSidecar(s.encrypted)),
+      };
+    }
+
+    it("replaces matched sidecars when all sourceHashes match", async () => {
+      for (let i = 1; i <= 3; i++) {
+        await storage.handleUpdate(
+          "doc-1",
+          envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate(`text-${i}`, i * 100))),
+        );
+      }
+
+      let state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(3);
+
+      const compaction = buildCompaction(state!.sidecars);
+
+      const newUpdate = makeYjsUpdate("new-text", 400);
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeCompactionPayload(newUpdate, compaction)),
+      );
+
+      state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(2);
+      expect(state!.sidecars[0].hash).toEqual(compaction.hash);
+    });
+
+    it("keeps concurrent sidecars alongside compaction", async () => {
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("a", 100))),
+      );
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("b", 200))),
+      );
+
+      let state = await storage.getDocumentState("doc-1");
+      const compaction = buildCompaction(state!.sidecars);
+
+      // Concurrent write
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("c", 300))),
+      );
+
+      // Apply compaction — concurrent sidecar should be kept
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeCompactionPayload(makeYjsUpdate("d", 400), compaction)),
+      );
+
+      state = await storage.getDocumentState("doc-1");
+      // 1 compacted + 1 concurrent + 1 new = 3
+      expect(state!.sidecars.length).toBe(3);
+      expect(state!.sidecars[0].hash).toEqual(compaction.hash);
+    });
+
+    it("skips compaction when source sidecars are missing", async () => {
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("a", 100))),
+      );
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("b", 200))),
+      );
+
+      let state = await storage.getDocumentState("doc-1");
+      const compaction = buildCompaction(state!.sidecars);
+
+      // Another client already compacted via handleCompaction
+      const allDecoded = state!.sidecars.map((s) =>
+        decodeSidecar(s.encrypted as unknown as Uint8Array),
+      );
+      const merged = mergeSidecars(allDecoded);
+      const otherBytes = encodeSidecar(merged) as EncryptedBinary;
+      await storage.handleCompaction(
+        "doc-1",
+        { encrypted: otherBytes, index: [], hash: hashSidecar(otherBytes) },
+        Y.encodeStateVectorFromUpdateV2(state!.update),
+      );
+
+      // Now our compaction has stale sourceHashes
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeCompactionPayload(makeYjsUpdate("c", 300), compaction)),
+      );
+
+      state = await storage.getDocumentState("doc-1");
+      // Skipped: 1 (other compaction) + 1 (new) = 2
+      expect(state!.sidecars.length).toBe(2);
+    });
+
+    it("hash survives serialization round-trip through unstorage", async () => {
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeContentEncryptedUpdate(makeYjsUpdate("hello", 100))),
+      );
+
+      const state = await storage.getDocumentState("doc-1");
+      const sidecar = state!.sidecars[0];
+
+      expect(sidecar.hash).toBeInstanceOf(Uint8Array);
+      expect(sidecar.hash.length).toBe(32);
+      expect(sidecar.hash).toEqual(hashSidecar(sidecar.encrypted));
     });
   });
 

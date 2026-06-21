@@ -404,7 +404,10 @@ describe("encrypted client integration", () => {
 
     const singleSidecar = await encryptUpdate(
       key,
-      encodeSidecar({ entries: [{ clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]) }], dictionary: new Map() }),
+      encodeSidecar({
+        entries: [{ clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]) }],
+        dictionary: new Map(),
+      }),
     );
 
     const result = await client.createCompactedSidecar([singleSidecar], new Uint8Array(0));

@@ -110,7 +110,7 @@ The **unstorage** implementation works with any storage backend supported by [un
 
 ```typescript
 import { createStorage } from "unstorage";
-import { createUnstorage } from "teleportal/storage";
+import { UnstorageDocumentStorage, UnstorageRateLimitStorage } from "teleportal/storage";
 import redisDriver from "unstorage/drivers/redis";
 
 const storage = createStorage({
@@ -121,19 +121,15 @@ const storage = createStorage({
 });
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createUnstorage(storage, {
-      fileKeyPrefix: "file",
-      documentKeyPrefix: "doc",
-      encrypted: ctx.documentId.includes("encrypted"),
+  storage: async (ctx) => {
+    return new UnstorageDocumentStorage(storage, {
+      keyPrefix: "document",
+      encrypted: ctx.encrypted,
     });
-    return documentStorage;
   },
 });
 
 // Create Rate Limit Storage
-import { UnstorageRateLimitStorage } from "teleportal/storage";
-
 const rateLimitStorage = new UnstorageRateLimitStorage(storage, {
   keyPrefix: "rate-limit",
 });
@@ -141,10 +137,9 @@ const rateLimitStorage = new UnstorageRateLimitStorage(storage, {
 
 **Key Features:**
 
-- Configurable key prefixes for file, document, and milestone storage
-- Supports both encrypted and unencrypted documents
+- Configurable key prefix per storage type
+- Supports both encrypted and unencrypted documents via the `encrypted` flag
 - Transaction support with TTL-based locking (default: 5000ms)
-- Can scan keys (useful for relational databases) or use indexed keys
 - All storage instances are completely independent
 
 ### In-Memory Implementation
@@ -159,15 +154,11 @@ The **in-memory** implementation stores everything in process memory. Perfect fo
 **Usage:**
 
 ```typescript
-import { createInMemory } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createInMemory({
-      encrypted: ctx.documentId.includes("encrypted"),
-      useYDoc: true, // Use YDoc storage for Y.js documents
-    });
-    return documentStorage;
+  storage: async (ctx) => {
+    return new MemoryDocumentStorage(ctx.encrypted);
   },
 });
 ```
@@ -177,7 +168,7 @@ const server = new Server({
 - Zero configuration
 - Fast (no I/O)
 - Data lost on restart
-- Supports YDoc storage mode
+- Supports both encrypted and unencrypted documents via the constructor flag
 
 ## Creating Custom Storage Implementations
 
@@ -340,61 +331,79 @@ const doc = await batchedStorage.getDocument("doc1"); // Flushes pending writes
 
 This wrapper is especially useful for collaborative apps where many small updates need to be persisted efficiently.
 
-## Factory Functions
+## Constructing Storage
 
-Factory functions simplify creating storage instances. They create independent storage instances with consistent configuration - no wiring between storage types.
+Each storage type is a class you instantiate directly. You construct each one
+explicitly and pass the file/milestone instances to their RPC handlers. This keeps
+every storage instance fully independent so you can mix backends freely.
 
-### `createUnstorage(storage, options?)`
+### Unstorage classes
 
-Creates document, file, and milestone storage based on the same unstorage instance with different key prefixes. All storage instances are completely independent.
-
-**What's created:**
-
-- `documentStorage` - Main document storage (encrypted or unencrypted based on options)
-- `fileStorage` - File storage with `temporaryUploadStorage` integration
-- `milestoneStorage` - Milestone storage
-
-**Important:** Each storage instance is independent. To use file or milestone handlers, create them separately and pass to handler factories:
+`UnstorageDocumentStorage`, `UnstorageFileStorage`, `UnstorageMilestoneStorage`,
+`UnstorageTemporaryUploadStorage`, and `UnstorageRateLimitStorage` all take an
+[unstorage](https://github.com/unjs/unstorage) instance plus an options object
+with a per-type `keyPrefix`.
 
 ```typescript
-import { createUnstorage, getFileRpcHandlers } from "teleportal/storage";
+import {
+  UnstorageDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageMilestoneStorage,
+  UnstorageTemporaryUploadStorage,
+} from "teleportal/storage";
+import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
 
-const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(storage, {
-  fileKeyPrefix: "file",
-  documentKeyPrefix: "document",
-  milestoneKeyPrefix: "document-milestone",
+const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(storage, {
+  keyPrefix: "file",
+});
+
+const fileStorage = new UnstorageFileStorage(storage, {
+  keyPrefix: "file",
+  temporaryUploadStorage,
+});
+
+const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+  keyPrefix: "document-milestone",
 });
 
 // Create handlers with storage instances
 const fileHandlers = getFileRpcHandlers(fileStorage);
 const milestoneHandlers = getMilestoneRpcHandlers(milestoneStorage);
 
-// Pass handlers to Server - server only knows about documentStorage
+// Document storage is created per request via the Server `storage` option
+const server = new Server({
+  storage: async (ctx) =>
+    new UnstorageDocumentStorage(storage, {
+      keyPrefix: "document",
+      encrypted: ctx.encrypted,
+    }),
+  rpcHandlers: { ...fileHandlers, ...milestoneHandlers },
+});
 ```
 
-**Options explained:**
+**`UnstorageDocumentStorage` options:**
 
-- `scanKeys`: When `true`, uses key scanning to find updates (better for relational databases). When `false`, uses indexed keys (better for key-value stores like Redis).
-- `ttl`: Transaction lock timeout in milliseconds. Prevents deadlocks by automatically releasing locks after this duration.
+- `keyPrefix`: Namespace prefix for this storage's keys.
+- `encrypted`: When `true`, the storage stores encrypted (ciphertext + sidecar) state. Defaults to `false`.
+- `ttl`: Transaction lock timeout in milliseconds (default: 5000ms). Prevents deadlocks by automatically releasing locks after this duration.
 
-### `createInMemory(options?)`
+### In-memory classes
 
-Creates in-memory document, file, and milestone storage. All storage instances are completely independent.
-
-**What's created:**
-
-- `documentStorage` - Main document storage (encrypted or YDoc-based)
-- `fileStorage` - File storage with `temporaryUploadStorage` integration
-- `milestoneStorage` - Milestone storage (when using unstorage-based implementation)
-
-**Usage:**
+`MemoryDocumentStorage`, `InMemoryFileStorage`, `InMemoryMilestoneStorage`, and
+`InMemoryTemporaryUploadStorage` store everything in process memory.
 
 ```typescript
-const { documentStorage, fileStorage } = createInMemory({
-  encrypted: false, // Default: false
-  useYDoc: false, // Default: false (note: currently both branches use YDocStorage)
-});
+import {
+  MemoryDocumentStorage,
+  InMemoryFileStorage,
+  InMemoryMilestoneStorage,
+} from "teleportal/storage";
+
+// `new MemoryDocumentStorage(true)` for encrypted documents
+const documentStorage = new MemoryDocumentStorage();
+const fileStorage = new InMemoryFileStorage();
+const milestoneStorage = new InMemoryMilestoneStorage();
 ```
 
 ## Architecture Notes
@@ -417,11 +426,9 @@ This separation allows you to:
 When using the same storage backend for multiple storage types, use key prefixes to namespace them:
 
 ```typescript
-createUnstorage(storage, {
-  fileKeyPrefix: "file", // Files stored as "file:file:..."
-  documentKeyPrefix: "document", // Documents stored as "document:..."
-  milestoneKeyPrefix: "document-milestone", // Milestones stored as "document-milestone:..."
-});
+new UnstorageFileStorage(storage, { keyPrefix: "file" }); // Files stored as "file:file:..."
+new UnstorageDocumentStorage(storage, { keyPrefix: "document" }); // Documents stored as "document:..."
+new UnstorageMilestoneStorage(storage, { keyPrefix: "document-milestone" }); // Milestones stored as "document-milestone:..."
 ```
 
 This prevents key collisions and allows you to:
@@ -444,11 +451,6 @@ The interface is flexible enough to support any transaction model.
 **Transaction TTL:**
 The unstorage implementation uses TTL-based locking (default: 5000ms). This prevents deadlocks by automatically releasing locks after the timeout period. Adjust the `ttl` option based on your expected transaction duration and network latency.
 
-**Key Scanning vs Indexed Keys:**
-
-- **`scanKeys: false`** (default): Uses indexed keys stored in a document metadata object. Better for key-value stores like Redis, Memcached, etc. Faster for reads but requires maintaining the index.
-- **`scanKeys: true`**: Scans for keys matching a pattern. Better for relational databases like PostgreSQL where scanning is efficient. No index maintenance required but may be slower for large document sets.
-
 ## Examples
 
 ### Using PostgreSQL for Documents, S3 for Files, Redis for Milestones
@@ -456,8 +458,7 @@ The unstorage implementation uses TTL-based locking (default: 5000ms). This prev
 ```typescript
 import { createStorage } from "unstorage";
 import postgresDriver from "unstorage/drivers/postgres";
-import { createUnstorage } from "teleportal/storage";
-import { S3FileStorage } from "./custom-s3-storage";
+import { UnstorageDocumentStorage, UnstorageFileStorage } from "teleportal/storage";
 import { RedisMilestoneStorage } from "./custom-redis-milestone";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
@@ -466,10 +467,7 @@ const docStorage = createStorage({
   driver: postgresDriver({ connectionString: "..." }),
 });
 
-const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(docStorage, {
-  documentKeyPrefix: "doc",
-  scanKeys: true, // Recommended for relational databases
-});
+const fileStorage = new UnstorageFileStorage(docStorage, { keyPrefix: "file" });
 
 // Create independent storage for milestones
 const msStorage = new RedisMilestoneStorage(redisClient);
@@ -479,7 +477,11 @@ const fileHandlers = getFileRpcHandlers(fileStorage);
 const milestoneHandlers = getMilestoneRpcHandlers(msStorage);
 
 const server = new Server({
-  getStorage: async (ctx) => documentStorage,
+  storage: async (ctx) =>
+    new UnstorageDocumentStorage(docStorage, {
+      keyPrefix: "doc",
+      encrypted: ctx.encrypted,
+    }),
   rpcHandlers: {
     ...fileHandlers,
     ...milestoneHandlers,
@@ -492,7 +494,11 @@ const server = new Server({
 ```typescript
 import { createStorage } from "unstorage";
 import redisDriver from "unstorage/drivers/redis";
-import { createUnstorage } from "teleportal/storage";
+import {
+  UnstorageDocumentStorage,
+  UnstorageFileStorage,
+  UnstorageMilestoneStorage,
+} from "teleportal/storage";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
 
@@ -503,14 +509,14 @@ const storage = createStorage({
   }),
 });
 
-const { documentStorage, fileStorage, milestoneStorage } = createUnstorage(storage, {
-  fileKeyPrefix: "file",
-  documentKeyPrefix: "doc",
-  encrypted: false,
+const fileStorage = new UnstorageFileStorage(storage, { keyPrefix: "file" });
+const milestoneStorage = new UnstorageMilestoneStorage(storage, {
+  keyPrefix: "document-milestone",
 });
 
 const server = new Server({
-  getStorage: async (ctx) => documentStorage,
+  storage: async (ctx) =>
+    new UnstorageDocumentStorage(storage, { keyPrefix: "doc", encrypted: ctx.encrypted }),
   rpcHandlers: {
     ...getFileRpcHandlers(fileStorage),
     ...getMilestoneRpcHandlers(milestoneStorage),
@@ -521,20 +527,22 @@ const server = new Server({
 ### Using In-Memory for Testing
 
 ```typescript
-import { createInMemory } from "teleportal/storage";
+import {
+  MemoryDocumentStorage,
+  InMemoryFileStorage,
+  InMemoryMilestoneStorage,
+} from "teleportal/storage";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
 
-const { documentStorage, fileStorage } = createInMemory();
-
-// Create handlers for file and milestone storage
-const fileHandlers = getFileRpcHandlers(fileStorage);
-// Note: createInMemory currently doesn't create milestoneStorage - create it separately if needed
+const fileStorage = new InMemoryFileStorage();
+const milestoneStorage = new InMemoryMilestoneStorage();
 
 const server = new Server({
-  getStorage: async () => documentStorage,
+  storage: async () => new MemoryDocumentStorage(),
   rpcHandlers: {
-    ...fileHandlers,
+    ...getFileRpcHandlers(fileStorage),
+    ...getMilestoneRpcHandlers(milestoneStorage),
   },
 });
 ```
@@ -542,10 +550,9 @@ const server = new Server({
 ### Accessing Milestone Storage
 
 ```typescript
-const { documentStorage } = createUnstorage(storage);
+import { InMemoryMilestoneStorage } from "teleportal/storage";
 
-// Milestone storage is automatically created and linked
-const milestoneStorage = documentStorage.milestoneStorage;
+const milestoneStorage = new InMemoryMilestoneStorage();
 
 // Create a milestone
 const milestoneId = await milestoneStorage.createMilestone({
@@ -565,15 +572,14 @@ const milestones = await milestoneStorage.getMilestones("doc-123");
 ## Best Practices
 
 1. **Create storage instances independently** - Each storage type (DocumentStorage, FileStorage, MilestoneStorage) is independent
-2. **Use handler factories for file/milestone operations** - Use `getFileRpcHandlers()` and `getMilestoneRpcHandlers()` to create handlers
-3. **Server only knows about DocumentStorage** - The Server receives handlers created with specific storage, but only DocumentStorage is passed via `getStorage()`
-4. **Choose the right `scanKeys` option** - Use `scanKeys: true` for relational databases (PostgreSQL, MySQL), `scanKeys: false` for key-value stores (Redis, Memcached)
-5. **Set appropriate TTL** - Adjust transaction TTL based on your expected operation duration and network latency (default: 5000ms)
-6. **Separate concerns** - Use different backends for documents vs files when it makes sense (e.g., PostgreSQL for documents, S3 for files)
-7. **Use key prefixes** - Namespace your data to avoid collisions and enable easy querying/deletion by prefix
-8. **Always provide `createdBy`** - The `createdBy` field is required when creating milestones to distinguish user vs system milestones
-9. **Handle errors gracefully** - Storage operations can fail, handle errors appropriately
-10. **Test with in-memory** - Use in-memory storage for fast, isolated tests
+2. **Create RPC handlers for file/milestone operations** - Use `getFileRpcHandlers()` and `getMilestoneRpcHandlers()` to create handlers
+3. **Server only knows about DocumentStorage** - The Server receives handlers created with specific storage, but only DocumentStorage is passed via the `storage` option
+4. **Set appropriate TTL** - Adjust transaction TTL based on your expected operation duration and network latency (default: 5000ms)
+5. **Separate concerns** - Use different backends for documents vs files when it makes sense (e.g., PostgreSQL for documents, S3 for files)
+6. **Use key prefixes** - Namespace your data to avoid collisions and enable easy querying/deletion by prefix
+7. **Always provide `createdBy`** - The `createdBy` field is required when creating milestones to distinguish user vs system milestones
+8. **Handle errors gracefully** - Storage operations can fail, handle errors appropriately
+9. **Test with in-memory** - Use in-memory storage for fast, isolated tests
 
 ## Interface Reference
 

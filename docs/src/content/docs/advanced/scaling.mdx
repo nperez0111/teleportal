@@ -15,7 +15,7 @@ This guide covers scaling strategies for Teleportal deployments.
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Your storage
   },
 });
@@ -34,7 +34,7 @@ import { Server } from "teleportal/server";
 import { RedisPubSub } from "teleportal/pubsub/redis";
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Shared storage backend
     return documentStorage;
   },
@@ -85,7 +85,7 @@ In some cases, pubsub may put pressure on the broker. This can be mitigated by:
 ```typescript
 // Each server instance
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Shared storage
     return documentStorage;
   },
@@ -121,7 +121,7 @@ Deploy servers in different regions:
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // Regional storage
     return regionalStorage;
   },

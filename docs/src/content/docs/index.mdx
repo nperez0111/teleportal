@@ -92,7 +92,7 @@ import { createTokenManager } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 import { checkPermissionWithTokenManager, Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 
 // token manager is a JWT token verifier and manager.
 const tokenManager = createTokenManager({
@@ -104,7 +104,7 @@ issuer: "teleportal.tools",
 // Create a Teleportal server instance
 const server = new Server({
 // you can use any storage backend you want, this one is in-memory
-storage: new YDocStorage(),
+storage: new MemoryDocumentStorage(),
 // every message is verified against the token's permissions to the document
 checkPermission: checkPermissionWithTokenManager(tokenManager),
 });

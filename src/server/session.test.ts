@@ -174,9 +174,9 @@ function createMockServer(): Server<ServerContext> {
 function createTestUpdate(content = "test"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, content);
-  const v1 = Y.encodeStateAsUpdate(doc);
+  const v2 = Y.encodeStateAsUpdateV2(doc);
   const payload = encodeContentEncryptedPayload({
-    structureUpdate: v1,
+    structureUpdate: v2,
     encryptedSidecars: [],
   });
   return { version: 2, data: payload } as unknown as VersionedUpdate;
@@ -701,7 +701,7 @@ describe("Session", () => {
         const doc = new Y.Doc();
         doc.getText("t").insert(0, "Hello");
         const v1Update = Y.encodeStateAsUpdate(doc);
-        const { update: structureUpdate, sidecar } = stripContent(v1Update);
+        const { update: structureUpdate, sidecar } = stripContent(v1Update, 1);
         const sidecarBytes = encodeSidecar(sidecar);
 
         const encPayload = encodeContentEncryptedPayload({
@@ -764,7 +764,7 @@ describe("Session", () => {
         const doc = new Y.Doc();
         doc.getText("t").insert(0, "Test");
         const v1Update = Y.encodeStateAsUpdate(doc);
-        const { update: structureUpdate, sidecar } = stripContent(v1Update);
+        const { update: structureUpdate, sidecar } = stripContent(v1Update, 1);
         const sidecarBytes = encodeSidecar(sidecar);
 
         const encPayload = encodeContentEncryptedPayload({
@@ -1140,7 +1140,7 @@ describe("Session", () => {
         const doc = new Y.Doc();
         doc.getText("t").insert(0, content);
         const v1Update = Y.encodeStateAsUpdate(doc);
-        const { update: structureUpdate, sidecar } = stripContent(v1Update);
+        const { update: structureUpdate, sidecar } = stripContent(v1Update, 1);
         const sidecarBytes = encodeSidecar(sidecar);
         const encPayload = encodeContentEncryptedPayload({
           structureUpdate,
@@ -1293,7 +1293,7 @@ describe("Session", () => {
           const doc = new Y.Doc();
           doc.getText("t").insert(0, `update-${i}`);
           const v1Update = Y.encodeStateAsUpdate(doc);
-          const { update: structureUpdate, sidecar } = stripContent(v1Update);
+          const { update: structureUpdate, sidecar } = stripContent(v1Update, 1);
           const sidecarBytes = encodeSidecar(sidecar);
           const encPayload = encodeContentEncryptedPayload({
             structureUpdate,

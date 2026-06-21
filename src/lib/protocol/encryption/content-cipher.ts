@@ -1,8 +1,12 @@
 /**
  * Content-level encryption for Y.js updates.
  *
- * Transforms Y.js V1 updates to separate CRDT metadata (kept in plaintext
+ * Transforms Y.js updates to separate CRDT metadata (kept in plaintext
  * as a valid Y.js update) from document content (encrypted in a sidecar).
+ *
+ * Works natively with both V1 and V2 update formats via Y.js's abstract
+ * UpdateDecoder/UpdateEncoder interface. Structure updates are always
+ * output in V2 format for zero-conversion storage and sync.
  *
  * The server can merge, sync, and store the structure update normally because
  * all CRDT metadata (client IDs, clocks, origins, parent refs, delete sets)
@@ -12,6 +16,7 @@
 
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
+import { digest as sha256 } from "lib0/hash/sha256";
 import * as Y from "yjs";
 import { type EncryptedBinary, encryptUpdate, decryptUpdate } from "teleportal/encryption-key";
 import { encodeContentEncryptedPayload } from "./encoding";
@@ -38,9 +43,6 @@ const BIT8 = 0x80; // bit 7: hasOrigin
 // ── Metadata string hashing ────────────────────────────────────────────────
 
 function opaqueToken(str: string): string {
-  // 64-bit djb2. A 64-bit space makes collisions between distinct metadata
-  // strings (root-type names, map keys, XML tag names) effectively impossible,
-  // even for documents that accumulate many distinct keys over their lifetime.
   let hash = 5381n;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5n) + hash + BigInt(str.charCodeAt(i))) & 0xffffffffffffffffn;
@@ -82,7 +84,12 @@ export type SidecarIndex = SidecarClientRange[];
 export type IndexedSidecar = {
   encrypted: EncryptedBinary;
   index: SidecarIndex;
+  hash: Uint8Array;
 };
+
+export function hashSidecar(encrypted: EncryptedBinary): Uint8Array {
+  return sha256(encrypted);
+}
 
 export function buildSidecarIndex(entries: ContentEntry[]): SidecarIndex {
   const ranges = new Map<number, { min: number; max: number }>();
@@ -178,17 +185,14 @@ export function encodeSidecar(sidecar: Sidecar): Uint8Array {
       encoding.writeVarUint(encoder, group.clientId);
       encoding.writeVarUint(encoder, group.entries.length);
 
-      // Clocks — delta-encoded with IntDiffOptRle
       const clockEnc = new encoding.IntDiffOptRleEncoder();
       for (const e of group.entries) clockEnc.write(e.clock);
       encoding.writeVarUint8Array(encoder, clockEnc.toUint8Array());
 
-      // Content refs — RLE-encoded
       const refEnc = new encoding.UintOptRleEncoder();
       for (const e of group.entries) refEnc.write(e.contentRef);
       encoding.writeVarUint8Array(encoder, refEnc.toUint8Array());
 
-      // Data lengths — RLE-encoded
       const lenEnc = new encoding.UintOptRleEncoder();
       let totalDataLen = 0;
       for (const e of group.entries) {
@@ -197,7 +201,6 @@ export function encodeSidecar(sidecar: Sidecar): Uint8Array {
       }
       encoding.writeVarUint8Array(encoder, lenEnc.toUint8Array());
 
-      // Concatenated content data
       encoding.writeVarUint(encoder, totalDataLen);
       for (const e of group.entries) {
         encoding.writeUint8Array(encoder, e.data);
@@ -276,135 +279,222 @@ function buildSidecarMap(entries: ContentEntry[]): Map<string, ContentEntry> {
   return map;
 }
 
-// ── V1 content readers (advance decoder, return raw bytes) ──────────────────
+// ── Abstract decoder/encoder types ────────────────────────────────────────
 
-function readContentRawBytes(
-  decoder: decoding.Decoder,
+type UpdateDecoder = Y.UpdateDecoderV1 | Y.UpdateDecoderV2;
+type UpdateEncoder = Y.UpdateEncoderV1 | Y.UpdateEncoderV2;
+
+// ── Content readers (abstract decoder → canonical sidecar bytes) ──────────
+
+function readContentToSidecar(
+  decoder: UpdateDecoder,
   contentRef: number,
 ): { data: Uint8Array; itemLength: number } {
-  const startPos = decoder.pos;
-  const itemLength = skipContent(decoder, contentRef);
-  return {
-    data: decoder.arr.slice(startPos, decoder.pos),
-    itemLength,
-  };
-}
+  const enc = encoding.createEncoder();
+  let itemLength: number;
 
-function skipContent(decoder: decoding.Decoder, contentRef: number): number {
   switch (contentRef) {
-    case CONTENT_DELETED: {
-      return decoding.readVarUint(decoder);
+    case CONTENT_STRING: {
+      const str = decoder.readString();
+      encoding.writeVarString(enc, str);
+      itemLength = str.length;
+      break;
     }
     case CONTENT_JSON: {
-      const count = decoding.readVarUint(decoder);
-      for (let i = 0; i < count; i++) decoding.readVarString(decoder);
-      return count;
+      const count = decoder.readLen();
+      encoding.writeVarUint(enc, count);
+      for (let i = 0; i < count; i++) {
+        encoding.writeVarString(enc, decoder.readString());
+      }
+      itemLength = count;
+      break;
     }
     case CONTENT_BINARY: {
-      decoding.readVarUint8Array(decoder);
-      return 1;
-    }
-    case CONTENT_STRING: {
-      return decoding.readVarString(decoder).length;
+      encoding.writeVarUint8Array(enc, decoder.readBuf());
+      itemLength = 1;
+      break;
     }
     case CONTENT_EMBED: {
-      decoding.readVarString(decoder); // JSON-encoded string
-      return 1;
+      const embed = decoder.readJSON();
+      encoding.writeVarString(enc, JSON.stringify(embed));
+      itemLength = 1;
+      break;
     }
     case CONTENT_FORMAT: {
-      decoding.readVarString(decoder); // key
-      decoding.readVarString(decoder); // JSON-encoded value
-      return 1;
+      const key = decoder.readKey();
+      const value = decoder.readJSON();
+      encoding.writeVarString(enc, key);
+      encoding.writeVarString(enc, JSON.stringify(value));
+      itemLength = 1;
+      break;
     }
-    case CONTENT_TYPE: {
-      const typeRef = decoding.readVarUint(decoder);
-      // YXmlElement (3) and YXmlHook (5) write an extra key string
-      if (typeRef === 3 || typeRef === 5) {
-        decoding.readVarString(decoder);
+    case CONTENT_ANY: {
+      const count = decoder.readLen();
+      encoding.writeVarUint(enc, count);
+      for (let i = 0; i < count; i++) {
+        encoding.writeAny(enc, decoder.readAny());
       }
+      itemLength = count;
+      break;
+    }
+    case CONTENT_DOC: {
+      const guid = decoder.readString();
+      const opts = decoder.readAny();
+      encoding.writeVarString(enc, guid);
+      encoding.writeAny(enc, opts);
+      itemLength = 1;
+      break;
+    }
+    default:
+      throw new Error(`Unknown content ref: ${contentRef}`);
+  }
+
+  return { data: encoding.toUint8Array(enc), itemLength };
+}
+
+// ── Content skip (advance decoder, return item length) ────────────────────
+
+function skipContent(decoder: UpdateDecoder, contentRef: number): number {
+  switch (contentRef) {
+    case CONTENT_DELETED:
+      return decoder.readLen();
+    case CONTENT_JSON: {
+      const count = decoder.readLen();
+      for (let i = 0; i < count; i++) decoder.readString();
+      return count;
+    }
+    case CONTENT_BINARY:
+      decoder.readBuf();
+      return 1;
+    case CONTENT_STRING:
+      return decoder.readString().length;
+    case CONTENT_EMBED:
+      decoder.readJSON();
+      return 1;
+    case CONTENT_FORMAT:
+      decoder.readKey();
+      decoder.readJSON();
+      return 1;
+    case CONTENT_TYPE: {
+      const typeRef = decoder.readTypeRef();
+      if (typeRef === 3 || typeRef === 5) decoder.readKey();
       return 1;
     }
     case CONTENT_ANY: {
-      const count = decoding.readVarUint(decoder);
-      for (let i = 0; i < count; i++) decoding.readAny(decoder);
+      const count = decoder.readLen();
+      for (let i = 0; i < count; i++) decoder.readAny();
       return count;
     }
-    case CONTENT_DOC: {
-      decoding.readVarString(decoder); // guid
-      decoding.readAny(decoder); // opts
+    case CONTENT_DOC:
+      decoder.readString();
+      decoder.readAny();
       return 1;
-    }
     default:
       throw new Error(`Unknown content ref: ${contentRef}`);
   }
 }
 
-// ── V1 placeholder content writers ──────────────────────────────────────────
+// ── Content writer (canonical sidecar bytes → abstract encoder) ───────────
+
+function writeContentFromSidecar(
+  encoder: UpdateEncoder,
+  contentRef: number,
+  data: Uint8Array,
+): void {
+  const dec = decoding.createDecoder(data);
+
+  switch (contentRef) {
+    case CONTENT_STRING:
+      encoder.writeString(decoding.readVarString(dec));
+      break;
+    case CONTENT_JSON: {
+      const count = decoding.readVarUint(dec);
+      encoder.writeLen(count);
+      for (let i = 0; i < count; i++) {
+        encoder.writeString(decoding.readVarString(dec));
+      }
+      break;
+    }
+    case CONTENT_BINARY:
+      encoder.writeBuf(decoding.readVarUint8Array(dec));
+      break;
+    case CONTENT_EMBED:
+      encoder.writeJSON(JSON.parse(decoding.readVarString(dec)));
+      break;
+    case CONTENT_FORMAT: {
+      const key = decoding.readVarString(dec);
+      const value = JSON.parse(decoding.readVarString(dec));
+      encoder.writeKey(key);
+      encoder.writeJSON(value);
+      break;
+    }
+    case CONTENT_ANY: {
+      const count = decoding.readVarUint(dec);
+      encoder.writeLen(count);
+      for (let i = 0; i < count; i++) {
+        encoder.writeAny(decoding.readAny(dec));
+      }
+      break;
+    }
+    case CONTENT_DOC:
+      encoder.writeString(decoding.readVarString(dec));
+      encoder.writeAny(decoding.readAny(dec));
+      break;
+    default:
+      throw new Error(`Unknown content ref: ${contentRef}`);
+  }
+}
+
+// ── Placeholder content writer (abstract encoder) ─────────────────────────
 
 function writePlaceholderContent(
-  encoder: encoding.Encoder,
+  encoder: UpdateEncoder,
   contentRef: number,
   itemLength: number,
 ): void {
   switch (contentRef) {
-    case CONTENT_DELETED: {
-      encoding.writeVarUint(encoder, itemLength);
+    case CONTENT_DELETED:
+      encoder.writeLen(itemLength);
       break;
-    }
-    case CONTENT_JSON: {
-      encoding.writeVarUint(encoder, itemLength);
-      for (let i = 0; i < itemLength; i++) {
-        encoding.writeVarString(encoder, "null");
-      }
+    case CONTENT_JSON:
+      encoder.writeLen(itemLength);
+      for (let i = 0; i < itemLength; i++) encoder.writeString("null");
       break;
-    }
-    case CONTENT_BINARY: {
-      encoding.writeVarUint8Array(encoder, new Uint8Array(0));
+    case CONTENT_BINARY:
+      encoder.writeBuf(new Uint8Array(0));
       break;
-    }
-    case CONTENT_STRING: {
-      // Write a string of null characters with the same character length
-      encoding.writeVarString(encoder, "\0".repeat(itemLength));
+    case CONTENT_STRING:
+      encoder.writeString("\0".repeat(itemLength));
       break;
-    }
-    case CONTENT_EMBED: {
-      encoding.writeVarString(encoder, "null");
+    case CONTENT_EMBED:
+      encoder.writeJSON(null);
       break;
-    }
-    case CONTENT_FORMAT: {
-      // Keep a placeholder key and null value
-      encoding.writeVarString(encoder, "\0");
-      encoding.writeVarString(encoder, "null");
+    case CONTENT_FORMAT:
+      encoder.writeKey("\0");
+      encoder.writeJSON(null);
       break;
-    }
-    case CONTENT_TYPE: {
-      // ContentType is structural — should never be called for it
+    case CONTENT_TYPE:
       throw new Error("ContentType should be copied verbatim, not replaced");
-    }
-    case CONTENT_ANY: {
-      encoding.writeVarUint(encoder, itemLength);
-      for (let i = 0; i < itemLength; i++) {
-        encoding.writeAny(encoder, null);
-      }
+    case CONTENT_ANY:
+      encoder.writeLen(itemLength);
+      for (let i = 0; i < itemLength; i++) encoder.writeAny(null);
       break;
-    }
-    case CONTENT_DOC: {
-      encoding.writeVarString(encoder, "\0");
-      encoding.writeAny(encoder, null);
+    case CONTENT_DOC:
+      encoder.writeString("\0");
+      encoder.writeAny(null);
       break;
-    }
     default:
       throw new Error(`Unknown content ref: ${contentRef}`);
   }
 }
 
-// ── V1 CRDT metadata copier ─────────────────────────────────────────────────
+// ── CRDT metadata copier (abstract decoder/encoder) ───────────────────────
 
 function copyItemMetadata(
-  decoder: decoding.Decoder,
-  encoder: encoding.Encoder,
+  decoder: UpdateDecoder,
+  encoder: UpdateEncoder,
   info: number,
-  transformString: (s: string) => string = (s) => s,
+  transformString: (s: string) => string,
 ): void {
   const hasOrigin = (info & BIT8) !== 0;
   const hasRightOrigin = (info & BIT7) !== 0;
@@ -412,30 +502,49 @@ function copyItemMetadata(
   const cantCopyParentInfo = !hasOrigin && !hasRightOrigin;
 
   if (hasOrigin) {
-    encoding.writeVarUint(encoder, decoding.readVarUint(decoder)); // origin client
-    encoding.writeVarUint(encoder, decoding.readVarUint(decoder)); // origin clock
+    encoder.writeLeftID(decoder.readLeftID());
   }
   if (hasRightOrigin) {
-    encoding.writeVarUint(encoder, decoding.readVarUint(decoder)); // right origin client
-    encoding.writeVarUint(encoder, decoding.readVarUint(decoder)); // right origin clock
+    encoder.writeRightID(decoder.readRightID());
   }
   if (cantCopyParentInfo) {
-    const parentInfo = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, parentInfo);
-    if (parentInfo === 1) {
-      encoding.writeVarString(encoder, transformString(decoding.readVarString(decoder)));
+    const isYKey = decoder.readParentInfo();
+    encoder.writeParentInfo(isYKey);
+    if (isYKey) {
+      encoder.writeString(transformString(decoder.readString()));
     } else {
-      // parent is an item ID
-      encoding.writeVarUint(encoder, decoding.readVarUint(decoder)); // parent client
-      encoding.writeVarUint(encoder, decoding.readVarUint(decoder)); // parent clock
+      encoder.writeLeftID(decoder.readLeftID());
     }
     if (hasParentSub) {
-      encoding.writeVarString(encoder, transformString(decoding.readVarString(decoder)));
+      encoder.writeString(transformString(decoder.readString()));
     }
   }
 }
 
-// ── Core: strip content from a V1 update ────────────────────────────────────
+// ── Delete set copier (abstract DS decoder/encoder) ───────────────────────
+
+function copyDeleteSet(decoder: UpdateDecoder, encoder: UpdateEncoder): void {
+  const numClients = decoding.readVarUint(decoder.restDecoder);
+  encoding.writeVarUint(encoder.restEncoder, numClients);
+
+  for (let i = 0; i < numClients; i++) {
+    decoder.resetDsCurVal();
+    encoder.resetDsCurVal();
+
+    const client = decoding.readVarUint(decoder.restDecoder);
+    encoding.writeVarUint(encoder.restEncoder, client);
+
+    const numDeletes = decoding.readVarUint(decoder.restDecoder);
+    encoding.writeVarUint(encoder.restEncoder, numDeletes);
+
+    for (let j = 0; j < numDeletes; j++) {
+      encoder.writeDsClock(decoder.readDsClock());
+      encoder.writeDsLen(decoder.readDsLen());
+    }
+  }
+}
+
+// ── Core: strip content from an update ─────────────────────────────────────
 
 function hasEncryptableContent(contentRef: number): boolean {
   return (
@@ -447,14 +556,18 @@ function hasEncryptableContent(contentRef: number): boolean {
 }
 
 /**
- * Parse a Y.js V1 update and separate CRDT metadata from content.
+ * Parse a Y.js update and separate CRDT metadata from content.
  *
- * Returns a structure update (valid V1 with placeholder content) and an array
- * of content entries that can be encrypted into a sidecar.
+ * Accepts V1 or V2 input (via `version` parameter, default V2). Always
+ * outputs a V2 structure update with placeholder content and a sidecar
+ * containing the original content entries.
  */
-export function stripContent(v1Update: Uint8Array): StrippedUpdate {
-  const decoder = decoding.createDecoder(v1Update);
-  const encoder = encoding.createEncoder();
+export function stripContent(update: Uint8Array, version: 1 | 2 = 2): StrippedUpdate {
+  const rawDecoder = decoding.createDecoder(update);
+  const decoder: UpdateDecoder =
+    version === 2 ? new Y.UpdateDecoderV2(rawDecoder) : new Y.UpdateDecoderV1(rawDecoder);
+  const encoder = new Y.UpdateEncoderV2();
+
   const entries: ContentEntry[] = [];
   const dictionary: MetadataDictionary = new Map();
   const origToToken = new Map<string, string>();
@@ -470,37 +583,37 @@ export function stripContent(v1Update: Uint8Array): StrippedUpdate {
   }
 
   // ── Struct section ──────────────────────────────────────────────────────
-  const numClients = decoding.readVarUint(decoder);
-  encoding.writeVarUint(encoder, numClients);
+  const numClients = decoding.readVarUint(decoder.restDecoder);
+  encoding.writeVarUint(encoder.restEncoder, numClients);
 
   for (let c = 0; c < numClients; c++) {
-    const numStructs = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, numStructs);
+    const numStructs = decoding.readVarUint(decoder.restDecoder);
+    encoding.writeVarUint(encoder.restEncoder, numStructs);
 
-    const clientId = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, clientId);
+    const clientId = decoder.readClient();
+    encoder.writeClient(clientId);
 
-    let clock = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, clock);
+    let clock = decoding.readVarUint(decoder.restDecoder);
+    encoding.writeVarUint(encoder.restEncoder, clock);
 
     for (let s = 0; s < numStructs; s++) {
-      const info = decoding.readUint8(decoder);
-      encoding.writeUint8(encoder, info);
+      const info = decoder.readInfo();
+      encoder.writeInfo(info);
 
       const contentRef = info & BITS5;
 
       // GC (ref 0)
       if (contentRef === 0) {
-        const len = decoding.readVarUint(decoder);
-        encoding.writeVarUint(encoder, len);
+        const len = decoder.readLen();
+        encoder.writeLen(len);
         clock += len;
         continue;
       }
 
-      // Skip (ref 10)
+      // Skip (ref 10) — uses restDecoder/restEncoder directly
       if (contentRef === 10) {
-        const len = decoding.readVarUint(decoder);
-        encoding.writeVarUint(encoder, len);
+        const len = decoding.readVarUint(decoder.restDecoder);
+        encoding.writeVarUint(encoder.restEncoder, len);
         clock += len;
         continue;
       }
@@ -510,33 +623,31 @@ export function stripContent(v1Update: Uint8Array): StrippedUpdate {
 
       // Content — either strip or copy verbatim
       if (hasEncryptableContent(contentRef)) {
-        const { data, itemLength } = readContentRawBytes(decoder, contentRef);
+        const { data, itemLength } = readContentToSidecar(decoder, contentRef);
         entries.push({ clientId, clock, contentRef, data });
         writePlaceholderContent(encoder, contentRef, itemLength);
         clock += itemLength;
       } else if (contentRef === CONTENT_TYPE) {
-        // Hash XML tag names while keeping typeRef verbatim
-        const typeRef = decoding.readVarUint(decoder);
-        encoding.writeVarUint(encoder, typeRef);
+        const typeRef = decoder.readTypeRef();
+        encoder.writeTypeRef(typeRef);
         if (typeRef === 3 || typeRef === 5) {
-          encoding.writeVarString(encoder, replaceString(decoding.readVarString(decoder)));
+          encoder.writeKey(replaceString(decoder.readKey()));
         }
         clock += 1;
       } else {
-        // ContentDeleted — copy raw bytes
-        const { data, itemLength } = readContentRawBytes(decoder, contentRef);
-        encoding.writeUint8Array(encoder, data);
-        clock += itemLength;
+        // ContentDeleted
+        const len = decoder.readLen();
+        encoder.writeLen(len);
+        clock += len;
       }
     }
   }
 
-  // ── Delete set — copy verbatim ──────────────────────────────────────────
-  const remaining = decoder.arr.slice(decoder.pos);
-  encoding.writeUint8Array(encoder, remaining);
+  // ── Delete set ─────────────────────────────────────────────────────────
+  copyDeleteSet(decoder, encoder);
 
   return {
-    update: encoding.toUint8Array(encoder),
+    update: encoder.toUint8Array(),
     sidecar: { entries, dictionary },
   };
 }
@@ -544,50 +655,55 @@ export function stripContent(v1Update: Uint8Array): StrippedUpdate {
 /**
  * Restore original content into a structure update using sidecar entries.
  *
- * Takes a V1 structure update (with placeholder content) and the original
- * content entries, and produces the original cleartext V1 update.
+ * Takes a V2 structure update (with placeholder content) and the original
+ * content entries, and produces the cleartext update.
+ *
+ * Output version defaults to V2. Pass `outputVersion: 1` for V1 output.
  */
 export function restoreContent(
   structureUpdate: Uint8Array,
   sidecar: Sidecar,
+  outputVersion: 1 | 2 = 2,
 ): Uint8Array {
   const entryMap = buildSidecarMap(sidecar.entries);
-  const decoder = decoding.createDecoder(structureUpdate);
-  const encoder = encoding.createEncoder();
+  const rawDecoder = decoding.createDecoder(structureUpdate);
+  const decoder = new Y.UpdateDecoderV2(rawDecoder);
+  const encoder: UpdateEncoder =
+    outputVersion === 2 ? new Y.UpdateEncoderV2() : new Y.UpdateEncoderV1();
   const reverseTransform = (token: string) => sidecar.dictionary.get(token) ?? token;
 
   // ── Struct section ──────────────────────────────────────────────────────
-  const numClients = decoding.readVarUint(decoder);
-  encoding.writeVarUint(encoder, numClients);
+  const numClients = decoding.readVarUint(decoder.restDecoder);
+  encoding.writeVarUint(encoder.restEncoder, numClients);
 
   for (let c = 0; c < numClients; c++) {
-    const numStructs = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, numStructs);
+    const numStructs = decoding.readVarUint(decoder.restDecoder);
+    encoding.writeVarUint(encoder.restEncoder, numStructs);
 
-    const clientId = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, clientId);
+    const clientId = decoder.readClient();
+    encoder.writeClient(clientId);
 
-    let clock = decoding.readVarUint(decoder);
-    encoding.writeVarUint(encoder, clock);
+    let clock = decoding.readVarUint(decoder.restDecoder);
+    encoding.writeVarUint(encoder.restEncoder, clock);
 
     for (let s = 0; s < numStructs; s++) {
-      const info = decoding.readUint8(decoder);
-      encoding.writeUint8(encoder, info);
+      const info = decoder.readInfo();
+      encoder.writeInfo(info);
 
       const contentRef = info & BITS5;
 
       // GC
       if (contentRef === 0) {
-        const len = decoding.readVarUint(decoder);
-        encoding.writeVarUint(encoder, len);
+        const len = decoder.readLen();
+        encoder.writeLen(len);
         clock += len;
         continue;
       }
 
       // Skip
       if (contentRef === 10) {
-        const len = decoding.readVarUint(decoder);
-        encoding.writeVarUint(encoder, len);
+        const len = decoding.readVarUint(decoder.restDecoder);
+        encoding.writeVarUint(encoder.restEncoder, len);
         clock += len;
         continue;
       }
@@ -600,37 +716,35 @@ export function restoreContent(
       if (entry && hasEncryptableContent(contentRef)) {
         // Skip placeholder content in the structure update
         const itemLength = skipContent(decoder, contentRef);
-        // Write original content from sidecar
-        encoding.writeUint8Array(encoder, entry.data);
+        // Write original content from sidecar through abstract encoder
+        writeContentFromSidecar(encoder, contentRef, entry.data);
         clock += itemLength;
       } else if (contentRef === CONTENT_TYPE) {
-        // Restore XML tag names from dictionary
-        const typeRef = decoding.readVarUint(decoder);
-        encoding.writeVarUint(encoder, typeRef);
+        const typeRef = decoder.readTypeRef();
+        encoder.writeTypeRef(typeRef);
         if (typeRef === 3 || typeRef === 5) {
-          encoding.writeVarString(encoder, reverseTransform(decoding.readVarString(decoder)));
+          encoder.writeKey(reverseTransform(decoder.readKey()));
         }
         clock += 1;
       } else {
-        // ContentDeleted or no sidecar entry — copy verbatim
-        const { data, itemLength } = readContentRawBytes(decoder, contentRef);
-        encoding.writeUint8Array(encoder, data);
-        clock += itemLength;
+        // ContentDeleted or no sidecar entry
+        const len = decoder.readLen();
+        encoder.writeLen(len);
+        clock += len;
       }
     }
   }
 
-  // ── Delete set — copy verbatim ──────────────────────────────────────────
-  const remaining = decoder.arr.slice(decoder.pos);
-  encoding.writeUint8Array(encoder, remaining);
+  // ── Delete set ─────────────────────────────────────────────────────────
+  copyDeleteSet(decoder, encoder);
 
-  return encoding.toUint8Array(encoder);
+  return encoder.toUint8Array();
 }
 
 // ── High-level API ──────────────────────────────────────────────────────────
 
 export type ContentEncryptedUpdate = {
-  /** V1 update with placeholder content (valid Y.js update, CRDT-operable) */
+  /** V2 update with placeholder content (valid Y.js update, CRDT-operable) */
   structureUpdate: Uint8Array;
   /** AES-GCM encrypted sidecar containing original content entries */
   encryptedSidecar: EncryptedBinary;
@@ -639,20 +753,15 @@ export type ContentEncryptedUpdate = {
 /**
  * Encrypt the content of a Y.js update while preserving CRDT metadata.
  *
- * Accepts either V1 or V2 updates (auto-detected via the `version` field).
- * The returned structure update is always V1 format.
- *
- * The structure update is a valid Y.js V1 update that the server can merge,
- * sync, and store. The encrypted sidecar contains the original content
- * encrypted with AES-256-GCM.
+ * Accepts either V1 or V2 updates via the `version` parameter (default V2).
+ * The returned structure update is always V2 format.
  */
 export async function encryptUpdateContent(
   key: CryptoKey,
   update: Uint8Array,
-  version: 1 | 2 = 1,
+  version: 1 | 2 = 2,
 ): Promise<ContentEncryptedUpdate> {
-  const v1 = version === 2 ? Y.convertUpdateFormatV2ToV1(update) : update;
-  const { update: structureUpdate, sidecar } = stripContent(v1);
+  const { update: structureUpdate, sidecar } = stripContent(update, version);
   const sidecarBytes = encodeSidecar(sidecar);
   const encryptedSidecar = await encryptUpdate(key, sidecarBytes);
   return { structureUpdate, encryptedSidecar };
@@ -661,17 +770,16 @@ export async function encryptUpdateContent(
 /**
  * Decrypt a content-encrypted update, restoring the original Y.js update.
  *
- * Returns a V1 update by default. Pass `outputVersion: 2` to get a V2 update.
+ * Returns a V2 update by default. Pass `outputVersion: 1` to get a V1 update.
  */
 export async function decryptUpdateContent(
   key: CryptoKey,
   encrypted: ContentEncryptedUpdate,
-  outputVersion: 1 | 2 = 1,
+  outputVersion: 1 | 2 = 2,
 ): Promise<Uint8Array> {
   const sidecarBytes = await decryptUpdate(key, encrypted.encryptedSidecar);
   const sidecar = decodeSidecar(sidecarBytes);
-  const v1 = restoreContent(encrypted.structureUpdate, sidecar);
-  return outputVersion === 2 ? Y.convertUpdateFormatV1ToV2(v1) : v1;
+  return restoreContent(encrypted.structureUpdate, sidecar, outputVersion);
 }
 
 /**
@@ -683,15 +791,14 @@ export async function decryptContentPayload(
   key: CryptoKey,
   structureUpdate: Uint8Array,
   encryptedSidecars: EncryptedBinary[],
-  outputVersion: 1 | 2 = 1,
+  outputVersion: 1 | 2 = 2,
 ): Promise<Uint8Array> {
   const sidecars: Sidecar[] = [];
   for (const encrypted of encryptedSidecars) {
     const bytes = await decryptUpdate(key, encrypted);
     sidecars.push(decodeSidecar(bytes));
   }
-  const v1 = restoreContent(structureUpdate, mergeSidecars(sidecars));
-  return outputVersion === 2 ? Y.convertUpdateFormatV1ToV2(v1) : v1;
+  return restoreContent(structureUpdate, mergeSidecars(sidecars), outputVersion);
 }
 
 /**
@@ -702,8 +809,7 @@ export async function encryptToContentPayload(
   key: CryptoKey,
   v2Update: Uint8Array,
 ): Promise<Uint8Array> {
-  const v1 = Y.convertUpdateFormatV2ToV1(v2Update);
-  const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(key, v1, 1);
+  const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(key, v2Update, 2);
   return encodeContentEncryptedPayload({
     structureUpdate,
     encryptedSidecars: [encryptedSidecar],
@@ -729,7 +835,6 @@ export async function compactSidecars(
   }
   const combined = mergeSidecars(decoded);
 
-  // Deduplicate entries by (clientId, clock)
   const deduped = new Map<string, ContentEntry>();
   for (const entry of combined.entries) {
     deduped.set(`${entry.clientId}:${entry.clock}`, entry);
@@ -740,5 +845,5 @@ export async function compactSidecars(
   const encrypted = await encryptUpdate(key, compactedBytes);
   const index = buildSidecarIndex(merged);
 
-  return { encrypted, index };
+  return { encrypted, index, hash: hashSidecar(encrypted) };
 }

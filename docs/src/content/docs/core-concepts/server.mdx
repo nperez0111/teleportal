@@ -107,7 +107,7 @@ You can implement permissions based on:
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // ... storage setup
   },
   checkPermission: async ({ context, documentId, fileId, message, type }) => {
@@ -288,7 +288,7 @@ When rate limits are exceeded, the server automatically disconnects the client, 
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // ... storage setup
   },
   rateLimitConfig: {
