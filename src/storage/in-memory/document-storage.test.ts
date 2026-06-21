@@ -1389,6 +1389,103 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       expect(sidecar.hash).toEqual(hashSidecar(sidecar.encrypted));
     });
 
+    it("processes compaction even when the update itself is a no-op (new client with no local changes)", async () => {
+      // Build the original updates and store them
+      const updates: Uint8Array[] = [];
+      for (let i = 1; i <= 3; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = i * 100;
+        doc.getMap("root").set(`key-${i}`, i);
+        const v2 = Y.encodeStateAsUpdateV2(doc);
+        updates.push(v2);
+        await storage.handleUpdate("doc-1", envelopeUpdate(makeContentEncryptedUpdate(v2)));
+      }
+
+      let state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(3);
+
+      const compaction = buildCompaction(state!.sidecars);
+
+      // Simulate a new client: apply the same updates to get identical state,
+      // then compute a diff against the server's SV — should produce a no-op update
+      const clientDoc = new Y.Doc();
+      for (const u of updates) {
+        Y.applyUpdateV2(clientDoc, u);
+      }
+      const serverSV = Y.encodeStateVectorFromUpdateV2(state!.update);
+      const noOpDiff = Y.encodeStateAsUpdateV2(clientDoc, serverSV);
+
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeCompactionPayload(noOpDiff, compaction)),
+      );
+
+      state = await storage.getDocumentState("doc-1");
+      // Compaction applied, no-op diff didn't add a sidecar → exactly 1 compacted sidecar
+      expect(state!.sidecars.length).toBe(1);
+      expect(state!.sidecars[0].hash).toEqual(compaction.hash);
+    });
+
+    it("next client connecting after compaction receives only the compacted sidecar", async () => {
+      // Accumulate 3 sidecars from different clients
+      for (let i = 1; i <= 3; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = i * 100;
+        doc.getMap("root").set(`key-${i}`, i);
+        await storage.handleUpdate(
+          "doc-1",
+          envelopeUpdate(makeContentEncryptedUpdate(Y.encodeStateAsUpdateV2(doc))),
+        );
+      }
+
+      // Verify 3 sidecars accumulated
+      let state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(3);
+      const compaction = buildCompaction(state!.sidecars);
+
+      // Client A sends back sync-step-2 with no-op diff + compaction
+      const updates = [];
+      for (let i = 1; i <= 3; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = i * 100;
+        doc.getMap("root").set(`key-${i}`, i);
+        updates.push(Y.encodeStateAsUpdateV2(doc));
+      }
+      const clientADoc = new Y.Doc();
+      for (const u of updates) Y.applyUpdateV2(clientADoc, u);
+      const serverSV = Y.encodeStateVectorFromUpdateV2(state!.update);
+      const noOpDiff = Y.encodeStateAsUpdateV2(clientADoc, serverSV);
+
+      await storage.handleUpdate(
+        "doc-1",
+        envelopeUpdate(makeCompactionPayload(noOpDiff, compaction)),
+      );
+
+      // After compaction: should have exactly 1 sidecar
+      state = await storage.getDocumentState("doc-1");
+      expect(state!.sidecars.length).toBe(1);
+
+      // Now simulate Client B connecting: server calls handleSyncStep1 which
+      // uses getDocument() → encodes sidecars into the payload
+      const doc = await storage.getDocument("doc-1");
+      expect(doc).not.toBeNull();
+      const payload = decodeContentEncryptedPayload(
+        doc!.content.update as unknown as EncryptedUpdatePayload,
+      );
+
+      // Client B should receive exactly 1 sidecar (the compacted one)
+      expect(payload.encryptedSidecars.length).toBe(1);
+
+      // Verify the content is intact: decode the compacted sidecar and restore
+      const sidecar = decodeSidecar(payload.encryptedSidecars[0] as unknown as Uint8Array);
+      const restored = restoreContent(payload.structureUpdate, sidecar);
+      const verifyDoc = new Y.Doc();
+      Y.applyUpdateV2(verifyDoc, restored);
+      expect(verifyDoc.getMap("root").get("key-1")).toBe(1);
+      expect(verifyDoc.getMap("root").get("key-2")).toBe(2);
+      expect(verifyDoc.getMap("root").get("key-3")).toBe(3);
+    });
+
     it("update without compaction appends sidecars normally", async () => {
       const docA = new Y.Doc();
       docA.clientID = 100;

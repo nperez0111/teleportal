@@ -4,6 +4,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 import {
   decodeContentEncryptedPayload,
   encodeContentEncryptedPayload,
+  encryptUpdateContent,
 } from "teleportal/protocol/encryption";
 import type {
   Message,
@@ -464,5 +465,195 @@ describe("encrypted client integration", () => {
     } as unknown as VersionedUpdate);
 
     expect(ydoc.getText("body").toString()).toBe("");
+  });
+
+  // ── Incremental sidecar compaction ───────────────────────────────────────
+
+  /**
+   * Helper: create an encrypted VersionedUpdate from a Y.Doc edit.
+   * Each call produces a distinct sidecar (different content).
+   */
+  async function makeEncryptedUpdate(key: CryptoKey, text: string): Promise<VersionedUpdate> {
+    const doc = new Y.Doc();
+    doc.getText("body").insert(0, text);
+    const update = Y.encodeStateAsUpdateV2(doc);
+    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(key, update, 2);
+    const payload = encodeContentEncryptedPayload({
+      structureUpdate,
+      encryptedSidecars: [encryptedSidecar],
+    });
+    return { version: 2, data: payload } as unknown as VersionedUpdate;
+  }
+
+  describe("incremental compaction", () => {
+    const ORIGINAL_THRESHOLD = EncryptionClient.COMPACTION_THRESHOLD;
+
+    // Use a low threshold for faster tests, restore afterward
+    beforeEach(() => {
+      EncryptionClient.COMPACTION_THRESHOLD = ORIGINAL_THRESHOLD;
+    });
+
+    it("triggers compaction after COMPACTION_THRESHOLD updates", async () => {
+      const THRESHOLD = 5;
+      EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
+
+      const key = await createEncryptionKey();
+      const client = new EncryptionClient({ document: "doc-1", key });
+
+      // Feed THRESHOLD updates
+      for (let i = 0; i < THRESHOLD; i++) {
+        const update = await makeEncryptedUpdate(key, `edit-${i}`);
+        await client.handleUpdate(update);
+      }
+
+      // The next onUpdate should carry the compaction
+      const ydoc = client.ydoc;
+      ydoc.getText("notes").insert(0, "my own edit");
+      const msg = await client.onUpdate({
+        version: 2,
+        data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      } as VersionedUpdate);
+
+      if (msg.type !== "doc" || msg.payload.type !== "update") {
+        throw new Error("Expected doc update");
+      }
+
+      const decoded = decodeContentEncryptedPayload(msg.payload.update.data as Update);
+      expect(decoded.compaction).toBeDefined();
+      expect(decoded.compaction!.sourceHashes.length).toBe(THRESHOLD);
+      expect(decoded.compaction!.sidecar).toBeInstanceOf(Uint8Array);
+      expect(decoded.compaction!.hash).toBeInstanceOf(Uint8Array);
+    });
+
+    it("does not trigger compaction below threshold", async () => {
+      const THRESHOLD = 10;
+      EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
+
+      const key = await createEncryptionKey();
+      const client = new EncryptionClient({ document: "doc-1", key });
+
+      // Feed fewer than THRESHOLD updates
+      for (let i = 0; i < THRESHOLD - 1; i++) {
+        const update = await makeEncryptedUpdate(key, `edit-${i}`);
+        await client.handleUpdate(update);
+      }
+
+      // onUpdate should NOT carry compaction
+      const ydoc = client.ydoc;
+      ydoc.getText("notes").insert(0, "my edit");
+      const msg = await client.onUpdate({
+        version: 2,
+        data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      } as VersionedUpdate);
+
+      if (msg.type !== "doc" || msg.payload.type !== "update") {
+        throw new Error("Expected doc update");
+      }
+
+      const decoded = decodeContentEncryptedPayload(msg.payload.update.data as Update);
+      expect(decoded.compaction).toBeUndefined();
+    });
+
+    it("resets accumulator after compaction and triggers again", async () => {
+      const THRESHOLD = 3;
+      EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
+
+      const key = await createEncryptionKey();
+      const client = new EncryptionClient({ document: "doc-1", key });
+
+      // First batch: trigger compaction
+      for (let i = 0; i < THRESHOLD; i++) {
+        const update = await makeEncryptedUpdate(key, `batch1-${i}`);
+        await client.handleUpdate(update);
+      }
+
+      // Consume the first compaction via onUpdate
+      const ydoc = client.ydoc;
+      ydoc.getText("notes").insert(0, "first send");
+      const msg1 = await client.onUpdate({
+        version: 2,
+        data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      } as VersionedUpdate);
+
+      if (msg1.type !== "doc" || msg1.payload.type !== "update") {
+        throw new Error("Expected doc update");
+      }
+      const decoded1 = decodeContentEncryptedPayload(msg1.payload.update.data as Update);
+      expect(decoded1.compaction).toBeDefined();
+      expect(decoded1.compaction!.sourceHashes.length).toBe(THRESHOLD);
+
+      // Second batch: trigger compaction again
+      for (let i = 0; i < THRESHOLD; i++) {
+        const update = await makeEncryptedUpdate(key, `batch2-${i}`);
+        await client.handleUpdate(update);
+      }
+
+      ydoc.getText("notes").insert(0, "second send");
+      const msg2 = await client.onUpdate({
+        version: 2,
+        data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      } as VersionedUpdate);
+
+      if (msg2.type !== "doc" || msg2.payload.type !== "update") {
+        throw new Error("Expected doc update");
+      }
+      const decoded2 = decodeContentEncryptedPayload(msg2.payload.update.data as Update);
+      expect(decoded2.compaction).toBeDefined();
+      expect(decoded2.compaction!.sourceHashes.length).toBe(THRESHOLD);
+    });
+
+    it("triggers compaction from outgoing updates only (single client)", async () => {
+      const THRESHOLD = 4;
+      EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
+
+      const key = await createEncryptionKey();
+      const ydoc = new Y.Doc();
+      const client = new EncryptionClient({ document: "doc-1", ydoc, key });
+
+      // No handleUpdate — only the client's own edits via onUpdate
+      for (let i = 0; i < THRESHOLD; i++) {
+        ydoc.getText("body").insert(0, `edit-${i} `);
+        await client.onUpdate({
+          version: 2,
+          data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+        } as VersionedUpdate);
+      }
+
+      // Compaction was triggered on the THRESHOLDth onUpdate but stored for the NEXT call.
+      // The next onUpdate should carry it.
+      ydoc.getText("body").insert(0, "trigger ");
+      const msg = await client.onUpdate({
+        version: 2,
+        data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      } as VersionedUpdate);
+
+      if (msg.type !== "doc" || msg.payload.type !== "update") {
+        throw new Error("Expected doc update");
+      }
+
+      const decoded = decodeContentEncryptedPayload(msg.payload.update.data as Update);
+      expect(decoded.compaction).toBeDefined();
+      expect(decoded.compaction!.sourceHashes.length).toBe(THRESHOLD);
+    });
+
+    it("onUpdate without pending compaction has no compaction field", async () => {
+      const key = await createEncryptionKey();
+      const ydoc = new Y.Doc();
+      const client = new EncryptionClient({ document: "doc-1", ydoc, key });
+
+      // No handleUpdate calls — no accumulated sidecars
+      ydoc.getText("body").insert(0, "plain update");
+      const msg = await client.onUpdate({
+        version: 2,
+        data: Y.encodeStateAsUpdateV2(ydoc) as Update,
+      } as VersionedUpdate);
+
+      if (msg.type !== "doc" || msg.payload.type !== "update") {
+        throw new Error("Expected doc update");
+      }
+
+      const decoded = decodeContentEncryptedPayload(msg.payload.update.data as Update);
+      expect(decoded.compaction).toBeUndefined();
+    });
   });
 });
