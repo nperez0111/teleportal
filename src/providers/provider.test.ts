@@ -1,1449 +1,918 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import {
-  DocMessage,
-  Message,
-  PresenceMessage,
-  RpcMessage,
-  type ClientContext,
-  type MilestoneSnapshot,
-  type StateVector,
-  type Transport,
-} from "teleportal";
-import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
+import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import {
-  type MilestoneCreateResponse,
-  type MilestoneGetResponse,
-  type MilestoneListResponse,
-  type MilestoneUpdateNameResponse,
-} from "../protocols/milestone";
-import { Connection, type ConnectionState } from "./connection";
-import { Provider, type DefaultTransportProperties } from "./provider";
+import { Awareness } from "y-protocols/awareness";
+import { DocMessage, PresenceMessage, RpcMessage } from "teleportal";
+import { Connection } from "./connection";
+import { Provider } from "./provider";
+import { createMemoryTransportPair } from "./transports/memory";
+import type { RpcExtension, RpcExtensionContext } from "./rpc-extension";
 
-// Mock Connection for testing
-class MockConnection extends Connection<{
-  connected: { clientId: string };
-  disconnected: {};
-  connecting: {};
-  errored: { reconnectAttempt: number };
-}> {
-  public sentMessages: Message[] = [];
-  public responseHandler?: (message: Message) => Message | null;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  constructor() {
-    super({ connect: false });
-    // Initialize state to disconnected
-    this.setState({
-      type: "disconnected",
-      context: {},
-    });
-  }
+/** Create a connected provider backed by an in-memory transport pair. */
+async function createTestProvider(options?: {
+  rpc?: Record<string, () => RpcExtension<any>>;
+  ydoc?: Y.Doc;
+  awareness?: Awareness;
+}) {
+  const [clientTransport, serverTransport] = createMemoryTransportPair();
+  const clientConn = new Connection({
+    transports: [clientTransport],
+    connect: false,
+    batchIntervalMs: 0,
+  });
+  const serverConn = new Connection({
+    transports: [serverTransport],
+    connect: false,
+    batchIntervalMs: 0,
+  });
 
-  protected async initConnection(): Promise<void> {
-    this.setState({
-      type: "connecting",
-      context: {},
-    });
-    // Simulate connection
-    await new Promise<void>((r) => queueMicrotask(r));
-    this.setState({
-      type: "connected",
-      context: { clientId: "test-client" },
-    });
-  }
+  await Promise.all([clientConn.connect(), serverConn.connect()]);
 
-  protected async sendMessage(message: Message): Promise<void> {
-    this.sentMessages.push(message);
-    // If there's a response handler, simulate a response
-    if (this.responseHandler) {
-      const response = this.responseHandler(message);
-      if (response) {
-        // Emit the response asynchronously to simulate network delay
-        queueMicrotask(() => {
-          this.call("received-message", response);
-        });
-      }
-    }
-  }
+  const provider = new Provider({
+    connection: clientConn,
+    document: "test-doc",
+    enableOfflinePersistence: false,
+    rpc: options?.rpc ?? {},
+    ydoc: options?.ydoc,
+    awareness: options?.awareness,
+  });
 
-  protected async closeConnection(): Promise<void> {
-    this.setState({
-      type: "disconnected",
-      context: {},
-    });
-  }
-
-  // Helper method to manually trigger disconnect
-  public triggerDisconnect() {
-    this.setState({
-      type: "disconnected",
-      context: {},
-    });
-  }
-
-  // Helper method to manually trigger connect
-  public triggerConnect() {
-    this.setState({
-      type: "connected",
-      context: { clientId: "test-client" },
-    });
-  }
-
-  // Helper method to simulate receiving a message
-  public simulateMessage(message: Message) {
-    this.call("received-message", message);
-  }
+  return { provider, clientConn, serverConn, clientTransport, serverTransport };
 }
 
-// Mock Transport for testing
-class MockTransport implements Transport<ClientContext, DefaultTransportProperties> {
-  public readable: ReadableStream<Message<ClientContext>>;
-  public writable: WritableStream<Message<ClientContext>>;
-  public synced: Promise<void>;
-  public handler: {
-    start: () => Promise<Message<ClientContext>>;
+/** Create a mock RPC extension for testing. */
+function createMockRpc() {
+  let ctx: RpcExtensionContext | null = null;
+  let destroyed = false;
+  const handledMessages: any[] = [];
+
+  const extension: RpcExtension<{
+    ping(): string;
+    getCtx(): RpcExtensionContext | null;
+  }> = {
+    create(c) {
+      ctx = c;
+      return {
+        ping: () => "pong",
+        getCtx: () => ctx,
+      };
+    },
+    destroy() {
+      destroyed = true;
+    },
+    handleMessage(msg) {
+      handledMessages.push(msg);
+      return true;
+    },
+    handleAck(msg) {
+      handledMessages.push(msg);
+      return true;
+    },
   };
 
-  private syncedResolve?: () => void;
-  private syncedReject?: (error: Error) => void;
-
-  constructor() {
-    const { readable, writable } = new TransformStream<Message<ClientContext>>();
-    this.readable = readable;
-    this.writable = writable;
-
-    // Create a controllable promise for synced
-    this.synced = new Promise<void>((resolve, reject) => {
-      this.syncedResolve = resolve;
-      this.syncedReject = reject;
-    });
-
-    this.handler = {
-      start: async () => {
-        return new DocMessage(
-          "test-doc",
-          {
-            type: "sync-step-1",
-            sv: new Uint8Array() as StateVector,
-          },
-          { clientId: "test-client" },
-        );
-      },
-    };
-  }
-
-  // Helper method to resolve the synced promise
-  public resolveSynced() {
-    if (this.syncedResolve) {
-      this.syncedResolve();
-    }
-  }
-
-  // Helper method to reject the synced promise
-  public rejectSynced(error: Error = new Error("Sync failed")) {
-    if (this.syncedReject) {
-      this.syncedReject(error);
-    }
-  }
+  return {
+    factory: () => extension,
+    isDestroyed: () => destroyed,
+    handledMessages,
+    getCtx: () => ctx,
+  };
 }
 
-describe("Provider sync events", () => {
-  let provider: Provider<MockTransport>;
-  let mockConnection: MockConnection;
-  let mockTransport: MockTransport;
-  let ydoc: Y.Doc;
+/** Wait for queued microtasks / timers to flush. */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 20));
+}
 
-  beforeEach(() => {
-    ydoc = new Y.Doc();
-    mockConnection = new MockConnection();
-    mockTransport = new MockTransport();
-  });
+/**
+ * Send a sync-done message from the server connection so that
+ * the client provider's transport.synced promise can resolve.
+ */
+async function sendSyncDone(serverConn: Connection, document: string) {
+  const syncDone = new DocMessage(document, { type: "sync-done" }, {}, false);
+  await serverConn.send(syncDone);
+  await flush();
+}
 
-  afterEach(() => {
-    if (provider) {
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("Provider", () => {
+  // -----------------------------------------------------------------------
+  // 1. Provider Construction and Lifecycle
+  // -----------------------------------------------------------------------
+  describe("construction and lifecycle", () => {
+    it("creates with default ydoc and awareness when not provided", async () => {
+      const { provider } = await createTestProvider();
+
+      expect(provider.doc).toBeInstanceOf(Y.Doc);
+      expect(provider.awareness).toBeInstanceOf(Awareness);
+      expect(provider.document).toBe("test-doc");
+
       provider.destroy();
-    }
-    if (mockConnection) {
-      mockConnection.destroy();
-    }
-  });
-
-  it("should emit sync event with [true, doc] when connection connects", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
     });
 
-    // Start with connection already connected so init() is called immediately
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
+    it("creates with custom ydoc and awareness", async () => {
+      const { provider } = await createTestProvider({
+        ydoc: new Y.Doc(),
+        awareness: undefined,
+      });
 
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
+      expect(provider.doc).toBeInstanceOf(Y.Doc);
+      expect(provider.awareness).toBeInstanceOf(Awareness);
 
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Now trigger another connect event to test the listener set up in init()
-    mockConnection.triggerDisconnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    mockConnection.triggerConnect();
-
-    // Wait for event to be processed
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    expect(syncEvents.length).toBeGreaterThan(0);
-    const connectedEvent = syncEvents.find(([isSynced]) => isSynced === true);
-    expect(connectedEvent).toBeDefined();
-    if (connectedEvent) {
-      expect(connectedEvent[0]).toBe(true);
-      expect(connectedEvent[1]).toBe(ydoc);
-    }
-  });
-
-  it("should emit sync event with [false, doc] when connection disconnects", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
-    });
-
-    // Connect before creating provider (Provider.create() waits for connection)
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Then disconnect
-    mockConnection.triggerDisconnect();
-
-    // Wait for event to be processed
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    const disconnectedEvent = syncEvents.find(([isSynced]) => isSynced === false);
-    expect(disconnectedEvent).toBeDefined();
-    if (disconnectedEvent) {
-      expect(disconnectedEvent[0]).toBe(false);
-      expect(disconnectedEvent[1]).toBe(ydoc);
-    }
-  });
-
-  it("should emit sync event with [true, doc] when transport.synced resolves", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
-    });
-
-    // Connect before creating provider
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Resolve the synced promise
-    mockTransport.resolveSynced();
-
-    // Wait for promise to resolve and event to be processed
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    const syncedEvent = syncEvents.find(([isSynced]) => isSynced === true);
-    expect(syncedEvent).toBeDefined();
-    if (syncedEvent) {
-      expect(syncedEvent[0]).toBe(true);
-      expect(syncedEvent[1]).toBe(ydoc);
-    }
-  });
-
-  it("should emit sync event with [false, doc] when transport.synced rejects", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
-    });
-
-    // Connect before creating provider
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Reject the synced promise
-    mockTransport.rejectSynced(new Error("Sync failed"));
-
-    // Wait for promise to reject and event to be processed
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    const rejectedEvent = syncEvents.find(([isSynced]) => isSynced === false);
-    expect(rejectedEvent).toBeDefined();
-    if (rejectedEvent) {
-      expect(rejectedEvent[0]).toBe(false);
-      expect(rejectedEvent[1]).toBe(ydoc);
-    }
-  });
-
-  it("should emit multiple sync events for connection state changes", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
-    });
-
-    // Connect before creating provider
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Disconnect
-    mockConnection.triggerDisconnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Connect again
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Should have multiple events
-    expect(syncEvents.length).toBeGreaterThan(1);
-
-    // Check that we have both true and false events
-    const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
-    const falseEvents = syncEvents.filter(([isSynced]) => isSynced === false);
-
-    expect(trueEvents.length).toBeGreaterThan(0);
-    expect(falseEvents.length).toBeGreaterThan(0);
-
-    // All events should reference the same doc
-    syncEvents.forEach(([, doc]) => {
-      expect(doc).toBe(ydoc);
-    });
-  });
-
-  it("should emit sync events in correct order: connect -> synced resolve", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
-    });
-
-    // Connect before creating provider
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Resolve synced
-    mockTransport.resolveSynced();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Should have at least one true event
-    const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
-    expect(trueEvents.length).toBeGreaterThan(0);
-  });
-
-  it("should emit sync event when transport.synced resolves on initial connection", async () => {
-    const syncEvents: Array<[boolean, Y.Doc]> = [];
-
-    // Set up listener before creating provider
-    ydoc.on("sync", (isSynced: boolean, doc: Y.Doc) => {
-      syncEvents.push([isSynced, doc]);
-    });
-
-    // Start with connection already connected
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-
-    // Wait for init to complete
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Resolve synced - this should trigger a sync event
-    mockTransport.resolveSynced();
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Should have at least one true event from synced resolving
-    const trueEvents = syncEvents.filter(([isSynced]) => isSynced === true);
-    expect(trueEvents.length).toBeGreaterThan(0);
-    expect(trueEvents[0][0]).toBe(true);
-    expect(trueEvents[0][1]).toBe(ydoc);
-  });
-});
-
-describe("Provider milestone operations", () => {
-  let provider: Provider<MockTransport>;
-  let mockConnection: MockConnection;
-  let mockTransport: MockTransport;
-  let ydoc: Y.Doc;
-
-  beforeEach(() => {
-    ydoc = new Y.Doc();
-    mockConnection = new MockConnection();
-    mockTransport = new MockTransport();
-    mockConnection.sentMessages = [];
-  });
-
-  afterEach(() => {
-    if (provider) {
       provider.destroy();
-    }
-    if (mockConnection) {
-      mockConnection.destroy();
-    }
-  });
-
-  // Helper function to set up provider and ack initial messages
-  async function setupProvider(opts?: { encryptionKey?: CryptoKey }) {
-    mockConnection.triggerConnect();
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-      encryptionKey: opts?.encryptionKey,
     });
 
-    // Ack any initial messages sent during provider creation
-    const initialMessages = mockConnection.sentMessages;
-    if (initialMessages.length > 0) {
-      const { AckMessage } = await import("teleportal");
-      for (const msg of initialMessages) {
-        if (msg.type !== "ack" && msg.type !== "awareness") {
-          const ack = new AckMessage(
-            { type: "ack", messageId: msg.id },
-            { clientId: "test-client" },
-          );
-          mockConnection.simulateMessage(ack);
-        }
-      }
-    }
+    it("creates with explicitly provided ydoc and awareness", async () => {
+      const ydoc = new Y.Doc();
+      const awareness = new Awareness(ydoc);
+      const { provider } = await createTestProvider({ ydoc, awareness });
 
-    mockTransport.resolveSynced();
-    // Wait for synced to resolve (should be fast now that messages are acked)
-    await provider.synced;
-  }
+      expect(provider.doc).toBe(ydoc);
+      expect(provider.awareness).toBe(awareness);
 
-  it("should list milestones", async () => {
-    await setupProvider();
-
-    // Set up response handler for RPC messages
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneList") {
-          const payload =
-            message.payload.type === "success"
-              ? (message.payload.payload as {
-                  snapshotIds?: string[];
-                  includeDeleted?: boolean;
-                })
-              : undefined;
-          if (!payload) return null;
-          const response: MilestoneListResponse = {
-            milestones: [
-              {
-                id: "milestone-1",
-                name: "v1.0.0",
-                documentId: "test-doc",
-                createdAt: 1234567890,
-                createdBy: { type: "system", id: "test-node" },
-              },
-              {
-                id: "milestone-2",
-                name: "v1.1.0",
-                documentId: "test-doc",
-                createdAt: 1234567900,
-                createdBy: { type: "system", id: "test-node" },
-              },
-            ],
-          };
-          return new RpcMessage(
-            "test-doc",
-            { type: "success", payload: response },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-      }
-      return null;
-    };
-
-    const milestones = await provider.listMilestones();
-
-    expect(milestones).toHaveLength(2);
-    expect(milestones[0].id).toBe("milestone-1");
-    expect(milestones[0].name).toBe("v1.0.0");
-    expect(milestones[1].id).toBe("milestone-2");
-    expect(milestones[1].name).toBe("v1.1.0");
-  });
-
-  it("should get milestone snapshot", async () => {
-    await setupProvider();
-
-    const testSnapshot = new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
-
-    // Set up response handler for RPC snapshot request
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneGet" && message.payload.type === "success") {
-          const payload = message.payload.payload as { milestoneId: string };
-          if (payload.milestoneId === "milestone-1") {
-            const response: MilestoneGetResponse = {
-              milestoneId: "milestone-1",
-              snapshot: testSnapshot,
-            };
-            return new RpcMessage(
-              "test-doc",
-              { type: "success", payload: response },
-              message.rpcMethod,
-              "response",
-              message.id,
-              { clientId: "test-client" },
-              false,
-            );
-          }
-        }
-      }
-      return null;
-    };
-
-    const snapshot = await provider.getMilestoneSnapshot("milestone-1");
-
-    expect(snapshot).toEqual(testSnapshot);
-  });
-
-  it("round-trips a client-encrypted snapshot for E2EE documents", async () => {
-    const { createEncryptionKey } = await import("teleportal/encryption-key");
-    const { decodeEncryptedUpdate } = await import("teleportal/protocol/encryption");
-    const encryptionKey = await createEncryptionKey();
-    await setupProvider({ encryptionKey });
-
-    ydoc.getText("content").insert(0, "secret");
-    const plaintext = Y.encodeStateAsUpdateV2(ydoc);
-
-    // Capture the encrypted snapshot createMilestone sends, then serve it back
-    // from getMilestoneSnapshot to verify it decrypts to the original content.
-    let stored: Uint8Array | undefined;
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneCreate") {
-          stored = (message.payload.payload as { snapshot: Uint8Array }).snapshot;
-          const response: MilestoneCreateResponse = {
-            milestone: {
-              id: "milestone-1",
-              name: "v1",
-              documentId: "test-doc",
-              createdAt: Date.now(),
-              createdBy: { type: "system", id: "test-node" },
-            },
-          };
-          return new RpcMessage(
-            "test-doc",
-            { type: "success", payload: response },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-        if (message.rpcMethod === "milestoneGet") {
-          const response: MilestoneGetResponse = {
-            milestoneId: "milestone-1",
-            snapshot: stored as unknown as MilestoneSnapshot,
-          };
-          return new RpcMessage(
-            "test-doc",
-            { type: "success", payload: response },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-      }
-      return null;
-    };
-
-    await provider.createMilestone("v1");
-    // The stored snapshot must be an encrypted-update container (decodable, not
-    // the plaintext update itself).
-    expect(stored).toBeDefined();
-    expect(new Uint8Array(stored!)).not.toEqual(new Uint8Array(plaintext));
-    const decodedStored = decodeEncryptedUpdate(
-      stored as unknown as Parameters<typeof decodeEncryptedUpdate>[0],
-    );
-    expect(decodedStored.type).toBe("update");
-    if (decodedStored.type === "update") {
-      expect(decodedStored.updates.length).toBe(1);
-    }
-
-    const snapshot = await provider.getMilestoneSnapshot("milestone-1");
-    const restored = new Y.Doc();
-    Y.applyUpdateV2(restored, snapshot as unknown as Uint8Array);
-    expect(restored.getText("content").toString()).toBe("secret");
-  });
-
-  it("decrypts multi-message automatic-milestone containers for E2EE documents", async () => {
-    const { createEncryptionKey, encryptUpdate } = await import("teleportal/encryption-key");
-    const { encodeEncryptedUpdateMessages } = await import("teleportal/protocol/encryption");
-    const { getEmptyEncodedContentIds } = await import("teleportal/attribution");
-    const { toBase64 } = await import("lib0/buffer");
-    const { digest } = await import("lib0/hash/sha256");
-    const encryptionKey = await createEncryptionKey();
-    await setupProvider({ encryptionKey });
-
-    // Build the container the way the server stores automatic milestones for
-    // E2EE docs: one encrypted message per incremental update.
-    const src = new Y.Doc();
-    const updates: Uint8Array[] = [];
-    src.on("updateV2", (u: Uint8Array) => updates.push(u));
-    src.getText("content").insert(0, "Hello ");
-    src.getText("content").insert(6, "World");
-    expect(updates.length).toBe(2);
-
-    const messages = await Promise.all(
-      updates.map(async (u, i) => {
-        const payload = await encryptUpdate(encryptionKey, u);
-        return {
-          id: toBase64(digest(payload)),
-          snapshotId: "snap-multi",
-          timestamp: [1, i] as [number, number],
-          payload,
-          contentIds: getEmptyEncodedContentIds(),
-        };
-      }),
-    );
-    const container = encodeEncryptedUpdateMessages(messages) as unknown as MilestoneSnapshot;
-
-    mockConnection.responseHandler = (message) => {
-      if (
-        message.type === "rpc" &&
-        message.requestType === "request" &&
-        message.rpcMethod === "milestoneGet"
-      ) {
-        const response: MilestoneGetResponse = {
-          milestoneId: "auto-1",
-          snapshot: container,
-        };
-        return new RpcMessage(
-          "test-doc",
-          { type: "success", payload: response },
-          message.rpcMethod,
-          "response",
-          message.id,
-          { clientId: "test-client" },
-          false,
-        );
-      }
-      return null;
-    };
-
-    const snapshot = await provider.getMilestoneSnapshot("auto-1");
-    const restored = new Y.Doc();
-    Y.applyUpdateV2(restored, snapshot as unknown as Uint8Array);
-    expect(restored.getText("content").toString()).toBe("Hello World");
-  });
-
-  it("should create milestone", async () => {
-    await setupProvider();
-
-    // Add some content to the document
-    const ytext = ydoc.getText("content");
-    ytext.insert(0, "Hello, World!");
-
-    // Set up response handler for RPC create request
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneCreate" && message.payload.type === "success") {
-          const payload = message.payload.payload as { name?: string };
-          const response: MilestoneCreateResponse = {
-            milestone: {
-              id: "milestone-1",
-              name: payload.name || "v1.0.0",
-              documentId: "test-doc",
-              createdAt: Date.now(),
-              createdBy: { type: "system", id: "test-node" },
-            },
-          };
-          return new RpcMessage(
-            "test-doc",
-            { type: "success", payload: response },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-      }
-      return null;
-    };
-
-    const milestone = await provider.createMilestone("My Milestone");
-
-    expect(milestone.id).toBe("milestone-1");
-    expect(milestone.name).toBe("My Milestone");
-    expect(milestone.documentId).toBe("test-doc");
-  });
-
-  it("should create milestone without name (auto-generate)", async () => {
-    await setupProvider();
-
-    // Set up response handler for RPC create request
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneCreate" && message.payload.type === "success") {
-          const _payload = message.payload.payload as Record<string, unknown>;
-          const response: MilestoneCreateResponse = {
-            milestone: {
-              id: "milestone-1",
-              name: "v1.0.0", // Server auto-generated
-              documentId: "test-doc",
-              createdAt: Date.now(),
-              createdBy: { type: "system", id: "test-node" },
-            },
-          };
-          return new RpcMessage(
-            "test-doc",
-            { type: "success", payload: response },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-      }
-      return null;
-    };
-
-    const milestone = await provider.createMilestone();
-
-    expect(milestone.id).toBe("milestone-1");
-    expect(milestone.name).toBe("v1.0.0");
-  });
-
-  it("should update milestone name", async () => {
-    await setupProvider();
-
-    // Set up response handler for RPC update request
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneUpdateName" && message.payload.type === "success") {
-          const payload = message.payload.payload as {
-            milestoneId: string;
-            name: string;
-          };
-          if (payload.milestoneId === "milestone-1") {
-            const response: MilestoneUpdateNameResponse = {
-              milestone: {
-                id: "milestone-1",
-                name: payload.name,
-                documentId: "test-doc",
-                createdAt: 1234567890,
-                createdBy: { type: "system", id: "test-node" },
-              },
-            };
-            return new RpcMessage(
-              "test-doc",
-              { type: "success", payload: response },
-              message.rpcMethod,
-              "response",
-              message.id,
-              { clientId: "test-client" },
-              false,
-            );
-          }
-        }
-      }
-      return null;
-    };
-
-    const milestone = await provider.updateMilestoneName("milestone-1", "Updated Name");
-
-    expect(milestone.id).toBe("milestone-1");
-    expect(milestone.name).toBe("Updated Name");
-  });
-
-  it("should handle milestone auth errors", async () => {
-    await setupProvider();
-
-    // Set up response handler to return RPC error response
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneList" && message.payload.type === "success") {
-          const _payload = message.payload.payload as { snapshotIds?: string[] };
-          return new RpcMessage(
-            "test-doc",
-            { type: "error", statusCode: 403, details: "Permission denied" },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-      }
-      return null;
-    };
-
-    await expect(provider.listMilestones()).rejects.toThrow("RPC error (403): Permission denied");
-  });
-
-  it("should handle milestone list with snapshotIds filter", async () => {
-    await setupProvider();
-
-    // Set up response handler for RPC list request
-    mockConnection.responseHandler = (message) => {
-      if (message.type === "rpc" && message.requestType === "request") {
-        if (message.rpcMethod === "milestoneList" && message.payload.type === "success") {
-          const payload = message.payload.payload as { snapshotIds?: string[] };
-          // Verify snapshotIds were sent
-          expect(payload.snapshotIds).toEqual(["milestone-1"]);
-          const response: MilestoneListResponse = {
-            milestones: [
-              {
-                id: "milestone-2",
-                name: "v1.1.0",
-                documentId: "test-doc",
-                createdAt: 1234567900,
-                createdBy: { type: "system", id: "test-node" },
-              },
-            ],
-          };
-          return new RpcMessage(
-            "test-doc",
-            { type: "success", payload: response },
-            message.rpcMethod,
-            "response",
-            message.id,
-            { clientId: "test-client" },
-            false,
-          );
-        }
-      }
-      return null;
-    };
-
-    const milestones = await provider.listMilestones(["milestone-1"]);
-
-    expect(milestones).toHaveLength(1);
-    expect(milestones[0].id).toBe("milestone-2");
-  });
-
-  describe("synced with in-flight messages", () => {
-    it("should wait for in-flight messages to be acked before synced resolves", async () => {
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
-      });
-
-      await new Promise<void>((r) => queueMicrotask(r));
-      mockTransport.resolveSynced();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Send a message that will be tracked as in-flight
-      const docMessage = new DocMessage(
-        "test-doc",
-        {
-          type: "sync-step-1",
-          sv: new Uint8Array() as StateVector,
-        },
-        { clientId: "test-client" },
-      );
-
-      await mockConnection.send(docMessage);
-
-      // synced should not resolve yet (has in-flight message)
-      let syncedResolved = false;
-      const syncedPromise = provider.synced.then(() => {
-        syncedResolved = true;
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      expect(syncedResolved).toBe(false);
-      expect(mockConnection.inFlightMessageCount).toBeGreaterThan(0);
-
-      // Send ACK for the message
-      const { AckMessage } = await import("teleportal");
-      const ackMessage = new AckMessage(
-        {
-          type: "ack",
-          messageId: docMessage.id,
-        },
-        { clientId: "test-client" },
-      );
-      mockConnection.simulateMessage(ackMessage);
-
-      // Wait for ACK to be processed
-      while (!syncedResolved) await new Promise<void>((r) => queueMicrotask(r));
-
-      // Now synced should resolve
-      await syncedPromise;
-      expect(syncedResolved).toBeTrue();
-      expect(mockConnection.inFlightMessageCount).toBe(0);
-    });
-
-    it("should resolve synced immediately when no in-flight messages", async () => {
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
-      });
-
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Ack any initial messages sent during provider creation
-      const initialMessages = mockConnection.sentMessages;
-      if (initialMessages.length > 0) {
-        const { AckMessage } = await import("teleportal");
-        for (const msg of initialMessages) {
-          if (msg.type !== "ack" && msg.type !== "awareness") {
-            const ack = new AckMessage(
-              { type: "ack", messageId: msg.id },
-              { clientId: "test-client" },
-            );
-            mockConnection.simulateMessage(ack);
-          }
-        }
-        await new Promise<void>((r) => queueMicrotask(r));
-      }
-
-      mockTransport.resolveSynced();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // No in-flight messages, synced should resolve quickly
-      const startTime = Date.now();
-      await provider.synced;
-      const endTime = Date.now();
-
-      // Should resolve quickly (within 500ms to account for all async operations)
-      expect(endTime - startTime).toBeLessThan(500);
-    });
-
-    it("should not wait for awareness messages to be acked", async () => {
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
-      });
-
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Ack any initial messages sent during provider creation
-      const initialMessages = mockConnection.sentMessages;
-      if (initialMessages.length > 0) {
-        const { AckMessage } = await import("teleportal");
-        for (const msg of initialMessages) {
-          if (msg.type !== "ack" && msg.type !== "awareness") {
-            const ack = new AckMessage(
-              { type: "ack", messageId: msg.id },
-              { clientId: "test-client" },
-            );
-            mockConnection.simulateMessage(ack);
-          }
-        }
-        await new Promise<void>((r) => queueMicrotask(r));
-      }
-
-      mockTransport.resolveSynced();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Send an awareness message (should not be tracked)
-      const { AwarenessMessage } = await import("teleportal");
-      const awarenessMessage = new AwarenessMessage(
-        "test-doc",
-        {
-          type: "awareness-update",
-          update: new Uint8Array([1, 2, 3]) as any,
-        },
-        { clientId: "test-client" },
-      );
-
-      await mockConnection.send(awarenessMessage);
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // synced should resolve even with awareness message sent (not tracked)
-      expect(mockConnection.inFlightMessageCount).toBe(0);
-
-      // Access synced after sending awareness message
-      const startTime = Date.now();
-      await provider.synced;
-      const endTime = Date.now();
-
-      // Should resolve quickly (within 500ms to account for all async operations)
-      expect(endTime - startTime).toBeLessThan(500);
-    });
-  });
-});
-
-describe("Provider events", () => {
-  let provider: Provider<MockTransport>;
-  let mockConnection: MockConnection;
-  let mockTransport: MockTransport;
-  let ydoc: Y.Doc;
-
-  beforeEach(() => {
-    ydoc = new Y.Doc();
-    mockConnection = new MockConnection();
-    mockTransport = new MockTransport();
-  });
-
-  afterEach(() => {
-    if (provider) {
       provider.destroy();
-    }
-    if (mockConnection) {
-      mockConnection.destroy();
-    }
-  });
+    });
 
-  describe("connected event", () => {
-    it("should emit connected event when connection connects", async () => {
-      const connectedEvents: boolean[] = [];
+    it("destroys cleanly (connection, doc, transport)", async () => {
+      const { provider, clientConn } = await createTestProvider();
+      expect(clientConn.destroyed).toBe(false);
 
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
+      provider.destroy();
+      await flush();
 
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
+      // Default destroyConnection=true means connection is also destroyed
+      expect(clientConn.destroyed).toBe(true);
+    });
+
+    it("destroys without destroying connection when destroyConnection: false", async () => {
+      const { provider, clientConn, serverConn } = await createTestProvider();
+
+      provider.destroy({ destroyConnection: false });
+      await flush();
+
+      expect(clientConn.destroyed).toBe(false);
+
+      // Clean up
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("destroys without destroying doc when destroyDoc: false", async () => {
+      const ydoc = new Y.Doc();
+      const { provider } = await createTestProvider({ ydoc });
+
+      let docDestroyed = false;
+      ydoc.on("destroy", () => {
+        docDestroyed = true;
       });
 
+      provider.destroy({ destroyDoc: false });
+      await flush();
+
+      expect(docDestroyed).toBe(false);
+
+      ydoc.destroy();
+    });
+
+    it("[Symbol.dispose] works", async () => {
+      const { provider, clientConn } = await createTestProvider();
+
+      provider[Symbol.dispose]();
+      await flush();
+
+      expect(clientConn.destroyed).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 2. Provider Events
+  // -----------------------------------------------------------------------
+  describe("events", () => {
+    it("emits connected event when connection connects", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      // Create provider while disconnected
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: false,
+        rpc: {},
+      });
+
+      let connectedFired = false;
       provider.on("connected", () => {
-        connectedEvents.push(true);
+        connectedFired = true;
       });
 
-      // Wait for initial setup
-      await new Promise<void>((r) => queueMicrotask(r));
+      // Now connect
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+      await flush();
 
-      // Disconnect and reconnect to trigger event
-      mockConnection.triggerDisconnect();
-      await new Promise<void>((r) => queueMicrotask(r));
+      expect(connectedFired).toBe(true);
 
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      expect(connectedEvents.length).toBeGreaterThan(0);
+      provider.destroy();
+      await serverConn.destroy();
     });
-  });
 
-  describe("disconnected event", () => {
-    it("should emit disconnected event when connection disconnects", async () => {
-      const disconnectedEvents: boolean[] = [];
+    it("emits disconnected event when connection disconnects", async () => {
+      const { provider, clientConn, serverConn, clientTransport } = await createTestProvider();
 
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
-      });
-
+      let disconnectedFired = false;
       provider.on("disconnected", () => {
-        disconnectedEvents.push(true);
+        disconnectedFired = true;
       });
 
-      // Wait for initial setup
-      await new Promise<void>((r) => queueMicrotask(r));
+      clientTransport.simulateDisconnect();
+      await flush();
 
-      // Disconnect to trigger event
-      mockConnection.triggerDisconnect();
-      await new Promise<void>((r) => queueMicrotask(r));
+      expect(disconnectedFired).toBe(true);
 
-      expect(disconnectedEvents.length).toBeGreaterThan(0);
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
     });
-  });
 
-  describe("update event", () => {
-    it("should emit update event when connection state changes", async () => {
-      const updateEvents: ConnectionState<any>[] = [];
+    it("emits update event when connection state changes", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
 
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
+      const provider = new Provider({
+        connection: clientConn,
         document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
         enableOfflinePersistence: false,
+        rpc: {},
       });
 
+      const states: string[] = [];
       provider.on("update", (state) => {
-        updateEvents.push(state);
+        states.push(state.type);
       });
 
-      // Wait for initial setup
-      await new Promise<void>((r) => queueMicrotask(r));
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+      await flush();
 
-      // Disconnect to trigger update event
-      mockConnection.triggerDisconnect();
-      await new Promise<void>((r) => queueMicrotask(r));
+      // Should have seen connecting -> connected
+      expect(states).toContain("connecting");
+      expect(states).toContain("connected");
 
-      // Reconnect to trigger another update event
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      expect(updateEvents.length).toBeGreaterThan(0);
-      expect(updateEvents.some((e) => e.type === "disconnected")).toBe(true);
-      expect(updateEvents.some((e) => e.type === "connected")).toBe(true);
+      provider.destroy();
+      await serverConn.destroy();
     });
-  });
 
-  describe("received-message event", () => {
-    it("should emit received-message event when connection receives a message", async () => {
+    it("emits received-message event", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
       const receivedMessages: any[] = [];
-
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
+      provider.on("received-message", (msg) => {
+        receivedMessages.push(msg);
       });
 
-      provider.on("received-message", (message) => {
-        receivedMessages.push(message);
-      });
-
-      // Wait for initial setup
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Simulate receiving a message
-      const { DocMessage } = await import("teleportal");
-      const testMessage = new DocMessage(
-        "test-doc",
-        {
-          type: "sync-step-1",
-          sv: new Uint8Array() as StateVector,
-        },
-        { clientId: "test-client" },
-      );
-
-      mockConnection.simulateMessage(testMessage);
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      expect(receivedMessages.length).toBeGreaterThan(0);
-      expect(receivedMessages[0].type).toBe("doc");
-    });
-  });
-
-  describe("sent-message event", () => {
-    it("should emit sent-message event when connection sends a message", async () => {
-      const sentMessages: Message[] = [];
-
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
-      });
-
-      provider.on("sent-message", (message) => {
-        sentMessages.push(message);
-      });
-
-      // Wait for initial setup
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Send a message through the provider
-      const { DocMessage } = await import("teleportal");
-      const testMessage = new DocMessage(
-        "test-doc",
-        {
-          type: "sync-step-1",
-          sv: new Uint8Array() as StateVector,
-        },
-        { clientId: "test-client" },
-      );
-
-      await mockConnection.send(testMessage);
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // The sent-message event should be emitted by the connection
-      // We need to check if the connection emits it
-      expect(mockConnection.sentMessages.length).toBeGreaterThan(0);
-    });
-  });
-
-  describe("multiple events", () => {
-    it("should emit all events correctly during provider lifecycle", async () => {
-      const eventLog: Array<{ type: string; data?: any }> = [];
-
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      provider = await Provider.create({
-        connection: mockConnection,
-        document: "test-doc",
-        ydoc,
-        getTransport: () => mockTransport,
-        enableOfflinePersistence: false,
-      });
-
-      provider.on("connected", () => {
-        eventLog.push({ type: "connected" });
-      });
-
-      provider.on("disconnected", () => {
-        eventLog.push({ type: "disconnected" });
-      });
-
-      provider.on("update", (state) => {
-        eventLog.push({ type: "update", data: state.type });
-      });
-
-      provider.on("received-message", (message) => {
-        eventLog.push({ type: "received-message", data: message.type });
-      });
-
-      provider.on("sent-message", (message) => {
-        eventLog.push({ type: "sent-message", data: message.type });
-      });
-
-      // Wait for initial setup
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Trigger various events
-      mockConnection.triggerDisconnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      mockConnection.triggerConnect();
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      const { DocMessage } = await import("teleportal");
-      const testMessage = new DocMessage(
-        "test-doc",
-        {
-          type: "sync-step-1",
-          sv: new Uint8Array() as StateVector,
-        },
-        { clientId: "test-client" },
-      );
-      mockConnection.simulateMessage(testMessage);
-      await new Promise<void>((r) => queueMicrotask(r));
-
-      // Verify we got events
-      expect(eventLog.length).toBeGreaterThan(0);
-      expect(eventLog.some((e) => e.type === "disconnected")).toBe(true);
-      expect(eventLog.some((e) => e.type === "connected")).toBe(true);
-      expect(eventLog.some((e) => e.type === "update")).toBe(true);
-      expect(eventLog.some((e) => e.type === "received-message")).toBe(true);
-    });
-  });
-});
-
-describe("Provider presence", () => {
-  let provider: Provider<MockTransport>;
-  let mockConnection: MockConnection;
-  let mockTransport: MockTransport;
-  let ydoc: Y.Doc;
-
-  beforeEach(() => {
-    ydoc = new Y.Doc();
-    mockConnection = new MockConnection();
-    mockTransport = new MockTransport();
-  });
-
-  afterEach(() => {
-    provider?.destroy();
-    mockConnection?.destroy();
-    ydoc?.destroy();
-  });
-
-  const createProvider = async () => {
-    mockConnection.triggerConnect();
-    await new Promise<void>((r) => queueMicrotask(r));
-    provider = await Provider.create({
-      connection: mockConnection,
-      document: "test-doc",
-      ydoc,
-      getTransport: () => mockTransport,
-      enableOfflinePersistence: false,
-    });
-    await new Promise<void>((r) => queueMicrotask(r));
-    return provider;
-  };
-
-  it("announces its awareness clientID on connect", async () => {
-    await createProvider();
-
-    const announce = mockConnection.sentMessages.find(
-      (m): m is PresenceMessage<ClientContext> =>
-        m.type === "presence" && (m as any).payload?.type === "presence-announce",
-    );
-    expect(announce).toBeDefined();
-    expect(announce!.payload).toEqual({
-      type: "presence-announce",
-      awarenessId: provider.awareness.clientID,
-    });
-  });
-
-  it("clears a peer's awareness and emits peer-leave on presence-leave", async () => {
-    await createProvider();
-
-    // Inject a remote peer's awareness state into the local Awareness.
-    const peerDoc = new Y.Doc();
-    const peerAwareness = new Awareness(peerDoc);
-    peerAwareness.setLocalState({ name: "bob" });
-    applyAwarenessUpdate(
-      provider.awareness,
-      encodeAwarenessUpdate(peerAwareness, [peerAwareness.clientID]),
-      "remote",
-    );
-    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(true);
-
-    const leaves: any[] = [];
-    provider.on("peer-leave", (peer) => leaves.push(peer));
-
-    mockConnection.simulateMessage(
-      new PresenceMessage("test-doc", {
-        type: "presence-leave",
-        awarenessId: peerAwareness.clientID,
-        clientId: "conn-bob",
-        userId: "user-bob",
-        data: { userName: "Bob" },
-      }),
-    );
-    await new Promise<void>((r) => queueMicrotask(r));
-
-    // Awareness cleared locally (no key required).
-    expect(provider.awareness.getStates().has(peerAwareness.clientID)).toBe(false);
-    expect(leaves).toHaveLength(1);
-    expect(leaves[0]).toEqual({
-      awarenessId: peerAwareness.clientID,
-      clientId: "conn-bob",
-      userId: "user-bob",
-      data: { userName: "Bob" },
-    });
-
-    peerAwareness.destroy();
-    peerDoc.destroy();
-  });
-
-  it("emits peer-join on presence-join", async () => {
-    await createProvider();
-
-    const joins: any[] = [];
-    provider.on("peer-join", (peer) => joins.push(peer));
-
-    mockConnection.simulateMessage(
-      new PresenceMessage("test-doc", {
+      // Send a presence-join from server to client
+      const presenceMsg = new PresenceMessage("test-doc", {
         type: "presence-join",
-        awarenessId: 4242,
-        clientId: "conn-carol",
-        userId: "user-carol",
-        data: { userName: "Carol" },
-      }),
-    );
-    await new Promise<void>((r) => queueMicrotask(r));
+        awarenessId: 42,
+        clientId: "client-1",
+        userId: "user-1",
+        data: { name: "Alice" },
+      });
+      await serverConn.send(presenceMsg);
+      await flush();
 
-    expect(joins).toEqual([
-      {
-        awarenessId: 4242,
-        clientId: "conn-carol",
-        userId: "user-carol",
-        data: { userName: "Carol" },
-      },
-    ]);
+      expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("emits sent-message event", async () => {
+      const { provider } = await createTestProvider();
+
+      const sentMessages: any[] = [];
+      provider.on("sent-message", (msg) => {
+        sentMessages.push(msg);
+      });
+
+      // The provider sends a sync-step-1 + presence-announce on init,
+      // which should trigger sent-message events
+      await flush();
+
+      // Provider auto-sends messages on connect (sync-step-1, presence-announce)
+      expect(sentMessages.length).toBeGreaterThanOrEqual(1);
+
+      provider.destroy();
+    });
+
+    it("emits all events correctly during lifecycle", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: false,
+        rpc: {},
+      });
+
+      const events: string[] = [];
+      provider.on("connected", () => events.push("connected"));
+      provider.on("disconnected", () => events.push("disconnected"));
+      provider.on("update", (state) => events.push(`update:${state.type}`));
+
+      // Connect
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+      await flush();
+
+      // Disconnect
+      clientTransport.simulateDisconnect();
+      await flush();
+
+      expect(events).toContain("connected");
+      expect(events).toContain("disconnected");
+      expect(events).toContain("update:connected");
+      expect(events).toContain("update:disconnected");
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 3. Synced Promise
+  // -----------------------------------------------------------------------
+  describe("synced promise", () => {
+    it("resolves when connected + transport synced + no in-flight messages", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      // Send sync-done from server so transport.synced resolves
+      await sendSyncDone(serverConn, "test-doc");
+
+      const synced = provider.synced;
+      expect(synced).toBeInstanceOf(Promise);
+
+      // Should resolve without hanging
+      await synced;
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("invalidates when connection disconnects", async () => {
+      const { provider, clientConn, serverConn, clientTransport } = await createTestProvider();
+
+      // Resolve synced first
+      await sendSyncDone(serverConn, "test-doc");
+      const synced1 = provider.synced;
+      await synced1;
+
+      // Disconnect to invalidate
+      clientTransport.simulateDisconnect();
+      await flush();
+
+      // After disconnect, synced should be a new promise (not the cached one)
+      const synced2 = provider.synced;
+      expect(synced2).not.toBe(synced1);
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 4. RPC Extension System
+  // -----------------------------------------------------------------------
+  describe("RPC extension system", () => {
+    it("initializes extensions during construction", async () => {
+      const mock = createMockRpc();
+      const { provider } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      // Extension should have been created — ctx should be set
+      expect(mock.getCtx()).not.toBeNull();
+
+      provider.destroy();
+    });
+
+    it("provides correct RpcExtensionContext", async () => {
+      const mock = createMockRpc();
+      const ydoc = new Y.Doc();
+      const awareness = new Awareness(ydoc);
+      const { provider } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+        ydoc,
+        awareness,
+      });
+
+      const ctx = mock.getCtx()!;
+      expect(ctx).not.toBeNull();
+      expect(ctx.document).toBe("test-doc");
+      expect(ctx.doc).toBe(ydoc);
+      expect(ctx.awareness).toBe(awareness);
+      expect(ctx.rpcClient).toBeDefined();
+      expect(ctx.connection).toBeDefined();
+      // ctx.synced mirrors provider.synced, which is rejectable (e.g. the
+      // transport's synced rejects on destroy). Swallow it here so teardown
+      // doesn't surface as an unhandled rejection.
+      const syncedPromise = ctx.synced;
+      expect(syncedPromise).toBeInstanceOf(Promise);
+      syncedPromise.catch(() => {});
+
+      provider.destroy();
+    });
+
+    it("exposes extension API under .rpc namespace", async () => {
+      const mock = createMockRpc();
+      const { provider } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      expect(provider.rpc.myExt).toBeDefined();
+      expect(provider.rpc.myExt.ping()).toBe("pong");
+
+      provider.destroy();
+    });
+
+    it("routes RPC messages to extension handleMessage", async () => {
+      const mock = createMockRpc();
+      const { provider, serverConn } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      // Send an RPC request message from server (request type does not need originalRequestId)
+      const rpcMsg = new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { method: "test" } },
+        "test",
+        "request",
+        undefined,
+      );
+      await serverConn.send(rpcMsg);
+      await flush();
+
+      const rpcMessages = mock.handledMessages.filter((m: any) => m.type === "rpc");
+      expect(rpcMessages.length).toBeGreaterThanOrEqual(1);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("routes ACK messages to extension handleAck", async () => {
+      const mock = createMockRpc();
+      const { provider, clientConn, serverConn } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      // First, we need a message "in flight" from the client, then the server acks it.
+      // But ACK routing to extensions happens on received-message for ack type.
+      // The connection itself also handles acks. The extension gets it too via the
+      // separate received-message listener in provider.
+
+      // We can directly simulate by sending a presence-join from client to server,
+      // and then the server will auto-ack it. When the client receives the ack,
+      // the extension should handle it.
+      // But it's simpler to just check that ack messages flow through.
+
+      // Clear tracked messages
+      mock.handledMessages.length = 0;
+
+      // Send a presence-join from server side which doesn't produce an ack
+      // Instead, send a regular doc message from server, which causes the client
+      // connection to auto-send an ack back. But we want the _client_ to receive
+      // an ack from the _server_.
+
+      // Simplest approach: send a doc message from client, which the server will ack.
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "hello");
+      const update = Y.encodeStateAsUpdateV2(doc);
+      const docMsg = new DocMessage(
+        "test-doc",
+        { type: "update", update: { version: 2, data: update as any } },
+        {},
+        false,
+      );
+      await clientConn.send(docMsg);
+      await flush();
+
+      // The server connection auto-acks non-ack messages. So the client should
+      // receive an ack, which should be routed to the extension.
+      const ackMessages = mock.handledMessages.filter((m: any) => m.type === "ack");
+      expect(ackMessages.length).toBeGreaterThanOrEqual(1);
+
+      provider.destroy();
+      await serverConn.destroy();
+      doc.destroy();
+    });
+
+    it("calls extension destroy on provider destroy", async () => {
+      const mock = createMockRpc();
+      const { provider } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      expect(mock.isDestroyed()).toBe(false);
+
+      provider.destroy();
+      await flush();
+
+      expect(mock.isDestroyed()).toBe(true);
+    });
+
+    it("works with no extensions (rpc: {})", async () => {
+      const { provider } = await createTestProvider({ rpc: {} });
+
+      expect(provider.rpc).toBeDefined();
+      expect(Object.keys(provider.rpc)).toHaveLength(0);
+
+      provider.destroy();
+    });
+
+    it("supports multiple extensions", async () => {
+      const mock1 = createMockRpc();
+      const mock2 = createMockRpc();
+      const { provider } = await createTestProvider({
+        rpc: {
+          ext1: mock1.factory,
+          ext2: mock2.factory,
+        },
+      });
+
+      expect(provider.rpc.ext1.ping()).toBe("pong");
+      expect(provider.rpc.ext2.ping()).toBe("pong");
+
+      provider.destroy();
+      await flush();
+
+      expect(mock1.isDestroyed()).toBe(true);
+      expect(mock2.isDestroyed()).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 5. Presence Events
+  // -----------------------------------------------------------------------
+  describe("presence events", () => {
+    it("emits peer-join on presence-join message", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      let joinEvent: any = null;
+      provider.on("peer-join", (peer) => {
+        joinEvent = peer;
+      });
+
+      const joinMsg = new PresenceMessage("test-doc", {
+        type: "presence-join",
+        awarenessId: 42,
+        clientId: "client-1",
+        userId: "user-1",
+        data: { name: "Alice" },
+      });
+      await serverConn.send(joinMsg);
+      await flush();
+
+      expect(joinEvent).not.toBeNull();
+      expect(joinEvent.awarenessId).toBe(42);
+      expect(joinEvent.clientId).toBe("client-1");
+      expect(joinEvent.userId).toBe("user-1");
+      expect(joinEvent.data).toEqual({ name: "Alice" });
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("emits peer-leave on presence-leave message and clears awareness", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      let leaveEvent: any = null;
+      provider.on("peer-leave", (peer) => {
+        leaveEvent = peer;
+      });
+
+      // Seed an awareness state for the peer so the leave can actually clear it.
+      provider.awareness.states.set(42, { name: "Alice" });
+      expect(provider.awareness.getStates().has(42)).toBe(true);
+
+      const leaveMsg = new PresenceMessage("test-doc", {
+        type: "presence-leave",
+        awarenessId: 42,
+        clientId: "client-1",
+        userId: "user-1",
+        data: { name: "Alice" },
+      });
+      await serverConn.send(leaveMsg);
+      await flush();
+
+      expect(leaveEvent).not.toBeNull();
+      expect(leaveEvent.awarenessId).toBe(42);
+      expect(leaveEvent.clientId).toBe("client-1");
+      expect(leaveEvent.userId).toBe("user-1");
+      expect(leaveEvent.data).toEqual({ name: "Alice" });
+
+      // Awareness state for that client should be cleared
+      const states = provider.awareness.getStates();
+      expect(states.has(42)).toBe(false);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("ignores presence-announce (client-to-server only)", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      let joinFired = false;
+      let leaveFired = false;
+      provider.on("peer-join", () => {
+        joinFired = true;
+      });
+      provider.on("peer-leave", () => {
+        leaveFired = true;
+      });
+
+      const announceMsg = new PresenceMessage("test-doc", {
+        type: "presence-announce",
+        awarenessId: 99,
+      });
+      await serverConn.send(announceMsg);
+      await flush();
+
+      expect(joinFired).toBe(false);
+      expect(leaveFired).toBe(false);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("ignores presence-heartbeat", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      let joinFired = false;
+      let leaveFired = false;
+      provider.on("peer-join", () => {
+        joinFired = true;
+      });
+      provider.on("peer-leave", () => {
+        leaveFired = true;
+      });
+
+      const heartbeatMsg = new PresenceMessage("test-doc", {
+        type: "presence-heartbeat",
+        clients: [
+          {
+            awarenessId: 1,
+            clientId: "c-1",
+            userId: "u-1",
+            data: {},
+          },
+        ],
+      });
+      await serverConn.send(heartbeatMsg);
+      await flush();
+
+      expect(joinFired).toBe(false);
+      expect(leaveFired).toBe(false);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 6. Provider.create() static factory
+  // -----------------------------------------------------------------------
+  describe("Provider.create() static factory", () => {
+    it("creates with connection option", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const provider = await Provider.create({
+        connection: clientConn,
+        document: "factory-doc",
+        enableOfflinePersistence: false,
+      });
+
+      expect(provider).toBeInstanceOf(Provider);
+      expect(provider.document).toBe("factory-doc");
+      expect(provider.connection).toBe(clientConn);
+
+      await flush();
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("awaits connection.connected before returning", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      // Start connection + factory concurrently
+      const connectPromise = Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const providerPromise = Provider.create({
+        connection: clientConn,
+        document: "factory-doc",
+        enableOfflinePersistence: false,
+      });
+
+      await connectPromise;
+      const provider = await providerPromise;
+
+      expect(provider.state.type).toBe("connected");
+
+      // Let any async init (sync-step-1, presence-announce) settle before destroying
+      await flush();
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 7. switchDocument and openDocument
+  // -----------------------------------------------------------------------
+  describe("switchDocument and openDocument", () => {
+    it("switchDocument destroys current provider but preserves connection", async () => {
+      const { provider, clientConn, serverConn } = await createTestProvider();
+
+      const oldDoc = provider.doc;
+      let oldDocDestroyed = false;
+      oldDoc.on("destroy", () => {
+        oldDocDestroyed = true;
+      });
+
+      const newProvider = provider.switchDocument({
+        document: "new-doc",
+        enableOfflinePersistence: false,
+      });
+
+      await flush();
+
+      expect(newProvider).toBeInstanceOf(Provider);
+      expect(newProvider.document).toBe("new-doc");
+      // Connection should still be alive (not destroyed)
+      expect(clientConn.destroyed).toBe(false);
+      // Old doc should be destroyed
+      expect(oldDocDestroyed).toBe(true);
+      // New provider has a different doc
+      expect(newProvider.doc).not.toBe(oldDoc);
+
+      newProvider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("openDocument creates new provider sharing connection", async () => {
+      const { provider, clientConn, serverConn } = await createTestProvider();
+
+      const newProvider = provider.openDocument({
+        document: "second-doc",
+        enableOfflinePersistence: false,
+      });
+
+      await flush();
+
+      expect(newProvider).toBeInstanceOf(Provider);
+      expect(newProvider.document).toBe("second-doc");
+      // Original provider should still be alive
+      expect(provider.document).toBe("test-doc");
+      // Both share the same connection
+      expect(newProvider.connection).toBe(clientConn);
+      expect(provider.connection).toBe(clientConn);
+      // New provider has its own doc
+      expect(newProvider.doc).not.toBe(provider.doc);
+
+      newProvider.destroy({ destroyConnection: false });
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("openDocument inherits rpc config", async () => {
+      const mock = createMockRpc();
+      const { provider, clientConn, serverConn } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      const newProvider = provider.openDocument({
+        document: "inherited-doc",
+        enableOfflinePersistence: false,
+      });
+
+      await flush();
+
+      // Should also have the rpc extension
+      expect(newProvider.rpc.myExt).toBeDefined();
+      expect(newProvider.rpc.myExt.ping()).toBe("pong");
+
+      newProvider.destroy({ destroyConnection: false });
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 8. Public getters
+  // -----------------------------------------------------------------------
+  describe("public getters", () => {
+    it("state reflects connection state", async () => {
+      const { provider, clientConn, serverConn, clientTransport } = await createTestProvider();
+
+      expect(provider.state.type).toBe("connected");
+
+      clientTransport.simulateDisconnect();
+      await flush();
+
+      expect(provider.state.type).toBe("disconnected");
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("connection returns the underlying connection", async () => {
+      const { provider, clientConn } = await createTestProvider();
+
+      expect(provider.connection).toBe(clientConn);
+
+      provider.destroy();
+    });
+
+    it("transport is defined", async () => {
+      const { provider } = await createTestProvider();
+
+      expect(provider.transport).toBeDefined();
+      expect(provider.transport.readable).toBeInstanceOf(ReadableStream);
+      expect(provider.transport.writable).toBeInstanceOf(WritableStream);
+
+      provider.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 9. Destroy idempotence
+  // -----------------------------------------------------------------------
+  describe("destroy idempotence", () => {
+    it("calling destroy multiple times does not throw", async () => {
+      const { provider } = await createTestProvider();
+
+      expect(() => {
+        provider.destroy();
+        provider.destroy();
+      }).not.toThrow();
+    });
   });
 });

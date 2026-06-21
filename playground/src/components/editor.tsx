@@ -3,17 +3,14 @@ import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import { useCreateBlockNote } from "@blocknote/react";
 import { use, useEffect } from "react";
-import { ClientContext, Milestone, Transport } from "teleportal";
-import { DefaultTransportProperties, Provider } from "teleportal/providers";
+import { Milestone } from "teleportal";
 import { yXmlFragmentToProseMirrorRootNode } from "y-prosemirror";
 import * as Y from "yjs";
-import { EncryptionClient } from "../../../src/transports/encrypted/client";
+import type { PlaygroundProvider } from "../utils/providers";
 
 interface EditorProps {
   selectedMilestone: Milestone | null;
-  provider: Provider<
-    Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
-  >;
+  provider: PlaygroundProvider;
   user?: {
     /**
      * The name of the user.
@@ -47,7 +44,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     },
     async uploadFile(file, blockId) {
       try {
-        const fileId = await provider.uploadFile(file, blockId, provider.transport.handler?.key);
+        const fileId = await provider.rpc.files.upload(file, blockId);
 
         return `teleportal://${fileId}`;
       } catch (error) {
@@ -58,7 +55,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     async resolveFileUrl(url) {
       if (url.startsWith("teleportal://")) {
         const fileId = url.split("://")[1];
-        const file = await provider.downloadFile(fileId, provider.transport.handler?.key);
+        const file = await provider.rpc.files.download(fileId);
         return URL.createObjectURL(file);
       }
       return url;

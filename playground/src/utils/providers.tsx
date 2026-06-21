@@ -3,15 +3,36 @@ import {
   Provider,
   DefaultTransportProperties,
   Connection,
-  FallbackConnection,
+  websocketTransport,
+  httpTransport,
 } from "teleportal/providers";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
-import { getFileClientHandlers } from "teleportal/protocols/file";
+import { createMilestoneRpc } from "teleportal/protocols/milestone";
+import { createAttributionRpc } from "teleportal/protocols/attribution";
+import { createFileRpc } from "teleportal/protocols/file";
 
 import { getEncryptedTransport } from "./encrypted";
 import { ClientContext, Transport } from "teleportal";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
 import { getIdentity } from "./identity";
+
+/**
+ * The RPC extensions registered by the playground provider.
+ */
+export type PlaygroundRpcExtensions = {
+  milestones: typeof createMilestoneRpc;
+  attribution: typeof createAttributionRpc;
+  files: () => ReturnType<typeof createFileRpc>;
+};
+
+/**
+ * Fully-typed Provider used by the playground, including the transport
+ * customisation (encrypted handler) and all registered RPC extensions.
+ */
+export type PlaygroundProvider = Provider<
+  Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>,
+  PlaygroundRpcExtensions
+>;
 
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -22,11 +43,9 @@ const tokenManager = createTokenManager({
 // Singleton provider manager to ensure only one provider instance exists (workaround for strict mode)
 class ProviderManager {
   private static instance: ProviderManager | null = null;
-  private provider: Provider<
-    Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
-  > | null = null;
+  private provider: PlaygroundProvider | null = null;
   private websocketConnection: Promise<Connection> | null = null;
-  private subscribers = new Set<(provider: Provider | null) => void>();
+  private subscribers = new Set<(provider: PlaygroundProvider | null) => void>();
 
   private constructor() {}
 
@@ -53,26 +72,26 @@ class ProviderManager {
             .build(),
         )
         .then((token) => {
-          return new FallbackConnection({
+          return new Connection({
             url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
+            transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
           });
         });
     }
     return this.websocketConnection;
   }
 
-  async getProvider(
-    documentId: string,
-    key: CryptoKey | undefined,
-  ): Promise<NonNullable<ProviderManager["provider"]>> {
+  async getProvider(documentId: string, key: CryptoKey | undefined): Promise<PlaygroundProvider> {
     if (!this.provider) {
       const connection = await this.getProviderConnection();
       this.provider = (await Provider.create({
         connection,
         document: documentId,
         encryptionKey: key,
-        rpcHandlers: {
-          ...getFileClientHandlers({ encryptionKey: key }),
+        rpc: {
+          milestones: createMilestoneRpc,
+          attribution: createAttributionRpc,
+          files: () => createFileRpc({ encryptionKey: key }),
         },
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
           const baseTransport = key
@@ -81,14 +100,16 @@ class ProviderManager {
           return baseTransport as any;
         },
         enableOfflinePersistence: false,
-      })) as any;
+      })) as PlaygroundProvider;
     } else {
       // Switch document on existing provider
       this.provider = this.provider.switchDocument({
         document: documentId,
         encryptionKey: key,
-        rpcHandlers: {
-          ...getFileClientHandlers({ encryptionKey: key }),
+        rpc: {
+          milestones: createMilestoneRpc,
+          attribution: createAttributionRpc,
+          files: () => createFileRpc({ encryptionKey: key }),
         },
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
           const baseTransport = key
@@ -101,10 +122,10 @@ class ProviderManager {
 
     // Notify all subscribers
     this.subscribers.forEach((callback) => callback(this.provider));
-    return this.provider as any;
+    return this.provider!;
   }
 
-  subscribe(callback: (provider: Provider | null) => void): () => void {
+  subscribe(callback: (provider: PlaygroundProvider | null) => void): () => void {
     this.subscribers.add(callback);
     // Immediately call with current provider if it exists
     if (this.provider) {
@@ -128,11 +149,9 @@ export function useProvider(
   documentId: string | null | undefined,
   key: CryptoKey | undefined,
 ): {
-  provider: Provider<
-    Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
-  > | null;
+  provider: PlaygroundProvider | null;
 } {
-  const [provider, setProvider] = useState<Provider | null>(null);
+  const [provider, setProvider] = useState<PlaygroundProvider | null>(null);
   const providerManager = ProviderManager.getInstance();
 
   useEffect(() => {
@@ -153,8 +172,6 @@ export function useProvider(
   }, [documentId, key]);
 
   return {
-    provider: provider as Provider<
-      Transport<ClientContext, DefaultTransportProperties & { handler?: EncryptionClient }>
-    > | null,
+    provider,
   };
 }

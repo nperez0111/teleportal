@@ -18,8 +18,10 @@ import { Client } from "../../server/client";
 import type { Session } from "../../server/session";
 import { EncryptionClient } from "./client";
 import { getWebsocketHandlers } from "../../websocket-server";
-import { WebSocketConnection } from "../../providers/websocket/connection";
+import { Connection } from "../../providers/connection";
+import { websocketTransport } from "../../providers/transports/websocket";
 import { Provider } from "../../providers/provider";
+import { createAttributionRpc } from "../../protocols/attribution/client";
 
 type Ctx = ServerContext;
 
@@ -485,8 +487,9 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
   });
 
   function createWsConnection(opts?: { connect?: boolean }) {
-    const conn = new WebSocketConnection({
+    const conn = new Connection({
       url: baseUrl,
+      transports: [websocketTransport()],
       connect: opts?.connect ?? true,
       maxReconnectAttempts: 0,
       batchIntervalMs: 0,
@@ -669,7 +672,8 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await new Promise((r) => setTimeout(r, 1));
 
     // Second client connects, syncs, disconnects, reconnects
-    const conn2 = new WebSocketConnection({
+    const conn2 = new Connection({
+      transports: [websocketTransport()],
       url: baseUrl,
       connect: true,
       maxReconnectAttempts: 5,
@@ -868,7 +872,8 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
   it("connection reports correct state transitions", async () => {
     const states: string[] = [];
-    const conn = new WebSocketConnection({
+    const conn = new Connection({
+      transports: [websocketTransport()],
       url: baseUrl,
       connect: false,
       maxReconnectAttempts: 0,
@@ -957,7 +962,8 @@ describe("attribution e2e: full WebSocket transport", () => {
   });
 
   function createWsConnection() {
-    const conn = new WebSocketConnection({
+    const conn = new Connection({
+      transports: [websocketTransport()],
       url: baseUrl,
       connect: true,
       maxReconnectAttempts: 0,
@@ -979,12 +985,15 @@ describe("attribution e2e: full WebSocket transport", () => {
       ydoc: opts?.ydoc,
       encryptionKey: opts?.encryptionKey,
       enableOfflinePersistence: false,
+      rpc: {
+        attribution: createAttributionRpc,
+      },
     });
     cleanups.push(() => provider.destroy());
     return { provider, connection: conn };
   }
 
-  function waitForSync(provider: Provider, timeoutMs = 5000): Promise<void> {
+  function waitForSync(provider: Provider<any, any>, timeoutMs = 5000): Promise<void> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error(`Sync timed out after ${timeoutMs}ms`)),
@@ -1028,7 +1037,7 @@ describe("attribution e2e: full WebSocket transport", () => {
     provider.doc.getText("body").insert(0, "hello world");
 
     const activity = await waitFor(
-      () => provider.getActivity(),
+      () => provider.rpc.attribution.getActivity(),
       (a) => a.length > 0,
     );
     expect(activity.length).toBeGreaterThan(0);
@@ -1042,7 +1051,7 @@ describe("attribution e2e: full WebSocket transport", () => {
     provider.doc.getText("body").insert(0, "encrypted hello");
 
     const activity = await waitFor(
-      () => provider.getActivity(),
+      () => provider.rpc.attribution.getActivity(),
       (a) => a.length > 0,
     );
     expect(activity.length).toBeGreaterThan(0);
@@ -1058,8 +1067,8 @@ describe("attribution e2e: full WebSocket transport", () => {
     const text = provider.doc.getText("body");
     const segments = await waitFor(
       () => {
-        provider.invalidateAttributionCache();
-        return provider.getAttributionForRange(text, 0, 5);
+        provider.rpc.attribution.invalidateCache();
+        return provider.rpc.attribution.getForRange(text, 0, 5);
       },
       (s) => s.length > 0,
     );
@@ -1076,7 +1085,7 @@ describe("attribution e2e: full WebSocket transport", () => {
     provider.doc.getText("body").insert(0, "data");
 
     const map = await waitFor(
-      () => provider.getAttributionMap(),
+      () => provider.rpc.attribution.getMap(),
       (m) => m !== null && m.inserts.clients.size > 0,
     );
     expect(map).not.toBeNull();

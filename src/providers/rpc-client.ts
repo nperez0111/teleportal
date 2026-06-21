@@ -1,9 +1,14 @@
 import type { RpcSuccess, RpcError } from "teleportal/protocol";
 import { RpcMessage } from "teleportal/protocol";
-import type { Connection } from "./connection";
+
+interface RpcClientConnection {
+  on(event: "received-message", callback: (message: any) => void): () => void;
+  send(message: any): Promise<void>;
+  readonly connected: Promise<void>;
+}
 
 export class RpcClient {
-  #connection: Connection<any>;
+  #connection: RpcClientConnection;
   #pendingRequests: Map<
     string,
     {
@@ -16,7 +21,7 @@ export class RpcClient {
   #messageHandler: (() => void) | null = null;
   #timeout: number = 30000;
 
-  constructor(connection: Connection<any>) {
+  constructor(connection: RpcClientConnection) {
     this.#connection = connection;
     this.#setupMessageListener();
   }
@@ -143,6 +148,7 @@ export class RpcClient {
     }
     this.#pendingRequests.forEach((pending) => {
       clearTimeout(pending.timeoutId);
+      pending.reject(new Error("RpcClient destroyed"));
     });
     this.#pendingRequests.clear();
   }

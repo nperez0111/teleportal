@@ -1,6 +1,6 @@
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { withPassthrough } from "teleportal/transports";
-import { Provider, websocket } from "teleportal/providers";
+import { Provider, Connection, websocketTransport } from "teleportal/providers";
 
 const token = await createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -17,14 +17,15 @@ const token = await createTokenManager({
     .build(),
 );
 
-const websocketConnection = new websocket.WebSocketConnection({
+const connection = new Connection({
   url: `ws://localhost:1235/?token=${token}`,
+  transports: [websocketTransport({ timeout: 5000 })],
 });
 
-await websocketConnection.connected;
+await connection.connected;
 
 const provider = await Provider.create({
-  connection: websocketConnection,
+  connection,
   document: "test-load",
   getTransport({ getDefaultTransport }) {
     return withPassthrough(getDefaultTransport(), {

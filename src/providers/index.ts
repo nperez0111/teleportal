@@ -1,5 +1,5 @@
 export * from "./provider";
-export * from "./fallback-connection";
 export * from "./connection";
-export * as websocket from "./websocket";
-export * as http from "./http";
+export * from "./rpc-extension";
+export { RpcClient, RpcOperationError } from "./rpc-client";
+export * from "./transports";

@@ -43,41 +43,24 @@ await new Promise((resolve) => setTimeout(resolve, 100));
 
 console.log(agentInstance1.ydoc.getText("test").toString());
 
-import { Connection, Provider, teleportalEventClient } from "teleportal/providers";
+import {
+  Connection,
+  Provider,
+  teleportalEventClient,
+  createMemoryTransportPair,
+} from "teleportal/providers";
 /**
  * There is probably a better way to do this, but this is a quick and dirty way to add events into the devtools.
  */
 async function addDevtoolsObservability() {
-  class MockConnection extends Connection {
-    constructor() {
-      super();
-      // Initialize the state with the correct HTTP context
-      this._state = {
-        type: "disconnected",
-        context: { clientId: null, lastEventId: null },
-      };
-    }
-    async initConnection(): Promise<void> {
-      // Set state to connecting first
-      this.setState({
-        type: "connecting",
-        context: {
-          clientId: this.state.context.clientId,
-          lastEventId: this.state.context.lastEventId,
-        },
-      });
-      // Simulate connection
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      this.setState({
-        type: "connected",
-        context: { clientId: "test-client", connectionType: "mock" },
-      });
-    }
-    async sendMessage(_message: Message): Promise<void> {}
-    async closeConnection(): Promise<void> {}
-  }
+  const [clientTransport] = createMemoryTransportPair();
 
-  const connection = new MockConnection();
+  const connection = new Connection({
+    transports: [clientTransport],
+    connect: false,
+  });
+
+  await connection.connect();
 
   const provider = await Provider.create({
     document: "test",
@@ -100,6 +83,4 @@ async function addDevtoolsObservability() {
       });
     }
   });
-
-  connection.call("connected");
 }

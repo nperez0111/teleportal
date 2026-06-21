@@ -1,11 +1,10 @@
 import { EventSource } from "eventsource";
-import { Provider } from "teleportal/providers";
+import { Provider, httpTransport } from "teleportal/providers";
 
 const provider = await Provider.create({
-  // we always dial WebSocket first, and fall back to HTTP if it fails
   url: `http://localhost:3000`,
-  // bun requires a polyfill for EventSource
-  httpOptions: { EventSource },
+  // use only HTTP transport; bun requires a polyfill for EventSource
+  transports: [httpTransport({ EventSource })],
   document: "test",
 });
 

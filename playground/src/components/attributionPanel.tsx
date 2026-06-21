@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Y from "yjs";
 import type { Milestone } from "teleportal";
-import type { Provider } from "teleportal/providers";
 import type { ActivityEntry, ContentMap } from "teleportal/attribution";
 import { resolveRangeAttribution } from "teleportal/protocols/attribution";
+import type { PlaygroundProvider } from "../utils/providers";
 import { colorForUser, getIdentity, setIdentity } from "../utils/identity";
 
 interface AttributionPanelProps {
-  provider: Provider | null;
+  provider: PlaygroundProvider | null;
   selectedMilestone: Milestone | null;
   isOpen: boolean;
   onClose: () => void;
@@ -151,8 +151,8 @@ export function AttributionPanel({
     setError(null);
     try {
       const [map, timeline] = await Promise.all([
-        provider.getAttributionMap(),
-        provider.getActivity(),
+        provider.rpc.attribution.getMap(),
+        provider.rpc.attribution.getActivity(),
       ]);
 
       if (map) {
@@ -183,15 +183,17 @@ export function AttributionPanel({
       return;
     }
     try {
-      const here = await provider.getActivity({ milestone: selectedMilestone.id });
+      const here = await provider.rpc.attribution.getActivity({ milestone: selectedMilestone.id });
       setMilestoneContributors(toContributions(here));
 
       // Compare against the milestone created immediately before this one.
-      const all = (await provider.listMilestones()).sort((a, b) => a.createdAt - b.createdAt);
+      const all = (await provider.rpc.milestones.list()).sort((a, b) => a.createdAt - b.createdAt);
       const idx = all.findIndex((m) => m.id === selectedMilestone.id);
       const prev = idx > 0 ? all[idx - 1] : null;
       if (prev) {
-        const delta = await provider.getActivity({ changeset: [prev.id, selectedMilestone.id] });
+        const delta = await provider.rpc.attribution.getActivity({
+          changeset: [prev.id, selectedMilestone.id],
+        });
         setChangeset(toContributions(delta));
       } else {
         setChangeset(null);
