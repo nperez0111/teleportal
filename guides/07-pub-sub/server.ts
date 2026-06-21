@@ -3,7 +3,7 @@ import { InMemoryPubSub } from "teleportal";
 
 import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
-import { YDocStorage } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 // This pubSub is the only thing shared between the two servers
@@ -12,7 +12,7 @@ const pubSub = new InMemoryPubSub();
 
 const server1 = new Server({
   // each server has its own storage (in-memory in this example)
-  storage: new YDocStorage(),
+  storage: new MemoryDocumentStorage(),
   pubSub,
 });
 
@@ -45,7 +45,7 @@ serve({
 
 const server2 = new Server({
   // each server has its own storage (in-memory in this example)
-  storage: new YDocStorage(),
+  storage: new MemoryDocumentStorage(),
   pubSub,
 });
 

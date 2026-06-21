@@ -11,7 +11,12 @@ import {
   type ClientContext,
   type Transport,
 } from "teleportal";
-import { getYTransportFromYDoc, type FanOutReader } from "teleportal/transports";
+import {
+  getYTransportFromYDoc,
+  getEncryptedTransport,
+  EncryptionClient,
+  type FanOutReader,
+} from "teleportal/transports";
 import { Connection, type ConnectionState } from "./connection";
 import { RpcClient } from "./rpc-client";
 import { websocketTransport } from "./transports/websocket";
@@ -179,7 +184,19 @@ export class Provider<
       ydoc,
       document,
       awareness,
-      getDefaultTransport() {
+      getDefaultTransport: () => {
+        if (encryptionKey) {
+          const handler = new EncryptionClient({
+            document,
+            ydoc,
+            awareness,
+            key: encryptionKey,
+          });
+          return getEncryptedTransport(handler) as unknown as Transport<
+            ClientContext,
+            DefaultTransportProperties
+          >;
+        }
         return getYTransportFromYDoc({ ydoc, document, awareness });
       },
     });

@@ -9,7 +9,6 @@ import {
   type PubSub,
   type ServerContext,
   type SyncStep2UpdateV2,
-  type Update,
   type VersionedSyncStep2Update,
   type VersionedUpdate,
 } from "teleportal";
@@ -21,19 +20,16 @@ import {
   type RpcServerContext,
   type RpcSuccess,
 } from "teleportal/protocol";
-import type { DocumentStorage, EncryptedDocumentStorage } from "teleportal/storage";
+import type { DocumentStorage } from "teleportal/storage";
 import type { EncodedContentMap } from "teleportal/storage";
 import type { EncryptedUpdatePayload } from "teleportal/protocol/encryption";
-import { decodeEncryptedUpdate } from "teleportal/protocol/encryption";
+import { decodeContentEncryptedPayload } from "teleportal/protocol/encryption";
 import {
   ContentAttribute,
-  type ContentIds,
   createContentAttribute,
   createContentIdsFromUpdate,
   createContentMapFromContentIds,
-  decodeContentIds,
   encodeContentMap,
-  mergeContentIds,
   recordToAttrs,
 } from "teleportal/attribution";
 import { Observable } from "../lib/utils";
@@ -701,20 +697,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   }
 
   async #computeAttribution(update: VersionedUpdate, context: Context, clientId?: string) {
-    let contentIds: ContentIds;
-    if (this.encrypted) {
-      const message = decodeEncryptedUpdate(update.data as unknown as EncryptedUpdatePayload);
-      if (message.type !== "update") {
-        // Non-update encrypted messages (e.g. milestones) don't carry
-        // content IDs we can extract — skip attribution entirely.
-        return;
-      } else {
-        const decoded = message.updates.map((m) => decodeContentIds(m.contentIds));
-        contentIds = decoded.length === 1 ? decoded[0] : mergeContentIds(decoded);
-      }
-    } else {
-      contentIds = createContentIdsFromUpdate(update);
-    }
+    const payload = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
+    const attrUpdate = { version: 1, data: payload.structureUpdate } as unknown as VersionedUpdate;
+    const contentIds = createContentIdsFromUpdate(attrUpdate);
     const now = Date.now();
     const userId = context.userId;
 
@@ -883,105 +868,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                 ? "replication"
                 : "client";
 
-              const encryptedStorage =
-                this.encrypted &&
-                typeof (this.#storage as EncryptedDocumentStorage).handleEncryptedUpdate ===
-                  "function"
-                  ? (this.#storage as EncryptedDocumentStorage)
-                  : null;
-
-              if (encryptedStorage) {
-                let encryptedAttribution: EncodedContentMap | undefined;
-                if (messageSource === "client" && message.context?.userId) {
-                  try {
-                    encryptedAttribution = await this.#computeAttribution(
-                      message.payload.update,
-                      message.context,
-                      client?.id,
-                    );
-                  } catch (error) {
-                    emitWideEvent("error", {
-                      event_type: "attribution_compute_failed",
-                      timestamp: new Date().toISOString(),
-                      document_id: this.documentId,
-                      session_id: this.id,
-                      error,
-                    });
-                  }
-                }
-
-                const storedUpdate = await encryptedStorage.handleEncryptedUpdate(
-                  this.namespacedDocumentId,
-                  message.payload.update.data as EncryptedUpdatePayload,
-                  encryptedAttribution,
-                );
-                if (!storedUpdate) {
-                  await Promise.all([
-                    this.broadcast(message, client?.id),
-                    this.#pubSub.publish(
-                      `document/${this.namespacedDocumentId}` as const,
-                      message.encoded,
-                      this.#nodeId,
-                    ),
-                  ]);
-                  this.#emitDocumentMessage(
-                    message,
-                    client,
-                    messageSource,
-                    replicationMeta?.sourceNodeId,
-                    replicationMeta?.deduped,
-                  );
-                  return;
-                }
-                if (encryptedAttribution) {
-                  this.call("document-attribution", {
-                    documentId: this.documentId,
-                    namespacedDocumentId: this.namespacedDocumentId,
-                    sessionId: this.id,
-                    userId: message.context!.userId,
-                    timestamp: Date.now(),
-                    contentMap: encryptedAttribution,
-                  });
-                }
-                this.call("document-write", {
-                  documentId: this.documentId,
-                  namespacedDocumentId: this.namespacedDocumentId,
-                  sessionId: this.id,
-                  encrypted: this.encrypted,
-                  context: message.context,
-                });
-                const broadcastMessage = new DocMessage(
-                  this.documentId,
-                  {
-                    type: "update",
-                    update: { version: 2, data: storedUpdate } as VersionedUpdate,
-                  },
-                  message.context,
-                  this.encrypted,
-                );
-
-                await Promise.all([
-                  this.broadcast(broadcastMessage, client?.id),
-                  this.#pubSub.publish(
-                    `document/${this.namespacedDocumentId}` as const,
-                    broadcastMessage.encoded,
-                    this.#nodeId,
-                  ),
-                ]);
-
-                void this.#updateDocumentSizeMetrics(message.context);
-
-                this.#emitDocumentMessage(
-                  broadcastMessage,
-                  client,
-                  messageSource,
-                  replicationMeta?.sourceNodeId,
-                  replicationMeta?.deduped,
-                );
-
-                return;
-              }
-
               await this.write(message.payload.update, message.context, messageSource, client?.id);
 
               await Promise.all([
@@ -1004,82 +890,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
               return;
             }
             case "sync-step-2": {
-              const encryptedStorage =
-                this.encrypted &&
-                typeof (this.#storage as EncryptedDocumentStorage).handleEncryptedSyncStep2 ===
-                  "function"
-                  ? (this.#storage as EncryptedDocumentStorage)
-                  : null;
-
-              if (encryptedStorage) {
-                const payloads = await encryptedStorage.handleEncryptedSyncStep2(
-                  this.namespacedDocumentId,
-                  message.payload.update.data as SyncStep2UpdateV2,
-                );
-                if (payloads.length > 0) {
-                  this.call("document-write", {
-                    documentId: this.documentId,
-                    namespacedDocumentId: this.namespacedDocumentId,
-                    sessionId: this.id,
-                    encrypted: this.encrypted,
-                    context: message.context,
-                  });
-                  await Promise.all(
-                    payloads.map(async (payload: Update) => {
-                      const broadcastMessage = new DocMessage(
-                        this.documentId,
-                        {
-                          type: "update",
-                          update: { version: 2, data: payload } as VersionedUpdate,
-                        },
-                        message.context,
-                        this.encrypted,
-                      );
-                      await Promise.all([
-                        this.broadcast(broadcastMessage, client?.id),
-                        this.#pubSub.publish(
-                          `document/${this.namespacedDocumentId}` as const,
-                          broadcastMessage.encoded,
-                          this.#nodeId,
-                        ),
-                      ]);
-
-                      this.#emitDocumentMessage(
-                        broadcastMessage,
-                        client,
-                        replicationMeta?.sourceNodeId ? "replication" : "client",
-                        replicationMeta?.sourceNodeId,
-                        replicationMeta?.deduped,
-                      );
-                    }),
-                  );
-                }
-
-                void this.#updateDocumentSizeMetrics(message.context);
-
-                if (!client) {
-                  emitWideEvent("info", {
-                    event_type: "sync_step2_no_client",
-                    timestamp: new Date().toISOString(),
-                    message_id: message.id,
-                    document_id: this.documentId,
-                    namespaced_document_id: this.namespacedDocumentId,
-                  });
-                  return;
-                }
-
-                await client.send(
-                  new DocMessage(
-                    this.documentId,
-                    { type: "sync-done" },
-                    message.context,
-                    this.encrypted,
-                  ),
-                );
-
-                return;
-              }
-
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#storage.handleSyncStep2(this.namespacedDocumentId, message.payload.update),

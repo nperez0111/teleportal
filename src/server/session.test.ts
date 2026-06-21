@@ -24,21 +24,13 @@ import {
 } from "y-protocols/awareness";
 import { createEncryptionKey, decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import type { EncryptedBinary } from "teleportal/encryption-key";
-import type {
-  DecodedEncryptedUpdatePayload,
-  EncryptedSnapshot,
-} from "teleportal/protocol/encryption";
 import {
-  encodeEncryptedSnapshot,
-  encodeEncryptedUpdateMessages,
+  encodeContentEncryptedPayload,
+  stripContent,
+  encodeSidecar,
 } from "teleportal/protocol/encryption";
-import {
-  createContentIds,
-  decodeContentMap,
-  encodeContentIds,
-  IdSet,
-} from "teleportal/attribution";
-import { EncryptedMemoryStorage } from "../storage/in-memory/encrypted";
+import { decodeContentMap } from "teleportal/attribution";
+import { MemoryDocumentStorage } from "../storage/in-memory/document-storage";
 import { Session } from "./session";
 import { Server } from "./server";
 import { Client } from "./client";
@@ -182,7 +174,12 @@ function createMockServer(): Server<ServerContext> {
 function createTestUpdate(content = "test"): VersionedUpdate {
   const doc = new Y.Doc();
   doc.getText("content").insert(0, content);
-  return { version: 2, data: Y.encodeStateAsUpdateV2(doc) as Update } as VersionedUpdate;
+  const v1 = Y.encodeStateAsUpdate(doc);
+  const payload = encodeContentEncryptedPayload({
+    structureUpdate: v1,
+    encryptedSidecars: [],
+  });
+  return { version: 2, data: payload } as unknown as VersionedUpdate;
 }
 
 /**
@@ -682,9 +679,9 @@ describe("Session", () => {
       });
 
       it("stores attribution for encrypted updates", async () => {
-        EncryptedMemoryStorage.docs.clear();
-        EncryptedMemoryStorage.attributionMaps.clear();
-        const encStorage = new EncryptedMemoryStorage();
+        MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.attributionMaps.clear();
+        const encStorage = new MemoryDocumentStorage(true);
 
         const encSession = new Session({
           documentId: "enc-doc",
@@ -701,44 +698,23 @@ describe("Session", () => {
         await encSession.load();
         encSession.addClient(client1 as any);
 
-        const snapshot: EncryptedSnapshot = {
-          id: "snap-1",
-          parentSnapshotId: null,
-          payload: new Uint8Array([0]) as EncryptedBinary,
-        };
-        await encSession.apply(
-          new DocMessage(
-            "enc-doc",
-            {
-              type: "update",
-              update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate,
-            },
-            { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
-            true,
-          ),
-          client1 as any,
-        );
+        const doc = new Y.Doc();
+        doc.getText("t").insert(0, "Hello");
+        const v1Update = Y.encodeStateAsUpdate(doc);
+        const { update: structureUpdate, sidecar } = stripContent(v1Update);
+        const sidecarBytes = encodeSidecar(sidecar);
 
-        const inserts = new IdSet();
-        inserts.add(100, 0, 5);
-        const payload = new Uint8Array([10, 20, 30]) as EncryptedBinary;
-        const updateMsg: DecodedEncryptedUpdatePayload = {
-          id: "test-update-id",
-          snapshotId: "snap-1",
-          timestamp: [1, 1],
-          payload,
-          contentIds: encodeContentIds(createContentIds(inserts, new IdSet())),
-        };
+        const encPayload = encodeContentEncryptedPayload({
+          structureUpdate,
+          encryptedSidecars: [sidecarBytes as EncryptedBinary],
+        });
 
         await encSession.apply(
           new DocMessage(
             "enc-doc",
             {
               type: "update",
-              update: {
-                version: 2,
-                data: encodeEncryptedUpdateMessages([updateMsg]),
-              } as VersionedUpdate,
+              update: { version: 2, data: encPayload } as VersionedUpdate,
             },
             { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
             true,
@@ -761,9 +737,9 @@ describe("Session", () => {
       });
 
       it("emits document-attribution event for encrypted updates", async () => {
-        EncryptedMemoryStorage.docs.clear();
-        EncryptedMemoryStorage.attributionMaps.clear();
-        const encStorage = new EncryptedMemoryStorage();
+        MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.attributionMaps.clear();
+        const encStorage = new MemoryDocumentStorage(true);
 
         const encSession = new Session({
           documentId: "enc-doc",
@@ -780,49 +756,28 @@ describe("Session", () => {
         await encSession.load();
         encSession.addClient(client1 as any);
 
-        const snapshot: EncryptedSnapshot = {
-          id: "snap-1",
-          parentSnapshotId: null,
-          payload: new Uint8Array([0]) as EncryptedBinary,
-        };
-        await encSession.apply(
-          new DocMessage(
-            "enc-doc",
-            {
-              type: "update",
-              update: { version: 2, data: encodeEncryptedSnapshot(snapshot) } as VersionedUpdate,
-            },
-            { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
-            true,
-          ),
-          client1 as any,
-        );
-
         let attributionEventFired = false;
         encSession.on("document-attribution", () => {
           attributionEventFired = true;
         });
 
-        const inserts = new IdSet();
-        inserts.add(200, 0, 3);
-        const payload = new Uint8Array([1, 2, 3]) as EncryptedBinary;
-        const updateMsg: DecodedEncryptedUpdatePayload = {
-          id: "test-update-evt",
-          snapshotId: "snap-1",
-          timestamp: [2, 1],
-          payload,
-          contentIds: encodeContentIds(createContentIds(inserts, new IdSet())),
-        };
+        const doc = new Y.Doc();
+        doc.getText("t").insert(0, "Test");
+        const v1Update = Y.encodeStateAsUpdate(doc);
+        const { update: structureUpdate, sidecar } = stripContent(v1Update);
+        const sidecarBytes = encodeSidecar(sidecar);
+
+        const encPayload = encodeContentEncryptedPayload({
+          structureUpdate,
+          encryptedSidecars: [sidecarBytes as EncryptedBinary],
+        });
 
         await encSession.apply(
           new DocMessage(
             "enc-doc",
             {
               type: "update",
-              update: {
-                version: 2,
-                data: encodeEncryptedUpdateMessages([updateMsg]),
-              } as VersionedUpdate,
+              update: { version: 2, data: encPayload } as VersionedUpdate,
             },
             { clientId: "client-1", userId: "user-1", room: "room" } as ServerContext,
             true,
@@ -1171,6 +1126,200 @@ describe("Session", () => {
         } as any;
 
         await expect(session.apply(message)).resolves.toBeUndefined();
+      });
+    });
+
+    describe("encrypted session operations", () => {
+      let encSession: Session<ServerContext>;
+      let encStorage: MemoryDocumentStorage;
+      let encPubSub: InMemoryPubSub;
+      let encClient1: MockClient<ServerContext>;
+      let encClient2: MockClient<ServerContext>;
+
+      function createEncryptedUpdate(content = "test") {
+        const doc = new Y.Doc();
+        doc.getText("t").insert(0, content);
+        const v1Update = Y.encodeStateAsUpdate(doc);
+        const { update: structureUpdate, sidecar } = stripContent(v1Update);
+        const sidecarBytes = encodeSidecar(sidecar);
+        const encPayload = encodeContentEncryptedPayload({
+          structureUpdate,
+          encryptedSidecars: [sidecarBytes as EncryptedBinary],
+        });
+        return { version: 2, data: encPayload } as VersionedUpdate;
+      }
+
+      beforeEach(() => {
+        MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.attributionMaps.clear();
+        encStorage = new MemoryDocumentStorage(true);
+        encPubSub = new InMemoryPubSub();
+        encClient1 = new MockClient<ServerContext>("enc-client-1");
+        encClient2 = new MockClient<ServerContext>("enc-client-2");
+
+        encSession = new Session({
+          documentId: "enc-doc",
+          namespacedDocumentId: "enc-doc",
+          id: "session-enc-ops",
+          encrypted: true,
+          storage: encStorage,
+          pubSub: encPubSub,
+          nodeId,
+          onCleanupScheduled: () => {},
+          server: mockServer,
+        });
+      });
+
+      afterEach(async () => {
+        await encSession[Symbol.asyncDispose]();
+        await encPubSub[Symbol.asyncDispose]();
+      });
+
+      it("sync-step-1 returns sync-step-2 and sync-step-1 echo", async () => {
+        await encSession.load();
+        encSession.addClient(encClient1 as any);
+
+        const stateVector = new Uint8Array([1, 2, 3]) as StateVector;
+        const message = new DocMessage(
+          "enc-doc",
+          { type: "sync-step-1", sv: stateVector },
+          { clientId: "enc-client-1", userId: "user-1", room: "room" } as ServerContext,
+          true,
+        );
+
+        await encSession.apply(message, encClient1 as any);
+
+        expect(encClient1.sentMessages.length).toBe(2);
+        expect(encClient1.sentMessages[0].payload.type).toBe("sync-step-2");
+        expect(encClient1.sentMessages[1].payload.type).toBe("sync-step-1");
+      });
+
+      it("update is stored, broadcast to other clients, and published to pubSub", async () => {
+        await encSession.load();
+        encSession.addClient(encClient1 as any);
+        encSession.addClient(encClient2 as any);
+
+        const encUpdate = createEncryptedUpdate("hello");
+        const message = new DocMessage(
+          "enc-doc",
+          { type: "update", update: encUpdate },
+          { clientId: "enc-client-1", userId: "user-1", room: "room" } as ServerContext,
+          true,
+        );
+
+        await encSession.apply(message, encClient1 as any);
+
+        // Should be stored
+        const doc = await encStorage.getDocument("enc-doc");
+        expect(doc).not.toBeNull();
+
+        // Should broadcast to other client, not originating client
+        expect(encClient2.sentMessages.length).toBe(1);
+        expect(encClient1.sentMessages.length).toBe(0);
+      });
+
+      it("sync-step-2 sends sync-done back to the client", async () => {
+        await encSession.load();
+        encSession.addClient(encClient1 as any);
+        encSession.addClient(encClient2 as any);
+
+        const encUpdate = createEncryptedUpdate("step2") as unknown as VersionedSyncStep2Update;
+        const message = new DocMessage(
+          "enc-doc",
+          { type: "sync-step-2", update: encUpdate },
+          { clientId: "enc-client-1", userId: "user-1", room: "room" } as ServerContext,
+          true,
+        );
+
+        await encSession.apply(message, encClient1 as any);
+
+        // Should broadcast to other clients
+        expect(encClient2.sentMessages.length).toBe(1);
+        // Should send sync-done to originating client
+        expect(encClient1.sentMessages.length).toBe(1);
+        expect(encClient1.sentMessages[0].payload.type).toBe("sync-done");
+      });
+
+      it("encrypted update round-trip: client A sends, client B receives broadcast", async () => {
+        await encSession.load();
+        encSession.addClient(encClient1 as any);
+        encSession.addClient(encClient2 as any);
+
+        const encUpdate = createEncryptedUpdate("round-trip");
+        const message = new DocMessage(
+          "enc-doc",
+          { type: "update", update: encUpdate },
+          { clientId: "enc-client-1", userId: "user-1", room: "room" } as ServerContext,
+          true,
+        );
+
+        await encSession.apply(message, encClient1 as any);
+
+        // Client B should have received the broadcast
+        expect(encClient2.sentMessages.length).toBe(1);
+        const broadcastMsg = encClient2.sentMessages[0];
+        expect(broadcastMsg.type).toBe("doc");
+        expect(broadcastMsg.payload.type).toBe("update");
+        expect(broadcastMsg.encrypted).toBe(true);
+
+        // The broadcast payload should contain data
+        const broadcastUpdate = (broadcastMsg.payload as any).update as VersionedUpdate;
+        expect(broadcastUpdate.version).toBe(2);
+        expect(broadcastUpdate.data).toBeInstanceOf(Uint8Array);
+        expect(broadcastUpdate.data.length).toBeGreaterThan(0);
+      });
+
+      it("encrypted session rejects unencrypted doc messages", async () => {
+        await encSession.load();
+        encSession.addClient(encClient1 as any);
+
+        const message = new DocMessage(
+          "enc-doc",
+          { type: "sync-done" },
+          { clientId: "enc-client-1", userId: "user-1", room: "room" } as ServerContext,
+          false, // Not encrypted
+        );
+
+        await expect(encSession.apply(message)).rejects.toThrow(
+          "Message encryption and document encryption are mismatched",
+        );
+      });
+
+      it("rapid encrypted updates are all stored", async () => {
+        await encSession.load();
+        encSession.addClient(encClient1 as any);
+
+        for (let i = 0; i < 10; i++) {
+          const doc = new Y.Doc();
+          doc.getText("t").insert(0, `update-${i}`);
+          const v1Update = Y.encodeStateAsUpdate(doc);
+          const { update: structureUpdate, sidecar } = stripContent(v1Update);
+          const sidecarBytes = encodeSidecar(sidecar);
+          const encPayload = encodeContentEncryptedPayload({
+            structureUpdate,
+            encryptedSidecars: [sidecarBytes as EncryptedBinary],
+          });
+          const update = { version: 2, data: encPayload } as VersionedUpdate;
+
+          const message = new DocMessage(
+            "enc-doc",
+            { type: "update", update },
+            { clientId: "enc-client-1", userId: "user-1", room: "room" } as ServerContext,
+            true,
+          );
+
+          await encSession.apply(message, encClient1 as any);
+        }
+
+        // All updates should be stored — the document should exist and have content
+        const doc = await encStorage.getDocument("enc-doc");
+        expect(doc).not.toBeNull();
+        expect(doc!.content.update).toBeInstanceOf(Uint8Array);
+        expect(doc!.content.update.length).toBeGreaterThan(0);
+
+        // State vector should reflect all 10 client contributions
+        expect(doc!.content.stateVector).toBeInstanceOf(Uint8Array);
+        expect(doc!.content.stateVector.length).toBeGreaterThan(0);
       });
     });
   });

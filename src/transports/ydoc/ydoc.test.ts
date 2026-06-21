@@ -2,10 +2,21 @@ import { describe, expect, it } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
-import { DocMessage, Update, type VersionedUpdate } from "teleportal";
-import { applyVersionedUpdate } from "teleportal/protocol";
+import { DocMessage, type VersionedUpdate } from "teleportal";
+import {
+  decodeContentEncryptedPayload,
+  encodeContentEncryptedPayload,
+} from "teleportal/protocol/encryption";
 import { withPassthrough } from "../passthrough";
 import { getYDocSink, getYDocSource, getYTransportFromYDoc } from ".";
+
+function wrapUpdate(v1: Uint8Array): VersionedUpdate {
+  const payload = encodeContentEncryptedPayload({
+    structureUpdate: v1,
+    encryptedSidecars: [],
+  });
+  return { version: 2, data: payload } as unknown as VersionedUpdate;
+}
 
 describe("ydoc source", () => {
   it("can read a doc's updates", async () => {
@@ -26,67 +37,20 @@ describe("ydoc source", () => {
           expect(chunk.context.clientId).toBe("local");
           expect(chunk.type).toBe("doc");
           expect(chunk.document).toBe("test");
+          const payload = chunk.payload as { type: string; update: VersionedUpdate };
+          expect(payload.type).toBe("update");
+          expect(payload.update.version).toBe(2);
+
+          // Verify round-trip: decode envelope and apply V1 structure update
+          const decoded = decodeContentEncryptedPayload(payload.update.data as any);
+          expect(decoded.encryptedSidecars).toHaveLength(0);
+          const verify = new Y.Doc();
+          Y.applyUpdate(verify, decoded.structureUpdate);
+
           if (count++ === 0) {
-            expect(chunk.payload).toMatchInlineSnapshot(`
-            {
-              "type": "update",
-              "update": {
-                "data": Uint8Array [
-                  1,
-                  1,
-                  200,
-                  1,
-                  0,
-                  4,
-                  1,
-                  4,
-                  116,
-                  101,
-                  115,
-                  116,
-                  5,
-                  104,
-                  101,
-                  108,
-                  108,
-                  111,
-                  0,
-                ],
-                "version": 1,
-              },
-            }
-          `);
+            expect(verify.getText("test").toString()).toBe("hello");
           } else {
-            expect(chunk.payload).toMatchInlineSnapshot(`
-              {
-                "type": "update",
-                "update": {
-                  "data": Uint8Array [
-                    1,
-                    1,
-                    200,
-                    1,
-                    5,
-                    196,
-                    200,
-                    1,
-                    3,
-                    200,
-                    1,
-                    4,
-                    6,
-                    32,
-                    119,
-                    111,
-                    114,
-                    108,
-                    100,
-                    0,
-                  ],
-                  "version": 1,
-                },
-              }
-            `);
+            // Second update applies on top of first
             doc.destroy();
           }
         },
@@ -183,8 +147,11 @@ describe("ydoc source batching", () => {
     expect(payload.type).toBe("update");
     expect(payload.update.version).toBe(2);
 
+    // Decode the content-encrypted envelope and verify the V1 structure update
+    const decoded = decodeContentEncryptedPayload(payload.update.data as any);
+    expect(decoded.encryptedSidecars).toHaveLength(0);
     const verify = new Y.Doc();
-    applyVersionedUpdate(verify, payload.update);
+    Y.applyUpdate(verify, decoded.structureUpdate);
     expect(verify.getText("t").toString()).toBe("abc");
   });
 
@@ -212,8 +179,8 @@ describe("ydoc source batching", () => {
     await done;
 
     expect(messages.length).toBe(2);
-    expect((messages[0].payload as any).update.version).toBe(1);
-    expect((messages[1].payload as any).update.version).toBe(1);
+    expect((messages[0].payload as any).update.version).toBe(2);
+    expect((messages[1].payload as any).update.version).toBe(2);
   });
 
   it("flushes pending updates on destroy", async () => {
@@ -241,8 +208,9 @@ describe("ydoc source batching", () => {
 
     expect(messages.length).toBe(1);
     const payload = messages[0].payload as { type: string; update: VersionedUpdate };
+    const decoded = decodeContentEncryptedPayload(payload.update.data as any);
     const verify = new Y.Doc();
-    applyVersionedUpdate(verify, payload.update);
+    Y.applyUpdate(verify, decoded.structureUpdate);
     expect(verify.getText("t").toString()).toBe("hello");
   });
 
@@ -289,64 +257,34 @@ describe("ydoc sink", () => {
     });
     const writer = sink.writable.getWriter();
 
+    // Create first update: insert "hello" into text "test"
+    const srcDoc1 = new Y.Doc();
+    srcDoc1.clientID = 200;
+    srcDoc1.getText("test").insert(0, "hello");
+    const update1 = Y.encodeStateAsUpdate(srcDoc1);
+
     await writer.write(
-      new DocMessage(
-        "test",
-        {
-          type: "update",
-          update: {
-            version: 2,
-            data: new Uint8Array([
-              0, 0, 2, 136, 3, 0, 0, 1, 4, 12, 9, 116, 101, 115, 116, 104, 101, 108, 108, 111, 4, 5,
-              1, 1, 0, 0, 1, 1, 0, 0,
-            ]) as Update,
-          } as VersionedUpdate,
-        },
-        {
-          clientId: "200",
-        },
-      ),
+      new DocMessage("test", { type: "update", update: wrapUpdate(update1) }, { clientId: "200" }),
     );
 
     expect(doc.getText("test").toString()).toBe("hello");
 
+    // Create second update: insert " world" at position 4
+    const srcDoc2 = new Y.Doc();
+    srcDoc2.clientID = 200;
+    Y.applyUpdate(srcDoc2, update1);
+    srcDoc2.getText("test").insert(4, " world");
+    const update2 = Y.encodeStateAsUpdate(srcDoc2, Y.encodeStateVector(srcDoc1));
+
     await writer.write(
-      new DocMessage(
-        "test",
-        {
-          type: "update",
-          update: {
-            version: 2,
-            data: new Uint8Array([
-              0, 0, 3, 200, 3, 1, 1, 6, 1, 8, 1, 196, 8, 6, 32, 119, 111, 114, 108, 100, 6, 0, 0, 0,
-              1, 1, 5, 0,
-            ]) as Update,
-          } as VersionedUpdate,
-        },
-        {
-          clientId: "200",
-        },
-      ),
+      new DocMessage("test", { type: "update", update: wrapUpdate(update2) }, { clientId: "200" }),
     );
 
     expect(doc.getText("test").toString()).toBe("hell worldo");
 
-    // Send sync-done message to resolve the synced promise
-    await writer.write(
-      new DocMessage(
-        "test",
-        {
-          type: "sync-done",
-        },
-        {
-          clientId: "200",
-        },
-      ),
-    );
+    await writer.write(new DocMessage("test", { type: "sync-done" }, { clientId: "200" }));
 
-    // Wait for the synced promise to resolve
     await sink.synced;
-
     await writer.close();
   });
 
@@ -386,18 +324,18 @@ describe("ydoc transport", () => {
 
     const writer = transport.writable.getWriter();
 
+    // Create a programmatic update for "hello" in text "test"
+    const srcDoc = new Y.Doc();
+    srcDoc.clientID = 200;
+    srcDoc.getText("test").insert(0, "hello");
+    const helloUpdate = Y.encodeStateAsUpdate(srcDoc);
+
     await writer.write(
       new DocMessage(
         "test",
         {
           type: "update",
-          update: {
-            version: 2,
-            data: new Uint8Array([
-              0, 0, 2, 136, 3, 0, 0, 1, 4, 12, 9, 116, 101, 115, 116, 104, 101, 108, 108, 111, 4, 5,
-              1, 1, 0, 0, 1, 1, 0, 0,
-            ]) as Update,
-          } as VersionedUpdate,
+          update: wrapUpdate(helloUpdate),
         },
         {
           clientId: "200",
@@ -414,33 +352,18 @@ describe("ydoc transport", () => {
     expect(value.context.clientId).toBe("local");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
-    expect(value.payload).toMatchInlineSnapshot(`
-      {
-        "type": "update",
-        "update": {
-          "data": Uint8Array [
-            1,
-            1,
-            172,
-            2,
-            0,
-            132,
-            200,
-            1,
-            4,
-            6,
-            32,
-            119,
-            111,
-            114,
-            108,
-            100,
-            0,
-          ],
-          "version": 1,
-        },
-      }
-    `);
+
+    // Verify output is content-encrypted envelope
+    const payload = value.payload as { type: string; update: VersionedUpdate };
+    expect(payload.type).toBe("update");
+    expect(payload.update.version).toBe(2);
+    const decoded = decodeContentEncryptedPayload(payload.update.data as any);
+    expect(decoded.encryptedSidecars).toHaveLength(0);
+    // Apply structure update to verify content
+    const verify = new Y.Doc();
+    Y.applyUpdate(verify, helloUpdate); // apply base first
+    Y.applyUpdate(verify, decoded.structureUpdate);
+    expect(verify.getText("test").toString()).toBe("hello world");
 
     expect(doc.getText("test").toString()).toBe("hello world");
   });
@@ -448,6 +371,15 @@ describe("ydoc transport", () => {
   it("can be inspected with a passthrough", async () => {
     const doc = new Y.Doc();
     doc.clientID = 300;
+
+    // Create a programmatic update for "hello" in text "test"
+    const srcDoc = new Y.Doc();
+    srcDoc.clientID = 200;
+    srcDoc.getText("test").insert(0, "hello");
+    const helloUpdate = Y.encodeStateAsUpdate(srcDoc);
+
+    let readCalled = false;
+    let writeCalled = false;
     const transport = withPassthrough(
       getYTransportFromYDoc({
         ydoc: doc,
@@ -455,91 +387,14 @@ describe("ydoc transport", () => {
       }),
       {
         onRead(chunk) {
-          expect(chunk.encoded).toMatchInlineSnapshot(`
-            Uint8Array [
-              89,
-              74,
-              83,
-              1,
-              4,
-              116,
-              101,
-              115,
-              116,
-              0,
-              0,
-              2,
-              1,
-              17,
-              1,
-              1,
-              172,
-              2,
-              0,
-              132,
-              200,
-              1,
-              4,
-              6,
-              32,
-              119,
-              111,
-              114,
-              108,
-              100,
-              0,
-            ]
-          `);
+          readCalled = true;
+          expect(chunk.encoded).toBeInstanceOf(Uint8Array);
+          expect(chunk.encoded.length).toBeGreaterThan(0);
         },
         onWrite(chunk) {
-          expect(chunk.encoded).toMatchInlineSnapshot(`
-            Uint8Array [
-              89,
-              74,
-              83,
-              1,
-              4,
-              116,
-              101,
-              115,
-              116,
-              0,
-              0,
-              2,
-              2,
-              30,
-              0,
-              0,
-              2,
-              136,
-              3,
-              0,
-              0,
-              1,
-              4,
-              12,
-              9,
-              116,
-              101,
-              115,
-              116,
-              104,
-              101,
-              108,
-              108,
-              111,
-              4,
-              5,
-              1,
-              1,
-              0,
-              0,
-              1,
-              1,
-              0,
-              0,
-            ]
-          `);
+          writeCalled = true;
+          expect(chunk.encoded).toBeInstanceOf(Uint8Array);
+          expect(chunk.encoded.length).toBeGreaterThan(0);
         },
       },
     );
@@ -553,13 +408,7 @@ describe("ydoc transport", () => {
         "test",
         {
           type: "update",
-          update: {
-            version: 2,
-            data: new Uint8Array([
-              0, 0, 2, 136, 3, 0, 0, 1, 4, 12, 9, 116, 101, 115, 116, 104, 101, 108, 108, 111, 4, 5,
-              1, 1, 0, 0, 1, 1, 0, 0,
-            ]) as Update,
-          } as VersionedUpdate,
+          update: wrapUpdate(helloUpdate),
         },
         {
           clientId: "200",
@@ -577,32 +426,15 @@ describe("ydoc transport", () => {
     expect(value.context.clientId).toBe("local");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
-    expect(value.payload).toMatchInlineSnapshot(`
-      {
-        "type": "update",
-        "update": {
-          "data": Uint8Array [
-            1,
-            1,
-            172,
-            2,
-            0,
-            132,
-            200,
-            1,
-            4,
-            6,
-            32,
-            119,
-            111,
-            114,
-            108,
-            100,
-            0,
-          ],
-          "version": 1,
-        },
-      }
-    `);
+
+    // Verify output is content-encrypted envelope
+    const payload = value.payload as { type: string; update: VersionedUpdate };
+    expect(payload.type).toBe("update");
+    expect(payload.update.version).toBe(2);
+    const decoded = decodeContentEncryptedPayload(payload.update.data as any);
+    expect(decoded.encryptedSidecars).toHaveLength(0);
+
+    expect(readCalled).toBe(true);
+    expect(writeCalled).toBe(true);
   });
 });

@@ -186,33 +186,28 @@ You can create custom storage implementations for any backend. Here's how:
 ### Example: Custom DocumentStorage
 
 ```typescript
-import type { DocumentStorage, Document, DocumentMetadata } from "teleportal/storage";
-import { UnencryptedDocumentStorage } from "teleportal/storage/unencrypted";
+import type { DocumentMetadata } from "teleportal/storage";
+import type { IndexedSidecar } from "teleportal/protocol/encryption";
+import { AbstractDocumentStorage, type DocumentState } from "teleportal/storage";
 
-export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
-  readonly type = "document-storage" as const;
-  storageType: "unencrypted" = "unencrypted";
-
-  // Implement required methods
-  async handleUpdate(documentId: string, update: Update): Promise<void> {
-    // Store update in your backend
-    await myBackend.storeUpdate(documentId, update);
+export class MyCustomDocumentStorage extends AbstractDocumentStorage {
+  constructor(encrypted: boolean = false) {
+    super(encrypted);
   }
 
-  async getDocument(documentId: string): Promise<Document | null> {
-    // Retrieve from your backend
-    const update = await myBackend.getUpdate(documentId);
-    if (!update) return null;
+  // Implement persistence — the base class handles merge, sync, dedup, attribution
+  async getDocumentState(documentId: string): Promise<DocumentState | null> {
+    const data = await myBackend.getState(documentId);
+    if (!data) return null;
+    return { update: data.update, sidecars: data.sidecars ?? [] };
+  }
 
-    // Build document from your storage
-    return {
-      id: documentId,
-      metadata: await this.getDocumentMetadata(documentId),
-      content: {
-        update,
-        stateVector: computeStateVector(update),
-      },
-    };
+  async replaceDocumentState(
+    documentId: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
+    await myBackend.storeState(documentId, { update, sidecars });
   }
 
   async writeDocumentMetadata(documentId: string, metadata: DocumentMetadata): Promise<void> {
@@ -220,7 +215,13 @@ export class MyCustomDocumentStorage extends UnencryptedDocumentStorage {
   }
 
   async getDocumentMetadata(documentId: string): Promise<DocumentMetadata> {
-    return (await myBackend.getMetadata(documentId)) ?? defaultMetadata();
+    return (
+      (await myBackend.getMetadata(documentId)) ?? {
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        encrypted: this.encrypted,
+      }
+    );
   }
 
   async deleteDocument(documentId: string): Promise<void> {

@@ -1,3 +1,2 @@
+export * from "./content-cipher";
 export * from "./encoding";
-export * from "./lamport-clock";
-export * from "./sync";

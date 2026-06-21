@@ -4,6 +4,7 @@ import * as Y from "yjs";
 import { compose } from "../utils";
 import { getYDocSink, getYDocSource } from "../ydoc";
 import { EncryptionClient } from "./client";
+export { EncryptionClient } from "./client";
 
 /**
  * Wraps a transport in encryption, encrypting all document messages that are sent through the transport.

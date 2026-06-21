@@ -16,9 +16,10 @@ import {
 import { type ContentMap, type IdMap, decodeContentMap } from "teleportal/attribution";
 import { decryptUpdate } from "teleportal/encryption-key";
 import {
-  decodeEncryptedUpdate,
-  decodeFromStateVector,
-  decodeFromSyncStep2,
+  decodeContentEncryptedPayload,
+  decodeSidecar,
+  mergeSidecars,
+  restoreContent,
 } from "teleportal/protocol/encryption";
 import { Provider } from "teleportal/providers";
 import type { EncodedContentMap } from "teleportal/storage";
@@ -44,7 +45,6 @@ export function getMessageTypeLabel(message: MessageType): string {
     return message.payload.type;
   }
   if (message.type === "rpc") {
-    // Include request type (request/response/stream) for better clarity
     const requestType = message.requestType;
     if (requestType === "response") {
       return `${message.rpcMethod}`;
@@ -58,13 +58,11 @@ export function getMessageTypeLabel(message: MessageType): string {
 }
 
 export function getMessageTypeColor(message: MessageType): string {
-  // Check message type directly for proper color mapping
   if (message.type === "rpc") {
-    // Different colors for different RPC request types
     const requestType = message.requestType;
     if (requestType === "response") return "devtools-bg-indigo-500";
     if (requestType === "stream") return "devtools-bg-indigo-400";
-    return "devtools-bg-indigo-600"; // request
+    return "devtools-bg-indigo-600";
   }
 
   if (message.type === "ack") return "devtools-bg-gray-500";
@@ -72,14 +70,12 @@ export function getMessageTypeColor(message: MessageType): string {
 
   const type = getMessageTypeLabel(message);
 
-  // Document message types
   if (type === "sync-step-1") return "devtools-bg-blue-500";
   if (type === "sync-step-2") return "devtools-bg-blue-600";
   if (type === "update") return "devtools-bg-green-500";
   if (type === "sync-done") return "devtools-bg-green-600";
   if (type === "auth-message") return "devtools-bg-red-500";
 
-  // Awareness
   if (type === "awareness-update") return "devtools-bg-yellow-500";
   if (type === "awareness-request") return "devtools-bg-yellow-600";
 
@@ -158,6 +154,45 @@ function formatRpcPayload(message: MessageType & { type: "rpc" }): unknown {
   return payload;
 }
 
+async function formatEncryptedPayload(
+  data: Uint8Array,
+  message: MessageType,
+  provider: Provider,
+): Promise<string | null> {
+  if (!provider.encryptionKey) {
+    return toBase64(data);
+  }
+
+  try {
+    const payload = decodeContentEncryptedPayload(data as any);
+    const sidecars = [];
+    for (const encrypted of payload.encryptedSidecars) {
+      const sidecarBytes = await decryptUpdate(provider.encryptionKey, encrypted);
+      sidecars.push(decodeSidecar(sidecarBytes));
+    }
+    const fullUpdate = restoreContent(payload.structureUpdate, mergeSidecars(sidecars));
+    const v2 = Y.convertUpdateFormatV1ToV2(fullUpdate);
+
+    return formatMessagePayload(
+      new DocMessage(
+        getDocId(message),
+        {
+          type: "sync-step-2",
+          update: {
+            version: 2,
+            data: v2 as SyncStep2UpdateV2,
+          } as VersionedSyncStep2Update,
+        },
+        message.context,
+        false,
+      ),
+      provider,
+    );
+  } catch {
+    return toBase64(data);
+  }
+}
+
 export async function formatMessagePayload(
   message: MessageType,
   provider: Provider,
@@ -175,7 +210,6 @@ export async function formatMessagePayload(
           let update = message.payload.update;
           if (message.encrypted) {
             if (!provider.encryptionKey) {
-              // bail, content is encrypted
               return toBase64(message.payload.update);
             }
             update = (await decryptUpdate(provider.encryptionKey, update)) as any;
@@ -201,170 +235,22 @@ export async function formatMessagePayload(
     case "doc": {
       switch (message.payload.type) {
         case "sync-step-1": {
-          let stateVector = message.payload.sv;
-          if (message.encrypted) {
-            const decodedStateVector = decodeFromStateVector(stateVector);
-            return JSON.stringify(decodedStateVector, null, 2);
-          }
+          const stateVector = message.payload.sv;
           return JSON.stringify(Y.decodeStateVector(stateVector), null, 2);
         }
         case "update":
         case "sync-step-2": {
-          if (message.encrypted && message.payload.type === "sync-step-2") {
-            const decoded = decodeFromSyncStep2(message.payload.update.data as any);
-            const items: string[] = [];
-            if (decoded.snapshot) {
-              if (!provider.encryptionKey) {
-                items.push(toBase64(decoded.snapshot.payload));
-              } else {
-                const decrypted = await decryptUpdate(
-                  provider.encryptionKey,
-                  decoded.snapshot.payload,
-                );
-                const docMsg = new DocMessage(
-                  getDocId(message),
-                  {
-                    type: "sync-step-2",
-                    update: {
-                      version: 2,
-                      data: decrypted as SyncStep2UpdateV2,
-                    } as VersionedSyncStep2Update,
-                  },
-                  message.context,
-                  false,
-                );
-                const formatted = await formatMessagePayload(docMsg as MessageType, provider);
-                if (formatted != null) items.push(formatted);
-              }
-            }
-            return Promise.all(
-              decoded.updates.map(async (val) => {
-                if (!provider.encryptionKey) {
-                  return toBase64(val.payload);
-                }
-                const decrypted = await decryptUpdate(provider.encryptionKey, val.payload);
-
-                return formatMessagePayload(
-                  new DocMessage(
-                    getDocId(message),
-                    {
-                      type: "sync-step-2",
-                      update: {
-                        version: 2,
-                        data: decrypted as SyncStep2UpdateV2,
-                      } as VersionedSyncStep2Update,
-                    },
-                    message.context,
-                    false,
-                  ),
-                  provider,
-                );
-              }),
-            ).then((res) => {
-              const combined = items.concat(res.filter((s): s is string => s != null));
-              if (combined.length === 0) {
-                return `[]`;
-              }
-              return combined.join("\n");
-            });
-          }
-          if (message.encrypted && message.payload.type === "update") {
-            const decoded = decodeEncryptedUpdate(message.payload.update.data as any);
-            if (decoded.type === "snapshot") {
-              if (!provider.encryptionKey) {
-                return `snapshot:${decoded.snapshot.id} ${toBase64(decoded.snapshot.payload)}`;
-              }
-              const decrypted = await decryptUpdate(
-                provider.encryptionKey,
-                decoded.snapshot.payload,
-              );
-              const formatted = await formatMessagePayload(
-                new DocMessage(
-                  getDocId(message),
-                  {
-                    type: "sync-step-2",
-                    update: {
-                      version: 2,
-                      data: decrypted as SyncStep2UpdateV2,
-                    } as VersionedSyncStep2Update,
-                  },
-                  message.context,
-                  false,
-                ),
-                provider,
-              );
-              return `snapshot:${decoded.snapshot.id}\n${formatted}`;
-            }
-
-            return Promise.all(
-              decoded.updates.map(async (val) => {
-                if (!provider.encryptionKey) {
-                  return toBase64(val.payload);
-                }
-                const decrypted = await decryptUpdate(provider.encryptionKey, val.payload);
-
-                return formatMessagePayload(
-                  new DocMessage(
-                    getDocId(message),
-                    {
-                      type: "sync-step-2",
-                      update: {
-                        version: 2,
-                        data: decrypted as SyncStep2UpdateV2,
-                      } as VersionedSyncStep2Update,
-                    },
-                    message.context,
-                    false,
-                  ),
-                  provider,
-                );
-              }),
-            ).then((res) => {
-              if (res.length === 0) {
-                return `[]`;
-              }
-              return res.join("\n");
-            });
+          if (message.encrypted) {
+            return formatEncryptedPayload(
+              message.payload.update.data as Uint8Array,
+              message,
+              provider,
+            );
           }
           const versionedUpdate = message.payload.update as VersionedUpdate;
-          if (message.encrypted) {
-            return toBase64(versionedUpdate.data);
-          }
 
           const meta = parseUpdateMetaVersioned(versionedUpdate);
           const decodedUpdate = decodeUpdateVersioned(versionedUpdate);
-
-          // TODO ask Kevin later about how to do this
-          // we known the state vector, before and after the update
-          // can we derive the before and after docs?
-          // const beforeStateVector = Y.decodeStateVector(
-          //   Y.encodeStateVector(doc),
-          // );
-          // const afterStateVector = Y.decodeStateVector(
-          //   Y.encodeStateVector(doc),
-          // );
-          // console.log("beforeStateVector", mapToJSON(beforeStateVector));
-          // console.log("afterStateVector", mapToJSON(afterStateVector));
-
-          // meta.from.forEach((value, key) => {
-          //   console.log("setting", key, value);
-          //   beforeStateVector.set(key, value);
-          // });
-          // meta.to.forEach((value, key) => {
-          //   console.log("setting", key, value);
-          //   afterStateVector.set(key, value);
-          // });
-          // console.log("beforeStateVector, after", mapToJSON(beforeStateVector));
-          // console.log("afterStateVector, after", mapToJSON(afterStateVector));
-
-          // const beforeDoc = Y.createDocFromSnapshot(
-          //   doc,
-          //   new Y.Snapshot(decodedUpdate.ds, beforeStateVector),
-          // );
-          // const afterDoc = Y.createDocFromSnapshot(
-          //   doc,
-          //   new Y.Snapshot(decodedUpdate.ds, afterStateVector),
-          // );
 
           return JSON.stringify(
             {

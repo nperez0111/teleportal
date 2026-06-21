@@ -4,7 +4,7 @@ import { AckMessage, type Message, type RpcServerContext, type ServerContext } f
 import { buildMerkleTree, CHUNK_SIZE, generateMerkleProof } from "teleportal/merkle-tree";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
-import { YDocStorage } from "../../storage/in-memory/ydoc";
+import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
 import type { DocumentStorage } from "../../storage/types";
 import type { FilePartStream } from "./methods";
 import { FileHandler } from "./server-handlers";
@@ -52,7 +52,7 @@ describe("FileHandler", () => {
     const temp = new InMemoryTemporaryUploadStorage();
     fileStorage.temporaryUploadStorage = temp;
 
-    const documentStorage = new YDocStorage();
+    const documentStorage = new MemoryDocumentStorage();
     const documentId = "test-doc";
     const context = createMockContext(documentId, documentStorage);
 
