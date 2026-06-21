@@ -711,9 +711,20 @@ export function restoreContent(
       // Item — copy CRDT metadata (with token reversal)
       copyItemMetadata(decoder, encoder, info, reverseTransform);
 
-      const entry = entryMap.get(sidecarKey(clientId, clock));
-
-      if (entry && hasEncryptableContent(contentRef)) {
+      if (hasEncryptableContent(contentRef)) {
+        const entry = entryMap.get(sidecarKey(clientId, clock));
+        // An encryptable item's placeholder content is NOT length-prefixed
+        // (e.g. a string, embed JSON, or binary buffer), so we cannot fall
+        // back to reading a length here. A missing entry means the sidecar
+        // set is incomplete for this structure update — fail loudly rather
+        // than silently desyncing the decoder and corrupting the rest of
+        // the update.
+        if (!entry) {
+          throw new Error(
+            `restoreContent: missing sidecar entry for encryptable content ` +
+              `(clientId=${clientId}, clock=${clock}, contentRef=${contentRef})`,
+          );
+        }
         // Skip placeholder content in the structure update
         const itemLength = skipContent(decoder, contentRef);
         // Write original content from sidecar through abstract encoder
@@ -727,7 +738,7 @@ export function restoreContent(
         }
         clock += 1;
       } else {
-        // ContentDeleted or no sidecar entry
+        // ContentDeleted
         const len = decoder.readLen();
         encoder.writeLen(len);
         clock += len;
