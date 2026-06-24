@@ -45,7 +45,6 @@ export class EncryptionClient
   public key: CryptoKey;
   #decryptUpdate: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
   #encryptUpdate: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
-  #pendingCompaction: SidecarCompaction | null = null;
   #receivedSidecars: EncryptedBinary[] = [];
 
   constructor({
@@ -117,14 +116,13 @@ export class EncryptionClient
 
   /**
    * Responds to the server's sync-step-1 echo with a diff of local-only state.
-   * Includes any pending compaction from handleSyncStep2.
+   * Includes a compaction computed lazily if enough sidecars have accumulated.
    */
   public async handleSyncStep1(syncStep1: Uint8Array): Promise<DocMessage<ClientContext>> {
     const diff = Y.encodeStateAsUpdateV2(this.ydoc, syncStep1);
     const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, diff, 2);
 
-    const compaction = this.#pendingCompaction;
-    this.#pendingCompaction = null;
+    const compaction = await this.#takePendingCompaction();
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
@@ -146,51 +144,48 @@ export class EncryptionClient
   }
 
   /**
-   * Applies the server's sync-step-2 diff to the local Y.Doc.
-   * If multiple sidecars are received, compacts them for piggy-backing
-   * on the next handleSyncStep1 response.
+   * Applies the server's sync-step-2 diff to the local Y.Doc, then accumulates
+   * the received sidecars so a later send can compact them.
    */
   public async handleSyncStep2(syncStep2: VersionedSyncStep2Update): Promise<void> {
     const decoded = decodeContentEncryptedPayload(
       syncStep2.data as unknown as EncryptedUpdatePayload,
     );
     await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
-
-    if (decoded.encryptedSidecars.length >= 2) {
-      const compacted = await compactSidecars(this.key, decoded.encryptedSidecars);
-      if (compacted) {
-        const sourceHashes = decoded.encryptedSidecars.map(hashSidecar);
-        this.#pendingCompaction = {
-          sidecar: compacted.encrypted,
-          index: compacted.index,
-          hash: compacted.hash,
-          sourceHashes,
-        };
-      }
-    }
+    this.#accumulate(...decoded.encryptedSidecars);
   }
 
   /**
-   * Pushes encrypted sidecars onto the accumulator and triggers compaction
-   * when the threshold is reached. Used by both handleUpdate (incoming)
-   * and onUpdate (outgoing) so that single-client edits are compacted too.
+   * Records encrypted sidecars (known to be stored on the server) for a future
+   * compaction. The compaction itself is computed lazily in
+   * {@link #takePendingCompaction} so no crypto work is spent on a compaction
+   * that never gets sent. Used by both handleUpdate (incoming) and onUpdate
+   * (outgoing) so single-client edits are compacted too.
    */
-  async #accumulate(...sidecars: EncryptedBinary[]): Promise<void> {
+  #accumulate(...sidecars: EncryptedBinary[]): void {
     this.#receivedSidecars.push(...sidecars);
+  }
 
-    if (this.#receivedSidecars.length >= EncryptionClient.COMPACTION_THRESHOLD) {
-      const compacted = await compactSidecars(this.key, this.#receivedSidecars);
-      if (compacted) {
-        const sourceHashes = this.#receivedSidecars.map(hashSidecar);
-        this.#pendingCompaction = {
-          sidecar: compacted.encrypted,
-          index: compacted.index,
-          hash: compacted.hash,
-          sourceHashes,
-        };
-      }
-      this.#receivedSidecars = [];
+  /**
+   * Compute a compaction from the accumulated sidecars, but only once enough
+   * have piled up to be worth collapsing. Captures and clears the accumulator
+   * before awaiting so a concurrent send can't compact the same set twice.
+   * Returns null when below threshold or nothing to compact.
+   */
+  async #takePendingCompaction(): Promise<SidecarCompaction | null> {
+    if (this.#receivedSidecars.length < EncryptionClient.COMPACTION_THRESHOLD) {
+      return null;
     }
+    const sources = this.#receivedSidecars;
+    this.#receivedSidecars = [];
+    const compacted = await compactSidecars(this.key, sources);
+    if (!compacted) return null;
+    return {
+      sidecar: compacted.encrypted,
+      index: compacted.index,
+      hash: compacted.hash,
+      sourceHashes: sources.map(hashSidecar),
+    };
   }
 
   /**
@@ -200,7 +195,7 @@ export class EncryptionClient
   public async handleUpdate(update: VersionedUpdate): Promise<void> {
     const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
     await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
-    await this.#accumulate(...decoded.encryptedSidecars);
+    this.#accumulate(...decoded.encryptedSidecars);
   }
 
   /**
@@ -216,7 +211,7 @@ export class EncryptionClient
 
   /**
    * Encrypts a local Y.js update and returns a doc message for sending.
-   * Consumes any pending compaction (from sync or incremental accumulation)
+   * Computes a compaction lazily (only when enough sidecars have accumulated)
    * and includes it in the outgoing payload. Also accumulates the outgoing
    * sidecar for future compaction so single-client edits are compacted too.
    */
@@ -227,8 +222,7 @@ export class EncryptionClient
       update.version,
     );
 
-    const compaction = this.#pendingCompaction;
-    this.#pendingCompaction = null;
+    const compaction = await this.#takePendingCompaction();
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
@@ -250,7 +244,7 @@ export class EncryptionClient
 
     // Accumulate AFTER building the payload — this sidecar will be referenced
     // by a future compaction, by which time the server will have stored it.
-    await this.#accumulate(encryptedSidecar);
+    this.#accumulate(encryptedSidecar);
 
     return message;
   }
