@@ -601,7 +601,9 @@ describe("encrypted client integration", () => {
       }
       const decoded2 = decodeContentEncryptedPayload(msg2.payload.update.data as Update);
       expect(decoded2.compaction).toBeDefined();
-      expect(decoded2.compaction!.sourceHashes.length).toBe(THRESHOLD);
+      // Lazy compaction collapses everything accumulated since the last send:
+      // the own sidecar carried over from the first send (1) plus batch2 (3).
+      expect(decoded2.compaction!.sourceHashes.length).toBe(THRESHOLD + 1);
     });
 
     it("triggers compaction from outgoing updates only (single client)", async () => {
