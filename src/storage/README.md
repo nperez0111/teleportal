@@ -142,6 +142,30 @@ const rateLimitStorage = new UnstorageRateLimitStorage(storage, {
 - Transaction support with TTL-based locking (default: 5000ms)
 - All storage instances are completely independent
 
+### IndexedDB Implementation (Client-side)
+
+The **IDB** implementation stores data in IndexedDB using `lib0/indexeddb`. Used by the Provider for encrypted-at-rest offline persistence.
+
+**Key Features:**
+
+- Zero additional dependencies (uses `lib0/indexeddb`, already a transitive dep)
+- Stores binary directly (IndexedDB supports structured clone — no base64)
+- Atomic multi-tab writes via `transaction()` override
+- Fails cleanly when `indexedDB` is unavailable (SSR/Node)
+- Same `AbstractDocumentStorage` base as the server — content-encrypted payloads stored as-is
+
+**Usage:**
+
+```typescript
+import { IdbDocumentStorage } from "teleportal/storage";
+
+// One DB per document, named by prefix + document ID
+const storage = new IdbDocumentStorage("teleportal-my-doc", true);
+await storage.handleUpdate("my-doc", update);
+const doc = await storage.getDocument("my-doc");
+storage.close(); // close IDB handle on teardown
+```
+
 ### In-Memory Implementation
 
 The **in-memory** implementation stores everything in process memory. Perfect for:
@@ -182,7 +206,8 @@ import type { IndexedSidecar } from "teleportal/protocol/encryption";
 import { AbstractDocumentStorage, type DocumentState } from "teleportal/storage";
 
 export class MyCustomDocumentStorage extends AbstractDocumentStorage {
-  constructor(encrypted: boolean = false) {
+  // Encrypted is the default; pass `false` for a plaintext document.
+  constructor(encrypted: boolean = true) {
     super(encrypted);
   }
 
@@ -385,7 +410,7 @@ const server = new Server({
 **`UnstorageDocumentStorage` options:**
 
 - `keyPrefix`: Namespace prefix for this storage's keys.
-- `encrypted`: When `true`, the storage stores encrypted (ciphertext + sidecar) state. Defaults to `false`.
+- `encrypted`: When `true` (the **default**), the storage tags the document as content-encrypted (it stores the plaintext CRDT structure update alongside the encrypted content sidecars). Pass `false` for a plaintext document. The server treats encrypted and plaintext content identically — this flag only tags metadata; the server never sees content or keys. Wire this from `ctx.encrypted` so it follows the session's mode.
 - `ttl`: Transaction lock timeout in milliseconds (default: 5000ms). Prevents deadlocks by automatically releasing locks after this duration.
 
 ### In-memory classes
@@ -400,7 +425,7 @@ import {
   InMemoryMilestoneStorage,
 } from "teleportal/storage";
 
-// `new MemoryDocumentStorage(true)` for encrypted documents
+// Defaults to encrypted; pass `new MemoryDocumentStorage(false)` for plaintext
 const documentStorage = new MemoryDocumentStorage();
 const fileStorage = new InMemoryFileStorage();
 const milestoneStorage = new InMemoryMilestoneStorage();

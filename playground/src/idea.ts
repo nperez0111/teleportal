@@ -65,6 +65,8 @@ async function addDevtoolsObservability() {
   const provider = await Provider.create({
     document: "test",
     connection,
+    // plaintext for this demo
+    encryptionKey: false,
   });
 
   server.on("client-message", ({ clientId, message, direction }) => {

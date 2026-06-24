@@ -1,8 +1,10 @@
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 const provider = await Provider.create({
   url: `ws://localhost:3000`,
   document: "test",
+  encryptionKey: await createEncryptionKey(),
 });
 
 await provider.synced;

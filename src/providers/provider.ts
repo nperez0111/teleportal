@@ -1,22 +1,26 @@
 import { EventClient } from "@tanstack/devtools-event-client";
-import { IndexeddbPersistence } from "y-indexeddb";
 import { Awareness, removeAwarenessStates } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
+  DocMessage,
   Message,
   Observable,
   PresenceMessage,
   RawReceivedMessage,
   type ClientContext,
   type Transport,
+  type VersionedUpdate,
 } from "teleportal";
 import {
   getYTransportFromYDoc,
   getEncryptedTransport,
   EncryptionClient,
+  createFanInReader,
   type FanOutReader,
 } from "teleportal/transports";
+import type { AbstractDocumentStorage } from "teleportal/storage";
+import { IdbDocumentStorage } from "../storage/idb/document-storage";
 import { Connection, type ConnectionState } from "./connection";
 import { RpcClient } from "./rpc-client";
 import { websocketTransport } from "./transports/websocket";
@@ -96,7 +100,21 @@ export type ProviderOptions<
   awareness?: Awareness;
   enableOfflinePersistence?: boolean;
   indexedDBPrefix?: string;
-  encryptionKey?: CryptoKey;
+  /**
+   * Override the local offline storage backend. Defaults to `IdbDocumentStorage`
+   * (IndexedDB-backed). Pass any `AbstractDocumentStorage` implementation for
+   * testing or custom backends.
+   */
+  offlineStorage?: AbstractDocumentStorage;
+  /**
+   * The key used for end-to-end content encryption.
+   *
+   * End-to-end encryption is the default: pass a {@link CryptoKey} (created via
+   * `createEncryptionKey`/`importEncryptionKey` from `teleportal/encryption-key`)
+   * to encrypt document content. Omitting this throws — to deliberately run an
+   * unencrypted document, pass `false`.
+   */
+  encryptionKey?: CryptoKey | false;
   rpc?: R;
   getTransport?: (ctx: {
     ydoc: Y.Doc;
@@ -139,7 +157,7 @@ export class Provider<
   public awareness: Awareness;
   public transport: T;
   public document: string;
-  public encryptionKey?: CryptoKey;
+  public encryptionKey?: CryptoKey | false;
   public subdocs: Map<string, Provider<any, any>> = new Map();
   public rpc: RpcNamespace<R>;
 
@@ -151,10 +169,11 @@ export class Provider<
   #rpcOptions?: R;
 
   // Offline persistence
-  #localPersistence?: IndexeddbPersistence;
+  #localStorage?: AbstractDocumentStorage;
   #enableOfflinePersistence: boolean;
   #indexedDBPrefix: string;
-  #localLoaded = false;
+  #localReplayed: Promise<void> = Promise.resolve();
+  #replayWriter: WritableStream<RawReceivedMessage> | null = null;
 
   #abortController = new AbortController();
   #initInProgress = false;
@@ -168,10 +187,25 @@ export class Provider<
     getTransport = ({ getDefaultTransport }) => getDefaultTransport() as T,
     enableOfflinePersistence = true,
     indexedDBPrefix = "teleportal-",
+    offlineStorage,
     encryptionKey,
     rpc,
   }: ProviderOptions<T, R>) {
     super();
+    // End-to-end encryption is the default. Omitting `encryptionKey` is almost
+    // always a mistake (the server enforces that all clients of a document agree
+    // on encryption, so a keyless client would be rejected), so fail loudly.
+    // To deliberately run an unencrypted document, pass `encryptionKey: false`.
+    // This must live in the constructor — not in `getDefaultTransport` — so a
+    // custom `getTransport` cannot silently bypass the requirement.
+    if (encryptionKey === undefined) {
+      throw new Error(
+        `Provider for document "${document}" was created without an encryptionKey. ` +
+          `End-to-end encryption is required by default — pass an encryptionKey ` +
+          `(a CryptoKey from teleportal/encryption-key), or explicitly opt out of ` +
+          `encryption with \`encryptionKey: false\`.`,
+      );
+    }
     this.doc = ydoc;
     this.awareness = awareness;
     this.document = document;
@@ -185,6 +219,9 @@ export class Provider<
       document,
       awareness,
       getDefaultTransport: () => {
+        // A CryptoKey selects the content-encryption transport; `false` is the
+        // explicit opt-out into a plaintext transport. (`undefined` is already
+        // rejected in the constructor above, so it never reaches here.)
         if (encryptionKey) {
           const handler = new EncryptionClient({
             document,
@@ -214,17 +251,33 @@ export class Provider<
     this.transport.readable.pipeTo(
       new WritableStream({
         write: (message) => {
+          this.#persistDocMessage(message);
           this.#connection.send(message);
         },
       }),
     );
-    this.#messageReader.readable.pipeTo(this.transport.writable);
-
-    this.doc.on("subdocs", this.#subdocListener);
 
     if (this.#enableOfflinePersistence) {
-      this.#initOfflinePersistence();
+      // Fan-in: merge network messages and the local replay injection.
+      const fanIn = createFanInReader<RawReceivedMessage>();
+      const networkWriter = fanIn.getWriter();
+      this.#messageReader.readable.pipeTo(
+        new WritableStream({
+          write: (chunk) => {
+            this.#persistDocMessage(chunk);
+            const writer = networkWriter.writable.getWriter();
+            writer.write(chunk).finally(() => writer.releaseLock());
+          },
+        }),
+      );
+      this.#replayWriter = fanIn.getWriter().writable;
+      fanIn.readable.pipeTo(this.transport.writable);
+      this.#initOfflinePersistence(offlineStorage);
+    } else {
+      this.#messageReader.readable.pipeTo(this.transport.writable);
     }
+
+    this.doc.on("subdocs", this.#subdocListener);
 
     if (connection.state.type === "connected") {
       this.#init();
@@ -318,7 +371,8 @@ export class Provider<
       document: this.document,
       doc: this.doc,
       awareness: this.awareness,
-      encryptionKey: this.encryptionKey,
+      // `false` is the plaintext opt-out; extensions only care about a real key.
+      encryptionKey: this.encryptionKey || undefined,
       connection: this.#connection,
       get synced() {
         return getSynced();
@@ -355,17 +409,54 @@ export class Provider<
 
   // --- Offline persistence ---
 
-  #initOfflinePersistence() {
-    if (!this.#enableOfflinePersistence || globalThis.window === undefined) return;
-    const key = `${this.#indexedDBPrefix}${this.document}`;
+  #initOfflinePersistence(injectedStorage?: AbstractDocumentStorage) {
+    if (!this.#enableOfflinePersistence) return;
+    if (!injectedStorage && (globalThis.window === undefined || typeof indexedDB === "undefined"))
+      return;
     try {
-      this.#localPersistence = new IndexeddbPersistence(key, this.doc);
-      this.#localPersistence.on("synced", () => {
-        this.#localLoaded = true;
-      });
+      const encrypted = this.encryptionKey !== false;
+      this.#localStorage =
+        injectedStorage ??
+        new IdbDocumentStorage(`${this.#indexedDBPrefix}${this.document}`, encrypted);
+      this.#localReplayed = this.#replayFromLocalStorage();
     } catch {
       this.#enableOfflinePersistence = false;
     }
+  }
+
+  async #replayFromLocalStorage(): Promise<void> {
+    try {
+      const storage = this.#localStorage;
+      if (!storage) return;
+      const doc = await storage.getDocument(this.document);
+      if (!doc?.content.update) return;
+      const encrypted = this.encryptionKey !== false;
+      const replayMsg = new DocMessage(
+        this.document,
+        {
+          type: "sync-step-2" as const,
+          update: { version: 2, data: doc.content.update } as any,
+        },
+        { clientId: this.awareness.clientID.toString() },
+        encrypted,
+      );
+      if (this.#replayWriter) {
+        const writer = this.#replayWriter.getWriter();
+        await writer.write(replayMsg as RawReceivedMessage);
+        writer.releaseLock();
+      }
+    } catch {
+      // Replay failed — fall back to empty-doc sync.
+    }
+  }
+
+  #persistDocMessage(message: Message | RawReceivedMessage): void {
+    if (!this.#localStorage) return;
+    if (message.type !== "doc") return;
+    const payload = (message as DocMessage<any>).payload;
+    if (payload.type !== "update" && payload.type !== "sync-step-2") return;
+    const update = payload.update as VersionedUpdate;
+    this.#localStorage.handleUpdate(this.document, update).catch(() => {});
   }
 
   // --- Init (on connect) ---
@@ -374,6 +465,11 @@ export class Provider<
     if (this.#initInProgress) return;
     this.#initInProgress = true;
     try {
+      if (this.#enableOfflinePersistence && this.#localStorage) {
+        // Wait for local replay so the sync-step-1 state vector reflects
+        // locally-restored state. Timeout prevents a failed replay from deadlocking.
+        await Promise.race([this.#localReplayed, new Promise<void>((r) => setTimeout(r, 5000))]);
+      }
       this.#connection.send(await this.transport.handler.start());
       this.#connection.send(
         new PresenceMessage(this.document, {
@@ -421,6 +517,8 @@ export class Provider<
         ydoc: doc,
         awareness: this.awareness,
         getTransport: this.#getTransport as any,
+        // `encryptionKey` is intentionally omitted so the subdoc inherits the
+        // parent's encryption mode (key or `false`) via openDocument's `??`.
       });
       this.subdocs.set(doc.guid, provider);
       const ctx = {
@@ -456,14 +554,8 @@ export class Provider<
 
   public get loaded(): Promise<void> {
     if (this.#loaded) return this.#loaded;
-    if (this.#enableOfflinePersistence && this.#localPersistence) {
-      this.#loaded = new Promise<void>((resolve) => {
-        if (this.#localLoaded) {
-          resolve();
-        } else {
-          this.#localPersistence!.once("synced", () => resolve());
-        }
-      });
+    if (this.#enableOfflinePersistence && this.#localStorage) {
+      this.#loaded = this.#localReplayed;
       return this.#loaded;
     }
     this.#loaded = this.synced;
@@ -541,6 +633,10 @@ export class Provider<
       getTransport: options.getTransport ?? (this.#getTransport as any),
       enableOfflinePersistence: options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix ?? this.#indexedDBPrefix,
+      // Inherit the parent's encryption mode unless explicitly overridden.
+      // `??` is deliberate: an explicit `false` override is non-nullish so it
+      // takes effect, while omitting the option inherits the parent's key/`false`
+      // (never `undefined`, since the parent was successfully constructed).
       encryptionKey: options.encryptionKey ?? this.encryptionKey,
       rpc: options.rpc ?? this.#rpcOptions,
       document: options.document,
@@ -559,9 +655,11 @@ export class Provider<
     this.doc.off("subdocs", this.#subdocListener);
     super.destroy();
 
-    if (this.#localPersistence) {
-      this.#localPersistence.destroy();
-      this.#localPersistence = undefined;
+    if (this.#localStorage) {
+      if (this.#localStorage instanceof IdbDocumentStorage) {
+        (this.#localStorage as IdbDocumentStorage).close();
+      }
+      this.#localStorage = undefined;
     }
 
     if (!this.#abortController.signal.aborted) {
@@ -591,6 +689,12 @@ export class Provider<
     }
     if (destroyDoc) {
       this.doc.destroy();
+    }
+  }
+
+  public async clearOfflineData(): Promise<void> {
+    if (this.#localStorage) {
+      await this.#localStorage.deleteDocument(this.document);
     }
   }
 
@@ -636,6 +740,7 @@ export class Provider<
       getTransport: options.getTransport,
       enableOfflinePersistence: options.enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix,
+      offlineStorage: options.offlineStorage,
       encryptionKey: options.encryptionKey,
       rpc: options.rpc,
     });

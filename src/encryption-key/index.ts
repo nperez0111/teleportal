@@ -63,6 +63,38 @@ export async function exportEncryptionKey(key: CryptoKey): Promise<string> {
 }
 
 /**
+ * Serialize an exported key string into a URL fragment (hash) value.
+ *
+ * The canonical way to share an end-to-end encryption key without it ever
+ * reaching the server is to keep it in the URL fragment, which browsers never
+ * send in requests. Pair with {@link exportEncryptionKey}:
+ *
+ * ```ts
+ * location.hash = keyToUrlFragment(await exportEncryptionKey(key));
+ * ```
+ *
+ * @param keyString - An exported key string (from {@link exportEncryptionKey})
+ * @returns The fragment value (without a leading `#`), e.g. `token=<key>`
+ */
+export function keyToUrlFragment(keyString: string): string {
+  return new URLSearchParams({ token: keyString }).toString();
+}
+
+/**
+ * Parse an exported key string out of a URL fragment (hash) value.
+ *
+ * Accepts the raw `location.hash` (with or without a leading `#`). Pass the
+ * result to {@link importEncryptionKey} to rebuild the {@link CryptoKey}.
+ *
+ * @param hash - A URL fragment such as `#token=<key>` or `token=<key>`
+ * @returns The key string, or `null` if no `token` is present
+ */
+export function keyFromUrlFragment(hash: string): string | null {
+  const value = hash.startsWith("#") ? hash.slice(1) : hash;
+  return new URLSearchParams(value).get("token");
+}
+
+/**
  * Encrypt a Y.js update using AES-GCM
  * @param key - The encryption key to use
  * @param data - The update to encrypt

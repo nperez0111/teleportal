@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { DocMessage, PresenceMessage, RpcMessage } from "teleportal";
+import { createEncryptionKey } from "teleportal/encryption-key";
+import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
+import { MemoryDocumentStorage } from "../storage/in-memory/document-storage";
 import { Connection } from "./connection";
 import { Provider } from "./provider";
 import { createMemoryTransportPair } from "./transports/memory";
@@ -16,6 +19,8 @@ async function createTestProvider(options?: {
   rpc?: Record<string, () => RpcExtension<any>>;
   ydoc?: Y.Doc;
   awareness?: Awareness;
+  /** Defaults to `false` (plaintext) since most mechanics tests don't need crypto. */
+  encryptionKey?: CryptoKey | false;
 }) {
   const [clientTransport, serverTransport] = createMemoryTransportPair();
   const clientConn = new Connection({
@@ -38,6 +43,7 @@ async function createTestProvider(options?: {
     rpc: options?.rpc ?? {},
     ydoc: options?.ydoc,
     awareness: options?.awareness,
+    encryptionKey: options?.encryptionKey ?? false,
   });
 
   return { provider, clientConn, serverConn, clientTransport, serverTransport };
@@ -83,7 +89,7 @@ function createMockRpc() {
 
 /** Wait for queued microtasks / timers to flush. */
 function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20));
+  return new Promise((resolve) => setTimeout(resolve, 1));
 }
 
 /**
@@ -212,6 +218,7 @@ describe("Provider", () => {
         document: "test-doc",
         enableOfflinePersistence: false,
         rpc: {},
+        encryptionKey: false,
       });
 
       let connectedFired = false;
@@ -265,6 +272,7 @@ describe("Provider", () => {
         document: "test-doc",
         enableOfflinePersistence: false,
         rpc: {},
+        encryptionKey: false,
       });
 
       const states: string[] = [];
@@ -344,6 +352,7 @@ describe("Provider", () => {
         document: "test-doc",
         enableOfflinePersistence: false,
         rpc: {},
+        encryptionKey: false,
       });
 
       const events: string[] = [];
@@ -733,6 +742,7 @@ describe("Provider", () => {
         connection: clientConn,
         document: "factory-doc",
         enableOfflinePersistence: false,
+        encryptionKey: false,
       });
 
       expect(provider).toBeInstanceOf(Provider);
@@ -764,6 +774,7 @@ describe("Provider", () => {
         connection: clientConn,
         document: "factory-doc",
         enableOfflinePersistence: false,
+        encryptionKey: false,
       });
 
       await connectPromise;
@@ -913,6 +924,372 @@ describe("Provider", () => {
         provider.destroy();
         provider.destroy();
       }).not.toThrow();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 10. Encryption is the default
+  // -----------------------------------------------------------------------
+  describe("encryption default", () => {
+    /** Capture the encryption flag of the first sync-step-1 doc message. */
+    async function firstDocMessageEncrypted(provider: Provider): Promise<boolean> {
+      const sent: DocMessage<any>[] = [];
+      provider.on("sent-message", (msg) => {
+        if (msg instanceof DocMessage) sent.push(msg);
+      });
+      await flush();
+      expect(sent.length).toBeGreaterThanOrEqual(1);
+      return sent[0].encrypted;
+    }
+
+    it("throws when constructed without an encryptionKey", async () => {
+      const [clientTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      expect(
+        // Omitting encryptionKey is type-valid (the field is optional) but
+        // throws at runtime — that's the loud-by-default behavior under test.
+        () => new Provider({ connection: clientConn, document: "test-doc" }),
+      ).toThrow(/encryptionKey/);
+      await clientConn.destroy();
+    });
+
+    it("opts out of encryption with encryptionKey: false (plaintext messages)", async () => {
+      const { provider, clientConn, serverConn } = await createTestProvider({
+        encryptionKey: false,
+      });
+      expect(await firstDocMessageEncrypted(provider)).toBe(false);
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("sends encrypted messages when given a key", async () => {
+      const key = await createEncryptionKey();
+      const { provider, clientConn, serverConn } = await createTestProvider({
+        encryptionKey: key,
+      });
+      expect(await firstDocMessageEncrypted(provider)).toBe(true);
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("openDocument inherits the parent's key by default", async () => {
+      const key = await createEncryptionKey();
+      const { provider, clientConn, serverConn } = await createTestProvider({
+        encryptionKey: key,
+      });
+      const child = provider.openDocument({
+        document: "child-doc",
+        enableOfflinePersistence: false,
+      });
+      expect(child.encryptionKey).toBe(key);
+      await flush();
+      child.destroy({ destroyConnection: false });
+      provider.destroy({ destroyConnection: false });
+      await flush();
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("openDocument can override an inherited key with false, and vice versa", async () => {
+      const key = await createEncryptionKey();
+      const { provider, clientConn, serverConn } = await createTestProvider({
+        encryptionKey: key,
+      });
+      // Encrypted parent -> explicit plaintext child.
+      const plaintextChild = provider.openDocument({
+        document: "plaintext-child",
+        enableOfflinePersistence: false,
+        encryptionKey: false,
+      });
+      expect(plaintextChild.encryptionKey).toBe(false);
+
+      // Plaintext provider -> encrypted child.
+      const {
+        provider: plaintextProvider,
+        clientConn: clientConn2,
+        serverConn: serverConn2,
+      } = await createTestProvider({ encryptionKey: false });
+      const encryptedChild = plaintextProvider.openDocument({
+        document: "encrypted-child",
+        enableOfflinePersistence: false,
+        encryptionKey: key,
+      });
+      expect(encryptedChild.encryptionKey).toBe(key);
+
+      await flush();
+      plaintextChild.destroy({ destroyConnection: false });
+      encryptedChild.destroy({ destroyConnection: false });
+      plaintextProvider.destroy({ destroyConnection: false });
+      provider.destroy({ destroyConnection: false });
+      await flush();
+      await clientConn.destroy();
+      await serverConn.destroy();
+      await clientConn2.destroy();
+      await serverConn2.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 11. Offline persistence (encrypted at rest)
+  // -----------------------------------------------------------------------
+  describe("offline persistence (encrypted at rest)", () => {
+    /** Create an isolated in-memory storage (not sharing the static Map). */
+    function createIsolatedStorage(encrypted: boolean = false) {
+      const docs = new Map<string, any>();
+      const storage = new MemoryDocumentStorage(encrypted, {
+        write: async (key, doc) => {
+          docs.set(key, doc);
+        },
+        fetch: async (key) => docs.get(key),
+      });
+      // Override deleteDocument to use the per-test map
+      storage.deleteDocument = async (key: string) => {
+        docs.delete(key);
+      };
+      return storage;
+    }
+
+    /** Helper: create a connected provider with an injected in-memory storage backend. */
+    async function createPersistentProvider(options: {
+      encryptionKey: CryptoKey | false;
+      offlineStorage: MemoryDocumentStorage;
+      document?: string;
+    }) {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: options.document ?? "test-doc",
+        enableOfflinePersistence: true,
+        offlineStorage: options.offlineStorage,
+        encryptionKey: options.encryptionKey,
+        rpc: {},
+      });
+
+      return { provider, clientConn, serverConn, clientTransport, serverTransport };
+    }
+
+    it("persists outgoing plaintext edits to offline storage", async () => {
+      const offlineStorage = createIsolatedStorage();
+      const { provider, clientConn, serverConn } = await createPersistentProvider({
+        encryptionKey: false,
+        offlineStorage,
+      });
+
+      // Wait for init (sync-step-1 send)
+      await flush();
+
+      // Make an edit — the transport will produce an update message
+      provider.doc.getText("body").insert(0, "offline test");
+      await flush();
+      await flush();
+
+      // Check that something was persisted
+      const stored = await offlineStorage.getDocument("test-doc");
+      expect(stored).not.toBeNull();
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("persists incoming server updates to offline storage", async () => {
+      const offlineStorage = createIsolatedStorage();
+      const { provider, clientConn, serverConn } = await createPersistentProvider({
+        encryptionKey: false,
+        offlineStorage,
+      });
+
+      await flush();
+
+      // Simulate server sending a sync-step-2 in content-encrypted format
+      const serverDoc = new Y.Doc();
+      serverDoc.getText("body").insert(0, "from server");
+      const v2 = Y.encodeStateAsUpdateV2(serverDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const syncStep2 = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2" as const,
+          update: { version: 2, data: payload as any },
+        },
+        {},
+        false,
+      );
+      await serverConn.send(syncStep2);
+      await flush();
+      await flush();
+
+      const stored = await offlineStorage.getDocument("test-doc");
+      expect(stored).not.toBeNull();
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+      serverDoc.destroy();
+    });
+
+    it("replays persisted state into a fresh provider (offline-first)", async () => {
+      const offlineStorage = createIsolatedStorage();
+
+      // First provider: edit and persist.
+      const {
+        provider: p1,
+        clientConn: c1,
+        serverConn: s1,
+      } = await createPersistentProvider({
+        encryptionKey: false,
+        offlineStorage,
+      });
+      await flush();
+
+      // Simulate receiving a sync-step-2 in content-encrypted format
+      const sourceDoc = new Y.Doc();
+      sourceDoc.getText("body").insert(0, "persisted content");
+      const v2 = Y.encodeStateAsUpdateV2(sourceDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const syncStep2 = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2" as const,
+          update: { version: 2, data: payload as any },
+        },
+        {},
+        false,
+      );
+      await s1.send(syncStep2);
+      await flush();
+      await flush();
+
+      p1.destroy({ destroyConnection: false });
+      await c1.destroy();
+      await s1.destroy();
+
+      // Verify data persisted
+      const stored = await offlineStorage.getDocument("test-doc");
+      expect(stored).not.toBeNull();
+
+      // Second provider: should replay persisted state.
+      const {
+        provider: p2,
+        clientConn: c2,
+        serverConn: s2,
+      } = await createPersistentProvider({
+        encryptionKey: false,
+        offlineStorage,
+      });
+
+      await p2.loaded;
+      await flush();
+
+      expect(p2.doc.getText("body").toString()).toBe("persisted content");
+
+      p2.destroy({ destroyConnection: false });
+      await c2.destroy();
+      await s2.destroy();
+      sourceDoc.destroy();
+    });
+
+    it("clearOfflineData removes persisted data", async () => {
+      const offlineStorage = createIsolatedStorage();
+      const { provider, clientConn, serverConn } = await createPersistentProvider({
+        encryptionKey: false,
+        offlineStorage,
+      });
+      await flush();
+
+      // Persist something in content-encrypted format
+      const sourceDoc = new Y.Doc();
+      sourceDoc.getText("body").insert(0, "to delete");
+      const v2 = Y.encodeStateAsUpdateV2(sourceDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const syncStep2 = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2" as const,
+          update: { version: 2, data: payload as any },
+        },
+        {},
+        false,
+      );
+      await serverConn.send(syncStep2);
+      await flush();
+      await flush();
+
+      expect(await offlineStorage.getDocument("test-doc")).not.toBeNull();
+
+      await provider.clearOfflineData();
+
+      expect(await offlineStorage.getDocument("test-doc")).toBeNull();
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+      sourceDoc.destroy();
+    });
+
+    it("SSR guard: offline persistence disabled when no window/indexedDB", async () => {
+      // When offlineStorage is NOT injected AND window is undefined (SSR),
+      // the provider should disable persistence gracefully.
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      // In bun test, globalThis.window is undefined, and there's no
+      // indexedDB. Without an injected offlineStorage, the guard should
+      // skip persistence without throwing.
+      const provider = new Provider({
+        connection: clientConn,
+        document: "ssr-doc",
+        enableOfflinePersistence: true,
+        encryptionKey: false,
+        rpc: {},
+      });
+
+      await flush();
+
+      // loaded should fall back to synced (since no local persistence)
+      const loadedPromise = provider.loaded;
+      expect(loadedPromise).toBeInstanceOf(Promise);
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
     });
   });
 });

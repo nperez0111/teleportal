@@ -78,7 +78,7 @@ describe("UnstorageFileStorage", () => {
     const unstorage = createStorage();
     storage = new UnstorageFileStorage(unstorage);
     temp = new UnstorageTemporaryUploadStorage(unstorage, {
-      uploadTimeoutMs: 50,
+      uploadTimeoutMs: 1,
     });
     storage.temporaryUploadStorage = temp;
 
@@ -92,7 +92,7 @@ describe("UnstorageFileStorage", () => {
       documentId: "test-doc",
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 52));
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await temp.cleanupExpiredUploads();
 
     const progress = await temp.getUploadProgress(uploadId);

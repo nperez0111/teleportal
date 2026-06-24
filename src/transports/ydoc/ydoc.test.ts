@@ -120,7 +120,7 @@ describe("ydoc source batching", () => {
     const source = getYDocSource({
       ydoc: doc,
       document: "test",
-      updateBatchIntervalMs: 20,
+      updateBatchIntervalMs: 1,
     });
 
     const messages: any[] = [];
@@ -137,7 +137,7 @@ describe("ydoc source batching", () => {
     doc.getText("t").insert(2, "c");
 
     // Wait for the batch to flush, then destroy to close the stream
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 5));
     doc.destroy();
     await done;
 
@@ -219,7 +219,7 @@ describe("ydoc source batching", () => {
     const source = getYDocSource({
       ydoc: doc,
       document: "test",
-      updateBatchIntervalMs: 10,
+      updateBatchIntervalMs: 1,
     });
 
     const messages: any[] = [];
@@ -234,11 +234,11 @@ describe("ydoc source batching", () => {
     // First batch
     doc.getText("t").insert(0, "a");
     doc.getText("t").insert(1, "b");
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 5));
 
     // Second batch
     doc.getText("t").insert(2, "c");
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 5));
 
     doc.destroy();
     await done;

@@ -1,6 +1,6 @@
 # Encryption Protocol
 
-Content-level encryption for Y.js updates. Encrypts document **content** while preserving CRDT **metadata** in plaintext. This allows the server to merge updates, compute state vectors, and perform sync — while the actual text, values, embeds, and formatting remain encrypted.
+Content-level encryption for Y.js updates, and the **default** mode for Teleportal documents. Encrypts document **content** while preserving CRDT **metadata** in plaintext. This allows the server to merge updates, compute state vectors, and perform sync — while the actual text, values, embeds, and formatting remain encrypted. The `Provider` applies this automatically; pass `encryptionKey: false` to opt a document out into plaintext.
 
 The server stores V2 updates internally for both encrypted and unencrypted documents. For encrypted documents, V1 structure updates are used on the wire (for `stripContent`/`restoreContent`), with V1↔V2 conversion happening at the storage boundary.
 

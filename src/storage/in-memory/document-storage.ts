@@ -13,7 +13,8 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
   public static attributionMaps = new Map<string, EncodedContentMap[]>();
 
   constructor(
-    encrypted: boolean = false,
+    // Encrypted by default; pass `false` to tag documents as plaintext.
+    encrypted: boolean = true,
     private options: {
       write: (key: string, doc: DocumentRecord) => Promise<void>;
       fetch: (key: string) => Promise<DocumentRecord | undefined>;

@@ -388,7 +388,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
   async function createProvider(
     document: string,
-    opts?: { ydoc?: Y.Doc; encryptionKey?: CryptoKey },
+    opts?: { ydoc?: Y.Doc; encryptionKey?: CryptoKey | false },
   ) {
     const conn = createWsConnection();
     await conn.connected;
@@ -397,11 +397,70 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       connection: conn,
       document,
       ydoc: opts?.ydoc,
-      encryptionKey: opts?.encryptionKey,
+      // Default to the explicit plaintext opt-out for the unencrypted tests;
+      // encrypted tests pass a real key.
+      encryptionKey: opts?.encryptionKey ?? false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => provider.destroy());
     return { provider, connection: conn };
+  }
+
+  /**
+   * Builds a factory for `MemoryDocumentStorage` instances that all share one
+   * backing Map. Each call to the factory returns a *fresh* storage object (as a
+   * page reload would construct a fresh `IdbDocumentStorage`) but reads/writes
+   * the same underlying data — standing in for IndexedDB persisting across
+   * reloads, without needing a real IndexedDB in the bun test env.
+   */
+  function createPersistentStoreFactory(encrypted: boolean) {
+    const backing = new Map<string, any>();
+    const make = () =>
+      new MemoryDocumentStorage(encrypted, {
+        write: async (docKey, record) => {
+          backing.set(docKey, record);
+        },
+        fetch: async (docKey) => backing.get(docKey),
+      });
+    return { make, backing };
+  }
+
+  /** Poll until `predicate` (sync or async) is true, or throw after `timeoutMs`. */
+  async function waitUntil(
+    predicate: () => boolean | Promise<boolean>,
+    timeoutMs = 3000,
+  ): Promise<void> {
+    const start = performance.now();
+    while (!(await predicate())) {
+      if (performance.now() - start > timeoutMs) throw new Error("waitUntil timed out");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  /**
+   * Decrypts a storage's persisted document with a throwaway EncryptionClient and
+   * returns the reconstructed `body` text — exactly what a fresh provider would
+   * restore. Used to wait until persistence has fully settled (a sidecar can land
+   * before its structure update, leaving a transiently-incomplete state).
+   */
+  async function reconstructBody(
+    store: MemoryDocumentStorage,
+    docId: string,
+    encKey: CryptoKey,
+  ): Promise<string | null> {
+    const doc = await store.getDocument(docId);
+    if (!doc?.content.update) return null;
+    const probe = new Y.Doc();
+    const ec = new EncryptionClient({ document: docId, ydoc: probe, key: encKey });
+    try {
+      await ec.handleSyncStep2({
+        version: 2,
+        data: doc.content.update as unknown as VersionedSyncStep2Update["data"],
+      } as unknown as VersionedSyncStep2Update);
+    } catch {
+      return null;
+    }
+    return probe.getText("body").toString();
   }
 
   function waitForSync(provider: Provider, timeoutMs = 5000): Promise<void> {
@@ -476,6 +535,112 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await new Promise((r) => setTimeout(r, 1));
 
     expect(p2.doc.getText("body").toString()).toBe("persisted text");
+  });
+
+  // --- Offline persistence: server-down restore ---
+
+  it("restores an encrypted document from local storage with the server down", async () => {
+    const docId = "doc-offline-restore";
+    const { make: makeStore } = createPersistentStoreFactory(true);
+
+    // 1. Connect, edit, and let the edit persist to local storage.
+    const conn1 = createWsConnection();
+    await conn1.connected;
+    const p1 = new Provider({
+      connection: conn1,
+      document: docId,
+      encryptionKey: key,
+      enableOfflinePersistence: true,
+      offlineStorage: makeStore(),
+    });
+    cleanups.push(() => p1.destroy());
+    await waitForSync(p1);
+
+    p1.doc.getText("body").insert(0, "secret offline data");
+    // The outgoing edit persists asynchronously via the transport seam, and a
+    // sidecar can land before its structure update. Wait until the backing store
+    // genuinely reconstructs the edit before tearing the writer down.
+    await waitUntil(
+      async () => (await reconstructBody(makeStore(), docId, key)) === "secret offline data",
+    );
+
+    p1.destroy();
+    await conn1.disconnect();
+
+    // 2. Take the server down entirely.
+    bunServer.stop(true);
+
+    // 3. A fresh provider, fresh Y.Doc, a connection that can never reach the
+    //    (now-dead) server — but the SAME backing local storage.
+    const conn2 = createWsConnection({ connect: false });
+    const ydoc2 = new Y.Doc();
+    const p2 = new Provider({
+      connection: conn2,
+      document: docId,
+      ydoc: ydoc2,
+      encryptionKey: key,
+      enableOfflinePersistence: true,
+      offlineStorage: makeStore(),
+    });
+    cleanups.push(() => p2.destroy());
+
+    // `loaded` resolves from the local replay, independent of any server.
+    await p2.loaded;
+    const restored = await waitForContent(ydoc2, "body", (t) => t === "secret offline data");
+    expect(restored).toBe("secret offline data");
+    // Confirm we genuinely never reached the server.
+    expect(conn2.state.type).not.toBe("connected");
+  });
+
+  it("offline: loaded resolves from local storage even though synced never does", async () => {
+    const docId = "doc-offline-loaded-vs-synced";
+    const { make: makeStore } = createPersistentStoreFactory(true);
+
+    // Seed local storage via a connected provider.
+    const conn1 = createWsConnection();
+    await conn1.connected;
+    const p1 = new Provider({
+      connection: conn1,
+      document: docId,
+      encryptionKey: key,
+      enableOfflinePersistence: true,
+      offlineStorage: makeStore(),
+    });
+    cleanups.push(() => p1.destroy());
+    await waitForSync(p1);
+    p1.doc.getText("body").insert(0, "data while online");
+    await waitUntil(
+      async () => (await reconstructBody(makeStore(), docId, key)) === "data while online",
+    );
+    p1.destroy();
+    await conn1.disconnect();
+
+    bunServer.stop(true);
+
+    const conn2 = createWsConnection({ connect: false });
+    const ydoc2 = new Y.Doc();
+    const p2 = new Provider({
+      connection: conn2,
+      document: docId,
+      ydoc: ydoc2,
+      encryptionKey: key,
+      enableOfflinePersistence: true,
+      offlineStorage: makeStore(),
+    });
+    cleanups.push(() => p2.destroy());
+
+    // loaded resolves and the doc is restored from local storage...
+    await p2.loaded;
+    const restored = await waitForContent(ydoc2, "body", (t) => t === "data while online");
+    expect(restored).toBe("data while online");
+
+    // ...but synced never resolves, since there is no server to sync with.
+    const SYNCED_PENDING = Symbol("pending");
+    const syncedResult = await Promise.race([
+      p2.synced.then(() => "synced").catch(() => "errored"),
+      new Promise((r) => setTimeout(() => r(SYNCED_PENDING), 200)),
+    ]);
+    expect(syncedResult).toBe(SYNCED_PENDING);
   });
 
   // --- Two-client sync ---
@@ -575,6 +740,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const p2 = await Provider.create({
       connection: conn2,
       document: docId,
+      encryptionKey: false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => p2.destroy());
@@ -680,6 +846,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const provider = await Provider.create({
       connection: conn,
       document: docId,
+      encryptionKey: false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => provider.destroy());
@@ -767,6 +934,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const p1 = await Provider.create({
       connection: conn,
       document: "multi-doc-1",
+      encryptionKey: false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => p1.destroy());
@@ -774,6 +942,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const p2 = await Provider.create({
       connection: conn,
       document: "multi-doc-2",
+      encryptionKey: false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => p2.destroy());
@@ -793,6 +962,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const p1b = await Provider.create({
       connection: conn2,
       document: "multi-doc-1",
+      encryptionKey: false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => p1b.destroy());
@@ -800,6 +970,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const p2b = await Provider.create({
       connection: conn2,
       document: "multi-doc-2",
+      encryptionKey: false,
       enableOfflinePersistence: false,
     });
     cleanups.push(() => p2b.destroy());
@@ -992,7 +1163,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await waitForSync(p1);
 
     p1.doc.getText("body").insert(0, "persisted secret");
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 1));
 
     p1.destroy();
     await c1.disconnect();
@@ -1001,9 +1172,9 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
     });
     await waitForSync(p2);
-    await new Promise((r) => setTimeout(r, 50));
+    const restoredText = await waitForContent(p2.doc, "body", (t) => t === "persisted secret");
 
-    expect(p2.doc.getText("body").toString()).toBe("persisted secret");
+    expect(restoredText).toBe("persisted secret");
   });
 
   it("server storage does not contain plaintext user content", async () => {
@@ -1029,7 +1200,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
         state = record.state;
         break;
       }
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 1));
     }
     expect(state).not.toBeNull();
     if (!state) throw new Error("unreachable");
@@ -1082,7 +1253,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     body.insert(0, "formatted text");
     body.format(0, 9, { bold: true });
 
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 1));
 
     // New client with same key receives all content types
     const { provider: pB } = await createProvider(docId, {
@@ -1112,7 +1283,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await waitForSync(pA);
 
     pA.doc.getText("body").insert(0, "hello");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 1));
 
     const { provider: pB } = await createProvider(docId, {
       encryptionKey: key,
@@ -1135,9 +1306,9 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
     });
     await waitForSync(pC);
-    await new Promise((r) => setTimeout(r, 50));
-
-    const finalText = pC.doc.getText("body").toString();
+    const finalText = await waitForContent(pC.doc, "body", (t) =>
+      t.includes("hello") && t.includes("world") && t.includes("!!!"),
+    );
     expect(finalText).toContain("hello");
     expect(finalText).toContain("world");
     expect(finalText).toContain("!!!");
@@ -1152,7 +1323,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     });
     await waitForSync(p1);
     p1.doc.getText("body").insert(0, "round1");
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 1));
     p1.destroy();
     await c1.disconnect();
 
@@ -1161,10 +1332,9 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
     });
     await waitForSync(p2);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(p2.doc.getText("body").toString()).toBe("round1");
+    await waitForContent(p2.doc, "body", (t) => t === "round1");
     p2.doc.getText("body").insert(6, " round2");
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 1));
     p2.destroy();
     await c2.disconnect();
 
@@ -1173,8 +1343,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
     });
     await waitForSync(p3);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(p3.doc.getText("body").toString()).toBe("round1 round2");
+    await waitForContent(p3.doc, "body", (t) => t === "round1 round2");
   });
 });
 
@@ -1264,7 +1433,7 @@ describe("attribution e2e: full WebSocket transport", () => {
 
   async function createProvider(
     document: string,
-    opts?: { ydoc?: Y.Doc; encryptionKey?: CryptoKey },
+    opts?: { ydoc?: Y.Doc; encryptionKey?: CryptoKey | false },
   ) {
     const conn = createWsConnection();
     await conn.connected;
@@ -1272,7 +1441,7 @@ describe("attribution e2e: full WebSocket transport", () => {
       connection: conn,
       document,
       ydoc: opts?.ydoc,
-      encryptionKey: opts?.encryptionKey,
+      encryptionKey: opts?.encryptionKey ?? false,
       enableOfflinePersistence: false,
       rpc: {
         attribution: createAttributionRpc,
@@ -1315,7 +1484,7 @@ describe("attribution e2e: full WebSocket transport", () => {
       const value = await fn();
       if (predicate(value)) return value;
       if (Date.now() - start > timeoutMs) return value;
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 1));
     }
   }
 

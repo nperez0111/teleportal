@@ -49,12 +49,17 @@ serve({
 
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 import * as Y from "yjs";
 
-// Create a provider that connects to the server
+// Create a provider that connects to the server.
+// End-to-end content encryption is the default, so an `encryptionKey` is
+// required. Share this key with collaborators out-of-band (e.g. in the URL
+// fragment) — the server never sees it.
 const provider = await Provider.create({
   url: "ws://localhost:3000",
   document: "my-document",
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Wait for the document to sync
@@ -76,9 +81,12 @@ ydoc.on("update", () => {
 **What's happening:**
 
 1. **`Provider.create()`**: Creates a provider and automatically connects to the server
-2. **`provider.synced`**: A promise that resolves when the document is fully synchronized
-3. **`provider.doc`**: The Y.js document instance - use it like any Y.js document
-4. **Updates**: Changes are automatically synced to other clients connected to the same document
+2. **`encryptionKey`**: End-to-end content encryption is the default — pass a key created with `createEncryptionKey()` (or import a shared one with `importEncryptionKey()`). To deliberately run a plaintext document, pass `encryptionKey: false`.
+3. **`provider.synced`**: A promise that resolves when the document is fully synchronized
+4. **`provider.doc`**: The Y.js document instance - use it like any Y.js document
+5. **Updates**: Changes are automatically synced to other clients connected to the same document
+
+> **Note**: With content-level E2EE the server only ever sees the plaintext CRDT structure and encrypted content sidecars — never your text or keys. Offline persistence stores the encrypted wire representation to IndexedDB, so data at rest is encrypted too. One caveat: awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload itself is encrypted.
 
 ## How It Works
 

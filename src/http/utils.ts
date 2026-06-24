@@ -5,8 +5,11 @@ import { fromMessageArrayStream } from "teleportal/transports";
  * Default implementation that extracts document IDs from URL query parameters
  * Supports multiple 'documents' parameters: ?documents=id-1&documents=id-2
  * Also supports comma-separated values: ?documents=id-1,id-2
- * Supports encryption suffix: ?documents=id-1:encrypted,id-2,id-3:encrypted
- * Documents with ":encrypted" suffix will be marked as encrypted
+ *
+ * End-to-end encryption is the default: every document is marked encrypted
+ * unless it carries an explicit ":plaintext" (or ":unencrypted") opt-out
+ * suffix, e.g. ?documents=id-1,id-2:plaintext,id-3
+ * On conflict (the same id appears both ways) the encrypted entry wins.
  */
 export function getDocumentsFromQueryParams(
   request: Request,
@@ -24,14 +27,16 @@ export function getDocumentsFromQueryParams(
       .filter((id) => id.length > 0);
 
     for (const id of ids) {
-      // Check if the document has an ":encrypted" suffix
-      if (id.endsWith(":encrypted")) {
-        const documentName = id.slice(0, -10); // Remove ':encrypted' suffix
+      // Documents are encrypted by default; an explicit ":plaintext" or
+      // ":unencrypted" suffix opts a single document out.
+      const plaintextSuffix = [":plaintext", ":unencrypted"].find((s) => id.endsWith(s));
+      if (plaintextSuffix) {
+        const documentName = id.slice(0, -plaintextSuffix.length);
         if (documentName.length > 0) {
-          documents.push({ document: documentName, encrypted: true });
+          documents.push({ document: documentName, encrypted: false });
         }
       } else {
-        documents.push({ document: id, encrypted: false });
+        documents.push({ document: id, encrypted: true });
       }
     }
   }

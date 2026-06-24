@@ -59,7 +59,10 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     return this.encrypted ? "encrypted" : "unencrypted";
   }
 
-  constructor(encrypted: boolean = false) {
+  // Encrypted by default — pass `false` to tag this storage's documents as
+  // plaintext. The flag only tags metadata; the storage handles encrypted and
+  // plaintext content identically (content is opaque to the server).
+  constructor(encrypted: boolean = true) {
     this.encrypted = encrypted;
   }
 

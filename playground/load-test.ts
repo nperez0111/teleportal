@@ -1,6 +1,7 @@
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { withPassthrough } from "teleportal/transports";
 import { Provider, Connection, websocketTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 const token = await createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
@@ -27,6 +28,7 @@ await connection.connected;
 const provider = await Provider.create({
   connection,
   document: "test-load",
+  encryptionKey: await createEncryptionKey(),
   getTransport({ getDefaultTransport }) {
     return withPassthrough(getDefaultTransport(), {
       onWrite() {

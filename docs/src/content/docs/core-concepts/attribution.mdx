@@ -53,9 +53,12 @@ server.on(
 The `Provider` exposes attribution methods that query the server and resolve content ranges locally:
 
 ```typescript
+import { createEncryptionKey } from "teleportal/encryption-key";
+
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document",
+  encryptionKey: await createEncryptionKey(), // encrypted by default
 });
 
 // Activity timeline — who edited, and when?
@@ -250,7 +253,7 @@ When `checkPermission` returns `false` (or throws), the RPC call fails with a `4
 
 ## Encryption Boundary
 
-Attribution works for end-to-end-encrypted documents without the server ever seeing content.
+Documents are end-to-end-encrypted by default, and attribution works on them without the server ever seeing content.
 
 Every Y.js operation has a structural ID — `(clientID, clock)` — that is separate from the content it represents. With content-level encryption the CRDT structure stays in **plaintext** and only the content is encrypted into sidecars, so the server reads these IDs directly from the plaintext structure update — the same code path as unencrypted documents — and tags them with the authenticated userId and timestamp. The client does not extract or ship IDs separately. The structure reveals the shape of the CRDT (which client wrote how many operations), but never the text or data itself.
 

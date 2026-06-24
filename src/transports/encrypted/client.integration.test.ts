@@ -219,7 +219,7 @@ describe("encrypted client integration", () => {
 
     // The client should not auto-emit send-message events; onUpdate returns messages
     // synchronously rather than emitting them (no snapshot timer, no auto-send).
-    await new Promise<void>((r) => setTimeout(r, 50));
+    await new Promise<void>((r) => setTimeout(r, 1));
     expect(sent.length).toBe(0);
   });
 

@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { getDocumentsFromQueryParams } from "./utils";
 
 describe("getDocumentsFromQueryParams", () => {
-  it("should extract single document from query parameter", () => {
+  it("should extract single document from query parameter (encrypted by default)", () => {
     const request = new Request("http://example.com/sse?documents=doc-1");
     const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([{ document: "doc-1", encrypted: false }]);
+    expect(result).toEqual([{ document: "doc-1", encrypted: true }]);
   });
 
   it("should extract multiple documents from multiple query parameters", () => {
@@ -14,9 +14,9 @@ describe("getDocumentsFromQueryParams", () => {
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc-1", encrypted: false },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: false },
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: true },
     ]);
   });
 
@@ -24,9 +24,9 @@ describe("getDocumentsFromQueryParams", () => {
     const request = new Request("http://example.com/sse?documents=doc-1,doc-2,doc-3");
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc-1", encrypted: false },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: false },
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: true },
     ]);
   });
 
@@ -36,11 +36,11 @@ describe("getDocumentsFromQueryParams", () => {
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc-1", encrypted: false },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: false },
-      { document: "doc-4", encrypted: false },
-      { document: "doc-5", encrypted: false },
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: true },
+      { document: "doc-4", encrypted: true },
+      { document: "doc-5", encrypted: true },
     ]);
   });
 
@@ -50,9 +50,9 @@ describe("getDocumentsFromQueryParams", () => {
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc-1", encrypted: false },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: false },
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: true },
     ]);
   });
 
@@ -64,8 +64,8 @@ describe("getDocumentsFromQueryParams", () => {
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc with spaces", encrypted: false },
-      { document: "doc/with/slashes", encrypted: false },
+      { document: "doc with spaces", encrypted: true },
+      { document: "doc/with/slashes", encrypted: true },
     ]);
   });
 
@@ -75,8 +75,8 @@ describe("getDocumentsFromQueryParams", () => {
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc-1", encrypted: false },
-      { document: "doc-2", encrypted: false },
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: true },
     ]);
   });
 
@@ -96,7 +96,7 @@ describe("getDocumentsFromQueryParams", () => {
     const specialName = encodeURIComponent("doc-with-symbols!@#$%^&*()");
     const request = new Request(`http://example.com/sse?documents=${specialName}`);
     const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([{ document: "doc-with-symbols!@#$%^&*()", encrypted: false }]);
+    expect(result).toEqual([{ document: "doc-with-symbols!@#$%^&*()", encrypted: true }]);
   });
 
   it("should trim whitespace from document names", () => {
@@ -105,9 +105,9 @@ describe("getDocumentsFromQueryParams", () => {
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "doc-1", encrypted: false },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: false },
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: true },
     ]);
   });
 
@@ -115,9 +115,9 @@ describe("getDocumentsFromQueryParams", () => {
     const request = new Request("http://example.com/sse?documents=123,456&documents=789");
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: "123", encrypted: false },
-      { document: "456", encrypted: false },
-      { document: "789", encrypted: false },
+      { document: "123", encrypted: true },
+      { document: "456", encrypted: true },
+      { document: "789", encrypted: true },
     ]);
   });
 
@@ -127,57 +127,66 @@ describe("getDocumentsFromQueryParams", () => {
     const request = new Request(`http://example.com/sse?documents=${uuid1}&documents=${uuid2}`);
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
-      { document: uuid1, encrypted: false },
-      { document: uuid2, encrypted: false },
+      { document: uuid1, encrypted: true },
+      { document: uuid2, encrypted: true },
     ]);
   });
 
-  // New tests for encryption functionality
-  it("should handle encrypted documents with suffix", () => {
+  // Encryption is the default; ":plaintext" / ":unencrypted" opts a doc out.
+  it("should opt documents out of encryption with a :plaintext suffix", () => {
     const request = new Request(
-      "http://example.com/sse?documents=doc-1:encrypted,doc-2,doc-3:encrypted",
-    );
-    const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([
-      { document: "doc-1", encrypted: true },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: true },
-    ]);
-  });
-
-  it("should handle encrypted documents in multiple parameters", () => {
-    const request = new Request(
-      "http://example.com/sse?documents=doc-1:encrypted&documents=doc-2&documents=doc-3:encrypted",
-    );
-    const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([
-      { document: "doc-1", encrypted: true },
-      { document: "doc-2", encrypted: false },
-      { document: "doc-3", encrypted: true },
-    ]);
-  });
-
-  it("should prefer encrypted version when document appears both encrypted and unencrypted", () => {
-    const request = new Request("http://example.com/sse?documents=doc-1,doc-1:encrypted");
-    const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([{ document: "doc-1", encrypted: true }]);
-  });
-
-  it("should handle URL-encoded encrypted document names", () => {
-    const encodedName = encodeURIComponent("doc with spaces");
-    const request = new Request(`http://example.com/sse?documents=${encodedName}:encrypted`);
-    const result = getDocumentsFromQueryParams(request);
-    expect(result).toEqual([{ document: "doc with spaces", encrypted: true }]);
-  });
-
-  it("should ignore empty encrypted document names", () => {
-    const request = new Request(
-      "http://example.com/sse?documents=:encrypted,doc-1,doc-2:encrypted",
+      "http://example.com/sse?documents=doc-1:plaintext,doc-2,doc-3:plaintext",
     );
     const result = getDocumentsFromQueryParams(request);
     expect(result).toEqual([
       { document: "doc-1", encrypted: false },
       { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: false },
+    ]);
+  });
+
+  it("should accept :unencrypted as an alias for the opt-out suffix", () => {
+    const request = new Request("http://example.com/sse?documents=doc-1:unencrypted,doc-2");
+    const result = getDocumentsFromQueryParams(request);
+    expect(result).toEqual([
+      { document: "doc-1", encrypted: false },
+      { document: "doc-2", encrypted: true },
+    ]);
+  });
+
+  it("should handle plaintext opt-out across multiple parameters", () => {
+    const request = new Request(
+      "http://example.com/sse?documents=doc-1:plaintext&documents=doc-2&documents=doc-3:plaintext",
+    );
+    const result = getDocumentsFromQueryParams(request);
+    expect(result).toEqual([
+      { document: "doc-1", encrypted: false },
+      { document: "doc-2", encrypted: true },
+      { document: "doc-3", encrypted: false },
+    ]);
+  });
+
+  it("should prefer encrypted version when document appears both ways", () => {
+    const request = new Request("http://example.com/sse?documents=doc-1:plaintext,doc-1");
+    const result = getDocumentsFromQueryParams(request);
+    expect(result).toEqual([{ document: "doc-1", encrypted: true }]);
+  });
+
+  it("should handle URL-encoded plaintext document names", () => {
+    const encodedName = encodeURIComponent("doc with spaces");
+    const request = new Request(`http://example.com/sse?documents=${encodedName}:plaintext`);
+    const result = getDocumentsFromQueryParams(request);
+    expect(result).toEqual([{ document: "doc with spaces", encrypted: false }]);
+  });
+
+  it("should ignore empty plaintext document names", () => {
+    const request = new Request(
+      "http://example.com/sse?documents=:plaintext,doc-1,doc-2:plaintext",
+    );
+    const result = getDocumentsFromQueryParams(request);
+    expect(result).toEqual([
+      { document: "doc-1", encrypted: true },
+      { document: "doc-2", encrypted: false },
     ]);
   });
 });

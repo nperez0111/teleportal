@@ -20,13 +20,13 @@ By tagging each message with a `documentId`, the protocol allows a single WebSoc
 
 ## Encryption Semantics
 
-Encrypted messages are handled with different semantics than unencrypted messages, which is why messages include an **encryption flag** in their header.
+**Content-level end-to-end encryption is the default.** Every message carries an **encryption flag** in its header so encrypted and unencrypted documents can share the same connection.
 
-**Why different semantics?** When a message is encrypted:
+**Why different semantics?** When a document is encrypted:
 
-- The payload structure changes (it contains encrypted data rather than raw Y.js updates)
-- The server's processing differs (it must decrypt before applying updates)
-- Storage requirements may differ (encrypted documents may need different persistence strategies)
+- The payload structure changes (the content is split into a plaintext CRDT **structure update** plus an encrypted **sidecar**, rather than a raw Y.js update)
+- The server still merges, diffs, and syncs the structure update exactly as it does for plaintext — but it **never** sees the content or the key (those stay client-side, encrypted with AES-GCM)
+- Storage tags the document as encrypted but otherwise treats the bytes identically
 
 By marking messages as encrypted or not, the protocol ensures that:
 
@@ -34,7 +34,7 @@ By marking messages as encrypted or not, the protocol ensures that:
 - Clients can handle encrypted and unencrypted documents in the same connection
 - The protocol can evolve encryption features independently
 
-> **Note**: Encryption is currently in alpha and the API is subject to change.
+The server enforces that all clients of a single document agree on its encryption mode — a mismatch is rejected. See [`teleportal/protocol/encryption`](/docs/advanced/protocol/) for the wire format and sidecar details.
 
 ## Document Synchronization Flow
 

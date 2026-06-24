@@ -1,5 +1,6 @@
 import { Provider } from "teleportal/providers";
 import { createTokenManager } from "teleportal/token";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 // just for illustration, we create the token on the client
 // in production, you would generate the token on the server and send it to the client
@@ -25,6 +26,7 @@ const token = await tokenManager.createToken(
 const provider = await Provider.create({
   url: `http://localhost:3000?token=${token}`,
   document: "test",
+  encryptionKey: await createEncryptionKey(),
 });
 
 await provider.synced;
