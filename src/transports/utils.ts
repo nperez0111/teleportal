@@ -197,6 +197,46 @@ export function createFanInReader<T>() {
   };
 }
 
+export type SerialQueue<T> = {
+  /**
+   * Enqueue an item. Items are processed strictly in enqueue order, one at a
+   * time. The returned promise resolves once THIS item has finished processing
+   * (or rejects if processing it threw) — giving callers a precise "applied"
+   * signal without polling or event sniffing.
+   */
+  enqueue: (item: T) => Promise<void>;
+  /** Stop accepting new items; in-flight processing is left to settle. */
+  close: () => void;
+};
+
+/**
+ * A minimal serial async queue: a single ordered pipeline around an async sink.
+ *
+ * Unlike a WritableStream used as a fan-in (where a writer resolves on enqueue,
+ * not on consumption), this resolves each `enqueue` only after the sink has
+ * finished processing that item. A failed item rejects its own `enqueue`
+ * promise but does not poison the queue — subsequent items still run in order.
+ */
+export function createSerialQueue<T>(process: (item: T) => Promise<void> | void): SerialQueue<T> {
+  let tail: Promise<void> = Promise.resolve();
+  let closed = false;
+  return {
+    enqueue(item: T): Promise<void> {
+      if (closed) return Promise.resolve();
+      const run = tail.then(() => (closed ? undefined : process(item)));
+      // Keep the chain alive regardless of this item's outcome.
+      tail = run.then(
+        () => {},
+        () => {},
+      );
+      return run;
+    },
+    close() {
+      closed = true;
+    },
+  };
+}
+
 /**
  * Compose a {@link Source} and {@link Sink} into a {@link Transport}.
  */

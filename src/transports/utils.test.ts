@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { BinaryMessage, Message } from "teleportal";
-import { createFanInReader, createFanOutWriter, getBatchingTransform } from "./utils";
+import {
+  createFanInReader,
+  createFanOutWriter,
+  createSerialQueue,
+  getBatchingTransform,
+} from "./utils";
 
 // Helper function to create a test message
 function createTestMessage(data: number[]): BinaryMessage {
@@ -914,6 +919,61 @@ describe("Batching Transform", () => {
 
       await writer.close();
       reader.releaseLock();
+    });
+  });
+
+  describe("createSerialQueue", () => {
+    it("resolves each enqueue only after the item is processed", async () => {
+      const processed: number[] = [];
+      const queue = createSerialQueue<number>(async (n) => {
+        await new Promise((r) => setTimeout(r, 1));
+        processed.push(n);
+      });
+
+      // The promise must not resolve before the sink ran.
+      const p = queue.enqueue(1);
+      expect(processed).toEqual([]);
+      await p;
+      expect(processed).toEqual([1]);
+    });
+
+    it("processes items strictly in enqueue order", async () => {
+      const processed: number[] = [];
+      const queue = createSerialQueue<number>(async (n) => {
+        // Earlier items take longer; order must still be preserved.
+        await new Promise((r) => setTimeout(r, n === 1 ? 5 : 0));
+        processed.push(n);
+      });
+
+      await Promise.all([queue.enqueue(1), queue.enqueue(2), queue.enqueue(3)]);
+      expect(processed).toEqual([1, 2, 3]);
+    });
+
+    it("a failing item rejects its own enqueue but does not poison the queue", async () => {
+      const processed: number[] = [];
+      const queue = createSerialQueue<number>(async (n) => {
+        if (n === 2) throw new Error("boom");
+        processed.push(n);
+      });
+
+      const r1 = queue.enqueue(1);
+      const r2 = queue.enqueue(2);
+      const r3 = queue.enqueue(3);
+
+      await expect(r2).rejects.toThrow("boom");
+      await Promise.all([r1, r3]);
+      expect(processed).toEqual([1, 3]);
+    });
+
+    it("ignores items enqueued after close", async () => {
+      const processed: number[] = [];
+      const queue = createSerialQueue<number>((n) => {
+        processed.push(n);
+      });
+      await queue.enqueue(1);
+      queue.close();
+      await queue.enqueue(2);
+      expect(processed).toEqual([1]);
     });
   });
 });
