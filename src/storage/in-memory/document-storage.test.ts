@@ -1525,3 +1525,37 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     expect(state).toBeNull();
   });
 });
+
+// ── deleteDocument routes through custom options ────────────────────────────
+
+describe("MemoryDocumentStorage with custom backing options", () => {
+  beforeEach(() => {
+    MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.attributionMaps.clear();
+  });
+
+  it("deletes from the custom backing store, not the static map", async () => {
+    // A storage backed by its own Map (as offline persistence does) must have
+    // deleteDocument remove from that Map — not the static MemoryDocumentStorage.docs.
+    const backing = new Map<string, any>();
+    const storage = new MemoryDocumentStorage(false, {
+      write: async (key, doc) => {
+        backing.set(key, doc);
+      },
+      fetch: async (key) => backing.get(key),
+      delete: async (key) => {
+        backing.delete(key);
+      },
+    });
+
+    const doc = new Y.Doc();
+    doc.getText("content").insert(0, "Hello");
+    await storage.handleUpdate("doc-1", versionedUpdate(Y.encodeStateAsUpdateV2(doc) as Update));
+    expect(backing.has("doc-1")).toBe(true);
+
+    await storage.deleteDocument("doc-1");
+
+    expect(backing.has("doc-1")).toBe(false);
+    expect(await storage.getDocumentState("doc-1")).toBeNull();
+  });
+});

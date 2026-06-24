@@ -238,4 +238,46 @@ describe("mergeContentEncryptedPayloads", () => {
     expect(verifyDoc.getText("t").toString()).toContain("hello");
     expect(verifyDoc.getText("t").toString()).toContain("world");
   });
+
+  it("preserves a piggy-backed compaction through the merge", async () => {
+    // A compaction attached to one payload must survive merging; dropping it
+    // would leave the server's superseded sidecars uncollapsed since the
+    // producer already cleared its pending compaction state.
+    const Y = await import("yjs");
+    const { encryptUpdateContent } = await import("./content-cipher");
+    const { createEncryptionKey } = await import("teleportal/encryption-key");
+    const key = await createEncryptionKey();
+
+    const docA = new Y.Doc();
+    docA.getText("t").insert(0, "hello");
+    const encA = await encryptUpdateContent(key, Y.encodeStateAsUpdateV2(docA), 2);
+    const docB = new Y.Doc();
+    docB.getText("t").insert(0, "world");
+    const encB = await encryptUpdateContent(key, Y.encodeStateAsUpdateV2(docB), 2);
+
+    const compaction = {
+      sidecar: new Uint8Array([99, 98, 97]) as EncryptedBinary,
+      index: [{ clientId: 1, minClock: 0, maxClock: 5 }],
+      hash: new Uint8Array([0xaa, 0xbb]),
+      sourceHashes: [new Uint8Array([1, 1]), new Uint8Array([2, 2])],
+    };
+    const payloadA = encodeContentEncryptedPayload({
+      structureUpdate: encA.structureUpdate,
+      encryptedSidecars: [encA.encryptedSidecar],
+      compaction,
+    });
+    const payloadB = encodeContentEncryptedPayload({
+      structureUpdate: encB.structureUpdate,
+      encryptedSidecars: [encB.encryptedSidecar],
+    });
+
+    const decoded = decodeContentEncryptedPayload(
+      mergeContentEncryptedPayloads([payloadA, payloadB]),
+    );
+
+    expect(decoded.compaction).toBeDefined();
+    expect(decoded.compaction!.index).toEqual(compaction.index);
+    expect(decoded.compaction!.sourceHashes.length).toBe(2);
+    expect(Buffer.from(decoded.compaction!.sidecar)).toEqual(Buffer.from(compaction.sidecar));
+  });
 });

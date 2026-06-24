@@ -342,8 +342,9 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
       Y.applyUpdateV2(out, restored);
       expect(out.getText("t").toString()).toBe("Hello World!!!");
 
-      // Index reflects the single deduped entry for client 1 at clock 0.
-      expect(c.index).toEqual([{ clientId: 1, minClock: 0, maxClock: 0 }]);
+      // Index reflects the single deduped entry for client 1, covering the
+      // full 14-char "Hello World!!!" run (clocks 0-13).
+      expect(c.index).toEqual([{ clientId: 1, minClock: 0, maxClock: 13 }]);
     });
 
     it("dedups multiple clients' overlapping entries into one each", async () => {

@@ -1047,11 +1047,10 @@ describe("Provider", () => {
           docs.set(key, doc);
         },
         fetch: async (key) => docs.get(key),
+        delete: async (key) => {
+          docs.delete(key);
+        },
       });
-      // Override deleteDocument to use the per-test map
-      storage.deleteDocument = async (key: string) => {
-        docs.delete(key);
-      };
       return storage;
     }
 

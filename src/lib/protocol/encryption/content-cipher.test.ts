@@ -1083,11 +1083,15 @@ describe("content-cipher", () => {
   describe("sidecar index", () => {
     describe("buildSidecarIndex", () => {
       it("computes clock ranges per client from entries", () => {
+        // Valid single-clock content: a 1-char string (contentRef 4 →
+        // varString "x") and a 1-element any-array (contentRef 8 → count 1).
+        const oneCharString = new Uint8Array([1, 0x78]);
+        const oneElementAny = new Uint8Array([1]);
         const entries: ContentEntry[] = [
-          { clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]) },
-          { clientId: 1, clock: 5, contentRef: 4, data: new Uint8Array([2]) },
-          { clientId: 1, clock: 10, contentRef: 4, data: new Uint8Array([3]) },
-          { clientId: 2, clock: 3, contentRef: 8, data: new Uint8Array([4]) },
+          { clientId: 1, clock: 0, contentRef: 4, data: oneCharString },
+          { clientId: 1, clock: 5, contentRef: 4, data: oneCharString },
+          { clientId: 1, clock: 10, contentRef: 4, data: oneCharString },
+          { clientId: 2, clock: 3, contentRef: 8, data: oneElementAny },
         ];
         const index = buildSidecarIndex(entries);
         expect(index).toEqual([
@@ -1102,7 +1106,7 @@ describe("content-cipher", () => {
 
       it("handles single entry", () => {
         const entries: ContentEntry[] = [
-          { clientId: 42, clock: 7, contentRef: 4, data: new Uint8Array([1]) },
+          { clientId: 42, clock: 7, contentRef: 4, data: new Uint8Array([1, 0x78]) },
         ];
         const index = buildSidecarIndex(entries);
         expect(index).toEqual([{ clientId: 42, minClock: 7, maxClock: 7 }]);

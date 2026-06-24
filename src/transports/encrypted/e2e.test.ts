@@ -421,6 +421,9 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
           backing.set(docKey, record);
         },
         fetch: async (docKey) => backing.get(docKey),
+        delete: async (docKey) => {
+          backing.delete(docKey);
+        },
       });
     return { make, backing };
   }
@@ -1306,8 +1309,10 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
     });
     await waitForSync(pC);
-    const finalText = await waitForContent(pC.doc, "body", (t) =>
-      t.includes("hello") && t.includes("world") && t.includes("!!!"),
+    const finalText = await waitForContent(
+      pC.doc,
+      "body",
+      (t) => t.includes("hello") && t.includes("world") && t.includes("!!!"),
     );
     expect(finalText).toContain("hello");
     expect(finalText).toContain("world");
