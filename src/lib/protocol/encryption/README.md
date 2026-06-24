@@ -13,8 +13,31 @@ The server stores V2 updates internally for both encrypted and unencrypted docum
 | Content type (text vs. embed vs. format), item count           | Embeds (`ContentEmbed`)                 |
 | Delete sets (which items were deleted)                         | Format key + value (`ContentFormat`)    |
 | Shared type structure (`ContentType` — YText, YMap, YArray...) | JSON values (`ContentJSON`)             |
-| Parent key names (map keys like `"title"`, `"body"`)           | Binary data (`ContentBinary`)           |
+| Item **lengths** (placeholders preserve exact item size)       | Binary data (`ContentBinary`)           |
+| Map-key **reuse** (same key → same opaque token)               | Map/format key names (keyed-tokenized)  |
 |                                                                | Sub-document identifiers (`ContentDoc`) |
+
+Map and format key names (e.g. `"title"`, `"body"`) are **not** sent in the
+clear. They are replaced by an opaque token in the structure update, and the
+token→name mapping travels in the encrypted sidecar dictionary. The token is a
+keyed PRF — `HMAC-SHA256(documentKey, name)` truncated to 128 bits — so it is
+deterministic within a document (the server can still merge edits to the same
+key) but **not** guessable: a server cannot confirm a key is `"title"` by
+hashing the guess, the way an unkeyed hash would allow.
+
+## Threat model
+
+The server is treated as **honest-but-curious without the key**. It cannot read
+content, but the plaintext structure update is a real Y.js update, so the server
+**can infer**: the document's CRDT shape (clients, causal order, type tree),
+**how large each edit is** (item lengths are preserved exactly — e.g. it learns
+a text insertion was 12 characters), **when** edits happen, deletion patterns,
+and which edits touch the same (tokenized) map key. It cannot recover text,
+values, embeds, formatting values, or key names. Length and structure leakage is
+inherent to letting the server run CRDT merge/diff without the key — an item's
+length **is** its clock span, so it cannot be hidden while keeping the structure
+update mergeable. Choose this mode when "server learns structure and edit sizes,
+never content" is an acceptable trade; it is not a metadata-private design.
 
 ## How it works
 
@@ -121,6 +144,7 @@ per client group:
   [clientId] [numEntries]
   [clocks as IntDiffOptRle bytes (varUint8Array)]
   [contentRefs as UintOptRle bytes (varUint8Array)]
+  [itemLengths as UintOptRle bytes (varUint8Array)]
   [data lengths as UintOptRle bytes (varUint8Array)]
   [concatenated data (raw bytes, length = sum of data lengths)]
 ```
