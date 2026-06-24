@@ -59,6 +59,12 @@ export type ContentEntry = {
   clock: number;
   contentRef: number;
   data: Uint8Array;
+  /**
+   * Number of clocks this content item spans ([clock, clock + itemLength)).
+   * Stored explicitly so range lookups and overlap checks never re-parse the
+   * (potentially multi-byte) content data to recover its length.
+   */
+  itemLength: number;
 };
 
 export type Sidecar = {
@@ -96,7 +102,7 @@ export function buildSidecarIndex(entries: ContentEntry[]): SidecarIndex {
   for (const entry of entries) {
     // The entry covers [clock, clock + itemLength); record the inclusive end so
     // sidecarOverlapsDiff doesn't drop a multi-clock item for a tail diff.
-    const endClock = entry.clock + entryItemLength(entry.contentRef, entry.data) - 1;
+    const endClock = entry.clock + entry.itemLength - 1;
     const existing = ranges.get(entry.clientId);
     if (existing) {
       existing.min = Math.min(existing.min, entry.clock);
@@ -148,6 +154,7 @@ export function sidecarOverlapsDiff(
 //     [clientId] [numEntries]
 //     [clocks as IntDiffOptRle bytes (varUint8Array)]
 //     [contentRefs as UintOptRle bytes (varUint8Array)]
+//     [itemLengths as UintOptRle bytes (varUint8Array)]
 //     [data lengths as UintOptRle bytes (varUint8Array)]
 //     [concatenated data (raw bytes, length = sum of data lengths)]
 //
@@ -196,6 +203,10 @@ export function encodeSidecar(sidecar: Sidecar): Uint8Array {
       for (const e of group.entries) refEnc.write(e.contentRef);
       encoding.writeVarUint8Array(encoder, refEnc.toUint8Array());
 
+      const itemLenEnc = new encoding.UintOptRleEncoder();
+      for (const e of group.entries) itemLenEnc.write(e.itemLength);
+      encoding.writeVarUint8Array(encoder, itemLenEnc.toUint8Array());
+
       const lenEnc = new encoding.UintOptRleEncoder();
       let totalDataLen = 0;
       for (const e of group.entries) {
@@ -236,6 +247,7 @@ export function decodeSidecar(data: Uint8Array): Sidecar {
 
     const clockDec = new decoding.IntDiffOptRleDecoder(decoding.readVarUint8Array(decoder));
     const refDec = new decoding.UintOptRleDecoder(decoding.readVarUint8Array(decoder));
+    const itemLenDec = new decoding.UintOptRleDecoder(decoding.readVarUint8Array(decoder));
     const lenDec = new decoding.UintOptRleDecoder(decoding.readVarUint8Array(decoder));
 
     const totalDataLen = decoding.readVarUint(decoder);
@@ -245,11 +257,12 @@ export function decodeSidecar(data: Uint8Array): Sidecar {
     for (let i = 0; i < numEntries; i++) {
       const clock = clockDec.read();
       const contentRef = refDec.read();
+      const itemLength = itemLenDec.read();
       const dataLen = lenDec.read();
       const data = allData.slice(dataOffset, dataOffset + dataLen);
       dataOffset += dataLen;
 
-      entries.push({ clientId, clock, contentRef, data });
+      entries.push({ clientId, clock, contentRef, data, itemLength });
     }
   }
 
@@ -308,7 +321,7 @@ function findContainingEntry(
   if (!entries) return undefined;
   for (const entry of entries) {
     if (entry.clock > clock) break;
-    if (clock < entry.clock + entryItemLength(entry.contentRef, entry.data)) {
+    if (clock < entry.clock + entry.itemLength) {
       return entry;
     }
   }
@@ -478,24 +491,6 @@ function writeContentFromSidecar(
       break;
     default:
       throw new Error(`Unknown content ref: ${contentRef}`);
-  }
-}
-
-/**
- * How many clocks a sidecar entry's content spans, derived from its canonical
- * data. Mirrors the `itemLength` computed in `readContentToSidecar` so we never
- * need to store it separately. Only multi-clock content types (string / JSON /
- * any) can exceed length 1; everything else occupies a single clock.
- */
-function entryItemLength(contentRef: number, data: Uint8Array): number {
-  switch (contentRef) {
-    case CONTENT_STRING:
-      return decoding.readVarString(decoding.createDecoder(data)).length;
-    case CONTENT_JSON:
-    case CONTENT_ANY:
-      return decoding.readVarUint(decoding.createDecoder(data));
-    default:
-      return 1;
   }
 }
 
@@ -725,7 +720,7 @@ export function stripContent(update: Uint8Array, version: 1 | 2 = 2): StrippedUp
       // Content — either strip or copy verbatim
       if (hasEncryptableContent(contentRef)) {
         const { data, itemLength } = readContentToSidecar(decoder, contentRef);
-        entries.push({ clientId, clock, contentRef, data });
+        entries.push({ clientId, clock, contentRef, data, itemLength });
         writePlaceholderContent(encoder, contentRef, itemLength);
         clock += itemLength;
       } else if (contentRef === CONTENT_TYPE) {

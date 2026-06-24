@@ -406,7 +406,9 @@ describe("encrypted client integration", () => {
     const singleSidecar = await encryptUpdate(
       key,
       encodeSidecar({
-        entries: [{ clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]) }],
+        entries: [
+          { clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]), itemLength: 1 },
+        ],
         dictionary: new Map(),
       }),
     );

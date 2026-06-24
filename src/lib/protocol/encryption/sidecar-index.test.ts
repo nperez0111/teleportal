@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import * as encoding from "lib0/encoding";
 import * as Y from "yjs";
 import {
   stripContent,
@@ -25,12 +24,8 @@ function singleClockDiff(clientId: number, clock: number): DiffMeta {
   };
 }
 
-// Valid sidecar bytes for a single-character string (contentRef 4), so the
-// entry spans exactly one clock (itemLength derives from the content data).
-const ONE_CHAR_STRING = encoding.encode((e) => encoding.writeVarString(e, "x"));
-
-function entry(clientId: number, clock: number, contentRef = 4): ContentEntry {
-  return { clientId, clock, contentRef, data: ONE_CHAR_STRING };
+function entry(clientId: number, clock: number, contentRef = 4, itemLength = 1): ContentEntry {
+  return { clientId, clock, contentRef, data: new Uint8Array([clock & 0xff]), itemLength };
 }
 
 /**

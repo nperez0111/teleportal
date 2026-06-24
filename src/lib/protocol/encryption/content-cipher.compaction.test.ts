@@ -217,13 +217,15 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
   describe("mergeSidecars", () => {
     it("concatenates entries and unions dictionaries across sidecars", () => {
       const s1: Sidecar = {
-        entries: [{ clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]) }],
+        entries: [
+          { clientId: 1, clock: 0, contentRef: 4, data: new Uint8Array([1]), itemLength: 1 },
+        ],
         dictionary: new Map([["tokA", "alpha"]]),
       };
       const s2: Sidecar = {
         entries: [
-          { clientId: 2, clock: 0, contentRef: 4, data: new Uint8Array([2]) },
-          { clientId: 2, clock: 1, contentRef: 8, data: new Uint8Array([3]) },
+          { clientId: 2, clock: 0, contentRef: 4, data: new Uint8Array([2]), itemLength: 1 },
+          { clientId: 2, clock: 1, contentRef: 8, data: new Uint8Array([3]), itemLength: 1 },
         ],
         dictionary: new Map([["tokB", "beta"]]),
       };
@@ -270,6 +272,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
         clock: 3,
         contentRef: 4,
         data: new Uint8Array([9]),
+        itemLength: 1,
       };
       const merged = mergeSidecars([
         { entries: [dup], dictionary: new Map() },
