@@ -40,9 +40,74 @@ const BIT6 = 0x20; // bit 5: hasParentSub
 const BIT7 = 0x40; // bit 6: hasRightOrigin
 const BIT8 = 0x80; // bit 7: hasOrigin
 
-// ── Metadata string hashing ────────────────────────────────────────────────
+// ── Metadata string tokenization ───────────────────────────────────────────
+//
+// Metadata strings (map keys, format keys) appear in the plaintext structure
+// update and would otherwise leak field names to the server. They are replaced
+// by opaque tokens; the token→original mapping lives in the encrypted sidecar
+// dictionary, so only key holders can reverse it.
+//
+// The token MUST be a deterministic function of the original (the same map key
+// must always produce the same token, or the server can't merge edits to that
+// key) but MUST NOT be guessable by the server. A keyed PRF (HMAC-SHA256 over
+// the document key) satisfies both: deterministic per document, and
+// unguessable without the key — unlike an unkeyed hash, which the server can
+// brute-force against common field names ("title", "body", ...).
 
-function opaqueToken(str: string): string {
+const utf8Encoder = new TextEncoder();
+
+/** SHA-256 block size in bytes. */
+const HMAC_BLOCK_SIZE = 64;
+const TOKEN_LABEL = "teleportal:metadata-token:v1:";
+/** Truncate the PRF output to 128 bits — ample to avoid metadata-key collisions. */
+const TOKEN_BYTES = 16;
+
+/** Synchronous HMAC-SHA256 built on lib0's sync SHA-256 digest. */
+function hmacSha256(keyBytes: Uint8Array, message: Uint8Array): Uint8Array {
+  let key = keyBytes;
+  if (key.length > HMAC_BLOCK_SIZE) key = sha256(key);
+  const block = new Uint8Array(HMAC_BLOCK_SIZE);
+  block.set(key);
+
+  const ipad = new Uint8Array(HMAC_BLOCK_SIZE + message.length);
+  const opad = new Uint8Array(HMAC_BLOCK_SIZE + 32);
+  for (let i = 0; i < HMAC_BLOCK_SIZE; i++) {
+    ipad[i] = block[i] ^ 0x36;
+    opad[i] = block[i] ^ 0x5c;
+  }
+  ipad.set(message, HMAC_BLOCK_SIZE);
+  opad.set(sha256(ipad), HMAC_BLOCK_SIZE);
+  return sha256(opad);
+}
+
+function toHex(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, "0");
+  return s;
+}
+
+/**
+ * Build a keyed, deterministic tokenizer for metadata strings from raw key
+ * bytes. Domain-separated by a fixed label so it never collides with the
+ * AES-GCM use of the same key material.
+ */
+export function createKeyedTokenizer(keyBytes: Uint8Array): (str: string) => string {
+  const label = utf8Encoder.encode(TOKEN_LABEL);
+  return (str: string) => {
+    const msgBytes = utf8Encoder.encode(str);
+    const input = new Uint8Array(label.length + msgBytes.length);
+    input.set(label);
+    input.set(msgBytes, label.length);
+    return toHex(hmacSha256(keyBytes, input).subarray(0, TOKEN_BYTES));
+  };
+}
+
+/**
+ * Fallback unkeyed tokenizer. Deterministic but guessable — used only when
+ * `stripContent` is called without a key (tests, structural tooling). The
+ * production path (`encryptUpdateContent`) always supplies a keyed tokenizer.
+ */
+function unkeyedToken(str: string): string {
   let hash = 5381n;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5n) + hash + BigInt(str.charCodeAt(i))) & 0xffffffffffffffffn;
@@ -658,7 +723,11 @@ function hasEncryptableContent(contentRef: number): boolean {
  * outputs a V2 structure update with placeholder content and a sidecar
  * containing the original content entries.
  */
-export function stripContent(update: Uint8Array, version: 1 | 2 = 2): StrippedUpdate {
+export function stripContent(
+  update: Uint8Array,
+  version: 1 | 2 = 2,
+  tokenize: (str: string) => string = unkeyedToken,
+): StrippedUpdate {
   const rawDecoder = decoding.createDecoder(update);
   const decoder: UpdateDecoder =
     version === 2 ? new Y.UpdateDecoderV2(rawDecoder) : new Y.UpdateDecoderV1(rawDecoder);
@@ -671,7 +740,7 @@ export function stripContent(update: Uint8Array, version: 1 | 2 = 2): StrippedUp
   function replaceString(original: string): string {
     let token = origToToken.get(original);
     if (!token) {
-      token = opaqueToken(original);
+      token = tokenize(original);
       origToToken.set(original, token);
       dictionary.set(token, original);
     }
@@ -881,7 +950,14 @@ export async function encryptUpdateContent(
   update: Uint8Array,
   version: 1 | 2 = 2,
 ): Promise<ContentEncryptedUpdate> {
-  const { update: structureUpdate, sidecar } = stripContent(update, version);
+  // Derive a keyed tokenizer so metadata key names are not guessable from the
+  // plaintext structure update. Reverse mapping travels in the encrypted sidecar.
+  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  const { update: structureUpdate, sidecar } = stripContent(
+    update,
+    version,
+    createKeyedTokenizer(rawKey),
+  );
   const sidecarBytes = encodeSidecar(sidecar);
   const encryptedSidecar = await encryptUpdate(key, sidecarBytes);
   return { structureUpdate, encryptedSidecar };
