@@ -295,8 +295,14 @@ describe("content-cipher", () => {
   describe("sidecar encoding", () => {
     it("round-trips sidecar entries", () => {
       const entries: ContentEntry[] = [
-        { clientId: 123, clock: 0, contentRef: 4, data: new Uint8Array([1, 2, 3]) },
-        { clientId: 456, clock: 5, contentRef: 8, data: new Uint8Array([4, 5, 6, 7]) },
+        { clientId: 123, clock: 0, contentRef: 4, data: new Uint8Array([1, 2, 3]), itemLength: 3 },
+        {
+          clientId: 456,
+          clock: 5,
+          contentRef: 8,
+          data: new Uint8Array([4, 5, 6, 7]),
+          itemLength: 2,
+        },
       ];
       const sidecar: Sidecar = { entries, dictionary: new Map() };
       const encoded = encodeSidecar(sidecar);
@@ -307,7 +313,7 @@ describe("content-cipher", () => {
 
     it("round-trips sidecar entries with dictionary", () => {
       const entries: ContentEntry[] = [
-        { clientId: 123, clock: 0, contentRef: 4, data: new Uint8Array([1, 2, 3]) },
+        { clientId: 123, clock: 0, contentRef: 4, data: new Uint8Array([1, 2, 3]), itemLength: 3 },
       ];
       const dictionary: Map<string, string> = new Map([
         ["abc123", "password"],
@@ -337,6 +343,7 @@ describe("content-cipher", () => {
         clock: i * 2,
         contentRef: 4,
         data: new Uint8Array([0x41 + i]),
+        itemLength: 1,
       }));
       const encoded = encodeSidecar({ entries: sameClient, dictionary: new Map() });
       const decoded = decodeSidecar(encoded);
@@ -351,11 +358,11 @@ describe("content-cipher", () => {
 
     it("handles multiple client groups", () => {
       const entries: ContentEntry[] = [
-        { clientId: 100, clock: 0, contentRef: 4, data: new Uint8Array([1]) },
-        { clientId: 100, clock: 5, contentRef: 4, data: new Uint8Array([2]) },
-        { clientId: 200, clock: 0, contentRef: 8, data: new Uint8Array([3, 4]) },
-        { clientId: 200, clock: 1, contentRef: 8, data: new Uint8Array([5, 6]) },
-        { clientId: 200, clock: 2, contentRef: 6, data: new Uint8Array([7]) },
+        { clientId: 100, clock: 0, contentRef: 4, data: new Uint8Array([1]), itemLength: 1 },
+        { clientId: 100, clock: 5, contentRef: 4, data: new Uint8Array([2]), itemLength: 1 },
+        { clientId: 200, clock: 0, contentRef: 8, data: new Uint8Array([3, 4]), itemLength: 1 },
+        { clientId: 200, clock: 1, contentRef: 8, data: new Uint8Array([5, 6]), itemLength: 1 },
+        { clientId: 200, clock: 2, contentRef: 6, data: new Uint8Array([7]), itemLength: 1 },
       ];
       const decoded = decodeSidecar(encodeSidecar({ entries, dictionary: new Map() }));
       expect(decoded.entries).toEqual(entries);
@@ -1083,15 +1090,12 @@ describe("content-cipher", () => {
   describe("sidecar index", () => {
     describe("buildSidecarIndex", () => {
       it("computes clock ranges per client from entries", () => {
-        // Valid single-clock content: a 1-char string (contentRef 4 →
-        // varString "x") and a 1-element any-array (contentRef 8 → count 1).
-        const oneCharString = new Uint8Array([1, 0x78]);
-        const oneElementAny = new Uint8Array([1]);
+        const d = new Uint8Array([1]);
         const entries: ContentEntry[] = [
-          { clientId: 1, clock: 0, contentRef: 4, data: oneCharString },
-          { clientId: 1, clock: 5, contentRef: 4, data: oneCharString },
-          { clientId: 1, clock: 10, contentRef: 4, data: oneCharString },
-          { clientId: 2, clock: 3, contentRef: 8, data: oneElementAny },
+          { clientId: 1, clock: 0, contentRef: 4, data: d, itemLength: 1 },
+          { clientId: 1, clock: 5, contentRef: 4, data: d, itemLength: 1 },
+          { clientId: 1, clock: 10, contentRef: 4, data: d, itemLength: 1 },
+          { clientId: 2, clock: 3, contentRef: 8, data: d, itemLength: 1 },
         ];
         const index = buildSidecarIndex(entries);
         expect(index).toEqual([
@@ -1100,13 +1104,24 @@ describe("content-cipher", () => {
         ]);
       });
 
+      it("extends maxClock to cover a multi-clock item's full range", () => {
+        const d = new Uint8Array([1]);
+        const entries: ContentEntry[] = [
+          { clientId: 1, clock: 0, contentRef: 4, data: d, itemLength: 10 },
+          { clientId: 1, clock: 20, contentRef: 4, data: d, itemLength: 1 },
+        ];
+        // clock 0 spans [0,10) → maxClock 9; the later single-clock item at 20
+        // pushes it to 20.
+        expect(buildSidecarIndex(entries)).toEqual([{ clientId: 1, minClock: 0, maxClock: 20 }]);
+      });
+
       it("returns empty index for empty entries", () => {
         expect(buildSidecarIndex([])).toEqual([]);
       });
 
       it("handles single entry", () => {
         const entries: ContentEntry[] = [
-          { clientId: 42, clock: 7, contentRef: 4, data: new Uint8Array([1, 0x78]) },
+          { clientId: 42, clock: 7, contentRef: 4, data: new Uint8Array([1]), itemLength: 1 },
         ];
         const index = buildSidecarIndex(entries);
         expect(index).toEqual([{ clientId: 42, minClock: 7, maxClock: 7 }]);
