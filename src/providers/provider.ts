@@ -16,14 +16,11 @@ import {
   getYTransportFromYDoc,
   getEncryptedTransport,
   EncryptionClient,
-  createFanInReader,
+  createSerialQueue,
+  type SerialQueue,
   type FanOutReader,
 } from "teleportal/transports";
 import type { AbstractDocumentStorage } from "teleportal/storage";
-import {
-  decodeContentEncryptedPayload,
-  type EncryptedUpdatePayload,
-} from "../lib/protocol/encryption/encoding";
 import { IdbDocumentStorage } from "../storage/idb/document-storage";
 import { Connection, type ConnectionState } from "./connection";
 import { RpcClient } from "./rpc-client";
@@ -177,7 +174,7 @@ export class Provider<
   #enableOfflinePersistence: boolean;
   #indexedDBPrefix: string;
   #localReplayed: Promise<void> = Promise.resolve();
-  #replayWriter: WritableStream<RawReceivedMessage> | null = null;
+  #applyQueue: SerialQueue<RawReceivedMessage> | null = null;
 
   #abortController = new AbortController();
   #initInProgress = false;
@@ -262,24 +259,23 @@ export class Provider<
     );
 
     if (this.#enableOfflinePersistence) {
-      // Fan-in: merge network messages and the local replay injection.
-      const fanIn = createFanInReader<RawReceivedMessage>();
-      const networkWriter = fanIn.getWriter();
-      // Acquire the writer once and await each write. Re-acquiring per chunk
-      // throws "WritableStream is locked" when the previous write hasn't
-      // released the lock yet (it releases async), which would error the pipe
-      // and permanently halt inbound delivery on any burst of messages.
-      const writer = networkWriter.writable.getWriter();
+      // A single serial queue feeds the transport. Both network messages and
+      // the local replay go through it, processed strictly in order. Each
+      // enqueue resolves only once the transport has applied that message, so
+      // replay can await actual application (see #replayFromLocalStorage) and
+      // bursts can't race a stream writer lock.
+      const transportWriter = this.transport.writable.getWriter();
+      this.#applyQueue = createSerialQueue<RawReceivedMessage>((msg) => transportWriter.write(msg));
       this.#messageReader.readable.pipeTo(
         new WritableStream({
-          write: async (chunk) => {
+          write: (chunk) => {
             this.#persistDocMessage(chunk);
-            await writer.write(chunk);
+            // Ordered, but not awaited here: network delivery needs no
+            // backpressure and the queue preserves order on its own.
+            void this.#applyQueue!.enqueue(chunk);
           },
         }),
       );
-      this.#replayWriter = fanIn.getWriter().writable;
-      fanIn.readable.pipeTo(this.transport.writable);
       this.#initOfflinePersistence(offlineStorage);
     } else {
       this.#messageReader.readable.pipeTo(this.transport.writable);
@@ -448,30 +444,11 @@ export class Provider<
         { clientId: this.awareness.clientID.toString() },
         encrypted,
       );
-      if (this.#replayWriter) {
-        // The replay flows through the fan-in stream into the transport, which
-        // applies it to the doc asynchronously. Writing to the stream only
-        // enqueues it, so we must wait for the doc to actually update before
-        // resolving — otherwise #init reads a stale state vector for
-        // sync-step-1. Skip the wait when the payload carries no structure
-        // (an empty payload never produces a doc update).
-        const hasContent =
-          decodeContentEncryptedPayload(doc.content.update as EncryptedUpdatePayload)
-            .structureUpdate.length > 0;
-        const applied = hasContent
-          ? new Promise<void>((resolve) => {
-              const onUpdate = () => {
-                this.doc.off("update", onUpdate);
-                resolve();
-              };
-              this.doc.on("update", onUpdate);
-            })
-          : Promise.resolve();
-
-        const writer = this.#replayWriter.getWriter();
-        await writer.write(replayMsg as RawReceivedMessage);
-        writer.releaseLock();
-        await applied;
+      if (this.#applyQueue) {
+        // enqueue resolves only after the transport has applied the replayed
+        // update to the doc, so #init's sync-step-1 state vector reflects the
+        // locally-restored state.
+        await this.#applyQueue.enqueue(replayMsg as RawReceivedMessage);
       }
     } catch {
       // Replay failed — fall back to empty-doc sync.
@@ -695,6 +672,7 @@ export class Provider<
     }
 
     this.#clearSyncedPromise();
+    this.#applyQueue?.close();
 
     try {
       this.transport.readable.cancel().catch(() => {});
