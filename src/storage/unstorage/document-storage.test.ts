@@ -99,7 +99,7 @@ describe("UnstorageDocumentStorage (unencrypted)", () => {
   let storage: UnstorageDocumentStorage;
 
   beforeEach(() => {
-    storage = new UnstorageDocumentStorage(createStorage());
+    storage = new UnstorageDocumentStorage(createStorage(), { encrypted: false });
   });
 
   describe("handleUpdate", () => {
@@ -316,7 +316,7 @@ describe("UnstorageDocumentStorage (unencrypted)", () => {
         encrypted: "invalid",
       });
 
-      const testStorage = new UnstorageDocumentStorage(unstorage);
+      const testStorage = new UnstorageDocumentStorage(unstorage, { encrypted: false });
       const metadata = await testStorage.getDocumentMetadata(key);
 
       expect(typeof metadata.createdAt).toBe("number");

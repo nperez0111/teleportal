@@ -81,7 +81,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     await session.write(createYjsUpdate("update 2"));
 
     // Wait for async milestone creation (createAutomaticMilestone is fire-and-forget)
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     milestones = await milestoneStorage.getMilestones("test-doc");
     expect(milestones.length).toBe(1);
@@ -242,7 +242,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     await session.write(createYjsUpdate("callback update"));
 
     // Wait for async milestone creation to complete (createAutomaticMilestone is fire-and-forget)
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(callbackCalled).toBe(true);
     expect(capturedMilestoneId).toBeTruthy();
@@ -282,7 +282,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     await session.write(createYjsUpdate("metadata update"));
 
     // Wait for async milestone creation to complete (createAutomaticMilestone is fire-and-forget)
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     const metadata = await storage.getDocumentMetadata("test-doc");
     expect(metadata.milestones).toBeDefined();

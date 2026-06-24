@@ -202,7 +202,8 @@ const sseEndpoint = getSSEReaderEndpoint({
   },
 });
 
-// GET /sse?documents=doc-1,doc-2:encrypted
+// Documents are encrypted by default; opt one out with a ":plaintext" suffix.
+// GET /sse?documents=doc-1,doc-2:plaintext
 const response = await sseEndpoint(request);
 ```
 
@@ -382,17 +383,19 @@ function getDocumentsFromQueryParams(request: Request): { document: string; encr
 
 - Multiple `documents` parameters: `?documents=id-1&documents=id-2`
 - Comma-separated values: `?documents=id-1,id-2`
-- Encryption suffix: `?documents=id-1:encrypted,id-2,id-3:encrypted`
+- Plaintext opt-out suffix: `?documents=id-1,id-2:plaintext,id-3:unencrypted`
+
+Documents are **encrypted by default**. Append `:plaintext` (or its alias `:unencrypted`) to a document id to opt that single document out into plaintext. If the same id appears both ways, the encrypted entry wins.
 
 **Example:**
 
 ```typescript
-// URL: /sse?documents=doc-1,doc-2:encrypted&documents=doc-3
+// URL: /sse?documents=doc-1,doc-2:plaintext&documents=doc-3
 // Returns:
 [
-  { document: "doc-1", encrypted: false },
-  { document: "doc-2", encrypted: true },
-  { document: "doc-3", encrypted: false },
+  { document: "doc-1", encrypted: true },
+  { document: "doc-2", encrypted: false },
+  { document: "doc-3", encrypted: true },
 ];
 ```
 

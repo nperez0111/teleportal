@@ -111,7 +111,7 @@ describe("Rate Limit Analytics", () => {
     writer.releaseLock();
 
     // Wait for message to be processed
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // 4. Send second message (should be rate limited)
     const message2 = new DocMessage(
@@ -129,7 +129,7 @@ describe("Rate Limit Analytics", () => {
     writer2.releaseLock();
 
     // Wait for metrics to be recorded
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // 5. Check status - should show rate limit metrics
     const status = await server.getStatus();

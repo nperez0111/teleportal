@@ -5,6 +5,8 @@ import {
   exportEncryptionKey,
   encryptUpdate,
   decryptUpdate,
+  keyToUrlFragment,
+  keyFromUrlFragment,
 } from "./index";
 import type { Update } from "teleportal";
 
@@ -173,5 +175,35 @@ describe("Encryption Functions", () => {
     // Cross-decryption should fail
     await expect(decryptUpdate(imported2, encrypted1)).rejects.toThrow();
     await expect(decryptUpdate(imported1, encrypted2)).rejects.toThrow();
+  });
+});
+
+describe("URL fragment key helpers", () => {
+  it("round-trips an exported key through a URL fragment", async () => {
+    const key = await createEncryptionKey();
+    const exported = await exportEncryptionKey(key);
+
+    const fragment = keyToUrlFragment(exported);
+    expect(fragment.startsWith("token=")).toBe(true);
+
+    // Tolerate a leading "#" as returned by location.hash.
+    expect(keyFromUrlFragment(fragment)).toBe(exported);
+    expect(keyFromUrlFragment("#" + fragment)).toBe(exported);
+
+    // The recovered string re-imports to a working key.
+    const recovered = await importEncryptionKey(keyFromUrlFragment(fragment)!);
+    const data = new Uint8Array([1, 2, 3]);
+    const ciphertext = await encryptUpdate(key, data as Update);
+    expect(await decryptUpdate(recovered, ciphertext)).toEqual(data);
+  });
+
+  it("returns null when no token is present", () => {
+    expect(keyFromUrlFragment("")).toBeNull();
+    expect(keyFromUrlFragment("#")).toBeNull();
+    expect(keyFromUrlFragment("#other=value")).toBeNull();
+  });
+
+  it("ignores other fragment params", () => {
+    expect(keyFromUrlFragment("#a=1&token=abc&b=2")).toBe("abc");
   });
 });

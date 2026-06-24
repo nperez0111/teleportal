@@ -69,9 +69,10 @@ import { Badge } from "@astrojs/starlight/components";
       complete sync server. Use your own auth, storage, and more.
     </Card>
     <Card title="Encryption" icon="seti:lock">
-      Supports end-to-end encryption and encryption at rest. Optional AES-GCM encryption for
-      document updates and file transfers. Includes key management utilities and encrypted transport
-      layers.
+      End-to-end content encryption is on by default — AES-GCM encrypts document content into
+      sidecars the server never sees, while the CRDT structure stays plaintext so sync still works.
+      Includes key management utilities, encrypted file transfers, and optional storage encryption
+      at rest.
     </Card>
     <Card title="Monitoring & Observability" icon="information">
       Built-in Prometheus metrics, health checks, and status endpoints. Track clients, sessions,
@@ -121,14 +122,17 @@ fetch: tokenAuthenticatedHTTPHandler({ server, tokenManager }),
   </TabItem>
   <TabItem label="client.ts">
 
-```typescript collapse={1-3}
+```typescript collapse={1-4}
 // Client
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
-// Create a provider that connects to the server
+// Create a provider that connects to the server.
+// Content is end-to-end encrypted by default — pass an encryptionKey.
 const provider = await Provider.create({
   url: "https://teleportal.tools?token=your-token-here",
   document: "my-document",
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Wait for the document to sync with the server

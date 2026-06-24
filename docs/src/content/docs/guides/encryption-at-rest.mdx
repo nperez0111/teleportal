@@ -3,16 +3,21 @@ title: Encryption at Rest
 description: Encrypting documents in storage for security
 ---
 
-This guide demonstrates encrypting documents before storing them in the storage backend. Data is encrypted using a symmetric encryption key.
+This guide covers **storage encryption at rest** — encrypting document data inside the storage backend, server-side, using a key your server holds.
+
+> **This is a separate concern from content-level end-to-end encryption.** Content E2EE is now **on by default**: every `Provider` encrypts document content client-side before it reaches the server, and the server never sees the content or the client's key (see [Integration → Encryption](/docs/integration/) and [Protocol](/docs/core-concepts/protocol/)). The "at rest" encryption described here is configured entirely on the server (typically via an encrypted unstorage driver) and protects whatever the server _does_ persist — including the plaintext CRDT structure of E2EE documents and any plaintext documents. The two can be used together or independently.
+
+This guide demonstrates encrypting documents before storing them in the storage backend. Data is encrypted using a symmetric encryption key held by the server.
 
 ## What it demonstrates
 
-- Using encrypted storage for document data
-- Importing or creating encryption keys
-- Encrypting document data before it's written to storage
-- Decrypting document data when reading from storage
+- Encrypting whatever the server persists, at the storage layer
+- Wrapping an unstorage driver so all bytes are encrypted before they hit disk
+- Keeping this independent of the client's content-level E2EE
 
 ## Server Setup
+
+At-rest encryption is configured on the **storage driver**, server-side. Wrap your underlying driver with an encrypting unstorage driver (or your backend's native encryption) so every value is encrypted before it is written:
 
 ```typescript
 import { Server } from "teleportal/server";
@@ -20,6 +25,8 @@ import { UnstorageDocumentStorage } from "teleportal/storage";
 import { createStorage } from "unstorage";
 import redisDriver from "unstorage/drivers/redis";
 
+// Use an encrypted driver (or your backend's native encryption) so the
+// bytes are encrypted at rest with a key the *server* holds.
 const storage = createStorage({
   driver: redisDriver({
     base: "teleportal:",
@@ -31,13 +38,19 @@ const server = new Server({
   storage: async (ctx) => {
     return new UnstorageDocumentStorage(storage, {
       keyPrefix: "doc",
-      encrypted: ctx.encrypted, // Store content-encrypted (structure + sidecars) based on context
+      // `ctx.encrypted` reflects the document's content-encryption mode
+      // (the client-side E2EE feature). It only tags metadata — the server
+      // never sees content or client keys. It is unrelated to the at-rest
+      // key used by the storage driver above.
+      encrypted: ctx.encrypted,
     });
   },
 });
 ```
 
 ## Encryption Key Management
+
+The server-side at-rest key is separate from any client encryption key. You can use the same key utilities to manage it:
 
 ```typescript
 import { createEncryptionKey, importEncryptionKey } from "teleportal/encryption-key";

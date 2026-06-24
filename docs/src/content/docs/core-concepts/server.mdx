@@ -71,6 +71,10 @@ This lifecycle ensures that:
 - **Reconnections are fast**: The 60-second grace period allows clients to reconnect without reloading
 - **Documents persist**: Even when no session exists, documents remain in storage
 
+### Encryption Mode
+
+Sessions default to **encrypted** (`encrypted: true`), matching the content-level end-to-end encryption that clients apply by default. The server never sees document content or keys — it only merges and syncs the plaintext CRDT structure update and stores the encrypted sidecars. All clients of a single document must agree on its encryption mode; the server rejects a client whose mode differs from the open session, so switching a document between plaintext and encrypted is a hard cutover, not a per-client choice.
+
 ## Permission & Access Control
 
 The server **gates permissions and access control** in a flexible way, allowing you to either use your own implementation or leverage Teleportal's built-in capabilities.

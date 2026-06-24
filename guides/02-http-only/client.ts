@@ -1,11 +1,13 @@
 import { EventSource } from "eventsource";
 import { Provider, httpTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 const provider = await Provider.create({
   url: `http://localhost:3000`,
   // use only HTTP transport; bun requires a polyfill for EventSource
   transports: [httpTransport({ EventSource })],
   document: "test",
+  encryptionKey: await createEncryptionKey(),
 });
 
 await provider.synced;

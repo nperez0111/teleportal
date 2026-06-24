@@ -99,7 +99,9 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
         }) ?? [];
       if (initialDocuments.length > 0) {
         await Promise.all(
-          initialDocuments.map(({ document, encrypted = false }) =>
+          // Encrypted by default; a custom getInitialDocuments must set
+          // `encrypted: false` explicitly to open a plaintext session.
+          initialDocuments.map(({ document, encrypted = true }) =>
             server.getOrOpenSession(document, {
               encrypted,
               client,

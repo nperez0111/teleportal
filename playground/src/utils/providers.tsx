@@ -87,7 +87,9 @@ class ProviderManager {
       this.provider = (await Provider.create({
         connection,
         document: documentId,
-        encryptionKey: key,
+        // `undefined` would throw (encryption is required by default); map the
+        // playground's "no key selected" state to the explicit plaintext opt-out.
+        encryptionKey: key ?? false,
         rpc: {
           milestones: createMilestoneRpc,
           attribution: createAttributionRpc,
@@ -99,13 +101,15 @@ class ProviderManager {
             : getDefaultTransport();
           return baseTransport as any;
         },
-        enableOfflinePersistence: false,
+        enableOfflinePersistence: true,
       })) as PlaygroundProvider;
     } else {
       // Switch document on existing provider
       this.provider = this.provider.switchDocument({
         document: documentId,
-        encryptionKey: key,
+        // `undefined` would throw (encryption is required by default); map the
+        // playground's "no key selected" state to the explicit plaintext opt-out.
+        encryptionKey: key ?? false,
         rpc: {
           milestones: createMilestoneRpc,
           attribution: createAttributionRpc,

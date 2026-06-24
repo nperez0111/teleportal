@@ -63,10 +63,12 @@ export interface MilestoneRpc {
  * @example
  * ```typescript
  * import { createMilestoneRpc } from "teleportal/protocols/milestone/client";
+ * import { createEncryptionKey } from "teleportal/encryption-key";
  *
  * const provider = await Provider.create({
  *   url: "wss://...",
  *   document: "my-doc",
+ *   encryptionKey: await createEncryptionKey(), // encrypted by default
  *   rpc: {
  *     milestones: createMilestoneRpc,
  *   },

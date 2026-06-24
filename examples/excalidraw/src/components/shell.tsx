@@ -2,6 +2,7 @@ import * as random from "lib0/random";
 import { useEffect, useState } from "react";
 
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { Whiteboard } from "./whiteboard";
 
@@ -41,6 +42,7 @@ export default function Shell() {
         const websocketProvider = await Provider.create({
           url: `${window.location.origin}/?token=${token}`,
           document: "whiteboard",
+          encryptionKey: await createEncryptionKey(),
         });
 
         websocketProvider.awareness.setLocalStateField("user", {

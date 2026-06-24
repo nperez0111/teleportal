@@ -65,7 +65,7 @@ describe("withAckSink", () => {
     writer.releaseLock();
 
     // Wait for ACK to be published
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(writtenMessages).toHaveLength(1);
     expect(writtenMessages[0]).toBe(docMessage);
@@ -111,7 +111,7 @@ describe("withAckSink", () => {
     writer.releaseLock();
 
     // Wait for ACK to be published
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(writtenMessages).toHaveLength(1);
     expect(writtenMessages[0]).toBe(awarenessMessage);
@@ -156,7 +156,7 @@ describe("withAckSink", () => {
     writer.releaseLock();
 
     // Wait for potential ACK to be published
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     expect(writtenMessages).toHaveLength(1);
     expect(writtenMessages[0]).toBe(ackMessage);
@@ -303,7 +303,7 @@ describe("withAckTrackingSink", () => {
     );
 
     // Wait a bit for the subscription to be set up
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await pubSub.publish(ackTopic, ackMessage.encoded, "other-source");
 
@@ -367,7 +367,7 @@ describe("withAckTrackingSink", () => {
     writer.releaseLock();
 
     // Wait for subscription to be set up
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Simulate slow pubsub propagation by delaying the ACK
     const ackMessage = new AckMessage(
@@ -462,7 +462,7 @@ describe("withAckTrackingSink", () => {
     writer.releaseLock();
 
     // Wait a bit for the subscription to be set up
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Send ACKs
     const ack1 = new AckMessage(

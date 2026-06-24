@@ -477,11 +477,15 @@ class FileClientHandler implements ClientRpcHandler {
  * @example
  * ```typescript
  * import { getFileClientHandlers } from "teleportal/protocols/file";
+ * import { createEncryptionKey } from "teleportal/encryption-key";
+ *
+ * // Content encryption is the default, so an encryptionKey is required.
+ * const myKey = await createEncryptionKey();
  *
  * const provider = await Provider.create({
  *   url: "wss://...",
  *   document: "my-doc",
- *   encryptionKey: myKey, // optional
+ *   encryptionKey: myKey,
  *   rpcHandlers: {
  *     ...getFileClientHandlers({ encryptionKey: myKey }),
  *   },

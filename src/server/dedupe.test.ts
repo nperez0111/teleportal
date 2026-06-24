@@ -54,11 +54,11 @@ describe("TtlDedupe", () => {
     });
 
     it("should prune expired messages", async () => {
-      const shortTtlDedupe = new TtlDedupe({ ttlMs: 50 });
+      const shortTtlDedupe = new TtlDedupe({ ttlMs: 1 });
       shortTtlDedupe.shouldAccept("doc-1", "msg-1");
 
       // Wait for message to expire
-      await new Promise((resolve) => setTimeout(resolve, 52));
+      await new Promise((resolve) => setTimeout(resolve, 5));
 
       // Should accept again after expiration
       const result = shortTtlDedupe.shouldAccept("doc-1", "msg-1");

@@ -49,13 +49,15 @@ const rateLimitedTransport = withRateLimit(transport, {
 
 ### Message Encryption
 
-Wraps a transport with end-to-end encryption:
+Wraps a transport with content-level end-to-end encryption:
 
 ```typescript
 import { getEncryptedTransport } from "teleportal/transports/encrypted";
 
 const encryptedTransport = getEncryptedTransport(handler);
 ```
+
+You rarely call this directly — the `Provider` applies it automatically because content encryption is the **default**. Pass an `encryptionKey` (a `CryptoKey`) when creating the provider, or `encryptionKey: false` to opt a document out into plaintext. The encrypted transport keeps the CRDT structure update in plaintext (so the server can still merge and sync) and encrypts only the document content into sidecars.
 
 ### Message Validation
 

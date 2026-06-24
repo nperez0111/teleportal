@@ -238,8 +238,9 @@ The `Provider` class extends `Observable` and emits the following events:
 
 ```typescript
 type ProviderOptions<T> = {
-  client: Connection<any>; // Connection instance (required)
+  connection: Connection<any>; // Connection instance (required)
   document: string; // Document ID (required)
+  encryptionKey: CryptoKey | false; // E2EE key — required (use `false` for plaintext)
   ydoc?: Y.Doc; // Existing Y.Doc (default: new Y.Doc())
   awareness?: Awareness; // Existing Awareness (default: new Awareness(ydoc))
   enableOfflinePersistence?: boolean; // Enable IndexedDB persistence (default: true)
@@ -247,6 +248,10 @@ type ProviderOptions<T> = {
   getTransport?: (ctx) => T; // Custom transport factory
 };
 ```
+
+> **Encryption is the default.** `encryptionKey` is required — pass a `CryptoKey` (from `createEncryptionKey()` / `importEncryptionKey()` in `teleportal/encryption-key`) to enable content-level end-to-end encryption, or pass `false` to deliberately run a plaintext document. Omitting it throws. The key is never sent to the server; only the plaintext CRDT structure update and the encrypted content sidecars are.
+>
+> Offline persistence stores the **encrypted wire representation** (content-encrypted payload) to IndexedDB — data at rest is encrypted for encrypted documents. Plaintext documents (`encryptionKey: false`) are stored inline as-is. Awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload is encrypted.
 
 ## How Provider and Connection Interact
 
@@ -321,11 +326,14 @@ type ProviderOptions<T> = {
 
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
-// Create a provider with automatic connection
+// Create a provider with automatic connection.
+// Content encryption is the default, so an encryptionKey is required.
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Wait for document to be loaded and synced
@@ -347,6 +355,7 @@ provider.on("update", (state) => {
 ```typescript
 import { Provider } from "teleportal/providers";
 import { WebSocketConnection } from "teleportal/providers/websocket";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 // Create a custom connection
 const connection = new WebSocketConnection({
@@ -356,8 +365,9 @@ const connection = new WebSocketConnection({
 
 // Create provider with custom connection
 const provider = new Provider({
-  client: connection,
+  connection,
   document: "my-document-id",
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Manually connect
@@ -466,17 +476,34 @@ if (subdocProvider) {
 ### Offline Persistence
 
 ```typescript
-// Provider automatically enables offline persistence by default
+// Provider automatically enables offline persistence by default.
+// Encrypted documents are stored at rest in content-encrypted format
+// (the same wire format used between client and server).
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
   enableOfflinePersistence: true, // default
-  indexedDBPrefix: "my-app-", // custom prefix
+  indexedDBPrefix: "my-app-", // custom prefix (names the IndexedDB database)
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Document will be loaded from IndexedDB if available
-await provider.loaded; // Resolves when local data is loaded
+await provider.loaded; // Resolves when local data is replayed
 await provider.synced; // Resolves when synced with server
+
+// Clear persisted data for this document
+await provider.clearOfflineData();
+```
+
+The offline storage uses the same `AbstractDocumentStorage` base as the server. By default it is backed by IndexedDB (`IdbDocumentStorage`), but you can inject a custom backend via the `offlineStorage` option:
+
+```typescript
+const provider = new Provider({
+  connection,
+  document: "my-doc",
+  encryptionKey: key,
+  offlineStorage: myCustomStorage, // any AbstractDocumentStorage
+});
 ```
 
 ### Connection State Monitoring

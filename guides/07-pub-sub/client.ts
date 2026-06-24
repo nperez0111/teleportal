@@ -1,5 +1,6 @@
 import { EventSource } from "eventsource";
 import { Provider, websocketTransport, httpTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 // just for illustration, we use a random number to decide which server to use
 const serverPort = Math.random() < 0.5 ? 3000 : 3001;
@@ -11,6 +12,7 @@ const provider = await Provider.create({
   // bun requires a polyfill for EventSource
   transports: [websocketTransport(), httpTransport({ EventSource })],
   document: "test",
+  encryptionKey: await createEncryptionKey(),
 });
 
 await provider.synced;

@@ -251,13 +251,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
   async getOrOpenSession(
     documentId: string | undefined,
     {
-      encrypted,
+      // Encrypted by default — callers that omit it open an encrypted session.
+      encrypted = true,
       id = "session-" + uuidv4(),
       client,
       context,
       ignoreEncryptionMismatch = false,
     }: {
-      encrypted: boolean;
+      encrypted?: boolean;
       id?: string;
       client?: Client<Context>;
       context: Context;

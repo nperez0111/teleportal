@@ -62,7 +62,8 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
       encrypted?: boolean;
     },
   ) {
-    super(options?.encrypted ?? false);
+    // Encrypted by default; pass `encrypted: false` to tag documents as plaintext.
+    super(options?.encrypted ?? true);
     this.storage = storage;
     this.options = { ttl: 5 * 1000, keyPrefix: "", ...options };
   }

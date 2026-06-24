@@ -56,10 +56,15 @@ export interface FileRpc {
  * @example
  * ```ts
  * import { createFileRpc } from "teleportal/protocols/file";
+ * import { createEncryptionKey } from "teleportal/encryption-key";
+ *
+ * // Content encryption is the default, so an encryptionKey is required.
+ * const encryptionKey = await createEncryptionKey();
  *
  * const provider = await Provider.create({
  *   url: "wss://...",
  *   document: "my-doc",
+ *   encryptionKey,
  *   rpc: {
  *     file: () => createFileRpc({ encryptionKey }),
  *   },

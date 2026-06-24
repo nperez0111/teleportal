@@ -1019,7 +1019,7 @@ describe("Connection", () => {
 
       // Server receives the message and auto-sends an ACK back.
       // Wait for delivery and ACK processing.
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 1));
 
       // The message should have been added to in-flight (true) and then
       // removed when the ACK came back (false).
@@ -1470,7 +1470,7 @@ describe("Connection", () => {
       await flushMicrotasks(10);
 
       // Wait for the server to auto-ACK back
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 1));
 
       // Should have seen: true (message sent), false (ACK received)
       expect(events).toEqual([true, false]);

@@ -66,6 +66,38 @@ const handlers = getHttpHandlers({
 });
 ```
 
+## Encryption
+
+**Content-level end-to-end encryption is the default.** The client encrypts document content into sidecars before it leaves the device; the server only ever sees the plaintext CRDT structure (needed for merge/sync) and the encrypted sidecars — never your content or keys. Every `Provider` requires an `encryptionKey` (a `CryptoKey`); to deliberately run a plaintext document, pass `encryptionKey: false`.
+
+```typescript
+import { Provider } from "teleportal/providers";
+import {
+  createEncryptionKey,
+  exportEncryptionKey,
+  keyToUrlFragment,
+} from "teleportal/encryption-key";
+
+// Encrypted by default
+const provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document",
+  encryptionKey: await createEncryptionKey(),
+});
+
+// Share the key with collaborators via the URL fragment (never sent to the server)
+location.hash = keyToUrlFragment(await exportEncryptionKey(provider.encryptionKey));
+
+// Opt a single document out into plaintext
+const plaintextProvider = await Provider.create({
+  url: "wss://example.com",
+  document: "public-doc",
+  encryptionKey: false,
+});
+```
+
+The server enforces that all clients of one document agree on encryption mode (mixing plaintext and encrypted clients on the same document throws). Note that this is distinct from [Encryption at Rest](/docs/guides/encryption-at-rest/), which encrypts data in the storage backend server-side.
+
 ## Runtime
 
 Teleportal works on any JavaScript runtime: **Bun** (recommended, fastest), Node.js, Deno, Cloudflare Workers, and edge runtimes (Vercel, Netlify).
@@ -172,6 +204,8 @@ Start
   ├─ Runtime: Bun (recommended), Node.js, Deno, or Edge
   │
   ├─ Auth: JWT (built-in) or Custom
+  │
+  ├─ Encryption: Content E2EE (default) or plaintext per-doc (encryptionKey: false)
   │
   ├─ Features: Document (always), File (optional), Milestones (optional)
   │
