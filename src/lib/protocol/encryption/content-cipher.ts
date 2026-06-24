@@ -94,12 +94,15 @@ export function hashSidecar(encrypted: EncryptedBinary): Uint8Array {
 export function buildSidecarIndex(entries: ContentEntry[]): SidecarIndex {
   const ranges = new Map<number, { min: number; max: number }>();
   for (const entry of entries) {
+    // The entry covers [clock, clock + itemLength); record the inclusive end so
+    // sidecarOverlapsDiff doesn't drop a multi-clock item for a tail diff.
+    const endClock = entry.clock + entryItemLength(entry.contentRef, entry.data) - 1;
     const existing = ranges.get(entry.clientId);
     if (existing) {
       existing.min = Math.min(existing.min, entry.clock);
-      existing.max = Math.max(existing.max, entry.clock);
+      existing.max = Math.max(existing.max, endClock);
     } else {
-      ranges.set(entry.clientId, { min: entry.clock, max: entry.clock });
+      ranges.set(entry.clientId, { min: entry.clock, max: endClock });
     }
   }
   return [...ranges.entries()].map(([clientId, { min, max }]) => ({
@@ -279,6 +282,39 @@ function buildSidecarMap(entries: ContentEntry[]): Map<string, ContentEntry> {
   return map;
 }
 
+/**
+ * Group entries by client, each list sorted ascending by clock, for locating
+ * the entry whose `[clock, clock + itemLength)` range contains a target clock.
+ */
+function buildSidecarRangeIndex(entries: ContentEntry[]): Map<number, ContentEntry[]> {
+  const byClient = new Map<number, ContentEntry[]>();
+  for (const entry of entries) {
+    let list = byClient.get(entry.clientId);
+    if (!list) {
+      list = [];
+      byClient.set(entry.clientId, list);
+    }
+    list.push(entry);
+  }
+  for (const list of byClient.values()) list.sort((a, b) => a.clock - b.clock);
+  return byClient;
+}
+
+/** Find the entry whose clock range contains `clock` (entries sorted ascending). */
+function findContainingEntry(
+  entries: ContentEntry[] | undefined,
+  clock: number,
+): ContentEntry | undefined {
+  if (!entries) return undefined;
+  for (const entry of entries) {
+    if (entry.clock > clock) break;
+    if (clock < entry.clock + entryItemLength(entry.contentRef, entry.data)) {
+      return entry;
+    }
+  }
+  return undefined;
+}
+
 // ── Abstract decoder/encoder types ────────────────────────────────────────
 
 type UpdateDecoder = Y.UpdateDecoderV1 | Y.UpdateDecoderV2;
@@ -442,6 +478,71 @@ function writeContentFromSidecar(
       break;
     default:
       throw new Error(`Unknown content ref: ${contentRef}`);
+  }
+}
+
+/**
+ * How many clocks a sidecar entry's content spans, derived from its canonical
+ * data. Mirrors the `itemLength` computed in `readContentToSidecar` so we never
+ * need to store it separately. Only multi-clock content types (string / JSON /
+ * any) can exceed length 1; everything else occupies a single clock.
+ */
+function entryItemLength(contentRef: number, data: Uint8Array): number {
+  switch (contentRef) {
+    case CONTENT_STRING:
+      return decoding.readVarString(decoding.createDecoder(data)).length;
+    case CONTENT_JSON:
+    case CONTENT_ANY:
+      return decoding.readVarUint(decoding.createDecoder(data));
+    default:
+      return 1;
+  }
+}
+
+/**
+ * Write the tail of a sidecar entry's content, starting at `offset` clocks in.
+ *
+ * Y.diffUpdateV2 slices a multi-clock content item when the requesting peer
+ * already holds a prefix; the resulting struct represents `[offset, length)` of
+ * the original item. We mirror that slice so the restored content length
+ * matches the placeholder's. Length-1 content types are never sliced (offset is
+ * always 0) and fall through to the verbatim writer.
+ */
+function writeSlicedContentFromSidecar(
+  encoder: UpdateEncoder,
+  contentRef: number,
+  data: Uint8Array,
+  offset: number,
+): void {
+  if (offset === 0) {
+    writeContentFromSidecar(encoder, contentRef, data);
+    return;
+  }
+  const dec = decoding.createDecoder(data);
+  switch (contentRef) {
+    case CONTENT_STRING:
+      encoder.writeString(decoding.readVarString(dec).slice(offset));
+      break;
+    case CONTENT_JSON: {
+      const count = decoding.readVarUint(dec);
+      const strings: string[] = [];
+      for (let i = 0; i < count; i++) strings.push(decoding.readVarString(dec));
+      const tail = strings.slice(offset);
+      encoder.writeLen(tail.length);
+      for (const s of tail) encoder.writeString(s);
+      break;
+    }
+    case CONTENT_ANY: {
+      const count = decoding.readVarUint(dec);
+      const anys: unknown[] = [];
+      for (let i = 0; i < count; i++) anys.push(decoding.readAny(dec));
+      const tail = anys.slice(offset);
+      encoder.writeLen(tail.length);
+      for (const a of tail) encoder.writeAny(a);
+      break;
+    }
+    default:
+      throw new Error(`restoreContent: cannot slice content ref ${contentRef} at offset ${offset}`);
   }
 }
 
@@ -666,6 +767,7 @@ export function restoreContent(
   outputVersion: 1 | 2 = 2,
 ): Uint8Array {
   const entryMap = buildSidecarMap(sidecar.entries);
+  const rangeIndex = buildSidecarRangeIndex(sidecar.entries);
   const rawDecoder = decoding.createDecoder(structureUpdate);
   const decoder = new Y.UpdateDecoderV2(rawDecoder);
   const encoder: UpdateEncoder =
@@ -712,7 +814,19 @@ export function restoreContent(
       copyItemMetadata(decoder, encoder, info, reverseTransform);
 
       if (hasEncryptableContent(contentRef)) {
-        const entry = entryMap.get(sidecarKey(clientId, clock));
+        let entry = entryMap.get(sidecarKey(clientId, clock));
+        let offset = 0;
+        if (!entry) {
+          // Y.diffUpdateV2 slices a multi-clock content item when the peer
+          // holds a prefix, so the struct's clock can fall inside an entry's
+          // range rather than on its start. Locate the containing entry and
+          // restore the matching tail.
+          const containing = findContainingEntry(rangeIndex.get(clientId), clock);
+          if (containing) {
+            entry = containing;
+            offset = clock - containing.clock;
+          }
+        }
         // An encryptable item's placeholder content is NOT length-prefixed
         // (e.g. a string, embed JSON, or binary buffer), so we cannot fall
         // back to reading a length here. A missing entry means the sidecar
@@ -727,8 +841,8 @@ export function restoreContent(
         }
         // Skip placeholder content in the structure update
         const itemLength = skipContent(decoder, contentRef);
-        // Write original content from sidecar through abstract encoder
-        writeContentFromSidecar(encoder, contentRef, entry.data);
+        // Write original content (sliced to match the placeholder) from sidecar
+        writeSlicedContentFromSidecar(encoder, contentRef, entry.data, offset);
         clock += itemLength;
       } else if (contentRef === CONTENT_TYPE) {
         const typeRef = decoder.readTypeRef();

@@ -166,8 +166,18 @@ export function mergeContentEncryptedPayloads(
     structures.length === 0 ? new Uint8Array(0) : Y.mergeUpdatesV2(structures);
   const allSidecars = decoded.flatMap((d) => d.encryptedSidecars);
 
+  // Preserve a piggy-backed compaction through the merge. A compaction's
+  // sourceHashes reference already-stored server sidecars, so it stays valid
+  // regardless of which structure updates are merged with it. Dropping it (the
+  // previous behavior) silently lost the compaction since the producer already
+  // cleared its pending state, leaving superseded sidecars uncollapsed. The
+  // payload format holds a single compaction; merging two is vanishingly rare,
+  // so keep the first and let the rest re-compact on a later round.
+  const compaction = decoded.find((d) => d.compaction)?.compaction;
+
   return encodeContentEncryptedPayload({
     structureUpdate: mergedStructure,
     encryptedSidecars: allSidecars,
+    compaction,
   });
 }

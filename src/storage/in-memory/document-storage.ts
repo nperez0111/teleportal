@@ -18,12 +18,16 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
     private options: {
       write: (key: string, doc: DocumentRecord) => Promise<void>;
       fetch: (key: string) => Promise<DocumentRecord | undefined>;
+      delete: (key: string) => Promise<void>;
     } = {
       write: async (key, doc) => {
         MemoryDocumentStorage.docs.set(key, doc);
       },
       fetch: async (key) => {
         return MemoryDocumentStorage.docs.get(key);
+      },
+      delete: async (key) => {
+        MemoryDocumentStorage.docs.delete(key);
       },
     },
   ) {
@@ -89,7 +93,9 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
   }
 
   async deleteDocument(key: string): Promise<void> {
-    MemoryDocumentStorage.docs.delete(key);
+    // Route through the same backing store as write/fetch; deleting from the
+    // static map directly would no-op for instances backed by custom options.
+    await this.options.delete(key);
     MemoryDocumentStorage.attributionMaps.delete(key);
   }
 

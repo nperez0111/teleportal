@@ -20,6 +20,10 @@ import {
   type FanOutReader,
 } from "teleportal/transports";
 import type { AbstractDocumentStorage } from "teleportal/storage";
+import {
+  decodeContentEncryptedPayload,
+  type EncryptedUpdatePayload,
+} from "../lib/protocol/encryption/encoding";
 import { IdbDocumentStorage } from "../storage/idb/document-storage";
 import { Connection, type ConnectionState } from "./connection";
 import { RpcClient } from "./rpc-client";
@@ -261,12 +265,16 @@ export class Provider<
       // Fan-in: merge network messages and the local replay injection.
       const fanIn = createFanInReader<RawReceivedMessage>();
       const networkWriter = fanIn.getWriter();
+      // Acquire the writer once and await each write. Re-acquiring per chunk
+      // throws "WritableStream is locked" when the previous write hasn't
+      // released the lock yet (it releases async), which would error the pipe
+      // and permanently halt inbound delivery on any burst of messages.
+      const writer = networkWriter.writable.getWriter();
       this.#messageReader.readable.pipeTo(
         new WritableStream({
-          write: (chunk) => {
+          write: async (chunk) => {
             this.#persistDocMessage(chunk);
-            const writer = networkWriter.writable.getWriter();
-            writer.write(chunk).finally(() => writer.releaseLock());
+            await writer.write(chunk);
           },
         }),
       );
@@ -441,9 +449,29 @@ export class Provider<
         encrypted,
       );
       if (this.#replayWriter) {
+        // The replay flows through the fan-in stream into the transport, which
+        // applies it to the doc asynchronously. Writing to the stream only
+        // enqueues it, so we must wait for the doc to actually update before
+        // resolving — otherwise #init reads a stale state vector for
+        // sync-step-1. Skip the wait when the payload carries no structure
+        // (an empty payload never produces a doc update).
+        const hasContent =
+          decodeContentEncryptedPayload(doc.content.update as EncryptedUpdatePayload)
+            .structureUpdate.length > 0;
+        const applied = hasContent
+          ? new Promise<void>((resolve) => {
+              const onUpdate = () => {
+                this.doc.off("update", onUpdate);
+                resolve();
+              };
+              this.doc.on("update", onUpdate);
+            })
+          : Promise.resolve();
+
         const writer = this.#replayWriter.getWriter();
         await writer.write(replayMsg as RawReceivedMessage);
         writer.releaseLock();
+        await applied;
       }
     } catch {
       // Replay failed — fall back to empty-doc sync.
