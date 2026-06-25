@@ -1,3 +1,4 @@
+import { defineMethod, defineProtocol } from "teleportal/rpc";
 import type { ActivityEntry } from "teleportal/attribution";
 import type { EncodedContentMap } from "teleportal/storage";
 
@@ -53,3 +54,28 @@ export type AttributedSegment = {
   timestamp: number | null;
   attributes: Record<string, unknown>;
 };
+
+// ---------------------------------------------------------------------------
+// Method contracts
+// ---------------------------------------------------------------------------
+
+export const attributionActivity = defineMethod<
+  "attributionActivity",
+  AttributionFilter,
+  { activity: ActivityEntry[] }
+>("attributionActivity");
+
+export const attributionGet = defineMethod<
+  "attributionGet",
+  { filter?: AttributionFilter },
+  { contentMap: EncodedContentMap | null }
+>("attributionGet");
+
+// ---------------------------------------------------------------------------
+// Protocol
+// ---------------------------------------------------------------------------
+
+export const attributionProtocol = defineProtocol("attribution", {
+  activity: attributionActivity,
+  get: attributionGet,
+});

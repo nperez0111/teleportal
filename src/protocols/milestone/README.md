@@ -1,80 +1,128 @@
-# Milestone RPC Methods
+# Milestone Protocol
 
 Milestone CRUD operations via RPC for Y.js document versioning.
 
 ## Overview
 
-This package provides RPC methods for managing document milestones (snapshots), enabling:
+This protocol provides RPC methods for managing document milestones (snapshots):
 
 - Listing milestones
 - Retrieving milestone snapshots
 - Creating new milestones
 - Updating milestone names
-- Deleting milestones
+- Deleting milestones (soft delete)
 - Restoring deleted milestones
 
-## Installation
+## File Structure
 
-```typescript
-import {
-  getServerHandlers,
-  type MilestoneListRequest,
-  type MilestoneCreateRequest,
-  // ... other types
-} from "teleportal/protocols/milestone";
+```
+src/protocols/milestone/
+  methods.ts   — method contracts (defineMethod/defineProtocol) + request/response types
+  server.ts    — server handlers (createHandlers)
+  client.ts    — client extension (createClientExtension)
+  index.ts     — public exports
 ```
 
 ## Server Integration
 
 ```typescript
 import { Server } from "teleportal/server";
-import { getServerHandlers } from "teleportal/protocols/milestone";
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
 
 const server = new Server({
-  // ... other options
+  storage: async () => documentStorage,
   rpcHandlers: {
-    ...getServerHandlers(),
+    ...getMilestoneRpcHandlers(milestoneStorage),
+  },
+});
+```
+
+### Automatic Milestones (Triggers)
+
+The server handlers support automatic milestone creation via triggers:
+
+```typescript
+const server = new Server({
+  storage: async () => documentStorage,
+  rpcHandlers: {
+    ...getMilestoneRpcHandlers(milestoneStorage, {
+      triggers: [
+        { id: "every-100", type: "update-count", enabled: true, config: { updateCount: 100 } },
+        { id: "hourly", type: "time-based", enabled: true, config: { interval: 3600000 } },
+      ],
+      onMilestoneCreated: (milestoneId, documentId) => {
+        console.log(`Auto-milestone ${milestoneId} for ${documentId}`);
+      },
+    }),
   },
 });
 ```
 
 ## Client Integration
 
-The `Provider` automatically handles milestone RPC requests via its `RpcClient`. You can use the built-in methods:
-
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createMilestoneRpc } from "teleportal/protocols/milestone";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 const provider = await Provider.create({
   url: "wss://...",
   document: "my-doc",
+  encryptionKey: await createEncryptionKey(),
+  rpc: {
+    milestones: createMilestoneRpc,
+  },
 });
 
-// List milestones
-const milestones = await provider.listMilestones();
+const milestones = await provider.rpc.milestones.list();
+const milestone = await provider.rpc.milestones.create("v1.0");
+const snapshot = await provider.rpc.milestones.getSnapshot(milestone.id);
+```
 
-// Create a milestone
-const milestone = await provider.createMilestone("v1.0");
+## Contract
 
-// Get milestone snapshot
-const snapshot = await provider.getMilestoneSnapshot(milestone.id);
+The protocol contract is defined in `methods.ts` using `defineMethod`/`defineProtocol` from `teleportal/rpc`. All six methods use type-first definitions (no schema validation, since payloads include binary `Uint8Array` snapshots):
+
+```typescript
+import { milestoneProtocol } from "teleportal/protocols/milestone";
+
+// milestoneProtocol.methods:
+//   list       → wire name "milestoneList"
+//   get        → wire name "milestoneGet"
+//   create     → wire name "milestoneCreate"
+//   updateName → wire name "milestoneUpdateName"
+//   delete     → wire name "milestoneDelete"
+//   restore    → wire name "milestoneRestore"
 ```
 
 ## Encryption (E2EE)
 
 For end-to-end-encrypted documents (a `Provider` created with an `encryptionKey`),
-`createMilestone` encrypts the snapshot with that key before it leaves the client and wraps
-it in the same encrypted-update-message container the server uses for automatic milestones,
-so the server only ever stores ciphertext. `getMilestoneSnapshot` decrypts every message in
-that container and merges them back into a single plaintext Y.js update, so callers always
-receive plaintext. The server treats the snapshot as opaque bytes either way. This is what
-makes client-side [milestone attribution](../attribution/README.md) possible without exposing
-content to the server.
+`create` encrypts the snapshot before it leaves the client, wrapping it in the same
+content-encrypted payload format the server uses for automatic milestones. `getSnapshot`
+decrypts the payload back into a single plaintext Y.js update.
 
-Server-generated **automatic** milestones store the document's existing encrypted-message
-container (the server has no plaintext to re-encrypt), and `getMilestoneSnapshot` decrypts
-them through the same path — so both client-created and automatic milestones work with the
-attribution helpers on E2EE documents.
+Server-generated automatic milestones store the document's existing encrypted payload
+and `getSnapshot` decrypts them through the same path — so both client-created and
+automatic milestones work identically on E2EE documents.
+
+## Error Handling
+
+All client methods throw `RpcOperationError` (from `teleportal/rpc`) on failure:
+
+```typescript
+import { RpcOperationError } from "teleportal/rpc";
+
+try {
+  await provider.rpc.milestones.create("v1");
+} catch (error) {
+  if (error instanceof RpcOperationError) {
+    console.log(error.protocol);  // "milestone"
+    console.log(error.operation); // "create"
+    console.log(error.cause);     // underlying RPC error
+  }
+}
+```
 
 ## Methods
 
@@ -82,262 +130,52 @@ attribution helpers on E2EE documents.
 
 List all milestones for a document.
 
-**Request:**
+**Request:** `{ snapshotIds?: string[]; includeDeleted?: boolean }`
 
-```typescript
-type MilestoneListRequest = {
-  snapshotIds?: string[]; // Filter to specific milestones
-  includeDeleted?: boolean; // Include deleted milestones
-};
-```
-
-**Response:**
-
-```typescript
-type MilestoneListResponse = {
-  milestones: Array<{
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    deletedAt?: number;
-    lifecycleState?: "active" | "deleted" | "archived" | "expired";
-    expiresAt?: number;
-    createdBy: { type: "user" | "system"; id: string };
-  }>;
-};
-```
+**Response:** `{ milestones: MilestoneMetaFull[] }`
 
 ### milestoneGet
 
 Retrieve a milestone's snapshot data.
 
-**Request:**
+**Request:** `{ milestoneId: string }`
 
-```typescript
-type MilestoneGetRequest = {
-  milestoneId: string;
-};
-```
-
-**Response:**
-
-```typescript
-type MilestoneGetResponse = {
-  milestoneId: string;
-  snapshot: Uint8Array; // Y.js document state vector
-};
-```
+**Response:** `{ milestoneId: string; snapshot: Uint8Array }`
 
 ### milestoneCreate
 
 Create a new milestone from the current document state.
 
-**Request:**
+**Request:** `{ name?: string; snapshot: Uint8Array }`
 
-```typescript
-type MilestoneCreateRequest = {
-  name?: string; // Optional milestone name
-  snapshot: Uint8Array; // Document state vector
-};
-```
-
-**Response:**
-
-```typescript
-type MilestoneCreateResponse = {
-  milestone: {
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    createdBy: { type: "user" | "system"; id: string };
-  };
-};
-```
+**Response:** `{ milestone: MilestoneMeta }`
 
 ### milestoneUpdateName
 
 Update a milestone's name.
 
-**Request:**
+**Request:** `{ milestoneId: string; name: string }`
 
-```typescript
-type MilestoneUpdateNameRequest = {
-  milestoneId: string;
-  name: string;
-};
-```
-
-**Response:**
-
-```typescript
-type MilestoneUpdateNameResponse = {
-  milestone: {
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    createdBy: { type: "user" | "system"; id: string };
-  };
-};
-```
+**Response:** `{ milestone: MilestoneMeta }`
 
 ### milestoneDelete
 
 Delete a milestone (soft delete).
 
-**Request:**
+**Request:** `{ milestoneId: string }`
 
-```typescript
-type MilestoneDeleteRequest = {
-  milestoneId: string;
-};
-```
-
-**Response:**
-
-```typescript
-type MilestoneDeleteResponse = {
-  milestoneId: string;
-};
-```
+**Response:** `{ milestoneId: string }`
 
 ### milestoneRestore
 
 Restore a deleted milestone.
 
-**Request:**
+**Request:** `{ milestoneId: string }`
 
-```typescript
-type MilestoneRestoreRequest = {
-  milestoneId: string;
-};
-```
-
-**Response:**
-
-```typescript
-type MilestoneRestoreResponse = {
-  milestone: {
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    deletedAt?: number;
-    lifecycleState?: "active" | "deleted" | "archived" | "expired";
-    expiresAt?: number;
-    createdBy: { type: "user" | "system"; id: string };
-  };
-};
-```
-
-## Storage Interface
-
-Implement `MilestoneStorage` for custom storage backends:
-
-```typescript
-export interface MilestoneStorage {
-  listMilestones(
-    documentId: string,
-    options?: { snapshotIds?: string[]; includeDeleted?: boolean },
-  ): Promise<
-    Array<{
-      id: string;
-      name: string;
-      documentId: string;
-      createdAt: number;
-      deletedAt?: number;
-      lifecycleState?: "active" | "deleted" | "archived" | "expired";
-      expiresAt?: number;
-      createdBy: { type: "user" | "system"; id: string };
-    }>
-  >;
-
-  getMilestoneSnapshot(documentId: string, milestoneId: string): Promise<Uint8Array | null>;
-
-  createMilestone(
-    documentId: string,
-    snapshot: Uint8Array,
-    name?: string,
-    userId?: string,
-  ): Promise<{
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    createdBy: { type: "user" | "system"; id: string };
-  }>;
-
-  updateMilestoneName(
-    documentId: string,
-    milestoneId: string,
-    name: string,
-  ): Promise<{
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    createdBy: { type: "user" | "system"; id: string };
-  }>;
-
-  deleteMilestone(
-    documentId: string,
-    milestoneId: string,
-    userId?: string,
-  ): Promise<{ milestoneId: string }>;
-
-  restoreMilestone(
-    documentId: string,
-    milestoneId: string,
-    userId?: string,
-  ): Promise<{
-    id: string;
-    name: string;
-    documentId: string;
-    createdAt: number;
-    deletedAt?: number;
-    lifecycleState?: "active" | "deleted" | "archived" | "expired";
-    expiresAt?: number;
-    createdBy: { type: "user" | "system"; id: string };
-  }>;
-}
-```
-
-## Context
-
-Server handlers receive `RpcServerContext`, which is automatically enriched by the Session when invoking handlers:
-
-```typescript
-interface RpcServerContext<Context extends ServerContext = ServerContext> {
-  /** The Server instance */
-  server: Server<Context>;
-  /** The namespaced document ID */
-  documentId: string;
-  /** The Session instance for this document */
-  session: Session<Context>;
-  /** User ID from the message context (if authenticated) */
-  userId?: string;
-  /** Client ID from the message context */
-  clientId?: string;
-}
-```
-
-The `session.storage` property provides access to the `DocumentStorage` for the document.
-
-## Method Names
-
-The RPC methods use the following string names:
-
-- `"milestoneList"` - list milestones for a document
-- `"milestoneGet"` - get a milestone snapshot
-- `"milestoneCreate"` - create a new milestone
-- `"milestoneUpdateName"` - update a milestone's name
-- `"milestoneDelete"` - delete a milestone
-- `"milestoneRestore"` - restore a deleted milestone
+**Response:** `{ milestone: MilestoneMetaFull }`
 
 ## See Also
 
-- [RPC System](../rpc/README.md) - Core RPC types and handlers
-- [Protocols Overview](../README.md) - Package overview
-- [File Methods](../file/README.md) - File upload/download RPC methods
+- [`teleportal/rpc`](../../lib/rpc/) — RPC framework primitives
+- [Attribution Protocol](../attribution/README.md) — Attribution (authorship) methods
+- [File Protocol](../file/README.md) — File upload/download methods

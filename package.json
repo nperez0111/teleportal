@@ -52,7 +52,8 @@
     "./merkle-tree": "./dist/merkle-tree/index.mjs",
     "./devtools": "./dist/devtools/index.mjs",
     "./agent": "./dist/agent/index.mjs",
-    "./attribution": "./dist/lib/attribution/index.mjs"
+    "./attribution": "./dist/lib/attribution/index.mjs",
+    "./rpc": "./dist/lib/rpc/index.mjs"
   },
   "publishConfig": {
     "access": "public"
@@ -93,12 +94,16 @@
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",
+    "@standard-schema/spec": "1.1.0",
     "crossws": "^0.4.3",
     "ioredis": "^5.8.2",
     "unstorage": "^1.17.2"
   },
   "peerDependenciesMeta": {
     "@nats-io/transport-node": {
+      "optional": true
+    },
+    "@standard-schema/spec": {
       "optional": true
     },
     "crossws": {

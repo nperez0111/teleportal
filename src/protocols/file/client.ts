@@ -1,37 +1,6 @@
 import type { AckMessage, RpcMessage } from "teleportal/protocol";
-import type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";
-import { getFileClientHandlers, type FileClientHandlerOptions } from "./client-handlers";
-
-// ---------------------------------------------------------------------------
-// Error types (mirrored from provider.ts for standalone use)
-// ---------------------------------------------------------------------------
-
-/**
- * Error thrown when a file operation is denied by the server.
- */
-export class FileOperationDeniedError extends Error {
-  constructor(public readonly reason: string) {
-    super(`File operation denied: ${reason}`);
-    this.name = "FileOperationDeniedError";
-  }
-}
-
-/**
- * Error thrown when a file operation fails.
- */
-export class FileOperationError extends Error {
-  constructor(
-    public readonly operation: string,
-    cause?: unknown,
-  ) {
-    const message =
-      cause instanceof Error
-        ? `Failed to ${operation}: ${cause.message}`
-        : `Failed to ${operation}: ${String(cause)}`;
-    super(message, { cause });
-    this.name = "FileOperationError";
-  }
-}
+import { RpcOperationError, type RpcExtension, type RpcExtensionContext } from "teleportal/rpc";
+import { getFileClientHandlers, type FileClientHandlerOptions } from "./transfer";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -51,14 +20,17 @@ export interface FileRpc {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a file RPC extension for use with the new Provider extension system.
+ * Create a file RPC extension for use with the Provider extension system.
+ *
+ * The file protocol is the "streaming escape hatch" — it uses the
+ * `FileClientHandler` state machine directly rather than `createClientExtension`,
+ * since file transfers require bidirectional message routing (handleMessage/handleAck).
  *
  * @example
  * ```ts
  * import { createFileRpc } from "teleportal/protocols/file";
  * import { createEncryptionKey } from "teleportal/encryption-key";
  *
- * // Content encryption is the default, so an encryptionKey is required.
  * const encryptionKey = await createEncryptionKey();
  *
  * const provider = await Provider.create({
@@ -75,14 +47,10 @@ export interface FileRpc {
  * ```
  */
 export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
-  // The handler instance is shared between upload & download.
-  // getFileClientHandlers returns { fileUpload, fileDownload } pointing at the
-  // same FileClientHandler – we only need one reference.
   const handlerOptions: FileClientHandlerOptions = {
     encryptionKey: options?.encryptionKey,
   };
   const handlers = getFileClientHandlers(handlerOptions);
-  // Both keys reference the same instance – grab either one.
   const handler = handlers.fileUpload as any;
 
   let document: string;
@@ -91,7 +59,6 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
     create(ctx: RpcExtensionContext): FileRpc {
       document = ctx.document;
 
-      // Wire the handler to the RPC client + stream sender.
       handler.setRpcClient(ctx.rpcClient, async (msg: RpcMessage<any>) => {
         await ctx.rpcClient.sendStream(msg);
       });
@@ -106,10 +73,7 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
               encryptionKey ?? ctx.encryptionKey,
             );
           } catch (error) {
-            if (error instanceof FileOperationDeniedError) {
-              throw error;
-            }
-            throw new FileOperationError("upload file", error);
+            throw new RpcOperationError("file", "upload", error);
           }
         },
 
@@ -122,21 +86,16 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
               timeout,
             );
           } catch (error) {
-            if (error instanceof FileOperationDeniedError) {
-              throw error;
-            }
-            throw new FileOperationError("download file", error);
+            throw new RpcOperationError("file", "download", error);
           }
         },
       };
     },
 
     handleMessage(message: RpcMessage<any>): boolean {
-      // Route response messages
       if (message.requestType === "response") {
         return handler.handleResponse(message);
       }
-      // Route stream messages (file part chunks during download)
       if (message.requestType === "stream") {
         return handler.handleStream(message);
       }

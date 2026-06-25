@@ -1,21 +1,14 @@
-import {
-  RpcServerContext,
-  RpcHandlerRegistry,
-  RpcServerRequestHandler,
-  RpcError,
-  type Message,
-  AckMessage,
-} from "teleportal/protocol";
+import { createHandlers, ok, type RpcHandlerRegistry, type RpcServerContext } from "teleportal/rpc";
+import type { Message } from "teleportal/protocol";
 import type { ServerContext } from "teleportal";
 import type { FileStorage, TemporaryUploadStorage } from "teleportal/storage";
 import { emitWideEvent } from "teleportal/server";
 import { buildMerkleTree, generateMerkleProof } from "teleportal/merkle-tree";
 import {
-  FileUploadRequest,
-  FileDownloadRequest,
-  FileUploadResponse,
-  FileDownloadResponse,
+  type FileUploadRequest,
+  type FileDownloadResponse,
   type FilePartStream,
+  fileProtocol,
 } from "./methods";
 
 // ============================================================================
@@ -33,19 +26,12 @@ const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
  * If not provided, all uploads and downloads are allowed.
  */
 export interface FilePermissionOptions {
-  /**
-   * Check if an upload is allowed. Return `{ allowed: false, reason: "..." }` to reject.
-   */
   checkUploadPermission?(
     fileId: string,
     metadata: FileUploadRequest,
     context: RpcServerContext,
   ): Promise<{ allowed: boolean; reason?: string }>;
 
-  /**
-   * Check if a download is allowed. Return `{ allowed: false, reason: "..." }` to reject.
-   * Can also return metadata to populate the download response.
-   */
   checkDownloadPermission?(
     fileId: string,
     context: RpcServerContext,
@@ -60,10 +46,6 @@ export interface FilePermissionOptions {
 // FileHandler - Core file handling logic
 // ============================================================================
 
-/**
- * Core file handling logic for uploads and downloads.
- * Used internally by the RPC handlers.
- */
 export class FileHandler {
   #fileStorage: FileStorage;
   #temporaryUploadStorage: TemporaryUploadStorage | undefined;
@@ -73,10 +55,6 @@ export class FileHandler {
     this.#temporaryUploadStorage = fileStorage.temporaryUploadStorage;
   }
 
-  /**
-   * Handle an incoming file part (chunk) during upload.
-   * Stores the chunk and completes the upload when all chunks arrive.
-   */
   async handleFilePart(
     payload: FilePartStream,
     messageId: string,
@@ -117,6 +95,7 @@ export class FileHandler {
         payload.merkleProof,
       );
 
+      const { AckMessage } = await import("teleportal/protocol");
       await sendResponse(
         new AckMessage({
           type: "ack",
@@ -173,12 +152,7 @@ export class FileHandler {
     }
   }
 
-  /**
-   * Stream file parts (chunks) for download.
-   * Returns an async generator that yields file parts.
-   */
   async *streamFileParts(fileId: string): AsyncGenerator<FilePartStream> {
-    const _startTime = Date.now();
     const file = await this.#fileStorage.getFile(fileId);
     if (!file) {
       emitWideEvent("info", {
@@ -219,9 +193,6 @@ export class FileHandler {
     }
   }
 
-  /**
-   * Initiate an upload session.
-   */
   async initiateUpload(
     fileId: string,
     metadata: {
@@ -259,17 +230,11 @@ export class FileHandler {
     });
   }
 
-  /**
-   * Clean up expired uploads.
-   */
   async cleanupExpiredUploads(): Promise<void> {
     if (!this.#temporaryUploadStorage) return;
     await this.#temporaryUploadStorage.cleanupExpiredUploads();
   }
 
-  /**
-   * Get file metadata for a file.
-   */
   async getFileMetadata(fileId: string): Promise<{
     filename: string;
     size: number;
@@ -292,116 +257,76 @@ export class FileHandler {
 }
 
 // ============================================================================
-// RPC Handler Factories
+// Public API
 // ============================================================================
 
-/**
- * Create the upload request handler.
- */
-function createUploadHandler(fileHandler: FileHandler, options?: FilePermissionOptions) {
-  return async (
-    payload: FileUploadRequest,
-    context: RpcServerContext,
-  ): Promise<{ response: FileUploadResponse | RpcError }> => {
-    try {
-      const permission = options?.checkUploadPermission
-        ? await options.checkUploadPermission(payload.fileId, payload, context)
-        : { allowed: true };
-
-      if (!permission.allowed) {
-        return {
-          response: {
-            fileId: payload.fileId,
-            allowed: false,
-            reason: permission.reason,
-            statusCode: 403,
-          },
-        };
-      }
-
-      await fileHandler.initiateUpload(
-        payload.fileId,
-        {
-          filename: payload.filename,
-          size: payload.size,
-          mimeType: payload.mimeType,
-          encrypted: payload.encrypted,
-        },
-        context.documentId,
-      );
-
-      return {
-        response: {
-          fileId: payload.fileId,
-          allowed: true,
-        },
-      };
-    } catch (error) {
-      return {
-        response: {
-          type: "error",
-          statusCode: 500,
-          details: error instanceof Error ? error.message : "Failed to initiate upload",
-        },
-      };
-    }
-  };
+interface FileDeps {
+  fileHandler: FileHandler;
+  permissionOptions?: FilePermissionOptions;
 }
 
 /**
- * Create the upload stream handler for file parts.
+ * Create RPC handlers for file upload/download operations.
+ *
+ * @param fileStorage - The file storage implementation
+ * @param options - Optional permission checking callbacks
  */
-function createUploadStreamHandler(fileHandler: FileHandler) {
-  return async (
-    payload: FilePartStream,
-    context: RpcServerContext,
-    messageId: string,
-    sendMessage: (message: Message<ServerContext>) => Promise<void>,
-  ): Promise<void> => {
-    await fileHandler.handleFilePart(payload, messageId, sendMessage, context);
-  };
-}
+export function getFileRpcHandlers(
+  fileStorage: FileStorage,
+  options?: FilePermissionOptions,
+): RpcHandlerRegistry {
+  const fileHandler = new FileHandler(fileStorage);
+  const deps: FileDeps = { fileHandler, permissionOptions: options };
 
-/**
- * Create the download request handler.
- * Returns file metadata and a stream of file parts.
- */
-function createDownloadHandler(fileHandler: FileHandler, options?: FilePermissionOptions) {
-  return async (
-    payload: FileDownloadRequest,
-    context: RpcServerContext,
-  ): Promise<{
-    response: FileDownloadResponse | RpcError;
-    stream?: AsyncIterable<FilePartStream>;
-  }> => {
-    try {
-      const permission = options?.checkDownloadPermission
-        ? await options.checkDownloadPermission(payload.fileId, context)
-        : { allowed: true };
+  return createHandlers(
+    fileProtocol,
+    deps,
+    {
+      upload: ({ fileHandler, permissionOptions }) => ({
+        handler: async (payload, context) => {
+          const permission = permissionOptions?.checkUploadPermission
+            ? await permissionOptions.checkUploadPermission(payload.fileId, payload, context)
+            : { allowed: true };
 
-      if (!permission.allowed) {
-        return {
-          response: {
+          if (!permission.allowed) {
+            return ok({
+              fileId: payload.fileId,
+              allowed: false,
+              reason: permission.reason,
+              statusCode: 403,
+            });
+          }
+
+          await fileHandler.initiateUpload(
+            payload.fileId,
+            {
+              filename: payload.filename,
+              size: payload.size,
+              mimeType: payload.mimeType,
+              encrypted: payload.encrypted,
+            },
+            context.documentId,
+          );
+
+          return ok({
             fileId: payload.fileId,
-            filename: "",
-            size: 0,
-            mimeType: "",
-            lastModified: 0,
-            encrypted: false,
-            allowed: false,
-            reason: permission.reason,
-            statusCode: 404,
-          },
-        };
-      }
+            allowed: true,
+          });
+        },
+        streamHandler: async (payload, context, messageId, sendMessage) => {
+          await fileHandler.handleFilePart(payload, messageId, sendMessage, context);
+        },
+      }),
 
-      // Get file metadata from storage
-      let fileMetadata = permission.metadata;
-      if (!fileMetadata) {
-        const metadata = await fileHandler.getFileMetadata(payload.fileId);
-        if (!metadata) {
-          return {
-            response: {
+      download:
+        ({ fileHandler, permissionOptions }) =>
+        async (payload, context) => {
+          const permission = permissionOptions?.checkDownloadPermission
+            ? await permissionOptions.checkDownloadPermission(payload.fileId, context)
+            : { allowed: true };
+
+          if (!permission.allowed) {
+            return ok({
               fileId: payload.fileId,
               filename: "",
               size: 0,
@@ -409,80 +334,48 @@ function createDownloadHandler(fileHandler: FileHandler, options?: FilePermissio
               lastModified: 0,
               encrypted: false,
               allowed: false,
-              reason: "File not found",
+              reason: permission.reason,
               statusCode: 404,
+            });
+          }
+
+          let fileMetadata = permission.metadata;
+          if (!fileMetadata) {
+            const metadata = await fileHandler.getFileMetadata(payload.fileId);
+            if (!metadata) {
+              return ok({
+                fileId: payload.fileId,
+                filename: "",
+                size: 0,
+                mimeType: "",
+                lastModified: 0,
+                encrypted: false,
+                allowed: false,
+                reason: "File not found",
+                statusCode: 404,
+              });
+            }
+            fileMetadata = metadata;
+          }
+
+          const stream = fileHandler.streamFileParts(payload.fileId);
+
+          return ok(
+            {
+              fileId: payload.fileId,
+              allowed: true,
+              filename: fileMetadata.filename,
+              size: fileMetadata.size,
+              mimeType: fileMetadata.mimeType,
+              lastModified: fileMetadata.lastModified,
+              encrypted: fileMetadata.encrypted,
             },
-          };
-        }
-        fileMetadata = metadata;
-      }
-
-      // Create a stream generator for file parts
-      const stream = fileHandler.streamFileParts(payload.fileId);
-
-      return {
-        response: {
-          fileId: payload.fileId,
-          allowed: true,
-          filename: fileMetadata.filename,
-          size: fileMetadata.size,
-          mimeType: fileMetadata.mimeType,
-          lastModified: fileMetadata.lastModified,
-          encrypted: fileMetadata.encrypted,
+            { stream },
+          );
         },
-        stream,
-      };
-    } catch (error) {
-      return {
-        response: {
-          type: "error",
-          statusCode: 500,
-          details: error instanceof Error ? error.message : "Failed to get file metadata",
-        },
-      };
-    }
-  };
-}
-
-// ============================================================================
-// Public API
-// ============================================================================
-
-/**
- * Create RPC handlers for file upload/download operations.
- *
- * The handlers integrate with the Session RPC system:
- * - `fileUpload`: Handles upload initiation (request) and file parts (stream)
- * - `fileDownload`: Handles download requests and streams file parts back
- *
- * @param fileStorage - The file storage implementation
- * @param options - Optional permission checking callbacks. If not provided, all operations are allowed.
- *
- * @example
- * ```typescript
- * const fileStorage = new InMemoryFileStorage();
- * fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
- *
- * const server = new Server({
- *   getStorage: async () => documentStorage,
- *   rpcHandlers: {
- *     ...getFileRpcHandlers(fileStorage),
- *     ...getMilestoneRpcHandlers(milestoneStorage),
- *   },
- * });
- * ```
- */
-export function getFileRpcHandlers(
-  fileStorage: FileStorage,
-  options?: FilePermissionOptions,
-): RpcHandlerRegistry {
-  const fileHandler = new FileHandler(fileStorage);
-
-  return {
-    fileUpload: {
-      handler: createUploadHandler(fileHandler, options),
-      streamHandler: createUploadStreamHandler(fileHandler),
-      init: () => {
+    },
+    {
+      init: (_server, { fileHandler }) => {
         const cleanupInterval = setInterval(
           async () => {
             try {
@@ -502,9 +395,6 @@ export function getFileRpcHandlers(
           clearInterval(cleanupInterval);
         };
       },
-    } as RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,
-    fileDownload: {
-      handler: createDownloadHandler(fileHandler, options),
-    } as RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,
-  };
+    },
+  );
 }

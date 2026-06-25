@@ -7,7 +7,7 @@ import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporar
 import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
 import type { DocumentStorage } from "../../storage/types";
 import type { FilePartStream } from "./methods";
-import { FileHandler } from "./server-handlers";
+import { FileHandler } from "./server";
 
 function createMockContext(documentId: string, storage: DocumentStorage): RpcServerContext {
   return {
