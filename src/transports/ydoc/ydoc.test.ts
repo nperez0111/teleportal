@@ -283,6 +283,27 @@ describe("ydoc sink", () => {
     sink.close();
   });
 
+  it("does not emit an unhandled rejection when closed before sync without awaiting synced", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      const doc = new Y.Doc();
+      const sink = getYDocSink({ ydoc: doc, document: "test" });
+      // Intentionally never await `sink.synced` — mirrors a provider that is
+      // destroyed (e.g. switchDocument) before anyone consumes the promise.
+      sink.close();
+      // Drain microtasks + a macrotask so any unhandled rejection is reported.
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      const cancelled = rejections.filter(
+        (r) => r instanceof Error && r.message === "YDoc cancelled",
+      );
+      expect(cancelled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
   // it("can write a doc's awareness updates", async () => {
   //   const doc = new Y.Doc();
   //   doc.clientID = 300;

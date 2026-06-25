@@ -300,13 +300,20 @@ export function getYDocSink<Context extends ClientContext>({
     onSynced = () => {};
   };
 
+  const synced = new Promise<void>((resolve, reject) => {
+    onSynced = (success: boolean) => {
+      if (success) resolve();
+      else reject(new Error("YDoc cancelled"));
+    };
+  });
+  // Awaiting `synced` is optional. `close()` rejects it (e.g. switching
+  // documents before sync completes), so attach a no-op rejection handler to
+  // keep an unconsumed `synced` from surfacing as an unhandled rejection. Real
+  // consumers attach their own handlers and still observe the rejection.
+  synced.catch(() => {});
+
   return {
-    synced: new Promise((resolve, reject) => {
-      onSynced = (success: boolean) => {
-        if (success) resolve();
-        else reject(new Error("YDoc cancelled"));
-      };
-    }),
+    synced,
     ydoc,
     awareness,
     async write(chunk) {

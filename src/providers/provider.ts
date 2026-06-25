@@ -561,6 +561,11 @@ export class Provider<
       this.transport.synced,
       this.#waitForInFlightMessages(),
     ]).then(() => {});
+    // `destroy()` abandons this promise via `#clearSyncedPromise()` while
+    // `transport.synced` is still pending, so it rejects ("YDoc cancelled")
+    // with no internal awaiter. Swallow that here; consumers that await the
+    // returned promise still observe the rejection on their own derived chain.
+    synced.catch(() => {});
 
     this.#synced = synced;
     this.#syncedUnsubscribe = this.#connection.on("update", (state) => {
