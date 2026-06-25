@@ -2,19 +2,18 @@ import { describe, expect, it, mock, beforeEach } from "bun:test";
 import { RateLimitedTransport } from "./index";
 import type { RateLimitStorage, RateLimitState } from "../../storage/types";
 import type { Message, ClientContext } from "teleportal";
+import { createChannel } from "../../lib/iter";
 
 // Mock Transport
 const createMockTransport = () => {
-  const readable = new ReadableStream<Message<ClientContext>>({
-    start(controller) {
-      // @ts-ignore
-      this.controller = controller;
-    },
-  });
-  const writable = new WritableStream<Message<ClientContext>>({
-    write: mock(),
-  });
-  return { readable, writable, controller: (readable as any).controller };
+  const ch = createChannel<Message<ClientContext>>();
+  const writeFn = mock();
+  return {
+    source: ch as AsyncIterable<Message<ClientContext>[]>,
+    write: writeFn as (message: Message<ClientContext>) => void,
+    close() {},
+    channel: ch,
+  };
 };
 
 // Mock Storage
@@ -68,15 +67,13 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
       onRateLimitExceeded,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
     // Normal user: limit 2. Write 2 messages.
-    await writer.write({ type: "ping", context: { userId: "normal" } } as any);
-    await writer.write({ type: "ping", context: { userId: "normal" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "normal" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "normal" } } as any);
 
     // VIP user: limit 10. Write 5 messages.
     for (let i = 0; i < 5; i++) {
-      await writer.write({ type: "ping", context: { userId: "vip" } } as any);
+      await rateLimited.write({ type: "ping", context: { userId: "vip" } } as any);
     }
 
     // Check storage for VIP - key includes rule ID
@@ -94,7 +91,7 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
     expect(stateNormal?.tokens).toBeLessThan(1); // 2 - 2 = 0 (with possible tiny refill)
 
     // Now send 3rd message for Normal - should be silently dropped
-    await writer.write({
+    await rateLimited.write({
       type: "ping",
       context: { userId: "normal" },
     } as any);
@@ -116,14 +113,12 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
       rateLimitStorage: mockStorage,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
-    await writer.write({ type: "ping", context: { userId: "slow" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "slow" } } as any);
 
     const stateSlow = await mockStorage.getState("rate-limit:user-limit:user:slow");
     expect(stateSlow?.windowMs).toBe(10000);
 
-    await writer.write({ type: "ping", context: { userId: "fast" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "fast" } } as any);
 
     const stateFast = await mockStorage.getState("rate-limit:user-limit:user:fast");
     expect(stateFast?.windowMs).toBe(1000);

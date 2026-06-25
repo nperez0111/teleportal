@@ -1,5 +1,6 @@
-import type { Message, ClientContext } from "teleportal";
-import { fromMessageArrayStream } from "teleportal/transports";
+import type { Message, ClientContext, MessageArray } from "teleportal";
+import { fromMessageArrayTransform } from "teleportal/transports";
+import { fromReadableStream } from "../lib/iter";
 
 /**
  * Default implementation that extracts document IDs from URL query parameters
@@ -56,12 +57,14 @@ export function getDocumentsFromQueryParams(
 
 /**
  * Decodes a {@link Response} containing a {@link ReadableStream} of {@link MessageArray}s
- * into a {@link ReadableStream} of {@link Message}s.
+ * into a batched async iterable of {@link Message}s.
  */
-export function decodeHTTPRequest(response: Response): ReadableStream<Message<ClientContext>> {
-  return response.body!.pipeThrough(
-    fromMessageArrayStream({
-      clientId: response.headers.get("x-teleportal-client-id")!,
-    }) as TransformStream<Uint8Array, Message<ClientContext>>,
-  );
+export function decodeHTTPRequest(
+  response: Response,
+): AsyncIterable<Message<ClientContext>[]> {
+  const transform = fromMessageArrayTransform({
+    clientId: response.headers.get("x-teleportal-client-id")!,
+  });
+  const source = fromReadableStream(response.body! as ReadableStream<MessageArray>);
+  return transform(source);
 }

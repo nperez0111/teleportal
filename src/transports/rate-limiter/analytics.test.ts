@@ -3,39 +3,30 @@ import { Server } from "../../server/server";
 import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
 import { withRateLimit } from "./index";
 import { DocMessage } from "teleportal";
-import type { Message, ServerContext, StateVector } from "teleportal";
+import type { Message, ServerContext, StateVector, Transport } from "teleportal";
 import type { RateLimitStorage, RateLimitState } from "../../storage/types";
+import { createChannel } from "../../lib/iter";
 
-// Mock Transport that allows enqueueing messages for testing
-class MockTransport<Context extends ServerContext> {
-  public readable: ReadableStream<Message<Context>>;
-  public writable: WritableStream<Message<Context>>;
-  private controller: ReadableStreamDefaultController<Message<Context>> | null = null;
-
-  constructor() {
-    this.readable = new ReadableStream<Message<Context>>({
-      start: (controller) => {
-        this.controller = controller;
-      },
-    });
-    this.writable = new WritableStream<Message<Context>>();
-  }
-
-  // Helper to enqueue messages for testing
-  enqueueMessage(message: Message<Context>) {
-    if (this.controller) {
-      this.controller.enqueue(message);
-    }
-  }
-
-  closeReadable() {
-    if (this.controller) {
-      this.controller.close();
-    }
-  }
+function createMockTransport<Context extends ServerContext>(): Transport<Context> & {
+  enqueueMessage(message: Message<Context>): void;
+  closeSource(): void;
+} {
+  const channel = createChannel<Message<Context>>();
+  return {
+    source: channel,
+    write() {},
+    close() {
+      channel.close();
+    },
+    enqueueMessage(message: Message<Context>) {
+      channel.send(message);
+    },
+    closeSource() {
+      channel.close();
+    },
+  };
 }
 
-// Mock RateLimitStorage for testing
 class MockRateLimitStorage implements RateLimitStorage {
   store = new Map<string, RateLimitState>();
 
@@ -64,7 +55,6 @@ describe("Rate Limit Analytics", () => {
   let server: Server<any>;
 
   beforeEach(() => {
-    // Create server with minimal config
     const documentStorage = new MemoryDocumentStorage();
     server = new Server({
       storage: async () => documentStorage,
@@ -76,29 +66,26 @@ describe("Rate Limit Analytics", () => {
   });
 
   it("should report rate limit metrics in getStatus", async () => {
-    // 1. Setup a transport with aggressive rate limits and storage
-    const baseTransport = new MockTransport<any>();
+    const baseTransport = createMockTransport<any>();
     const rateLimitStorage = new MockRateLimitStorage();
-    const rateLimitedTransport = withRateLimit(baseTransport as any, {
+    const rateLimitedTransport = withRateLimit(baseTransport, {
       rules: [
         {
           id: "test-rule",
-          maxMessages: 1, // Only 1 message allowed
+          maxMessages: 1,
           windowMs: 1000,
-          trackBy: "transport", // Use transport-level tracking
+          trackBy: "transport",
         },
       ],
-      metricsCollector: server.getMetricsCollector(), // Use server's metrics collector
-      rateLimitStorage, // Use storage for proper tracking
+      metricsCollector: server.getMetricsCollector(),
+      rateLimitStorage,
     });
 
-    // 2. Create client with rate-limited transport
     server.createClient({
       transport: rateLimitedTransport,
       id: "test-client",
     });
 
-    // 3. Send first message through the writable stream (should pass rate limit)
     const message1 = new DocMessage(
       "test-doc",
       { type: "sync-step-1", sv: new Uint8Array() as StateVector },
@@ -106,14 +93,10 @@ describe("Rate Limit Analytics", () => {
       false,
     );
 
-    const writer = rateLimitedTransport.writable.getWriter();
-    await writer.write(message1);
-    writer.releaseLock();
+    await rateLimitedTransport.write(message1);
 
-    // Wait for message to be processed
     await new Promise((resolve) => setTimeout(resolve, 1));
 
-    // 4. Send second message (should be rate limited)
     const message2 = new DocMessage(
       "test-doc",
       { type: "sync-step-1", sv: new Uint8Array() as StateVector },
@@ -121,37 +104,26 @@ describe("Rate Limit Analytics", () => {
       false,
     );
 
-    const writer2 = rateLimitedTransport.writable.getWriter();
+    await rateLimitedTransport.write(message2);
 
-    // First message consumed the token, so second should be silently dropped
-    await writer2.write(message2);
-
-    writer2.releaseLock();
-
-    // Wait for metrics to be recorded
     await new Promise((resolve) => setTimeout(resolve, 1));
 
-    // 5. Check status - should show rate limit metrics
     const status = await server.getStatus();
 
-    // Verify rate limit metrics are reported
     expect(status.rateLimitExceededTotal).toBeGreaterThan(0);
     expect(status.rateLimitBreakdown).toBeDefined();
     expect(status.rateLimitTopOffenders).toBeDefined();
     expect(status.rateLimitRecentEvents).toBeDefined();
 
-    // Verify breakdown includes transport tracking
     expect(status.rateLimitBreakdown).toBeDefined();
     expect(status.rateLimitBreakdown!["transport"]).toBeGreaterThan(0);
 
-    // Verify recent events contain the rate limit event
     expect(status.rateLimitRecentEvents).toBeDefined();
     expect(status.rateLimitRecentEvents!.length).toBeGreaterThan(0);
     const recentEvent = status.rateLimitRecentEvents![0];
     expect(recentEvent).toBeDefined();
     expect(recentEvent.trackBy).toBe("transport");
 
-    // Clean up
-    baseTransport.closeReadable();
+    baseTransport.closeSource();
   });
 });

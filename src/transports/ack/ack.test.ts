@@ -23,11 +23,10 @@ describe("withAckSink", () => {
     pubSub = new InMemoryPubSub();
     writtenMessages = [];
     baseSink = {
-      writable: new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      }),
+      write(chunk) {
+        writtenMessages.push(chunk);
+      },
+      close() {},
     };
   });
 
@@ -60,9 +59,7 @@ describe("withAckSink", () => {
 
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
-    const writer = ackSink.writable.getWriter();
-    await writer.write(docMessage);
-    writer.releaseLock();
+    await ackSink.write(docMessage);
 
     // Wait for ACK to be published
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -106,9 +103,7 @@ describe("withAckSink", () => {
       context,
     );
 
-    const writer = ackSink.writable.getWriter();
-    await writer.write(awarenessMessage);
-    writer.releaseLock();
+    await ackSink.write(awarenessMessage);
 
     // Wait for ACK to be published
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -151,9 +146,7 @@ describe("withAckSink", () => {
       context,
     );
 
-    const writer = ackSink.writable.getWriter();
-    await writer.write(ackMessage);
-    writer.releaseLock();
+    await ackSink.write(ackMessage);
 
     // Wait for potential ACK to be published
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -196,15 +189,13 @@ describe("withAckSink", () => {
     const ackTopic: PubSubTopic = "ack/test-client";
 
     let closed = false;
-    const sinkWithClose = {
-      writable: new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-        close() {
-          closed = true;
-        },
-      }),
+    const sinkWithClose: Sink<TestContext> = {
+      write(chunk) {
+        writtenMessages.push(chunk);
+      },
+      close() {
+        closed = true;
+      },
     };
 
     const ackSink = withAckSink(sinkWithClose, {
@@ -214,39 +205,8 @@ describe("withAckSink", () => {
       context,
     });
 
-    await ackSink.writable.close();
+    ackSink.close();
     expect(closed).toBe(true);
-  });
-
-  it("should handle abort", async () => {
-    const context: TestContext = {
-      clientId: "test-client",
-      userId: "test-user",
-      room: "test-room",
-    };
-    const ackTopic: PubSubTopic = "ack/test-client";
-
-    let aborted = false;
-    const sinkWithAbort = {
-      writable: new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-        abort(_reason) {
-          aborted = true;
-        },
-      }),
-    };
-
-    const ackSink = withAckSink(sinkWithAbort, {
-      pubSub,
-      ackTopic,
-      sourceId: "test-source",
-      context,
-    });
-
-    await ackSink.writable.abort("test reason");
-    expect(aborted).toBe(true);
   });
 });
 
@@ -259,11 +219,10 @@ describe("withAckTrackingSink", () => {
     pubSub = new InMemoryPubSub();
     writtenMessages = [];
     baseSink = {
-      writable: new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      }),
+      write(chunk) {
+        writtenMessages.push(chunk);
+      },
+      close() {},
     };
   });
 
@@ -289,9 +248,7 @@ describe("withAckTrackingSink", () => {
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(docMessage);
-    writer.releaseLock();
+    await trackedSink.write(docMessage);
 
     // Send ACK
     const ackMessage = new AckMessage(
@@ -334,9 +291,7 @@ describe("withAckTrackingSink", () => {
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(docMessage);
-    writer.releaseLock();
+    await trackedSink.write(docMessage);
 
     // Wait for ACK (should timeout)
     await expect(trackedSink.waitForAcks()).rejects.toThrow("ACK timeout");
@@ -362,9 +317,7 @@ describe("withAckTrackingSink", () => {
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(docMessage);
-    writer.releaseLock();
+    await trackedSink.write(docMessage);
 
     // Wait for subscription to be set up
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -417,9 +370,7 @@ describe("withAckTrackingSink", () => {
     );
 
     // Write ACK message
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(ackMessage);
-    writer.releaseLock();
+    await trackedSink.write(ackMessage);
 
     // Wait for ACKs (should resolve immediately since ACK messages aren't tracked)
     await trackedSink.waitForAcks();
@@ -456,10 +407,8 @@ describe("withAckTrackingSink", () => {
     );
 
     // Write messages
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(message1);
-    await writer.write(message2);
-    writer.releaseLock();
+    await trackedSink.write(message1);
+    await trackedSink.write(message2);
 
     // Wait a bit for the subscription to be set up
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -514,9 +463,7 @@ describe("withAckTrackingSink", () => {
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(docMessage);
-    writer.releaseLock();
+    await trackedSink.write(docMessage);
 
     // Abort before ACK is received
     abortController.abort();
@@ -545,9 +492,7 @@ describe("withAckTrackingSink", () => {
     const docMessage = new DocMessage("test-doc", { type: "sync-done" }, context);
 
     // Write message
-    const writer = trackedSink.writable.getWriter();
-    await writer.write(docMessage);
-    writer.releaseLock();
+    await trackedSink.write(docMessage);
 
     // Unsubscribe before ACK is received
     await trackedSink.unsubscribe();
@@ -587,15 +532,13 @@ describe("withAckTrackingSink", () => {
     const ackTopic: PubSubTopic = "ack/test-client";
 
     let closed = false;
-    const sinkWithClose = {
-      writable: new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-        close() {
-          closed = true;
-        },
-      }),
+    const sinkWithClose: Sink<TestContext> = {
+      write(chunk) {
+        writtenMessages.push(chunk);
+      },
+      close() {
+        closed = true;
+      },
     };
 
     const trackedSink = withAckTrackingSink(sinkWithClose, {
@@ -604,40 +547,8 @@ describe("withAckTrackingSink", () => {
       sourceId: "test-source",
     });
 
-    await trackedSink.writable.close();
+    trackedSink.close();
     expect(closed).toBe(true);
-
-    await trackedSink.unsubscribe();
-  });
-
-  it("should handle abort", async () => {
-    const _context: TestContext = {
-      clientId: "test-client",
-      userId: "test-user",
-      room: "test-room",
-    };
-    const ackTopic: PubSubTopic = "ack/test-client";
-
-    let aborted = false;
-    const sinkWithAbort = {
-      writable: new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-        abort(_reason) {
-          aborted = true;
-        },
-      }),
-    };
-
-    const trackedSink = withAckTrackingSink(sinkWithAbort, {
-      pubSub,
-      ackTopic,
-      sourceId: "test-source",
-    });
-
-    await trackedSink.writable.abort("test reason");
-    expect(aborted).toBe(true);
 
     await trackedSink.unsubscribe();
   });

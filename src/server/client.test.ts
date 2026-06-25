@@ -5,26 +5,21 @@ import type { ServerContext, Message, StateVector } from "teleportal";
 
 describe("Client", () => {
   let client: Client<ServerContext>;
-  let writable: WritableStream<Message<ServerContext>>;
   let writtenMessages: Message<ServerContext>[];
 
   beforeEach(() => {
     writtenMessages = [];
-    writable = new WritableStream({
-      write(chunk) {
-        writtenMessages.push(chunk);
-      },
-    });
 
     client = new Client({
       id: "test-client",
-      writable,
+      write(chunk) {
+        writtenMessages.push(chunk);
+      },
     });
   });
 
   afterEach(async () => {
     // Client doesn't have a destroy method in server-v2
-    // The writable stream will be closed naturally
   });
 
   describe("constructor", () => {
@@ -72,15 +67,11 @@ describe("Client", () => {
     });
 
     it("should propagate send errors", async () => {
-      const errorWritable = new WritableStream({
+      const errorClient = new Client({
+        id: "error-client",
         write() {
           throw new Error("Write error");
         },
-      });
-
-      const errorClient = new Client({
-        id: "error-client",
-        writable: errorWritable,
       });
 
       const mockMessage = new DocMessage(

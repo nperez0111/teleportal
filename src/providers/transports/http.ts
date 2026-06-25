@@ -1,4 +1,4 @@
-import type { Message, RawReceivedMessage, ClientContext } from "teleportal";
+import type { Message, ClientContext, Sink } from "teleportal";
 import { getHTTPSink, getSSESource, type BatchingOptions } from "teleportal/transports";
 import type { ConnectionTransport, TransportConnectContext } from "./types";
 
@@ -41,33 +41,24 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
   const httpBatchingOptions = options?.httpBatchingOptions;
 
   let source: ReturnType<typeof getSSESource> | null = null;
-  let httpWriter: WritableStreamDefaultWriter<RawReceivedMessage> | null = null;
+  let httpSink: Sink<ClientContext> | null = null;
   let streamAbortController: AbortController | null = null;
 
   function cleanup() {
-    // Abort any ongoing stream processing
     if (streamAbortController) {
       streamAbortController.abort("Connection cleanup");
       streamAbortController = null;
     }
 
-    // Close and clean up HTTP writer
-    if (httpWriter) {
-      const writer = httpWriter;
-      httpWriter = null;
+    if (httpSink) {
       try {
-        writer.close().catch(() => {});
+        httpSink.close();
       } catch {
-        // Ignore errors when closing writer, it might already be closed
+        // Ignore errors when closing
       }
-      try {
-        writer.releaseLock();
-      } catch {
-        // Ignore errors when releasing lock
-      }
+      httpSink = null;
     }
 
-    // Close and clean up EventSource
     if (source) {
       try {
         source.eventSource.close();
@@ -83,7 +74,6 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
     timeout: timeoutMs,
 
     connect(ctx: TransportConnectContext): Promise<void> {
-      // Clean up any previous connection before creating a new one
       cleanup();
 
       return new Promise<void>((resolve, reject) => {
@@ -95,18 +85,15 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
         let settled = false;
         let connectionTimeout: ReturnType<typeof setTimeout> | null = null;
 
-        // Build the SSE URL: convert ws(s) to http(s), append /sse
         const sseUrl = new URL(ctx.url);
         if (sseUrl.protocol === "ws:") sseUrl.protocol = "http:";
         if (sseUrl.protocol === "wss:") sseUrl.protocol = "https:";
         sseUrl.pathname += sseUrl.pathname.endsWith("/") ? "sse" : "/sse";
 
-        // Append token as query parameter if provided
         if (ctx.token) {
           sseUrl.searchParams.set("token", ctx.token);
         }
 
-        // Set up connection timeout
         connectionTimeout = ctx.timer.setTimeout(() => {
           if (!settled) {
             settled = true;
@@ -119,7 +106,6 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
           }
         }, timeoutMs);
 
-        // Create the SSE source
         source = getSSESource({
           context: {} as ClientContext,
           source: new EventSourceImpl(sseUrl.toString()),
@@ -128,7 +114,6 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
           },
         });
 
-        // Wait for the clientId to establish the connection
         source.clientId
           .then((clientId) => {
             if (settled) return;
@@ -138,10 +123,9 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
               connectionTimeout = null;
             }
 
-            // Create the HTTP sink for sending messages
             const context = { clientId } satisfies ClientContext;
 
-            const sink = getHTTPSink({
+            httpSink = getHTTPSink({
               context,
               request: async ({ requestOptions }) => {
                 const resp = await fetchImpl(sseUrl.toString(), requestOptions);
@@ -154,39 +138,27 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
               batchingOptions: httpBatchingOptions,
             });
 
-            // Get the writer for sending messages
-            httpWriter = sink.writable.getWriter();
-
-            // Set up stream processing with abort controller
             streamAbortController = new AbortController();
             const signal = streamAbortController.signal;
 
-            // Pipe the SSE readable stream to route messages via ctx.onMessage
-            source!.readable
-              .pipeTo(
-                new WritableStream({
-                  write(chunk) {
-                    if (signal.aborted) {
-                      throw new Error("Stream processing aborted");
-                    }
+            // Consume SSE source and forward messages via ctx.onMessage
+            (async () => {
+              try {
+                for await (const batch of source!.source) {
+                  if (signal.aborted) break;
+                  for (const chunk of batch) {
                     ctx.onMessage(chunk);
-                  },
-                }),
-                { signal },
-              )
-              .then(() => {
-                // Normal stream completion.
+                  }
+                }
                 ctx.onClose();
-              })
-              .catch((error) => {
-                // On abort (deliberate close) report a clean close; otherwise
-                // surface the error. Exactly one onClose per teardown.
+              } catch (error) {
                 if (signal.aborted) {
                   ctx.onClose();
                 } else {
                   ctx.onClose(error instanceof Error ? error : new Error(String(error)));
                 }
-              });
+              }
+            })();
 
             settled = true;
             resolve();
@@ -206,10 +178,10 @@ export function httpTransport(options?: HttpTransportOptions): ConnectionTranspo
     },
 
     async send(message: Message): Promise<void> {
-      if (!httpWriter) {
+      if (!httpSink) {
         throw new Error("HTTP transport is not connected");
       }
-      await httpWriter.write(message);
+      await httpSink.write(message);
     },
 
     async close(): Promise<void> {

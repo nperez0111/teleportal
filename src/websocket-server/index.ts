@@ -10,6 +10,7 @@ import {
 import type { Client, Server } from "teleportal/server";
 import type { TokenManager } from "teleportal/token";
 import { fromBinaryTransport } from "teleportal/transports";
+import { createChannel } from "../lib/iter";
 
 declare module "crossws" {
   interface PeerContext {
@@ -17,7 +18,7 @@ declare module "crossws" {
     userId: string;
     clientId: string;
     transport: BinaryTransport;
-    writer: WritableStreamDefaultWriter<BinaryMessage>;
+    channel: ReturnType<typeof createChannel<BinaryMessage>>;
     client: Client<ServerContext>;
   }
 }
@@ -89,7 +90,7 @@ export function getWebsocketHandlers<T extends ServerContext>({
             ...context,
             clientId: "upgrade",
             transport: {} as any,
-            writer: {} as any,
+            channel: {} as any,
             client: {} as Client<ServerContext>,
           },
           headers: {
@@ -124,26 +125,27 @@ export function getWebsocketHandlers<T extends ServerContext>({
         timestamp: new Date().toISOString(),
         client_id: peer.id,
       });
-      const transform = new TransformStream<BinaryMessage, BinaryMessage>();
+
+      const channel = createChannel<BinaryMessage>();
 
       peer.context.clientId = peer.id;
-      peer.context.writer = transform.writable.getWriter();
+      peer.context.channel = channel;
       peer.context.transport = {
-        readable: transform.readable,
-        writable: new WritableStream({
-          write(chunk) {
-            peer.send(chunk);
-          },
-        }),
+        source: channel,
+        write(chunk: BinaryMessage) {
+          peer.send(chunk);
+        },
+        close() {},
       };
+
       try {
-        peer.context.client = await server.createClient({
+        peer.context.client = (await server.createClient({
           transport: fromBinaryTransport(
             peer.context.transport,
             Object.assign({ clientId: peer.id }, peer.context) as unknown as T,
           ),
           id: peer.id,
-        });
+        })) as unknown as Client<ServerContext>;
 
         await onConnect?.({
           client: peer.context.client as unknown as Client<T>,
@@ -175,8 +177,7 @@ export function getWebsocketHandlers<T extends ServerContext>({
           message,
           peer,
         });
-        await peer.context.writer.ready;
-        await peer.context.writer.write(message);
+        peer.context.channel.send(message);
       } catch (err) {
         emitWideEvent("error", {
           event_type: "websocket_write_failed",
@@ -205,14 +206,12 @@ export function getWebsocketHandlers<T extends ServerContext>({
           peer,
         });
         await server.disconnectClient(peer.id);
-        await peer.context.writer.close();
+        peer.context.channel.close();
       } catch {
         // no-op
       }
       try {
-        if (!peer.context.transport.writable.locked) {
-          await peer.context.transport.writable.close();
-        }
+        peer.context.transport.close();
       } catch {
         // no-op
       }
@@ -224,8 +223,7 @@ export function getWebsocketHandlers<T extends ServerContext>({
         client_id: peer.id,
         error,
       });
-      await peer.context.writer.abort(error);
-      await peer.context.transport.writable.abort(error);
+      peer.context.channel.error(error);
     },
   };
 }
@@ -259,7 +257,7 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
 }: {
   server: Server<T>;
   tokenManager: TokenManager;
-  hooks?: Partial<Omit<Parameters<typeof getWebsocketHandlers>[0], "server">>;
+  hooks?: Partial<Omit<Parameters<typeof getWebsocketHandlers<T>>[0], "server">>;
 }) {
   return getWebsocketHandlers<T>({
     server,

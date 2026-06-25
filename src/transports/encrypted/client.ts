@@ -30,6 +30,7 @@ import * as Y from "yjs";
 import { getSyncTransactionOrigin, YDocSinkHandler, YDocSourceHandler } from "../ydoc";
 
 type EncryptionClientEvents = {
+  /** Emitted when the client wants to send a message (e.g. periodic compaction). */
   "send-message": (message: Message) => void;
 };
 
@@ -37,6 +38,7 @@ export class EncryptionClient
   extends Observable<EncryptionClientEvents>
   implements YDocSinkHandler, YDocSourceHandler
 {
+  /** Number of accumulated sidecars before a compaction is produced on the next send. */
   static COMPACTION_THRESHOLD = 25;
 
   public document: string;
@@ -71,16 +73,29 @@ export class EncryptionClient
     this.#encryptUpdate = encryptUpdate ?? defaultEncryptUpdate;
   }
 
+  /**
+   * Releases any resources held by this client. Call when the client is no longer used.
+   */
   public destroy(): void {}
 
+  /**
+   * Encrypts a {@link DecryptedBinary} using the {@link CryptoKey}.
+   */
   public encryptUpdate(update: DecryptedBinary): Promise<EncryptedBinary> {
     return this.#encryptUpdate(this.key, update);
   }
 
+  /**
+   * Decrypts an {@link EncryptedBinary} using the {@link CryptoKey}.
+   */
   public decryptUpdate(encryptedUpdate: EncryptedBinary): Promise<DecryptedBinary> {
     return this.#decryptUpdate(this.key, encryptedUpdate);
   }
 
+  /**
+   * Decrypts the encrypted sidecars, restores the full Y.js update from the
+   * structure-only update + sidecar content, and applies it to the {@link Y.Doc}.
+   */
   private async decryptAndApply(
     structureUpdate: Uint8Array,
     encryptedSidecars: EncryptedBinary[],
@@ -249,6 +264,10 @@ export class EncryptionClient
     return message;
   }
 
+  /**
+   * Compacts multiple encrypted sidecars into a single {@link IndexedSidecar}.
+   * Returns `null` when compaction produces no output.
+   */
   public async createCompactedSidecar(
     sidecars: EncryptedBinary[],
     _structureUpdate: Uint8Array,
@@ -256,6 +275,10 @@ export class EncryptionClient
     return compactSidecars(this.key, sidecars);
   }
 
+  /**
+   * Handles an awareness request by encrypting the local awareness state and
+   * returning an {@link AwarenessMessage}.
+   */
   public async handleAwarenessRequest(): Promise<AwarenessMessage<ClientContext>> {
     return new AwarenessMessage(
       this.document,
@@ -272,6 +295,9 @@ export class EncryptionClient
     );
   }
 
+  /**
+   * Encrypts a local awareness update and returns an {@link AwarenessMessage} for sending.
+   */
   public async onAwarenessUpdate(update: AwarenessUpdateMessage): Promise<Message> {
     const encryptedUpdate = await this.encryptUpdate(update);
     return new AwarenessMessage(

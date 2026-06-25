@@ -25,6 +25,7 @@ import {
   type EncryptedUpdatePayload,
 } from "teleportal/protocol/encryption";
 import { compose } from "teleportal/transports";
+import { createChannel } from "../../lib/iter";
 
 export function getSyncTransactionOrigin(ydoc: Y.Doc) {
   return ydoc.clientID + "-sync";
@@ -120,11 +121,7 @@ export function getYDocSource<Context extends ClientContext>({
     handler: YDocSourceHandler;
   }
 > {
-  let onUpdate: (...args: any[]) => void;
-  let onDestroy: (...args: any[]) => void;
-  let onAwarenessUpdate: (...args: any[]) => void;
-  let onAwarenessDestroy: (...args: any[]) => void;
-  let onMessage: (message: Message) => void;
+  const channel = createChannel<Message<Context>>();
   let isDestroyed = false;
 
   let pendingUpdates: UpdateV2[] = [];
@@ -137,7 +134,7 @@ export function getYDocSource<Context extends ClientContext>({
     }
   }
 
-  async function flushBatch(controller: ReadableStreamDefaultController<Message>) {
+  async function flushBatch() {
     clearBatchTimer();
     const updates = pendingUpdates;
     if (updates.length === 0) return;
@@ -147,15 +144,69 @@ export function getYDocSource<Context extends ClientContext>({
       version: 2,
       data: updates.length === 1 ? updates[0] : mergeUpdates(updates),
     };
+    channel.trySend(await handler.onUpdate(merged));
+  }
+
+  const onUpdate = ydoc.on("update", async (update: Uint8Array, origin: any) => {
+    if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
+      return;
+    }
+
+    if (updateBatchIntervalMs <= 0) {
+      const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
+      channel.trySend(await handler.onUpdate(versioned));
+      return;
+    }
+
+    const v2 = convertToV2({ version: 1, data: update as UpdateV1 });
+    pendingUpdates.push(v2);
+    if (batchTimer === null) {
+      batchTimer = setTimeout(() => {
+        batchTimer = null;
+        void flushBatch();
+      }, updateBatchIntervalMs);
+    }
+  });
+
+  // Shared teardown for both ydoc and awareness `destroy` events.
+  async function shutdown() {
+    if (isDestroyed) return;
+    isDestroyed = true;
+    await flushBatch();
+    if (handler.destroy) await handler.destroy();
+    channel.close();
+  }
+
+  const onDestroy = ydoc.on("destroy", shutdown);
+
+  const onAwarenessUpdate = async (_clients: any, origin: any) => {
+    if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) return;
+    const update = encodeAwarenessUpdate(awareness, [awareness.clientID]) as AwarenessUpdateMessage;
+    channel.trySend(await handler.onAwarenessUpdate(update));
+  };
+  awareness.on("update", onAwarenessUpdate);
+
+  const onAwarenessDestroy = shutdown;
+  awareness.on("destroy", onAwarenessDestroy);
+
+  const onMessage = (message: Message) => {
+    channel.trySend(message as Message<Context>);
+  };
+  observer.on("message", onMessage);
+
+  // Wrap the channel with cleanup on iteration end
+  async function* sourceWithCleanup(): AsyncIterable<Message<Context>[]> {
     try {
-      controller.enqueue(await handler.onUpdate(merged));
-    } catch (err: any) {
-      if (
-        err?.code !== "ERR_INVALID_STATE" &&
-        err?.message !== "Invalid state: Controller is already closed"
-      ) {
-        throw err;
-      }
+      yield* channel;
+    } finally {
+      isDestroyed = true;
+      clearBatchTimer();
+      pendingUpdates = [];
+      ydoc.off("update", onUpdate);
+      ydoc.off("destroy", onDestroy);
+      awareness.off("update", onAwarenessUpdate);
+      awareness.off("destroy", onAwarenessDestroy);
+      observer.off("message", onMessage);
     }
   }
 
@@ -163,94 +214,11 @@ export function getYDocSource<Context extends ClientContext>({
     ydoc,
     awareness,
     handler,
-    readable: new ReadableStream({
-      async start(controller) {
-        onUpdate = ydoc.on("update", async (update: Uint8Array, origin: any) => {
-          if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
-            return;
-          }
-
-          if (updateBatchIntervalMs <= 0) {
-            try {
-              const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
-              controller.enqueue(await handler.onUpdate(versioned));
-            } catch (err: any) {
-              if (
-                err?.code !== "ERR_INVALID_STATE" &&
-                err?.message !== "Invalid state: Controller is already closed"
-              ) {
-                throw err;
-              }
-            }
-            return;
-          }
-
-          const v2 = convertToV2({ version: 1, data: update as UpdateV1 });
-          pendingUpdates.push(v2);
-          if (batchTimer === null) {
-            batchTimer = setTimeout(() => {
-              batchTimer = null;
-              void flushBatch(controller);
-            }, updateBatchIntervalMs);
-          }
-        });
-        onDestroy = ydoc.on("destroy", async () => {
-          if (isDestroyed) {
-            return;
-          }
-          isDestroyed = true;
-          await flushBatch(controller);
-          if (handler.destroy) {
-            await handler.destroy();
-          }
-          controller.close();
-        });
-        onAwarenessUpdate = async (_clients: any, origin: any) => {
-          if (origin === getSyncTransactionOrigin(ydoc) || isDestroyed) {
-            return;
-          }
-          const update = encodeAwarenessUpdate(awareness, [
-            awareness.clientID,
-          ]) as AwarenessUpdateMessage;
-          controller.enqueue(await handler.onAwarenessUpdate(update));
-        };
-
-        awareness.on("update", onAwarenessUpdate);
-        onAwarenessDestroy = async () => {
-          if (isDestroyed) {
-            return;
-          }
-          isDestroyed = true;
-          await flushBatch(controller);
-          if (handler.destroy) {
-            await handler.destroy();
-          }
-          controller.close();
-        };
-        awareness.on("destroy", onAwarenessDestroy);
-
-        onMessage = (message) => {
-          controller.enqueue(message);
-        };
-        observer.on("message", onMessage);
-      },
-      cancel() {
-        isDestroyed = true;
-        clearBatchTimer();
-        pendingUpdates = [];
-        ydoc.off("update", onUpdate);
-        ydoc.off("destroy", onDestroy);
-        awareness.off("update", onAwarenessUpdate);
-        awareness.off("destroy", onAwarenessDestroy);
-        observer.off("message", onMessage);
-      },
-    }),
+    source: sourceWithCleanup(),
   };
 }
 
-/**
- * Makes a {@link Sink} from a {@link Y.Doc} and a document name
- */
+/** Makes a {@link Sink} from a {@link Y.Doc} and a document name. */
 export function getYDocSink<Context extends ClientContext>({
   ydoc = new Y.Doc(),
   context,
@@ -324,138 +292,115 @@ export function getYDocSink<Context extends ClientContext>({
   }
 > {
   let onSynced: (success: boolean) => void;
+  let closed = false;
+
+  // Settle the `synced` promise exactly once; later calls are no-ops.
+  const settleSync = (success: boolean) => {
+    onSynced(success);
+    onSynced = () => {};
+  };
 
   return {
     synced: new Promise((resolve, reject) => {
       onSynced = (success: boolean) => {
-        if (success) {
-          resolve();
-        } else {
-          reject(new Error("YDoc cancelled"));
-        }
+        if (success) resolve();
+        else reject(new Error("YDoc cancelled"));
       };
     }),
     ydoc,
     awareness,
-    writable: new WritableStream({
-      async write(chunk, controller) {
-        try {
-          // For doc/awareness messages, ensure they target this document and are
-          // not local-only. Non-doc/awareness messages (e.g. file messages)
-          // bypass this filter so higher-level transports can still use the
-          // same underlying transport.
-          if (
-            (chunk.type === "doc" || chunk.type === "awareness") &&
-            (chunk.document !== document || chunk.context.clientId === "local")
-          ) {
-            return;
-          }
-          if (ydoc.isDestroyed) {
-            controller.error(new Error("YDoc is destroyed"));
-            return;
-          }
-          switch (chunk.type) {
-            case "awareness": {
-              switch (chunk.payload.type) {
-                case "awareness-update": {
-                  handler.handleAwarenessUpdate(chunk.payload.update);
-                  break;
-                }
-                case "awareness-request": {
-                  const update = encodeAwarenessUpdate(awareness, [
-                    awareness.clientID,
-                  ]) as AwarenessUpdateMessage;
-                  observer.call("message", await handler.handleAwarenessRequest(update));
-                  break;
-                }
-                default: {
-                  // This should be unreachable due to type checking
-                  const _exhaustive: never = chunk.payload;
-                  throw new Error("Invalid chunk.payload.type", {
-                    cause: { chunk: _exhaustive },
-                  });
-                }
-              }
-              break;
-            }
-            case "doc": {
-              switch (chunk.payload.type) {
-                case "sync-step-1": {
-                  const response = await handler.handleSyncStep1(chunk.payload.sv);
-                  observer.call("message", response);
-                  break;
-                }
-                case "sync-step-2": {
-                  const compaction = await handler.handleSyncStep2(chunk.payload.update);
-                  if (compaction) {
-                    observer.call("message", compaction);
-                  }
-                  break;
-                }
-                case "update": {
-                  await handler.handleUpdate(chunk.payload.update);
-                  break;
-                }
-                case "sync-done": {
-                  // Only resolve synced promise when sync-done is received
-                  onSynced(true);
-                  onSynced = () => {};
-                  break;
-                }
-                case "auth-message": {
-                  controller.error(new Error(chunk.payload.reason));
-                  break;
-                }
-                default: {
-                  // This should be unreachable due to type checking
-                  const _exhaustive: never = chunk.payload;
-                  throw new Error("Invalid chunk.payload.type", {
-                    cause: { chunk: _exhaustive },
-                  });
-                }
-              }
-              break;
-            }
-            case "rpc": {
-              // RPC messages are handled by the RPC client and RPC handlers,
-              // not the Y.doc transport. They should NOT be passed through to
-              // the readable stream, as that would cause them to be re-sent.
-              break;
-            }
-            case "ack": {
-              // ACK messages are handled by the connection layer,
-              // not the Y.doc transport.
-              break;
-            }
-            case "presence": {
-              // Presence (client join/leave) messages are handled by the
-              // provider, not the Y.doc transport.
-              break;
-            }
-            default: {
-              // Exhaustive check for message types - all types should be handled above
-              const _exhaustive: never = chunk;
-              void _exhaustive;
-              break;
-            }
-          }
-        } catch (err) {
-          onSynced(false);
-          onSynced = () => {};
-          controller.error(err);
+    async write(chunk) {
+      if (closed) return;
+      try {
+        if (
+          (chunk.type === "doc" || chunk.type === "awareness") &&
+          (chunk.document !== document || chunk.context.clientId === "local")
+        ) {
+          return;
         }
-      },
-      close() {
-        onSynced(false);
-        onSynced = () => {};
-      },
-    }),
+        if (ydoc.isDestroyed) {
+          throw new Error("YDoc is destroyed");
+        }
+        switch (chunk.type) {
+          case "awareness": {
+            switch (chunk.payload.type) {
+              case "awareness-update": {
+                handler.handleAwarenessUpdate(chunk.payload.update);
+                break;
+              }
+              case "awareness-request": {
+                const update = encodeAwarenessUpdate(awareness, [
+                  awareness.clientID,
+                ]) as AwarenessUpdateMessage;
+                observer.call("message", await handler.handleAwarenessRequest(update));
+                break;
+              }
+              default: {
+                const _exhaustive: never = chunk.payload;
+                throw new Error("Invalid chunk.payload.type", {
+                  cause: { chunk: _exhaustive },
+                });
+              }
+            }
+            break;
+          }
+          case "doc": {
+            switch (chunk.payload.type) {
+              case "sync-step-1": {
+                const response = await handler.handleSyncStep1(chunk.payload.sv);
+                observer.call("message", response);
+                break;
+              }
+              case "sync-step-2": {
+                const compaction = await handler.handleSyncStep2(chunk.payload.update);
+                if (compaction) {
+                  observer.call("message", compaction);
+                }
+                break;
+              }
+              case "update": {
+                await handler.handleUpdate(chunk.payload.update);
+                break;
+              }
+              case "sync-done": {
+                settleSync(true);
+                break;
+              }
+              case "auth-message": {
+                throw new Error(chunk.payload.reason);
+              }
+              default: {
+                const _exhaustive: never = chunk.payload;
+                throw new Error("Invalid chunk.payload.type", {
+                  cause: { chunk: _exhaustive },
+                });
+              }
+            }
+            break;
+          }
+          case "rpc":
+          case "ack":
+          case "presence":
+            break;
+          default: {
+            const _exhaustive: never = chunk;
+            void _exhaustive;
+            break;
+          }
+        }
+      } catch (err) {
+        settleSync(false);
+        throw err;
+      }
+    },
+    close() {
+      closed = true;
+      settleSync(false);
+    },
   };
 }
 
-/**
- * Makes a {@link Transport} from a {@link Y.Doc} and a document name
- */
+/** Makes a {@link Transport} from a {@link Y.Doc} and a document name. */
 export function getYTransportFromYDoc<Context extends ClientContext>({
   ydoc = new Y.Doc(),
   context = { clientId: "local" } as Context,
@@ -471,9 +416,7 @@ export function getYTransportFromYDoc<Context extends ClientContext>({
   document: string;
   awareness?: Awareness;
   handler?: YDocSinkHandler & YDocSourceHandler;
-  /**
-   * An observer which can inject messages into the source stream.
-   */
+  /** An observer which can inject messages into the source stream. */
   observer?: Observable<{
     message: (message: Message) => void;
   }>;

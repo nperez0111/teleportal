@@ -26,12 +26,19 @@ const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
  * If not provided, all uploads and downloads are allowed.
  */
 export interface FilePermissionOptions {
+  /**
+   * Check if an upload is allowed. Return `{ allowed: false, reason: "..." }` to reject.
+   */
   checkUploadPermission?(
     fileId: string,
     metadata: FileUploadRequest,
     context: RpcServerContext,
   ): Promise<{ allowed: boolean; reason?: string }>;
 
+  /**
+   * Check if a download is allowed. Return `{ allowed: false, reason: "..." }` to reject.
+   * Can also return metadata to populate the download response.
+   */
   checkDownloadPermission?(
     fileId: string,
     context: RpcServerContext,
@@ -46,6 +53,10 @@ export interface FilePermissionOptions {
 // FileHandler - Core file handling logic
 // ============================================================================
 
+/**
+ * Core file handling logic for uploads and downloads.
+ * Used internally by the RPC handlers.
+ */
 export class FileHandler {
   #fileStorage: FileStorage;
   #temporaryUploadStorage: TemporaryUploadStorage | undefined;
@@ -55,6 +66,10 @@ export class FileHandler {
     this.#temporaryUploadStorage = fileStorage.temporaryUploadStorage;
   }
 
+  /**
+   * Handle an incoming file part (chunk) during upload.
+   * Stores the chunk and completes the upload when all chunks arrive.
+   */
   async handleFilePart(
     payload: FilePartStream,
     messageId: string,
@@ -152,6 +167,10 @@ export class FileHandler {
     }
   }
 
+  /**
+   * Stream file parts (chunks) for download.
+   * Returns an async generator that yields file parts.
+   */
   async *streamFileParts(fileId: string): AsyncGenerator<FilePartStream> {
     const file = await this.#fileStorage.getFile(fileId);
     if (!file) {
@@ -193,6 +212,9 @@ export class FileHandler {
     }
   }
 
+  /**
+   * Initiate an upload session.
+   */
   async initiateUpload(
     fileId: string,
     metadata: {
@@ -230,11 +252,17 @@ export class FileHandler {
     });
   }
 
+  /**
+   * Clean up expired uploads.
+   */
   async cleanupExpiredUploads(): Promise<void> {
     if (!this.#temporaryUploadStorage) return;
     await this.#temporaryUploadStorage.cleanupExpiredUploads();
   }
 
+  /**
+   * Get file metadata for a file.
+   */
   async getFileMetadata(fileId: string): Promise<{
     filename: string;
     size: number;
@@ -268,8 +296,26 @@ interface FileDeps {
 /**
  * Create RPC handlers for file upload/download operations.
  *
+ * The handlers integrate with the Session RPC system:
+ * - `fileUpload`: Handles upload initiation (request) and file parts (stream)
+ * - `fileDownload`: Handles download requests and streams file parts back
+ *
  * @param fileStorage - The file storage implementation
- * @param options - Optional permission checking callbacks
+ * @param options - Optional permission checking callbacks. If not provided, all operations are allowed.
+ *
+ * @example
+ * ```typescript
+ * const fileStorage = new InMemoryFileStorage();
+ * fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
+ *
+ * const server = new Server({
+ *   getStorage: async () => documentStorage,
+ *   rpcHandlers: {
+ *     ...getFileRpcHandlers(fileStorage),
+ *     ...getMilestoneRpcHandlers(milestoneStorage),
+ *   },
+ * });
+ * ```
  */
 export function getFileRpcHandlers(
   fileStorage: FileStorage,

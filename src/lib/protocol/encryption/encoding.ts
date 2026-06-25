@@ -30,8 +30,16 @@ export type ContentEncryptedPayload = {
   compaction?: SidecarCompaction;
 };
 
+/**
+ * The binary (wire) representation of a {@link ContentEncryptedPayload}.
+ * Opaque to anything that does not hold the encryption key.
+ */
 export type EncryptedUpdatePayload = Update;
 
+/**
+ * A versioned wrapper for encrypted updates, ensuring encrypted and cleartext
+ * updates cannot be confused at the type level.
+ */
 export type EncryptedVersionedUpdate =
   | { version: 1; data: EncryptedUpdatePayload }
   | { version: 2; data: EncryptedUpdatePayload };
@@ -151,6 +159,13 @@ export function isEmptyContentEncryptedPayload(payload: EncryptedUpdatePayload):
   }
 }
 
+/**
+ * Merges multiple {@link EncryptedUpdatePayload}s into a single payload.
+ * Structure updates are merged via `Y.mergeUpdatesV2` (empty structures are
+ * dropped to avoid tripping the Y.js parser). Encrypted sidecars are
+ * concatenated. At most one {@link SidecarCompaction} is preserved (the first
+ * found); the rest will re-compact on a later round.
+ */
 export function mergeContentEncryptedPayloads(
   payloads: EncryptedUpdatePayload[],
 ): EncryptedUpdatePayload {

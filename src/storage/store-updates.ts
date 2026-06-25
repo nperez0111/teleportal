@@ -7,58 +7,46 @@ import { convertToV2, convertSyncStep2ToV2 } from "teleportal/protocol";
 
 export type UpdateMessage = Tag<Uint8Array, "update-message">;
 
-export const getWriteDocUpdateStream = () =>
-  new TransformStream<Message<any>, { document: string; update: UpdateMessage }>({
-    transform(chunk, controller) {
-      if (chunk.type === "doc" && chunk.payload.type === "update") {
-        const v2 = convertToV2(chunk.payload.update as VersionedUpdate);
-        const encoder = encoding.createEncoder();
-        encoding.writeVarUint8Array(encoder, v2);
-        controller.enqueue({
-          document: chunk.document,
-          update: encoding.toUint8Array(encoder) as UpdateMessage,
-        });
-      } else if (chunk.type === "doc" && chunk.payload.type === "sync-step-2") {
-        const v2 = convertSyncStep2ToV2(chunk.payload.update as VersionedSyncStep2Update);
-        const encoder = encoding.createEncoder();
-        encoding.writeVarUint8Array(encoder, v2);
-        controller.enqueue({
-          document: chunk.document,
-          update: encoding.toUint8Array(encoder) as UpdateMessage,
-        });
-      }
-    },
-  });
+export function extractDocUpdate(
+  chunk: Message<any>,
+): { document: string; update: UpdateMessage } | null {
+  if (chunk.type === "doc" && chunk.payload.type === "update") {
+    const v2 = convertToV2(chunk.payload.update as VersionedUpdate);
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint8Array(encoder, v2);
+    return {
+      document: chunk.document,
+      update: encoding.toUint8Array(encoder) as UpdateMessage,
+    };
+  } else if (chunk.type === "doc" && chunk.payload.type === "sync-step-2") {
+    const v2 = convertSyncStep2ToV2(chunk.payload.update as VersionedSyncStep2Update);
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint8Array(encoder, v2);
+    return {
+      document: chunk.document,
+      update: encoding.toUint8Array(encoder) as UpdateMessage,
+    };
+  }
+  return null;
+}
 
-/**
- * Compacts a readable stream of {@link UpdateMessage}s into a single {@link UpdateMessage}
- * @returns
- */
-export async function compactToSingleUpdate(
-  updateStream: ReadableStream<UpdateMessage>,
-): Promise<UpdateMessage> {
+export function compactUpdates(updates: UpdateMessage[]): UpdateMessage {
   let mergedUpdates: Uint8Array | null = null;
 
-  await updateStream.pipeTo(
-    new WritableStream({
-      write(chunk) {
-        const decoder = decoding.createDecoder(chunk);
-        const update = decoding.readVarUint8Array(decoder);
-        mergedUpdates = mergedUpdates ? Y.mergeUpdatesV2([mergedUpdates, update]) : update;
-        const tail = decoding.readTailAsUint8Array(decoder);
-        if (tail.length > 0) {
-          throw new Error(
-            "Unexpected bytes at the end of the update, expected proper alignment of updates",
-            {
-              cause: {
-                tail,
-              },
-            },
-          );
-        }
-      },
-    }),
-  );
+  for (const chunk of updates) {
+    const decoder = decoding.createDecoder(chunk);
+    const update = decoding.readVarUint8Array(decoder);
+    mergedUpdates = mergedUpdates ? Y.mergeUpdatesV2([mergedUpdates, update]) : update;
+    const tail = decoding.readTailAsUint8Array(decoder);
+    if (tail.length > 0) {
+      throw new Error(
+        "Unexpected bytes at the end of the update, expected proper alignment of updates",
+        {
+          cause: { tail },
+        },
+      );
+    }
+  }
 
   return mergedUpdates! as UpdateMessage;
 }

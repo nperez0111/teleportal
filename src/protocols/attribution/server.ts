@@ -16,6 +16,10 @@ async function loadContentMap(context: RpcServerContext): Promise<EncodedContent
   return retrieve.call(context.session.storage, context.documentId);
 }
 
+/**
+ * Build a ContentMap attribute predicate from an {@link AttributionFilter}.
+ * Insert ranges carry `insert`/`insertAt`, delete ranges `delete`/`deleteAt`.
+ */
 function matchesFilter(filter: AttributionFilter): (attrs: ContentAttribute[]) => boolean {
   return (attrs) => {
     if (filter.userId !== undefined) {

@@ -906,8 +906,9 @@ describe("Provider", () => {
       const { provider } = await createTestProvider();
 
       expect(provider.transport).toBeDefined();
-      expect(provider.transport.readable).toBeInstanceOf(ReadableStream);
-      expect(provider.transport.writable).toBeInstanceOf(WritableStream);
+      expect(provider.transport.source).toBeDefined();
+      expect(typeof provider.transport.write).toBe("function");
+      expect(typeof provider.transport.close).toBe("function");
 
       provider.destroy();
     });
@@ -1285,6 +1286,8 @@ describe("Provider", () => {
       // loaded should fall back to synced (since no local persistence)
       const loadedPromise = provider.loaded;
       expect(loadedPromise).toBeInstanceOf(Promise);
+      // Swallow the rejection that destroy() causes on synced/loaded
+      loadedPromise.catch(() => {});
 
       provider.destroy({ destroyConnection: false });
       await clientConn.destroy();

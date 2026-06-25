@@ -6,6 +6,7 @@ import { checkPermissionWithTokenManager } from "./check-permission";
 import { Client } from "./client";
 import { AckMessage, InMemoryPubSub, DocMessage, RpcMessage } from "teleportal";
 import { createTokenManager } from "teleportal/token";
+import { createChannel } from "../lib/iter";
 import type {
   ServerContext,
   Message,
@@ -138,23 +139,16 @@ class MockDocumentStorage implements DocumentStorage {
 
 // Mock Transport for testing
 class MockTransport<Context extends ServerContext> implements Transport<Context> {
-  public readable: ReadableStream<Message<Context>>;
-  public writable: WritableStream<Message<Context>>;
+  public source: AsyncIterable<Message<Context>[]>;
   public mockDestroy = false;
-  private controller: ReadableStreamDefaultController<Message<Context>> | null = null;
+  private _channel = createChannel<Message<Context>>();
 
   constructor() {
-    const { readable, writable } = new TransformStream<Message<Context>>();
-    this.readable = readable;
-    this.writable = writable;
-
-    // Set up readable stream controller
-    this.readable = new ReadableStream<Message<Context>>({
-      start: (controller) => {
-        this.controller = controller;
-      },
-    });
+    this.source = this._channel;
   }
+
+  write(_message: Message<Context>): void {}
+  close(): void {}
 
   async destroy() {
     this.mockDestroy = true;
@@ -162,15 +156,15 @@ class MockTransport<Context extends ServerContext> implements Transport<Context>
 
   // Helper to enqueue messages for testing
   enqueueMessage(message: Message<Context>) {
-    if (this.controller) {
-      this.controller.enqueue(message);
+    try {
+      this._channel.send(message);
+    } catch {
+      // Channel closed — ignore
     }
   }
 
   closeReadable() {
-    if (this.controller) {
-      this.controller.close();
-    }
+    this._channel.close();
   }
 
   // Add index signature to satisfy Record<string, unknown>
@@ -388,12 +382,11 @@ describe("Server", () => {
       const transport = new MockTransport<ServerContext>();
       const writtenMessages: Message<ServerContext>[] = [];
       const customTransport = {
-        readable: transport.readable,
-        writable: new WritableStream({
-          write: (m) => {
-            writtenMessages.push(m);
-          },
-        }),
+        source: transport.source,
+        write(m: Message<ServerContext>) {
+          writtenMessages.push(m);
+        },
+        close() {},
       } as Transport<ServerContext>;
       rpcServer.createClient({ transport: customTransport, id: "client-1" });
 
@@ -725,16 +718,14 @@ describe("Server", () => {
 
       const transport = new MockTransport();
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
+
+      // Replace write to capture messages
+      const customTransport = {
+        source: transport.source,
+        write(chunk: Message<ServerContext>) {
           writtenMessages.push(chunk);
         },
-      });
-
-      // Replace writable to capture messages
-      const customTransport = {
-        readable: transport.readable,
-        writable,
+        close() {},
       } as Transport<ServerContext>;
 
       const _client = serverWithPermission.createClient({
@@ -798,16 +789,14 @@ describe("Server", () => {
 
       const transport = new MockTransport();
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
+
+      // Replace write to capture messages
+      const customTransport = {
+        source: transport.source,
+        write(chunk: Message<ServerContext>) {
           writtenMessages.push(chunk);
         },
-      });
-
-      // Replace writable to capture messages
-      const customTransport = {
-        readable: transport.readable,
-        writable,
+        close() {},
       } as Transport<ServerContext>;
 
       const _client = serverWithPermission.createClient({
@@ -1179,20 +1168,13 @@ describe("Server", () => {
 
     it("should handle multiple clients on same document", async () => {
       // Create clients without transports to avoid stream issues
-      const writable1 = new WritableStream({
-        write() {},
-      });
-      const writable2 = new WritableStream({
-        write() {},
-      });
-
       const client1 = new Client({
         id: "client-1",
-        writable: writable1,
+        write() {},
       });
       const client2 = new Client({
         id: "client-2",
-        writable: writable2,
+        write() {},
       });
 
       // Both clients connect to same document
@@ -1225,16 +1207,11 @@ describe("Server", () => {
   describe("ACK message handling", () => {
     it("should send ACK for doc messages", async () => {
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
-      // Override the writable to capture messages
-      transport.writable = writable;
+      // Override write to capture messages
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = server.createClient({
         transport,
@@ -1266,16 +1243,11 @@ describe("Server", () => {
 
     it("should send ACK for file-part RPC stream messages", async () => {
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
-      // Override the writable to capture messages
-      transport.writable = writable;
+      // Override write to capture messages
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = server.createClient({
         transport,
@@ -1322,16 +1294,11 @@ describe("Server", () => {
 
     it("should NOT send ACK for ack messages (to avoid loops)", async () => {
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
-      // Override the writable to capture messages
-      transport.writable = writable;
+      // Override write to capture messages
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = server.createClient({
         transport,
@@ -1367,11 +1334,6 @@ describe("Server", () => {
 
     it("should send ACK even when file handler throws", async () => {
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const mockStorage = new MockDocumentStorage();
       const serverWithFailingHandler = new Server({
@@ -1387,7 +1349,7 @@ describe("Server", () => {
       });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithFailingHandler.createClient({
         transport,
@@ -1443,14 +1405,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1496,14 +1453,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1560,14 +1512,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1622,14 +1569,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1684,14 +1626,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1747,14 +1684,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1828,14 +1760,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1906,14 +1833,9 @@ describe("Server", () => {
       });
 
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const transport = new MockTransport<ServerContext>();
-      transport.writable = writable;
+      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -2090,15 +2012,13 @@ describe("Server", () => {
 
       const transport = new MockTransport();
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const customTransport = {
-        readable: transport.readable,
-        writable,
+        source: transport.source,
+        write(chunk: Message<ServerContext>) {
+          writtenMessages.push(chunk);
+        },
+        close() {},
       } as Transport<ServerContext>;
 
       const _client = server.createClient({
@@ -2131,15 +2051,13 @@ describe("Server", () => {
 
       const transport = new MockTransport();
       const writtenMessages: Message<ServerContext>[] = [];
-      const writable = new WritableStream({
-        write(chunk) {
-          writtenMessages.push(chunk);
-        },
-      });
 
       const customTransport = {
-        readable: transport.readable,
-        writable,
+        source: transport.source,
+        write(chunk: Message<ServerContext>) {
+          writtenMessages.push(chunk);
+        },
+        close() {},
       } as Transport<ServerContext>;
 
       const _client = server.createClient({
@@ -2174,11 +2092,10 @@ describe("Server", () => {
 
       // First, create a session by connecting a client
       const transport = new MockTransport();
-      const writable = new WritableStream({ write() {} });
-
       const customTransport = {
-        readable: transport.readable,
-        writable,
+        source: transport.source,
+        write() {},
+        close() {},
       } as Transport<ServerContext>;
 
       const _client = server.createClient({
@@ -2215,11 +2132,10 @@ describe("Server", () => {
       server.on("client-message", (data) => events.push(data));
 
       const transport = new MockTransport();
-      const writable = new WritableStream({ write() {} });
-
       const customTransport = {
-        readable: transport.readable,
-        writable,
+        source: transport.source,
+        write() {},
+        close() {},
       } as Transport<ServerContext>;
 
       const _client = server.createClient({
@@ -2256,11 +2172,10 @@ describe("Server", () => {
 
       // Create a session first
       const transport = new MockTransport();
-      const writable = new WritableStream({ write() {} });
-
       const customTransport = {
-        readable: transport.readable,
-        writable,
+        source: transport.source,
+        write() {},
+        close() {},
       } as Transport<ServerContext>;
 
       server.createClient({
@@ -2297,11 +2212,10 @@ describe("Server", () => {
 
       // Create a session first
       const transport = new MockTransport();
-      const writable = new WritableStream({ write() {} });
-
       const customTransport = {
-        readable: transport.readable,
-        writable,
+        source: transport.source,
+        write() {},
+        close() {},
       } as Transport<ServerContext>;
 
       server.createClient({
