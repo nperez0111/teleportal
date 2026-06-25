@@ -6,7 +6,7 @@ import {
   verifyMerkleProof,
   serializeMerkleTree,
   deserializeMerkleTree,
-  createMerkleTreeTransformStream,
+  chunkFile,
   CHUNK_SIZE,
 } from "../src/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "../src/storage/in-memory/file-storage";
@@ -121,7 +121,7 @@ describe("File Upload & Download Benchmarks", () => {
       );
     });
 
-    it("createMerkleTreeTransformStream vs plain function", async () => {
+    it("chunkFile (async generator) vs plain function", async () => {
       for (const sizeMB of [0.1, 1, 10]) {
         const fileSize = Math.floor(sizeMB * 1024 * 1024);
         const data = new Uint8Array(fileSize);
@@ -129,27 +129,22 @@ describe("File Upload & Download Benchmarks", () => {
         const iters = sizeMB >= 10 ? 5 : 20;
 
         await bench(
-          `transformStream (${sizeMB}MB)`,
+          `chunkFile (${sizeMB}MB)`,
           async () => {
-            const stream = createMerkleTreeTransformStream(fileSize);
-            const writer = stream.writable.getWriter();
-
-            const drain = (async () => {
-              const reader = stream.readable.getReader();
-              while (true) {
-                const { done } = await reader.read();
-                if (done) break;
-              }
-            })();
-
-            let offset = 0;
-            while (offset < fileSize) {
-              const end = Math.min(offset + CHUNK_SIZE, fileSize);
-              await writer.write(data.subarray(offset, end));
-              offset = end;
+            const stream = new ReadableStream<Uint8Array>({
+              start(controller) {
+                let offset = 0;
+                while (offset < fileSize) {
+                  const end = Math.min(offset + CHUNK_SIZE, fileSize);
+                  controller.enqueue(data.subarray(offset, end));
+                  offset = end;
+                }
+                controller.close();
+              },
+            });
+            for await (const _part of chunkFile(stream, fileSize)) {
+              // consume
             }
-            await writer.close();
-            await drain;
           },
           { iterations: iters },
         );

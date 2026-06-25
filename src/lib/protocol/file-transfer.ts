@@ -2,7 +2,7 @@ import { toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
 import {
   CHUNK_SIZE,
-  createMerkleTreeTransformStream,
+  chunkFile,
   ENCRYPTED_CHUNK_SIZE,
 } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "./message-types";
@@ -236,49 +236,43 @@ export namespace FileTransferProtocol {
       context?: Context,
       originalRequestId?: string,
     ) {
-      const transformStream = createMerkleTreeTransformStream(
+      const parts = chunkFile(
+        uploadState.file.stream(),
         uploadState.file.size,
         uploadState.encryptionKey
           ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
           : undefined,
       );
 
-      return uploadState.file
-        .stream()
-        .pipeThrough(transformStream)
-        .pipeTo(
-          new WritableStream({
-            write: async (chunk) => {
-              if (chunk.rootHash.length > 0 && !uploadState.fileId) {
-                uploadState.fileId = toBase64(chunk.rootHash);
-              }
+      for await (const chunk of parts) {
+        if (chunk.rootHash.length > 0 && !uploadState.fileId) {
+          uploadState.fileId = toBase64(chunk.rootHash);
+        }
 
-              const filePart: FilePartStream = {
-                fileId: uploadState.uploadId,
-                chunkIndex: chunk.chunkIndex,
-                chunkData: chunk.chunkData,
-                merkleProof: chunk.merkleProof,
-                totalChunks: chunk.totalChunks,
-                bytesUploaded: chunk.bytesProcessed,
-                encrypted: chunk.encrypted,
-              };
+        const filePart: FilePartStream = {
+          fileId: uploadState.uploadId,
+          chunkIndex: chunk.chunkIndex,
+          chunkData: chunk.chunkData,
+          merkleProof: chunk.merkleProof,
+          totalChunks: chunk.totalChunks,
+          bytesUploaded: chunk.bytesProcessed,
+          encrypted: chunk.encrypted,
+        };
 
-              const message = new RpcMessage<Context>(
-                uploadState.document,
-                { type: "success", payload: filePart },
-                "fileUpload",
-                "stream",
-                originalRequestId ?? uploadState.uploadId,
-                context ?? ({} as Context),
-                chunk.encrypted,
-              );
-
-              uploadState.sentChunks.add(message.id);
-
-              this.sendMessage(message);
-            },
-          }),
+        const message = new RpcMessage<Context>(
+          uploadState.document,
+          { type: "success", payload: filePart },
+          "fileUpload",
+          "stream",
+          originalRequestId ?? uploadState.uploadId,
+          context ?? ({} as Context),
+          chunk.encrypted,
         );
+
+        uploadState.sentChunks.add(message.id);
+
+        this.sendMessage(message);
+      }
     }
 
     protected abstract verifyChunk(chunk: FilePartStream, fileId: string): boolean;

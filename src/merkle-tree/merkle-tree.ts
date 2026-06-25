@@ -493,22 +493,21 @@ class StableIncrementalMerkleTree {
 }
 
 /**
- * TransformStream that processes a file stream and outputs file parts with merkle proofs.
+ * Chunk a file stream into {@link FilePart} objects with merkle proofs.
  *
- * This stream:
- * 1. Chunks the input data into CHUNK_SIZE pieces
- * 2. Builds a merkle tree incrementally knowing the complete tree structure
- * 3. Outputs each chunk once its proof becomes stable
- * 4. The root hash is only set in the last chunk
+ * Reads from a {@link ReadableStream}, splits into CHUNK_SIZE pieces, builds
+ * a merkle tree incrementally, and yields each part once its proof is stable.
+ * The root hash is only set on the last part.
  *
- * @param fileSize - Total size of the file (used to determine total chunks)
- * @returns A TransformStream that transforms Uint8Array chunks into FilePart objects
+ * @param source - ReadableStream of raw file bytes (e.g. from `File.stream()`)
+ * @param fileSize - Total file size in bytes
+ * @param encryptChunk - Optional per-chunk encryption function
  */
-export function createMerkleTreeTransformStream(
+export async function* chunkFile(
+  source: ReadableStream<Uint8Array>,
   fileSize: number,
   encryptChunk?: (chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array,
-): TransformStream<Uint8Array, FilePart> {
-  // 12 bytes for the encryption initialization vector
+): AsyncGenerator<FilePart> {
   const chunkSize = encryptChunk ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
   const totalChunks = fileSize === 0 ? 1 : Math.ceil(fileSize / chunkSize);
   const tree = new StableIncrementalMerkleTree(totalChunks);
@@ -516,87 +515,59 @@ export function createMerkleTreeTransformStream(
   let bytesProcessed = 0;
   const pendingChunks = new Map<number, Uint8Array>();
 
-  const emitChunk = (
-    index: number,
-    data: Uint8Array,
-    controller: TransformStreamDefaultController<FilePart>,
-  ) => {
-    const proof = tree.generateProof(index);
-    const rootHash =
-      index === totalChunks - 1 ? (tree.getRootHash() ?? new Uint8Array(0)) : new Uint8Array(0);
-    bytesProcessed += data.length;
-
-    controller.enqueue({
-      chunkData: data,
-      chunkIndex: index,
-      merkleProof: proof,
-      totalChunks,
-      bytesProcessed,
-      rootHash,
-      encrypted: !!encryptChunk,
-    });
-  };
-
-  const flushReadyChunks = (controller: TransformStreamDefaultController<FilePart>) => {
+  function* flushReady(): Generator<FilePart> {
     const readyIndexes: number[] = [];
     for (const [index] of pendingChunks) {
       if (tree.canGenerateProof(index)) {
         readyIndexes.push(index);
       }
     }
-
     for (const index of readyIndexes) {
       const data = pendingChunks.get(index)!;
       pendingChunks.delete(index);
-      emitChunk(index, data, controller);
+      const proof = tree.generateProof(index);
+      const rootHash =
+        index === totalChunks - 1
+          ? (tree.getRootHash() ?? new Uint8Array(0))
+          : new Uint8Array(0);
+      bytesProcessed += data.length;
+      yield {
+        chunkData: data,
+        chunkIndex: index,
+        merkleProof: proof,
+        totalChunks,
+        bytesProcessed,
+        rootHash,
+        encrypted: !!encryptChunk,
+      };
     }
-  };
+  }
 
-  const encodeChunk = async (chunk: Uint8Array): Promise<Uint8Array> => {
-    if (!encryptChunk) {
-      return chunk;
+  async function processChunk(raw: Uint8Array) {
+    const encoded = encryptChunk ? await encryptChunk(raw) : raw;
+    const chunkIndex = tree.addChunk(encoded);
+    pendingChunks.set(chunkIndex, encoded);
+  }
+
+  for await (const incoming of source) {
+    const newBuffer = new Uint8Array(buffer.length + incoming.length);
+    newBuffer.set(buffer, 0);
+    newBuffer.set(incoming, buffer.length);
+    buffer = newBuffer;
+
+    while (buffer.length >= chunkSize) {
+      await processChunk(buffer.slice(0, chunkSize));
+      buffer = buffer.slice(chunkSize);
+      yield* flushReady();
     }
-    return await encryptChunk(chunk);
-  };
+  }
 
-  const processChunk = async (
-    chunk: Uint8Array,
-    controller: TransformStreamDefaultController<FilePart>,
-  ) => {
-    const encodedChunk = await encodeChunk(chunk);
-    const chunkIndex = tree.addChunk(encodedChunk);
-    pendingChunks.set(chunkIndex, encodedChunk);
-    flushReadyChunks(controller);
-  };
+  if (buffer.length > 0) {
+    await processChunk(buffer);
+  } else if (totalChunks === 1 && pendingChunks.size === 0) {
+    await processChunk(new Uint8Array(0));
+  }
 
-  return new TransformStream<Uint8Array, FilePart>({
-    async transform(chunk, controller) {
-      const newBuffer = new Uint8Array(buffer.length + chunk.length);
-      newBuffer.set(buffer, 0);
-      newBuffer.set(chunk, buffer.length);
-      buffer = newBuffer;
-
-      while (buffer.length >= chunkSize) {
-        const completeChunk = buffer.slice(0, chunkSize);
-        buffer = buffer.slice(chunkSize);
-
-        await processChunk(completeChunk, controller);
-      }
-    },
-
-    async flush(controller) {
-      if (buffer.length > 0) {
-        await processChunk(buffer, controller);
-        buffer = new Uint8Array(0);
-      } else if (tree.getTotalChunks() === 0) {
-        await processChunk(new Uint8Array(0), controller);
-      }
-
-      flushReadyChunks(controller);
-
-      if (pendingChunks.size > 0) {
-        flushReadyChunks(controller);
-      }
-    },
-  });
+  yield* flushReady();
+  yield* flushReady();
 }
