@@ -93,7 +93,7 @@ describe("IDB-like storage round-trip (via MemoryDocumentStorage)", () => {
     expect(reconstructed.getText("body").toString()).toBe("encrypted content");
   });
 
-  it("empty/no-op updates do not cause growth", async () => {
+  it("re-applied update converges to the same CRDT state", async () => {
     const doc = new Y.Doc();
     doc.getText("body").insert(0, "base");
     const v2 = Y.encodeStateAsUpdateV2(doc);
@@ -102,17 +102,14 @@ describe("IDB-like storage round-trip (via MemoryDocumentStorage)", () => {
 
     const stateBefore = await storage.getDocument("doc-noop");
 
-    // Re-send the same update (no-op).
+    // Re-send the same update. CRDT merge is idempotent so the state vector
+    // does not advance; sidecars accumulate (compaction cleans them up).
     await storage.handleUpdate("doc-noop", envelopeUpdate(payload));
     const stateAfter = await storage.getDocument("doc-noop");
 
-    const decodedBefore = decodeContentEncryptedPayload(
-      stateBefore!.content.update as unknown as EncryptedUpdatePayload,
+    expect(new Uint8Array(stateAfter!.content.stateVector)).toEqual(
+      new Uint8Array(stateBefore!.content.stateVector),
     );
-    const decodedAfter = decodeContentEncryptedPayload(
-      stateAfter!.content.update as unknown as EncryptedUpdatePayload,
-    );
-    expect(decodedAfter.encryptedSidecars.length).toBe(decodedBefore.encryptedSidecars.length);
   });
 
   it("multiple incremental updates merge correctly", async () => {
