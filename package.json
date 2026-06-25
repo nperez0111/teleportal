@@ -68,11 +68,17 @@
     "dev:encrypted": "PORT=1234 bun run --watch ./playground/bun/encrypted-server.ts",
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
     "test": "bun run test:types && bun test --dots",
-    "test:types": "vp check --no-fmt"
+    "test:types": "vp check --no-fmt",
+    "bench": "bun test ./benchmarks/ --timeout 60000",
+    "bench:storage": "bun test ./benchmarks/storage.bench.test.ts --timeout 60000",
+    "bench:server": "bun test ./benchmarks/server.bench.test.ts --timeout 60000",
+    "bench:sync": "bun test ./benchmarks/sync.bench.test.ts --timeout 60000",
+    "bench:protocol": "bun test ./benchmarks/protocol.bench.test.ts --timeout 60000",
+    "bench:file": "bun test ./benchmarks/file.bench.test.ts --timeout 60000"
   },
   "dependencies": {
-    "@logtape/logtape": "2.1.5",
-    "@tanstack/devtools-event-client": "0.4.3",
+    "@logtape/logtape": "2.2.1",
+    "@tanstack/devtools-event-client": "0.5.0",
     "hookable": "6.1.1",
     "jose": "6.2.3",
     "lib0": "0.2.117",
@@ -88,7 +94,7 @@
     "eventsource": "4.1.0",
     "ioredis": "5.11.1",
     "msw": "2.14.6",
-    "srvx": "0.11.16",
+    "srvx": "0.11.17",
     "unstorage": "1.17.5",
     "vite-plus": "0.2.1"
   },
