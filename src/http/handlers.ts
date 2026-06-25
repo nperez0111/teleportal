@@ -10,6 +10,7 @@ import {
   getPubSubSink,
   getPubSubSource,
   getSSESink,
+  withAckSink,
   withAckTrackingSink,
 } from "teleportal/transports";
 import { emitWideEvent } from "teleportal/server";
@@ -71,7 +72,12 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
         ...(await getContext(req)),
       } as Context;
 
-      const sseSink = getSSESink({ context });
+      const sseSink = withAckSink(getSSESink({ context }), {
+        pubSub: server.pubSub,
+        ackTopic: `ack/${context.clientId}`,
+        sourceId: "sse-" + context.clientId,
+        context,
+      });
 
       const sseTransport = compose(
         getPubSubSource({
