@@ -1,3 +1,5 @@
+import { defineMethod, defineProtocol } from "teleportal/rpc";
+
 /**
  * File part stream payload for chunked file transfers.
  * Used as the stream payload type for both upload and download RPC methods.
@@ -64,3 +66,27 @@ export type FileDownloadResponse = {
   reason?: string;
   statusCode?: number;
 };
+
+// ---------------------------------------------------------------------------
+// Method contracts — type-first (binary payloads, no schema validation)
+// ---------------------------------------------------------------------------
+
+export const fileUpload = defineMethod<
+  "fileUpload",
+  FileUploadRequest,
+  FileUploadResponse,
+  FilePartStream
+>("fileUpload", { kind: "multipart" });
+
+export const fileDownload = defineMethod<"fileDownload", FileDownloadRequest, FileDownloadResponse>(
+  "fileDownload",
+);
+
+// ---------------------------------------------------------------------------
+// Protocol
+// ---------------------------------------------------------------------------
+
+export const fileProtocol = defineProtocol("file", {
+  upload: fileUpload,
+  download: fileDownload,
+});

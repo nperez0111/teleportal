@@ -1,10 +1,12 @@
-export { getFileRpcHandlers, FileHandler } from "./server-handlers";
-export { getFileClientHandlers } from "./client-handlers";
+export { getFileRpcHandlers, FileHandler } from "./server";
+export { getFileClientHandlers } from "./transfer";
 export { createFileRpc } from "./client";
 export type { FileRpc, FileRpcOptions } from "./client";
 
-export type { FilePermissionOptions } from "./server-handlers";
-export type { FileClientHandlerOptions } from "./client-handlers";
+export { fileProtocol, fileUpload, fileDownload } from "./methods";
+
+export type { FilePermissionOptions } from "./server";
+export type { FileClientHandlerOptions } from "./transfer";
 
 export type {
   FileUploadRequest,

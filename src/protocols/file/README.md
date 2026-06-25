@@ -1,343 +1,180 @@
 # File Protocol
 
-File upload and download via RPC with streaming support.
+File upload and download via RPC with chunked streaming and Merkle proof verification.
 
 ## Overview
 
-This package provides RPC handlers for file transfers. Files are transferred via a streaming RPC protocol that supports:
+This protocol provides RPC handlers for file transfers:
 
-- **fileUpload**: Initiate an upload, then stream file chunks to the server
-- **fileDownload**: Request a file, then receive file chunks streamed back
+- **fileUpload**: Initiate an upload, then stream encrypted/plaintext chunks to the server
+- **fileDownload**: Request a file, then receive chunks streamed back
 
-The RPC system handles both the request/response flow and bidirectional streaming of file data.
+Files are transferred as 64KB chunks with Merkle proof integrity verification. Both upload and download support optional E2EE via the provider's encryption key.
 
-## Architecture
+## File Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Server                                   │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                    Session (RPC System)                  │    │
-│  │  ┌─────────────────────────────────────────────────┐    │    │
-│  │  │              getFileRpcHandlers()                │    │    │
-│  │  │  ┌─────────────────┐  ┌─────────────────────┐   │    │    │
-│  │  │  │   fileUpload    │  │    fileDownload     │   │    │    │
-│  │  │  │  ├─ handler     │  │  └─ handler         │   │    │    │
-│  │  │  │  ├─ streamHandler│  │     (returns stream)│   │    │    │
-│  │  │  │  └─ init        │  │                     │   │    │    │
-│  │  │  └─────────────────┘  └─────────────────────┘   │    │    │
-│  │  │              ↓                    ↓              │    │    │
-│  │  │         FileHandler (core logic)                 │    │    │
-│  │  │              ↓                    ↓              │    │    │
-│  │  │  ┌─────────────────────────────────────────┐    │    │    │
-│  │  │  │           FileStorage                    │    │    │    │
-│  │  │  │  ├─ TemporaryUploadStorage (uploads)    │    │    │    │
-│  │  │  │  └─ getFile/storeFile (downloads)       │    │    │    │
-│  │  │  └─────────────────────────────────────────┘    │    │    │
-│  │  └─────────────────────────────────────────────────┘    │    │
-│  └─────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+src/protocols/file/
+  methods.ts    — method contracts (defineMethod/defineProtocol) + request/response types
+  server.ts     — server handlers (createHandlers)
+  client.ts     — client extension (RpcExtension wrapper)
+  transfer.ts   — file transfer state machine (chunked upload/download, Merkle proofs)
+  index.ts      — public exports
 ```
+
+The file protocol uses a multipart method kind for uploads (the only protocol that does). The `transfer.ts` state machine manages the bidirectional chunk streaming, ACK tracking, and encryption — `client.ts` is a thin `RpcExtension` wrapper that delegates to it.
 
 ## Server Integration
 
 ```typescript
 import { Server } from "teleportal/server";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
-import { InMemoryFileStorage } from "teleportal/storage/in-memory/file-storage";
-import { InMemoryTemporaryUploadStorage } from "teleportal/storage/in-memory/temporary-upload-storage";
 
-// Set up file storage with temporary upload support
 const fileStorage = new InMemoryFileStorage();
 fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
 
 const server = new Server({
-  getStorage: async () => documentStorage,
+  storage: async () => documentStorage,
   rpcHandlers: {
     ...getFileRpcHandlers(fileStorage),
   },
 });
 ```
 
-## Permission Checking
-
-You can add custom permission checking for uploads and downloads:
+### Permission Checking
 
 ```typescript
-import { getFileRpcHandlers, FilePermissionOptions } from "teleportal/protocols/file";
+import { getFileRpcHandlers, type FilePermissionOptions } from "teleportal/protocols/file";
 
-const permissionOptions: FilePermissionOptions = {
-  // Check if upload is allowed
+const permissions: FilePermissionOptions = {
   async checkUploadPermission(fileId, metadata, context) {
-    // context includes: server, documentId, session, userId, clientId
-    const hasWriteAccess = await checkUserAccess(context.userId, context.documentId);
-    if (!hasWriteAccess) {
-      return { allowed: false, reason: "No write access" };
-    }
-    return { allowed: true };
+    const allowed = await checkAccess(context.userId, context.documentId, "write");
+    return allowed ? { allowed: true } : { allowed: false, reason: "No write access" };
   },
-
-  // Check if download is allowed
   async checkDownloadPermission(fileId, context) {
-    const hasReadAccess = await checkUserAccess(context.userId, context.documentId);
-    if (!hasReadAccess) {
-      return { allowed: false, reason: "No read access" };
-    }
-    // Optionally return metadata to populate the response
-    return { allowed: true };
+    const allowed = await checkAccess(context.userId, context.documentId, "read");
+    return allowed ? { allowed: true } : { allowed: false, reason: "No read access" };
   },
 };
 
 const server = new Server({
-  getStorage: async () => documentStorage,
+  storage: async () => documentStorage,
   rpcHandlers: {
-    ...getFileRpcHandlers(fileStorage, permissionOptions),
+    ...getFileRpcHandlers(fileStorage, permissions),
   },
 });
 ```
 
 ## Client Integration
 
-The `Provider` handles file RPC requests via its `rpcHandlers` option. Register file handlers:
-
 ```typescript
 import { Provider } from "teleportal/providers";
-import { getFileClientHandlers } from "teleportal/protocols/file";
+import { createFileRpc } from "teleportal/protocols/file";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
+const encryptionKey = await createEncryptionKey();
 
 const provider = await Provider.create({
   url: "wss://...",
   document: "my-doc",
-  rpcHandlers: {
-    ...getFileClientHandlers(),
+  encryptionKey,
+  rpc: {
+    file: () => createFileRpc({ encryptionKey }),
   },
 });
 
-// Upload a file
-const file = new File([content], "example.txt", { type: "text/plain" });
-const fileId = await provider.uploadFile(file);
-
-// Download a file
-const downloadedFile = await provider.downloadFile(fileId);
+const fileId = await provider.rpc.file.upload(myFile);
+const file = await provider.rpc.file.download(fileId);
 ```
 
-## RPC Methods
+## Contract
+
+The protocol contract is defined in `methods.ts`:
+
+```typescript
+import { fileProtocol } from "teleportal/protocols/file";
+
+// fileProtocol.methods:
+//   upload   → wire name "fileUpload"   (kind: "multipart")
+//   download → wire name "fileDownload" (kind: "request-response")
+```
+
+Upload uses the `"multipart"` method kind — it has both a `handler` (initiation) and a `streamHandler` (chunk processing). Download is `"request-response"` but returns a stream of file parts in the response.
+
+## Error Handling
+
+All client methods throw `RpcOperationError` (from `teleportal/rpc`) on failure:
+
+```typescript
+import { RpcOperationError } from "teleportal/rpc";
+
+try {
+  await provider.rpc.file.upload(myFile);
+} catch (error) {
+  if (error instanceof RpcOperationError) {
+    console.log(error.protocol);  // "file"
+    console.log(error.operation); // "upload"
+  }
+}
+```
+
+## Transfer Flow
+
+### Upload
+
+```
+Client                                Server
+  │  ──── fileUpload request ────────►  │  Check permission, initiate session
+  │  ◄──── fileUpload response ───────  │  { allowed: true }
+  │  ──── stream (chunk 0) ──────────►  │  Store chunk, verify Merkle proof
+  │  ◄──── ACK ──────────────────────  │
+  │  ──── stream (chunk 1) ──────────►  │
+  │  ◄──── ACK ──────────────────────  │
+  │  ...                                │
+  │  ──── stream (last chunk) ───────►  │  Complete upload, move to durable storage
+  │  ◄──── ACK ──────────────────────  │
+```
+
+### Download
+
+```
+Client                                Server
+  │  ──── fileDownload request ──────►  │  Check permission, get metadata
+  │  ◄──── stream (chunk 0) ─────────  │
+  │  ◄──── stream (chunk 1) ─────────  │
+  │  ...                                │
+  │  ◄──── stream (last chunk) ──────  │
+  │  ◄──── fileDownload response ────  │  { filename, size, mimeType, ... }
+```
+
+## Methods
 
 ### fileUpload
 
 Initiate a file upload and stream chunks to the server.
 
-**Request (RPC type: `request`):**
+**Request:** `FileUploadRequest` — `{ fileId, filename, size, mimeType, lastModified, encrypted }`
 
-```typescript
-type FileUploadRequest = {
-  fileId: string; // Content-addressable ID (hash of file)
-  filename: string; // Original filename
-  size: number; // File size in bytes
-  mimeType: string; // MIME type
-  lastModified: number; // Timestamp
-  encrypted: boolean; // Whether file is encrypted
-};
-```
+**Response:** `FileUploadResponse` — `{ fileId, allowed, reason?, statusCode? }`
 
-**Response:**
-
-```typescript
-type FileUploadResponse = {
-  fileId: string;
-  allowed: boolean;
-  reason?: string; // Present if not allowed
-  statusCode?: number; // 403 if denied, 500 on error
-};
-```
-
-**Stream (RPC type: `stream`):**
-
-After receiving an allowed response, the client streams file chunks:
-
-```typescript
-type FilePartStream = {
-  fileId: string;
-  chunkIndex: number;
-  chunkData: Uint8Array;
-  merkleProof: Uint8Array[]; // Proof for chunk integrity
-  totalChunks: number;
-  bytesUploaded: number;
-  encrypted: boolean;
-};
-```
-
-Each chunk receives an ACK message from the server.
+**Stream:** `FilePartStream` — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }`
 
 ### fileDownload
 
 Request a file download, receiving metadata and streamed chunks.
 
-**Request:**
+**Request:** `FileDownloadRequest` — `{ fileId }`
 
-```typescript
-type FileDownloadRequest = {
-  fileId: string;
-};
-```
-
-**Response:**
-
-```typescript
-type FileDownloadResponse = {
-  fileId: string;
-  filename: string;
-  size: number;
-  mimeType: string;
-  lastModified: number;
-  encrypted: boolean;
-  allowed: boolean;
-  reason?: string; // Present if not allowed
-  statusCode?: number; // 404 if not found
-};
-```
-
-**Stream (server → client):**
-
-The server streams `FilePartStream` chunks back to the client, followed by the final response.
-
-## File Transfer Flow
-
-### Upload Flow
-
-```
-Client                                Server
-  │                                      │
-  │  ──── fileUpload request ────────►   │
-  │                                      │  Check permission
-  │                                      │  Initiate upload session
-  │  ◄──── fileUpload response ───────   │
-  │        (allowed: true)               │
-  │                                      │
-  │  ──── fileUpload stream (chunk 0) ►  │
-  │                                      │  Store chunk, verify merkle proof
-  │  ◄──── ACK ────────────────────────  │
-  │                                      │
-  │  ──── fileUpload stream (chunk 1) ►  │
-  │                                      │  Store chunk
-  │  ◄──── ACK ────────────────────────  │
-  │                                      │
-  │  ...                                 │
-  │                                      │
-  │  ──── fileUpload stream (last) ───►  │
-  │                                      │  Complete upload
-  │  ◄──── ACK ────────────────────────  │  Move to durable storage
-  │                                      │
-```
-
-### Download Flow
-
-```
-Client                                Server
-  │                                      │
-  │  ──── fileDownload request ──────►   │
-  │                                      │  Check permission
-  │                                      │  Get file metadata
-  │                                      │
-  │  ◄──── fileDownload stream (chunk 0) │
-  │  ◄──── fileDownload stream (chunk 1) │
-  │  ...                                 │
-  │  ◄──── fileDownload stream (last) ── │
-  │                                      │
-  │  ◄──── fileDownload response ──────  │
-  │        (with file metadata)          │
-  │                                      │
-```
-
-## Handler Structure
-
-The `getFileRpcHandlers` function returns an `RpcHandlerRegistry` with:
-
-```typescript
-{
-  fileUpload: {
-    // Handle upload initiation requests
-    handler: (payload, context) => Promise<{ response, stream? }>,
-
-    // Handle incoming file chunks (stream messages)
-    streamHandler: (payload, context, messageId, sendMessage) => Promise<void>,
-
-    // Initialize handler (sets up periodic cleanup)
-    init: (server) => () => void,  // Returns cleanup function
-  },
-
-  fileDownload: {
-    // Handle download requests, returns stream of file parts
-    handler: (payload, context) => Promise<{ response, stream? }>,
-  },
-}
-```
-
-## Storage Requirements
-
-File operations require a `FileStorage` implementation with:
-
-```typescript
-interface FileStorage {
-  // For uploads - optional, enables upload support
-  temporaryUploadStorage?: TemporaryUploadStorage;
-
-  // For downloads
-  getFile(fileId: string): Promise<File | null>;
-
-  // For completing uploads
-  storeFileFromUpload(result: UploadResult): Promise<void>;
-}
-
-interface TemporaryUploadStorage {
-  beginUpload(fileId: string, metadata: FileMetadata): Promise<void>;
-  storeChunk(fileId: string, index: number, data: Uint8Array, proof: Uint8Array[]): Promise<void>;
-  getUploadProgress(fileId: string): Promise<UploadProgress | null>;
-  completeUpload(fileId: string): Promise<UploadResult>;
-  cleanupExpiredUploads(): Promise<void>;
-}
-```
-
-## Context
-
-Server handlers receive `RpcServerContext`:
-
-```typescript
-interface RpcServerContext {
-  server: Server; // The Server instance
-  documentId: string; // The namespaced document ID
-  session: Session; // The Session instance
-  userId?: string; // User ID (if authenticated)
-  clientId?: string; // Client ID
-}
-```
+**Response:** `FileDownloadResponse` — `{ fileId, filename, size, mimeType, lastModified, encrypted, allowed, reason?, statusCode? }`
 
 ## Constants
 
-- **MAX_FILE_SIZE**: 1GB (1024 _ 1024 _ 1024 bytes)
-- **Cleanup interval**: 5 minutes (expired uploads are periodically cleaned)
-
-## Exports
-
-```typescript
-import {
-  // Main factory function
-  getFileRpcHandlers,
-
-  // Core file handler class (for advanced use)
-  FileHandler,
-
-  // Types
-  FilePermissionOptions,
-  FileUploadRequest,
-  FileUploadResponse,
-  FileDownloadRequest,
-  FileDownloadResponse,
-  FilePartStream,
-} from "teleportal/protocols/file";
-```
+- **MAX_FILE_SIZE**: 1GB
+- **Chunk size**: 64KB (plaintext), adjusted for encryption overhead
+- **Cleanup interval**: 5 minutes (expired uploads)
 
 ## See Also
 
-- [Milestone Protocol](../milestone/README.md) - Document milestone/versioning
-- [Protocols Overview](../README.md) - All protocol packages
-- [Storage](../../storage/README.md) - Storage interfaces
+- [`teleportal/rpc`](../../lib/rpc/) — RPC framework primitives
+- [Milestone Protocol](../milestone/README.md) — Document milestone/versioning
+- [Attribution Protocol](../attribution/README.md) — Attribution (authorship) methods
