@@ -49,15 +49,11 @@ const transport = compose(
           throw new Error("Failed to post to /message");
         }
 
-        const readable = decodeHTTPRequest(resp);
-
-        await readable.pipeTo(
-          new WritableStream({
-            async write(message) {
-              await observer.call("message", [message]);
-            },
-          }),
-        );
+        for await (const batch of decodeHTTPRequest(resp)) {
+          for (const message of batch) {
+            await observer.call("message", [message]);
+          }
+        }
       }
     },
   }),

@@ -31,31 +31,29 @@ describe("ydoc source", () => {
     doc.getText("test").insert("hello".length - 1, " world");
 
     let count = 0;
-    await source.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
-          expect(chunk.context.clientId).toBe("local");
-          expect(chunk.type).toBe("doc");
-          expect(chunk.document).toBe("test");
-          const payload = chunk.payload as { type: string; update: VersionedUpdate };
-          expect(payload.type).toBe("update");
-          expect(payload.update.version).toBe(2);
+    for await (const batch of source.source) {
+      for (const chunk of batch) {
+        expect(chunk.context.clientId).toBe("local");
+        expect(chunk.type).toBe("doc");
+        expect(chunk.document).toBe("test");
+        const payload = chunk.payload as { type: string; update: VersionedUpdate };
+        expect(payload.type).toBe("update");
+        expect(payload.update.version).toBe(2);
 
-          // Verify round-trip: decode envelope and apply V2 structure update
-          const decoded = decodeContentEncryptedPayload(payload.update.data as any);
-          expect(decoded.encryptedSidecars).toHaveLength(0);
-          const verify = new Y.Doc();
-          Y.applyUpdateV2(verify, decoded.structureUpdate);
+        // Verify round-trip: decode envelope and apply V2 structure update
+        const decoded = decodeContentEncryptedPayload(payload.update.data as any);
+        expect(decoded.encryptedSidecars).toHaveLength(0);
+        const verify = new Y.Doc();
+        Y.applyUpdateV2(verify, decoded.structureUpdate);
 
-          if (count++ === 0) {
-            expect(verify.getText("test").toString()).toBe("hello");
-          } else {
-            // Second update applies on top of first
-            doc.destroy();
-          }
-        },
-      }),
-    );
+        if (count++ === 0) {
+          expect(verify.getText("test").toString()).toBe("hello");
+        } else {
+          // Second update applies on top of first
+          doc.destroy();
+        }
+      }
+    }
   });
 
   it("can read a doc's awareness updates", async () => {
@@ -75,13 +73,12 @@ describe("ydoc source", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     awareness.destroy();
 
-    await source.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
-          expect(chunk.context.clientId).toBe("local");
-          expect(chunk.type).toBe("awareness");
-          expect(chunk.document).toBe("test");
-          expect(chunk.payload).toMatchInlineSnapshot(`
+    for await (const batch of source.source) {
+      for (const chunk of batch) {
+        expect(chunk.context.clientId).toBe("local");
+        expect(chunk.type).toBe("awareness");
+        expect(chunk.document).toBe("test");
+        expect(chunk.payload).toMatchInlineSnapshot(`
             {
               "type": "awareness-update",
               "update": Uint8Array [
@@ -108,9 +105,8 @@ describe("ydoc source", () => {
               ],
             }
           `);
-        },
-      }),
-    );
+      }
+    }
   });
 });
 
@@ -124,13 +120,13 @@ describe("ydoc source batching", () => {
     });
 
     const messages: any[] = [];
-    const done = source.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
+    const done = (async () => {
+      for await (const batch of source.source) {
+        for (const chunk of batch) {
           messages.push(chunk);
-        },
-      }),
-    );
+        }
+      }
+    })();
 
     doc.getText("t").insert(0, "a");
     doc.getText("t").insert(1, "b");
@@ -164,13 +160,13 @@ describe("ydoc source batching", () => {
     });
 
     const messages: any[] = [];
-    const done = source.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
+    const done = (async () => {
+      for await (const batch of source.source) {
+        for (const chunk of batch) {
           messages.push(chunk);
-        },
-      }),
-    );
+        }
+      }
+    })();
 
     doc.getText("t").insert(0, "a");
     doc.getText("t").insert(1, "b");
@@ -192,13 +188,13 @@ describe("ydoc source batching", () => {
     });
 
     const messages: any[] = [];
-    const done = source.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
+    const done = (async () => {
+      for await (const batch of source.source) {
+        for (const chunk of batch) {
           messages.push(chunk);
-        },
-      }),
-    );
+        }
+      }
+    })();
 
     doc.getText("t").insert(0, "hello");
 
@@ -223,13 +219,13 @@ describe("ydoc source batching", () => {
     });
 
     const messages: any[] = [];
-    const done = source.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
+    const done = (async () => {
+      for await (const batch of source.source) {
+        for (const chunk of batch) {
           messages.push(chunk);
-        },
-      }),
-    );
+        }
+      }
+    })();
 
     // First batch
     doc.getText("t").insert(0, "a");
@@ -255,7 +251,6 @@ describe("ydoc sink", () => {
       ydoc: doc,
       document: "test",
     });
-    const writer = sink.writable.getWriter();
 
     // Create first update: insert "hello" into text "test"
     const srcDoc1 = new Y.Doc();
@@ -263,7 +258,7 @@ describe("ydoc sink", () => {
     srcDoc1.getText("test").insert(0, "hello");
     const update1 = Y.encodeStateAsUpdateV2(srcDoc1);
 
-    await writer.write(
+    await sink.write(
       new DocMessage("test", { type: "update", update: wrapUpdate(update1) }, { clientId: "200" }),
     );
 
@@ -276,16 +271,16 @@ describe("ydoc sink", () => {
     srcDoc2.getText("test").insert(4, " world");
     const update2 = Y.encodeStateAsUpdateV2(srcDoc2, Y.encodeStateVector(srcDoc1));
 
-    await writer.write(
+    await sink.write(
       new DocMessage("test", { type: "update", update: wrapUpdate(update2) }, { clientId: "200" }),
     );
 
     expect(doc.getText("test").toString()).toBe("hell worldo");
 
-    await writer.write(new DocMessage("test", { type: "sync-done" }, { clientId: "200" }));
+    await sink.write(new DocMessage("test", { type: "sync-done" }, { clientId: "200" }));
 
     await sink.synced;
-    await writer.close();
+    sink.close();
   });
 
   // it("can write a doc's awareness updates", async () => {
@@ -320,9 +315,7 @@ describe("ydoc transport", () => {
       document: "test",
     });
 
-    const reader = transport.readable.getReader();
-
-    const writer = transport.writable.getWriter();
+    const iter = transport.source[Symbol.asyncIterator]();
 
     // Create a programmatic update for "hello" in text "test"
     const srcDoc = new Y.Doc();
@@ -330,7 +323,7 @@ describe("ydoc transport", () => {
     srcDoc.getText("test").insert(0, "hello");
     const helloUpdate = Y.encodeStateAsUpdateV2(srcDoc);
 
-    await writer.write(
+    await transport.write(
       new DocMessage(
         "test",
         {
@@ -344,11 +337,11 @@ describe("ydoc transport", () => {
     );
 
     doc.getText("test").insert("hello".length, " world");
-    const { done, value } = await reader.read();
+    const { value: batch } = await iter.next();
+    const value = batch[0];
     if (!value) {
       throw new Error("No value");
     }
-    expect(done).toBe(false);
     expect(value.context.clientId).toBe("local");
     expect(value.type).toBe("doc");
     expect(value.document).toBe("test");
@@ -388,22 +381,18 @@ describe("ydoc transport", () => {
       {
         onRead(chunk) {
           readCalled = true;
-          expect(chunk.encoded).toBeInstanceOf(Uint8Array);
-          expect(chunk.encoded.length).toBeGreaterThan(0);
+          expect(chunk.type).toBe("doc");
         },
         onWrite(chunk) {
           writeCalled = true;
-          expect(chunk.encoded).toBeInstanceOf(Uint8Array);
-          expect(chunk.encoded.length).toBeGreaterThan(0);
+          expect(chunk.type).toBe("doc");
         },
       },
     );
 
-    const reader = transport.readable.getReader();
+    const iter = transport.source[Symbol.asyncIterator]();
 
-    const writer = transport.writable.getWriter();
-
-    await writer.write(
+    await transport.write(
       new DocMessage(
         "test",
         {
@@ -418,8 +407,8 @@ describe("ydoc transport", () => {
 
     doc.getText("test").insert("hello".length, " world");
 
-    const { done, value } = await reader.read();
-    expect(done).toBe(false);
+    const { value: batch } = await iter.next();
+    const value = batch[0];
     if (!value) {
       throw new Error("No value");
     }

@@ -88,6 +88,11 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     return this.#getAttributionKeyPrefix(key) + ":" + uuidv4();
   }
 
+  /**
+   * Lock a key for 5 seconds.
+   * @param key - The key to lock
+   * @param cb - The callback to execute
+   */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     const prefixedKey = this.#getKey(key);
     return withTransaction(this.storage, prefixedKey, async () => cb(), {
@@ -95,12 +100,18 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     });
   }
 
+  /**
+   * Retrieve the stored V2 update and sidecars from the unstorage backend.
+   */
   async getDocumentState(key: string): Promise<DocumentState | null> {
     const stored = (await this.storage.getItem(this.#getStateKey(key))) as StoredState | null;
     if (!stored) return null;
     return deserializeState(stored);
   }
 
+  /**
+   * Persist a V2 update and its sidecars, replacing any previously stored state.
+   */
   async replaceDocumentState(
     key: string,
     update: Uint8Array,

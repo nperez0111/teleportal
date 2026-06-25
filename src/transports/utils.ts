@@ -14,6 +14,14 @@ import {
   ClientContext,
   RawReceivedMessage,
 } from "teleportal";
+import { createBroadcast } from "../lib/iter";
+
+export type { Channel, ChannelOptions } from "../lib/iter";
+export { createChannel } from "../lib/iter";
+
+// ---------------------------------------------------------------------------
+// Fan-out (broadcast) — replaces createFanOutWriter
+// ---------------------------------------------------------------------------
 
 export type FanOutReader<T> = {
   /**
@@ -23,179 +31,40 @@ export type FanOutReader<T> = {
   /**
    * A readable stream to read messages from the fan out writer
    */
-  readable: ReadableStream<T>;
+  source: AsyncIterable<T[]>;
 };
 
 /**
  * Creates a writer which will fan out to all connected readers.
  */
 export function createFanOutWriter<T>() {
-  let controllers: ReadableStreamDefaultController<T>[] = [];
+  const bc = createBroadcast<T>();
 
   function getReader(): FanOutReader<T> {
-    let controller: ReadableStreamDefaultController<T> | null = null;
-
-    const readable = new ReadableStream<T>({
-      start(ctrl) {
-        controller = ctrl;
-        controllers.push(ctrl);
-      },
-      cancel() {
-        if (controller) {
-          const index = controllers.indexOf(controller);
-          if (index !== -1) {
-            controllers.splice(index, 1);
-          }
-        }
-      },
-    });
-
+    // `subscribe()` already registers the subscriber; grab its iterator once so
+    // `source` and `unsubscribe` share the same instance (the channel allows a
+    // single consumer, and `return()` is idempotent).
+    const iterator = bc.subscribe()[Symbol.asyncIterator]();
     return {
-      unsubscribe: () => {
-        if (controller) {
-          const index = controllers.indexOf(controller);
-          if (index !== -1) {
-            controllers.splice(index, 1);
-          }
-          try {
-            controller.close();
-          } catch {
-            // Ignore if already closed
-          }
-        }
-      },
-      readable,
+      source: { [Symbol.asyncIterator]: () => iterator },
+      unsubscribe: () => void iterator.return?.(),
     };
   }
 
-  const writable = new WritableStream<T>({
-    write: async (message) => {
-      // Send message to all active controllers
-      for (const controller of controllers) {
-        try {
-          controller.enqueue(message);
-        } catch {
-          // Ignore if controller is closed
-        }
-      }
-    },
-    close: () => {
-      controllers = []; // free the memory
-    },
-    abort: (_reason) => {
-      controllers = []; // free the memory
-    },
-  });
-
   return {
-    writable,
+    send(item: T): void {
+      bc.send(item);
+    },
+    close(): void {
+      bc.close();
+    },
     getReader,
   };
 }
 
-export type FanInWriter<T> = {
-  /**
-   * Remove this writer from the fan in reader
-   */
-  unsubscribe: () => void;
-  /**
-   * A writable stream to write messages to the fan in reader
-   */
-  writable: WritableStream<T>;
-};
-
-/**
- * Creates a reader which will fan in from all connected writers.
- */
-export function createFanInReader<T>() {
-  let mainController: ReadableStreamDefaultController<T> | null = null;
-  let isClosed = false;
-
-  const writers: WritableStream<T>[] = [];
-
-  const readable = new ReadableStream<T>({
-    start(controller) {
-      mainController = controller;
-    },
-    async cancel() {
-      isClosed = true;
-      // Just clear the writers array and let garbage collection handle cleanup
-      await Promise.all(
-        writers.map(async (writer) => {
-          try {
-            await writer.close();
-          } catch {
-            // Ignore if already closed
-          }
-        }),
-      );
-    },
-  });
-
-  function getWriter(): FanInWriter<T> {
-    if (isClosed) {
-      throw new Error("Cannot add writer to closed fan in reader");
-    }
-
-    const writable = new WritableStream<T>({
-      write: async (chunk) => {
-        if (mainController && !isClosed) {
-          try {
-            mainController.enqueue(chunk);
-          } catch {
-            // Controller might be closed, ignore the error
-          }
-        }
-      },
-      close: () => {
-        // Individual writer close doesn't close the main stream
-      },
-      abort: () => {
-        // Individual writer abort doesn't close the main stream
-      },
-    });
-
-    writers.push(writable);
-
-    return {
-      unsubscribe: () => {
-        const index = writers.indexOf(writable);
-        if (index !== -1) {
-          writers.splice(index, 1);
-        }
-        try {
-          writable.abort();
-        } catch {
-          // Ignore if already closed
-        }
-      },
-      writable,
-    };
-  }
-
-  return {
-    readable,
-    getWriter,
-    async close() {
-      isClosed = true;
-      try {
-        mainController?.close();
-      } catch {
-        // Ignore if already closed
-      }
-      // Just clear the writers array and let garbage collection handle cleanup
-      await Promise.all(
-        writers.map(async (writer) => {
-          try {
-            await writer.close();
-          } catch {
-            // Ignore if already closed
-          }
-        }),
-      );
-    },
-  };
-}
+// ---------------------------------------------------------------------------
+// Serial queue — unchanged, already not stream-based
+// ---------------------------------------------------------------------------
 
 export type SerialQueue<T> = {
   /**
@@ -224,7 +93,6 @@ export function createSerialQueue<T>(process: (item: T) => Promise<void> | void)
     enqueue(item: T): Promise<void> {
       if (closed) return Promise.resolve();
       const run = tail.then(() => (closed ? undefined : process(item)));
-      // Keep the chain alive regardless of this item's outcome.
       tail = run.then(
         () => {},
         () => {},
@@ -237,6 +105,10 @@ export function createSerialQueue<T>(process: (item: T) => Promise<void> | void)
   };
 }
 
+// ---------------------------------------------------------------------------
+// Compose / connect helpers
+// ---------------------------------------------------------------------------
+
 /**
  * Compose a {@link Source} and {@link Sink} into a {@link Transport}.
  */
@@ -248,51 +120,130 @@ export function compose<
   source: Source<Context, SourceAdditionalProperties>,
   sink: Sink<Context, SinkAdditionalProperties>,
 ): Transport<Context, SourceAdditionalProperties & SinkAdditionalProperties> {
+  // Spread both, but ensure `source` (the iterable) always comes from the
+  // Source arg and `write`/`close` always come from the Sink arg.  Without
+  // this, passing a Transport as the Sink would let its `source` property
+  // shadow the Source's filtered/wrapped one.
+  const { write, close } = sink;
   return {
     ...source,
     ...sink,
-    readable: source.readable,
-    writable: sink.writable,
-  };
+    source: source.source,
+    write,
+    close,
+  } as Transport<Context, SourceAdditionalProperties & SinkAdditionalProperties>;
 }
 
 /**
- * Pipe the updates from a {@link Source} to a {@link Sink}.
+ * Drain a batched source one item at a time, awaiting `fn` for each. Accepts a
+ * {@link Source} or a bare `AsyncIterable<T[]>`.
  */
-export function pipe<Context extends Record<string, unknown>>(
-  source: Source<Context>,
+export async function forEachMessage<T>(
+  source: { source: AsyncIterable<T[]> } | AsyncIterable<T[]>,
+  fn: (item: T) => void | Promise<void>,
+): Promise<void> {
+  const iterable = "source" in source ? source.source : source;
+  for await (const batch of iterable) {
+    for (const item of batch) {
+      await fn(item);
+    }
+  }
+}
+
+/**
+ * Connect a source to a sink — consume all messages from source and write to sink.
+ */
+export function connect<Context extends Record<string, unknown>>(
+  source: Source<Context> | AsyncIterable<Message<Context>[]>,
   sink: Sink<Context>,
 ): Promise<void> {
-  return source.readable.pipeTo(sink.writable);
+  return forEachMessage(source, (msg) => sink.write(msg));
 }
 
 /**
- * Sync two {@link Transport}s.
+ * Bidirectional connect between two transports.
  */
 export function sync<Context extends Record<string, unknown>>(
   a: Transport<Context>,
   b: Transport<Context>,
 ): Promise<void> {
-  return Promise.all([pipe(a, b), pipe(b, a)]).then(() => undefined);
+  return Promise.all([connect(a, b), connect(b, a)]).then(() => undefined);
 }
+
+// ---------------------------------------------------------------------------
+// Batch-preserving transform helpers
+//
+// Sources carry `AsyncIterable<T[]>`. These lift per-item logic into a
+// transform over those batches, preserving batching and never yielding an
+// empty batch.
+// ---------------------------------------------------------------------------
+
+/** Map each item to one output (or drop it by returning `null`/`undefined`). */
+export function mapMessages<In, Out>(
+  fn: (item: In) => Out | null | undefined | Promise<Out | null | undefined>,
+): (source: AsyncIterable<In[]>) => AsyncIterable<Out[]> {
+  return async function* (source) {
+    for await (const batch of source) {
+      const out: Out[] = [];
+      for (const item of batch) {
+        const mapped = await fn(item);
+        if (mapped != null) out.push(mapped);
+      }
+      if (out.length > 0) yield out;
+    }
+  };
+}
+
+/** Expand each item into zero or more outputs. */
+export function flatMapMessages<In, Out>(
+  fn: (item: In) => Iterable<Out>,
+): (source: AsyncIterable<In[]>) => AsyncIterable<Out[]> {
+  return async function* (source) {
+    for await (const batch of source) {
+      const out: Out[] = [];
+      for (const item of batch) {
+        for (const mapped of fn(item)) out.push(mapped);
+      }
+      if (out.length > 0) yield out;
+    }
+  };
+}
+
+/** Keep only items passing the (possibly async) predicate. */
+export function filterMessages<T>(
+  predicate: (item: T) => boolean | Promise<boolean>,
+): (source: AsyncIterable<T[]>) => AsyncIterable<T[]> {
+  return async function* (source) {
+    for await (const batch of source) {
+      const out: T[] = [];
+      for (const item of batch) {
+        if (await predicate(item)) out.push(item);
+      }
+      if (out.length > 0) yield out;
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Message decoding transform
+// ---------------------------------------------------------------------------
 
 /**
  * Reads an untrusted {@link BinaryMessage} and decodes it into a {@link Message}.
  */
-export const getMessageReader = <Context extends Record<string, unknown>>(
+export function decodeMessages<Context extends Record<string, unknown>>(
   context: Context | ((message: RawReceivedMessage) => Context),
-) =>
-  new TransformStream<BinaryMessage, Message<Context>>({
-    transform(chunk, controller) {
-      const decoded = decodeMessage(chunk);
-      if (typeof context === "function") {
-        Object.assign(decoded.context, context(decoded));
-      } else {
-        Object.assign(decoded.context, context);
-      }
-      controller.enqueue(decoded as Message<Context>);
-    },
+): (source: AsyncIterable<BinaryMessage[]>) => AsyncIterable<Message<Context>[]> {
+  return mapMessages((chunk: BinaryMessage) => {
+    const decoded = decodeMessage(chunk);
+    Object.assign(decoded.context, typeof context === "function" ? context(decoded) : context);
+    return decoded as Message<Context>;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Binary ↔ Message transport conversion
+// ---------------------------------------------------------------------------
 
 /**
  * Convert a {@link Transport} to a {@link BinaryTransport}.
@@ -304,24 +255,20 @@ export function toBinaryTransport<
   AdditionalProperties extends Record<string, unknown>,
 >(
   transport: Transport<Context, AdditionalProperties>,
-  context: Context,
+  _context: Context,
 ): BinaryTransport<AdditionalProperties> {
-  const reader = getMessageReader(context);
-  const writer = new TransformStream<Message, BinaryMessage>({
-    transform(chunk, controller) {
-      controller.enqueue(chunk.encoded);
-    },
-  });
-  const binarySource: Source<Context> = { readable: reader.readable };
-  const binarySink: Sink<Context> = { writable: writer.writable };
-  const binaryTransport = compose(binarySource, binarySink);
-
-  sync(binaryTransport, transport);
   return {
     ...transport,
-    readable: writer.readable,
-    writable: reader.writable,
-  };
+    source: mapMessages((msg: Message<Context>) => msg.encoded)(transport.source),
+    write(msg: BinaryMessage) {
+      const decoded = decodeMessage(msg);
+      Object.assign(decoded.context, _context);
+      transport.write(decoded as Message<Context>);
+    },
+    close() {
+      transport.close();
+    },
+  } as BinaryTransport<AdditionalProperties>;
 }
 
 /**
@@ -336,63 +283,51 @@ export function fromBinaryTransport<
   transport: BinaryTransport<AdditionalProperties>,
   context: Context,
 ): Transport<Context, AdditionalProperties> {
-  const readable = transport.readable
-    .pipeThrough(
-      new TransformStream({
-        async transform(chunk, controller) {
-          // Just filter out ping messages to avoid any unnecessary processing
-          if (isPingMessage(chunk)) {
-            const writer = transport.writable.getWriter();
-            try {
-              await writer.write(encodePongMessage());
-            } finally {
-              writer.releaseLock();
-            }
-            return;
-          }
-          controller.enqueue(chunk);
-        },
-      }),
-    )
-    .pipeThrough(getMessageReader(context));
-
-  const writable = new WritableStream<Message>({
-    async write(chunk) {
-      const writer = transport.writable.getWriter();
-      try {
-        await writer.write(chunk.encoded);
-      } finally {
-        writer.releaseLock();
-      }
-    },
-    close: transport.writable.close,
-    abort: transport.writable.abort,
-  });
-
   return {
     ...transport,
-    readable,
-    writable,
+    source: mapMessages((chunk: BinaryMessage) => {
+      // Answer pings inline; they never surface to the decoded source.
+      if (isPingMessage(chunk)) {
+        transport.write(encodePongMessage());
+        return null;
+      }
+      const decoded = decodeMessage(chunk);
+      Object.assign(decoded.context, context);
+      return decoded as Message<Context>;
+    })(transport.source),
+    write(msg: Message<Context>) {
+      transport.write(msg.encoded);
+    },
+    close() {
+      transport.close();
+    },
+  } as Transport<Context, AdditionalProperties>;
+}
+
+// ---------------------------------------------------------------------------
+// MessageArray encoding/decoding transforms
+// ---------------------------------------------------------------------------
+
+export function toMessageArrayTransform() {
+  return async function* (source: AsyncIterable<Message[]>): AsyncIterable<MessageArray[]> {
+    for await (const batch of source) {
+      yield [encodeMessageArray(batch)];
+    }
   };
 }
-export const toMessageArrayStream = () =>
-  new TransformStream<Message, MessageArray>({
-    transform: (chunk, controller) => {
-      const messageArray = encodeMessageArray([chunk]);
-      controller.enqueue(messageArray);
-    },
-  });
 
-export const fromMessageArrayStream = <Context extends ClientContext>(context: Context) =>
-  new TransformStream<MessageArray, Message<Context>>({
-    transform: (chunk, controller) => {
-      for (const message of decodeMessageArray(chunk)) {
-        Object.assign(message.context, context);
+export function fromMessageArrayTransform<Context extends ClientContext>(context: Context) {
+  return flatMapMessages((arr: MessageArray) =>
+    decodeMessageArray(arr).map((msg) => {
+      Object.assign(msg.context, context);
+      return msg as Message<Context>;
+    }),
+  );
+}
 
-        controller.enqueue(message);
-      }
-    },
-  });
+// ---------------------------------------------------------------------------
+// Batching
+// ---------------------------------------------------------------------------
 
 export type BatchingOptions = {
   /**
@@ -405,60 +340,4 @@ export type BatchingOptions = {
   maxBatchDelay?: number;
 };
 
-/**
- * Creates a transform stream that batches messages together
- */
-export function getBatchingTransform({
-  maxBatchSize = 10,
-  maxBatchDelay = 100,
-}: BatchingOptions = {}) {
-  let messageQueue: Message[] = [];
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let controller: TransformStreamDefaultController<Message[]> | null = null;
-
-  const sendBatch = () => {
-    if (messageQueue.length === 0 || !controller) return;
-    const batch = messageQueue;
-    messageQueue = [];
-    try {
-      controller.enqueue(batch);
-    } catch {
-      // Ignore errors if controller is closed or stream is errored
-    }
-  };
-
-  const scheduleBatch = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-    timeoutId = setTimeout(sendBatch, maxBatchDelay);
-  };
-
-  return new TransformStream<Message, Message[]>({
-    start(c) {
-      controller = c;
-    },
-
-    transform(message, _controller) {
-      messageQueue.push(message);
-
-      if (messageQueue.length >= maxBatchSize) {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-        sendBatch();
-      } else {
-        scheduleBatch();
-      }
-    },
-
-    flush() {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      sendBatch();
-    },
-  });
-}
+export { batch } from "../lib/iter";

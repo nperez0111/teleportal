@@ -35,9 +35,9 @@ export type Source<
   AdditionalProperties extends Record<string, unknown> = {},
 > = {
   /**
-   * A readable stream of document/awareness updates.
+   * An async iterable of document/awareness updates.
    */
-  readable: ReadableStream<Message<Context>>;
+  source: AsyncIterable<Message<Context>[]>;
 } & AdditionalProperties;
 
 /**
@@ -48,9 +48,10 @@ export type Sink<
   AdditionalProperties extends Record<string, unknown> = {},
 > = {
   /**
-   * A writable stream of document updates.
+   * Writes a document update.
    */
-  writable: WritableStream<Message<Context>>;
+  write(message: Message<Context>): void | Promise<void>;
+  close(): void;
 } & AdditionalProperties;
 
 /**
@@ -59,7 +60,7 @@ export type Sink<
 export type Transport<
   Context extends Record<string, unknown>,
   AdditionalProperties extends Record<string, unknown> = {},
-> = Sink<Context, AdditionalProperties> & Source<Context, AdditionalProperties>;
+> = Source<Context, AdditionalProperties> & Sink<Context, AdditionalProperties>;
 
 /**
  * A transport which sends and receives Y.js binary messages.
@@ -68,11 +69,12 @@ export type BinaryTransport<AdditionalProperties extends Record<string, unknown>
   /**
    * Reads bytes
    */
-  readable: ReadableStream<BinaryMessage>;
+  source: AsyncIterable<BinaryMessage[]>;
   /**
    * Sends bytes
    */
-  writable: WritableStream<BinaryMessage>;
+  write(message: BinaryMessage): void | Promise<void>;
+  close(): void;
 } & AdditionalProperties;
 
 /**

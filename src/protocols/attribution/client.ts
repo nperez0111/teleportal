@@ -59,6 +59,9 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
   build(methods, ctx): AttributionRpc {
     let cachedMap: ContentMap | null | undefined;
 
+    /**
+     * Fetch and decode the attribution ContentMap, caching when unfiltered.
+     */
     async function getMap(filter?: AttributionFilter): Promise<ContentMap | null> {
       const response = await methods.get(filter ? { filter } : {});
       const decoded = response.contentMap ? decodeContentMap(response.contentMap) : null;
@@ -68,6 +71,9 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
       return decoded;
     }
 
+    /**
+     * Ensure the cached ContentMap is loaded, fetching once if needed.
+     */
     async function ensureMap(): Promise<ContentMap | null> {
       if (cachedMap === undefined) {
         await getMap();
@@ -75,6 +81,9 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
       return cachedMap ?? null;
     }
 
+    /**
+     * Fetch and decrypt a milestone snapshot, returning its content IDs.
+     */
     async function milestoneContentIds(milestoneId: string): Promise<ContentIds> {
       const response = await ctx.rpcClient.sendRequest<MilestoneGetResponse>(
         ctx.document,
@@ -105,12 +114,21 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
       });
     }
 
+    /**
+     * Attribution restricted to the content present in a milestone.
+     * Computed client-side by intersecting the full ContentMap with
+     * the milestone's operation IDs.
+     */
     async function getMilestoneContentMap(milestoneId: string): Promise<ContentMap | null> {
       const [map, ids] = await Promise.all([ensureMap(), milestoneContentIds(milestoneId)]);
       if (!map) return null;
       return milestoneContentMap(map, ids);
     }
 
+    /**
+     * Attribution for the changes made between two milestones — the
+     * operations added from `fromMilestoneId` to `toMilestoneId`.
+     */
     async function getChangesetContentMap(
       fromMilestoneId: string,
       toMilestoneId: string,
@@ -125,6 +143,13 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
     }
 
     return {
+      /**
+       * Attribution activity timeline — who did what, when?
+       *
+       * Without `milestone` or `changeset`, the query runs server-side via
+       * RPC. With milestone/changeset scoping, the ContentMap is fetched and
+       * filtered client-side.
+       */
       async getActivity(options?: ActivityOptions): Promise<ActivityEntry[]> {
         if (options?.milestone && options?.changeset) {
           throw new Error("getActivity: `milestone` and `changeset` are mutually exclusive");
@@ -142,6 +167,11 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
 
       getMap,
 
+      /**
+       * Resolve who authored a specific Y.js item identified by
+       * (clientID, clock). Uses the cached ContentMap, fetching it once
+       * if not yet loaded.
+       */
       async resolveItem(
         clientID: number,
         clock: number,
@@ -155,6 +185,11 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
         return resolveItemAttribution(map, clientID, clock);
       },
 
+      /**
+       * Resolve attribution for a content range of a Y type (e.g. Y.Text),
+       * mapping position range to CRDT operation IDs against the local
+       * document, then looking them up in the cached ContentMap.
+       */
       async getForRange(
         type: Y.AbstractType<any>,
         index: number,
@@ -165,6 +200,11 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
         return resolveRangeAttribution(type, index, length, map);
       },
 
+      /**
+       * Invalidate the cached attribution ContentMap. The next call to
+       * resolveItem, getForRange, or any milestone method will re-fetch
+       * from the server.
+       */
       invalidateCache(): void {
         cachedMap = undefined;
       },

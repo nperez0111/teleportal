@@ -135,14 +135,9 @@ export function getRedisTransport<Context extends ServerContext>({
     ...transport,
     close: async () => {
       try {
-        await transport.readable.cancel();
+        transport.close();
       } catch {
-        // Stream might already be locked or closed
-      }
-      try {
-        await transport.writable.close();
-      } catch {
-        // Stream might already be locked or closed
+        // Transport might already be closed
       }
       await pubSub[Symbol.asyncDispose]?.();
     },

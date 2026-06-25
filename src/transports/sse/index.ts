@@ -9,7 +9,8 @@ import {
   Sink,
   Source,
 } from "teleportal";
-import { getMessageReader } from "../utils";
+import { createChannel, toReadableStream } from "../../lib/iter";
+import { decodeMessages } from "../utils";
 
 /**
  * {@link Sink} which transforms {@link Message}s into SSE messages
@@ -30,34 +31,34 @@ export function getSSESink<Context extends ClientContext>({
     sseResponse: Response;
   }
 > {
-  let interval: ReturnType<typeof setInterval>;
-  const transform = new TransformStream<Message<any>, string>({
-    start(controller) {
-      if (context.clientId) {
-        controller.enqueue(`event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`);
-      }
+  const channel = createChannel<string>();
 
-      interval = setInterval(() => {
-        try {
-          controller.enqueue(`event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`);
-        } catch {
-          clearInterval(interval);
-        }
-      }, 5000);
-    },
-    transform(chunk, controller) {
-      const payload = toBase64(chunk.encoded);
-      const message = `event:message\nid:${chunk.id}\ndata: ${payload}\n\n`;
-      controller.enqueue(message);
-    },
-    flush() {
+  // Send client ID as first event
+  if (context.clientId) {
+    channel.send(`event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`);
+  }
+
+  // Send periodic pings; stop once the channel no longer accepts them.
+  const interval = setInterval(() => {
+    if (!channel.trySend(`event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`)) {
       clearInterval(interval);
-    },
-  });
+    }
+  }, 5000);
+
+  // Convert channel to ReadableStream for SSE Response
+  const readable = toReadableStream<string>(channel);
 
   return {
-    writable: transform.writable,
-    sseResponse: new Response(transform.readable, {
+    write(message: Message<Context>) {
+      const payload = toBase64(message.encoded);
+      const event = `event:message\nid:${message.id}\ndata: ${payload}\n\n`;
+      if (!channel.trySend(event)) clearInterval(interval);
+    },
+    close() {
+      clearInterval(interval);
+      channel.close();
+    },
+    sseResponse: new Response(readable, {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "private, no-cache, no-store, no-transform, must-revalidate, max-age=0",
@@ -100,50 +101,51 @@ export function getSSESource<Context extends ClientContext>({
     eventSource: EventSource;
   }
 > {
-  let handler: (event: MessageEvent) => void;
+  const channel = createChannel<BinaryMessage>();
 
   const clientId = new Promise<string>((resolve) => {
     source.addEventListener("client-id", (ev) => {
-      resolve(ev.data);
+      resolve((ev as MessageEvent).data);
     });
   });
+
+  const handler = (event: Event) => {
+    const message = fromBase64((event as MessageEvent).data);
+    if (isPingMessage(message)) {
+      onPing?.();
+      return;
+    }
+    if (isBinaryMessage(message)) {
+      channel.trySend(message);
+    }
+  };
+  source.addEventListener("message", handler);
+  source.addEventListener("ping", handler);
+  source.addEventListener("error", (e) => {
+    channel.error(e);
+  });
+
+  const closeCheck = setInterval(() => {
+    if (source.readyState === source.CLOSED) {
+      clearInterval(closeCheck);
+      channel.close();
+    }
+  }, 3000);
+
+  const decoded = decodeMessages<Context>(context)(channel);
+
+  async function* decodeSource(): AsyncIterable<Message<Context>[]> {
+    try {
+      yield* decoded;
+    } finally {
+      clearInterval(closeCheck);
+      source.close();
+    }
+  }
+
   return {
     eventSource: source,
     clientId,
-    readable: new ReadableStream<BinaryMessage>({
-      start(controller) {
-        handler = (event: MessageEvent) => {
-          const message = fromBase64(event.data);
-
-          if (isPingMessage(message)) {
-            onPing?.();
-            return;
-          }
-
-          if (isBinaryMessage(message)) {
-            controller.enqueue(message);
-          }
-        };
-        source.addEventListener("message", handler);
-        source.addEventListener("ping", handler);
-        source.addEventListener("error", (e) => {
-          controller.error(e);
-        });
-
-        const interval = setInterval(() => {
-          if (source.readyState === source.CLOSED) {
-            clearInterval(interval);
-            try {
-              controller.close();
-            } catch {
-              // ignore if we can't close, it may have already been cancelled
-            }
-          }
-        }, 3000);
-      },
-      cancel() {
-        source.close();
-      },
-    }).pipeThrough(getMessageReader(context)),
+    source: decodeSource(),
   };
 }

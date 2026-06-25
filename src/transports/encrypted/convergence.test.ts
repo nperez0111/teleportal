@@ -57,12 +57,7 @@ describe("encrypted convergence (in-process session harness)", () => {
   // ── Harness helpers (mirrors e2e.test.ts) ──────────────────────────────────
 
   function createServerClient(id: string, onMessage: (msg: Message<Ctx>) => void): Client<Ctx> {
-    const writable = new WritableStream<Message<Ctx>>({
-      async write(chunk) {
-        onMessage(chunk);
-      },
-    });
-    return new Client<Ctx>({ id, writable });
+    return new Client<Ctx>({ id, write: (chunk) => onMessage(chunk) });
   }
 
   type Peer = {

@@ -145,7 +145,6 @@ export class Connection extends Observable<{
 
   // Fan-out writer
   #fanOutWriter = createFanOutWriter<RawReceivedMessage>();
-  #writer = this.#fanOutWriter.writable.getWriter();
 
   // State
   #state: ConnectionState = { type: "disconnected" };
@@ -374,8 +373,7 @@ export class Connection extends Observable<{
     this.#inFlightMessages.clear();
     this.#clearConnectedPromise();
 
-    this.#writer.releaseLock();
-    this.#fanOutWriter.writable.close();
+    this.#fanOutWriter.close();
 
     await this.#closeActiveTransport();
   }
@@ -434,7 +432,7 @@ export class Connection extends Observable<{
       onMessage: (message) => {
         if (attemptId !== this.#connectionAttemptId) return;
         this.#updateLastMessageReceived();
-        this.#writer.write(message);
+        this.#fanOutWriter.send(message);
         this.call("received-message", message as Message);
 
         // Reactive token refresh: detect auth-message with permission denied

@@ -2,19 +2,18 @@ import { describe, expect, it, mock, beforeEach } from "bun:test";
 import { RateLimitedTransport } from "./index";
 import type { RateLimitStorage, RateLimitState } from "../../storage/types";
 import type { Message, ClientContext } from "teleportal";
+import { createChannel } from "../../lib/iter";
 
 // Mock Transport
 const createMockTransport = () => {
-  const readable = new ReadableStream<Message<ClientContext>>({
-    start(controller) {
-      // @ts-ignore
-      this.controller = controller;
-    },
-  });
-  const writable = new WritableStream<Message<ClientContext>>({
-    write: mock(),
-  });
-  return { readable, writable, controller: (readable as any).controller };
+  const ch = createChannel<Message<ClientContext>>();
+  const writeFn = mock();
+  return {
+    source: ch as AsyncIterable<Message<ClientContext>[]>,
+    write: writeFn as (message: Message<ClientContext>) => void,
+    close() {},
+    channel: ch,
+  };
 };
 
 // Mock Storage
@@ -65,14 +64,12 @@ describe("RateLimitedTransport", () => {
       onRateLimitExceeded,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
     // First 2 messages should pass
-    await writer.write({ type: "ping" } as any);
-    await writer.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
 
     // 3rd message should be silently dropped (not thrown)
-    await writer.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
 
     expect(onRateLimitExceeded).toHaveBeenCalled();
   });
@@ -91,10 +88,9 @@ describe("RateLimitedTransport", () => {
       rateLimitStorage: mockStorage,
     });
 
-    const writer = rateLimited.writable.getWriter();
     const msg = { type: "ping", context: { userId: "user1" } } as any;
 
-    await writer.write(msg);
+    await rateLimited.write(msg);
 
     // Check storage - key now includes rule ID
     const state = await mockStorage.getState("rate-limit:user-limit:user:user1");
@@ -117,10 +113,8 @@ describe("RateLimitedTransport", () => {
       rateLimitStorage: mockStorage,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
     // User 1 uses their limit
-    await writer.write({ type: "ping", context: { userId: "user1" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "user1" } } as any);
 
     // Check User 1 state
     const state1 = await mockStorage.getState("rate-limit:user-limit:user:user1");
@@ -131,8 +125,7 @@ describe("RateLimitedTransport", () => {
     expect(state2).toBeNull();
 
     // If we write for User 2, it should work (and create state)
-    // Note: We can't use the same writer if it crashed, but here we haven't crashed it yet.
-    await writer.write({ type: "ping", context: { userId: "user2" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "user2" } } as any);
 
     const state2After = await mockStorage.getState("rate-limit:user-limit:user:user2");
     expect(state2After?.tokens).toBe(0);
@@ -155,15 +148,13 @@ describe("RateLimitedTransport", () => {
       onPermissionDenied,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
     // Non-admin: denied by permission check, should skip rate limit
-    await writer.write({ type: "ping", context: { userId: "guest" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "guest" } } as any);
     expect(checkPermission).toHaveBeenCalled();
     expect(onPermissionDenied).toHaveBeenCalled();
 
     // Verify rate limit was skipped (multiple messages pass despite limit 1)
-    await writer.write({ type: "ping", context: { userId: "guest" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "guest" } } as any);
   });
 
   it("should apply rate limit if permission granted", async () => {
@@ -181,12 +172,10 @@ describe("RateLimitedTransport", () => {
       onRateLimitExceeded,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
-    await writer.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
 
     // Second should be silently dropped
-    await writer.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
     expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
@@ -207,17 +196,15 @@ describe("RateLimitedTransport", () => {
       onRateLimitExceeded,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
     // Admin should not be limited
-    await writer.write({ type: "ping", context: { userId: "admin" } } as any);
-    await writer.write({ type: "ping", context: { userId: "admin" } } as any);
-    await writer.write({ type: "ping", context: { userId: "admin" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "admin" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "admin" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "admin" } } as any);
     expect(onRateLimitExceeded).not.toHaveBeenCalled();
 
     // Regular user should be limited (silently dropped)
-    await writer.write({ type: "ping", context: { userId: "user" } } as any);
-    await writer.write({ type: "ping", context: { userId: "user" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "user" } } as any);
+    await rateLimited.write({ type: "ping", context: { userId: "user" } } as any);
     expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
@@ -242,7 +229,6 @@ describe("RateLimitedTransport", () => {
       rateLimitStorage: mockStorage,
     });
 
-    const writer = rateLimited.writable.getWriter();
     const msg = {
       type: "ping",
       context: { userId: "user1" },
@@ -250,7 +236,7 @@ describe("RateLimitedTransport", () => {
     } as any;
 
     // First message should pass both rules
-    await writer.write(msg);
+    await rateLimited.write(msg);
 
     // Check both rules have state
     const userState = await mockStorage.getState("rate-limit:user-limit:user:user1");
@@ -275,62 +261,55 @@ describe("RateLimitedTransport", () => {
       onRateLimitExceeded,
     });
 
-    const writer = rateLimited.writable.getWriter();
-
     // First message passes
-    await writer.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
 
     // Second message is dropped silently
-    await writer.write({ type: "ping" } as any);
+    await rateLimited.write({ type: "ping" } as any);
     expect(onRateLimitExceeded).toHaveBeenCalledTimes(1);
 
-    // Stream is still alive — third message is also dropped (not thrown)
-    await writer.write({ type: "ping" } as any);
+    // Still alive — third message is also dropped (not thrown)
+    await rateLimited.write({ type: "ping" } as any);
     expect(onRateLimitExceeded).toHaveBeenCalledTimes(2);
   });
 
   it("should drop rate-limited messages on readable stream too", async () => {
     const onRateLimitExceeded = mock();
-    const sourceController: any = {};
-    const readable = new ReadableStream<Message<ClientContext>>({
-      start(controller) {
-        sourceController.ctrl = controller;
-      },
-    });
-    const writable = new WritableStream<Message<ClientContext>>({ write: mock() });
+    const ch = createChannel<Message<ClientContext>>();
 
-    const rateLimited = new RateLimitedTransport({ readable, writable } as any, {
-      rules: [
-        {
-          id: "transport-limit",
-          maxMessages: 1,
-          windowMs: 1000,
-          trackBy: "transport",
-        },
-      ],
-      onRateLimitExceeded,
-    });
+    const rateLimited = new RateLimitedTransport(
+      { source: ch as AsyncIterable<Message<ClientContext>[]>, write() {}, close() {} } as any,
+      {
+        rules: [
+          {
+            id: "transport-limit",
+            maxMessages: 1,
+            windowMs: 1000,
+            trackBy: "transport",
+          },
+        ],
+        onRateLimitExceeded,
+      },
+    );
 
     const received: any[] = [];
-    const reader = rateLimited.readable.getReader();
 
     // Start reading in background
     const readLoop = (async () => {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        received.push(value);
+      for await (const batch of rateLimited.source) {
+        for (const msg of batch) {
+          received.push(msg);
+        }
       }
     })();
 
     // Enqueue 3 messages into source
-    sourceController.ctrl.enqueue({ type: "ping" } as any);
-    sourceController.ctrl.enqueue({ type: "ping" } as any);
-    sourceController.ctrl.enqueue({ type: "ping" } as any);
+    ch.send({ type: "ping" } as any);
+    ch.send({ type: "ping" } as any);
+    ch.send({ type: "ping" } as any);
 
     // Close the source and wait for the read loop to drain deterministically
-    // (avoids a flaky fixed-delay wait on slower CI).
-    sourceController.ctrl.close();
+    ch.close();
     await readLoop;
 
     // Only the first should have passed through

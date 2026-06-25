@@ -8,6 +8,10 @@ type DocumentRecord = {
   state: DocumentState | null;
 };
 
+/**
+ * In-memory document storage backed by a static Map (or user-supplied
+ * read/write/delete callbacks). Useful for tests and ephemeral servers.
+ */
 export class MemoryDocumentStorage extends AbstractDocumentStorage {
   public static docs = new Map<string, DocumentRecord>();
   public static attributionMaps = new Map<string, EncodedContentMap[]>();

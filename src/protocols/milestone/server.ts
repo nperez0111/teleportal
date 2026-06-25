@@ -92,6 +92,10 @@ interface MilestoneDeps {
  * The handlers automatically set up lifecycle hooks via the `init` callback,
  * which listens for `session-open` events to configure automatic milestone triggers.
  * Cleanup is handled automatically when the server is disposed.
+ *
+ * @param milestoneStorage - Storage backend for milestones
+ * @param options - Optional configuration for triggers and callbacks
+ * @returns RPC handler registry to pass to Server
  */
 export function getMilestoneRpcHandlers(
   milestoneStorage: MilestoneStorage,

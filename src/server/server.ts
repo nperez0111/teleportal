@@ -13,7 +13,7 @@ import {
 import { HealthStatus, MetricsCollector, StatusData } from "teleportal/monitoring";
 import type { RpcHandlerRegistry } from "teleportal/protocol";
 import type { DocumentStorage, MilestoneTrigger, RateLimitStorage } from "teleportal/storage";
-import { withMessageValidator } from "teleportal/transports";
+import { forEachMessage, withMessageValidator } from "teleportal/transports";
 import { type RateLimitRule, withRateLimit } from "teleportal/transports/rate-limiter";
 import { Observable } from "../lib/utils";
 import { register } from "../monitoring/metrics";
@@ -581,14 +581,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
     const client = new Client<Context>({
       id,
-      writable: rateLimitedTransport.writable,
+      write: (msg) => rateLimitedTransport.write(msg),
     });
 
     client.on("client-message", (ctx) => {
       this.call("client-message", ctx);
     });
 
-    withMessageValidator(rateLimitedTransport, {
+    const validatedTransport = withMessageValidator(rateLimitedTransport, {
       isAuthorized: async (message, type) => {
         if (!this.#options.checkPermission) {
           return true;
@@ -689,95 +689,88 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           return false;
         }
       },
-    })
-      .readable.pipeTo(
-        new WritableStream<Message<Context>>({
-          write: async (message) => {
-            if (message.type === "ack") {
-              this.#metrics.incrementMessage(message.type);
-              return;
-            }
+    });
 
-            const startTime = Date.now();
-            const wideEvent: WideEvent = {
-              event_type: "message",
-              timestamp: new Date().toISOString(),
-              message_id: message.id,
-              client_id: client.id,
-              document_id: message.document,
-              message_type: message.type,
-              payload_type: (message as { payload?: { type?: string } }).payload?.type,
+    // Consume validated transport source
+    (async () => {
+      try {
+        await forEachMessage(validatedTransport.source, async (message) => {
+          if (message.type === "ack") {
+            this.#metrics.incrementMessage(message.type);
+            return;
+          }
+
+          const startTime = Date.now();
+          const wideEvent: WideEvent = {
+            event_type: "message",
+            timestamp: new Date().toISOString(),
+            message_id: message.id,
+            client_id: client.id,
+            document_id: message.document,
+            message_type: message.type,
+            payload_type: (message as { payload?: { type?: string } }).payload?.type,
+            encrypted: message.encrypted,
+            user_id: message.context?.userId,
+          };
+
+          try {
+            const session = await this.getOrOpenSession(message.document, {
               encrypted: message.encrypted,
-              user_id: message.context?.userId,
-            };
+              client,
+              context: message.context,
+              ignoreEncryptionMismatch: message.type === "presence" || message.type === "rpc",
+            });
+            wideEvent.session_id = session.id;
 
-            try {
-              const session = await this.getOrOpenSession(message.document, {
-                encrypted: message.encrypted,
-                client,
-                context: message.context,
-                // The `encrypted` flag on a message describes whether its
-                // payload is encrypted, not which session type it belongs to.
-                // Only `doc` messages use the flag for session routing (they
-                // carry document content processed differently per mode).
-                // Presence and RPC payloads are independent of the document's
-                // encryption state and must route to the existing session
-                // regardless of their own `encrypted` value.
-                ignoreEncryptionMismatch: message.type === "presence" || message.type === "rpc",
-              });
-              wideEvent.session_id = session.id;
+            await session.apply(message, client);
 
-              await session.apply(message, client);
+            this.#metrics.incrementMessage(message.type);
+            const durationSec = (Date.now() - startTime) / 1000;
+            this.#metrics.messageDuration.observe({ type: message.type }, durationSec);
 
-              this.#metrics.incrementMessage(message.type);
-              const durationSec = (Date.now() - startTime) / 1000;
-              this.#metrics.messageDuration.observe({ type: message.type }, durationSec);
+            this.call("client-message", {
+              clientId: client.id,
+              message,
+              direction: "in",
+            });
 
-              this.call("client-message", {
-                clientId: client.id,
-                message,
-                direction: "in",
-              });
+            const ackMessage = new AckMessage(
+              {
+                type: "ack",
+                messageId: message.id,
+              },
+              message.context,
+            );
+            await client.send(ackMessage);
+            await this.pubSub.publish(
+              `ack/${client.id}` as const,
+              ackMessage.encoded,
+              `server-${client.id}`,
+            );
 
-              const ackMessage = new AckMessage(
-                {
-                  type: "ack",
-                  messageId: message.id,
-                },
-                message.context,
-              );
-              await client.send(ackMessage);
-              await this.pubSub.publish(
-                `ack/${client.id}` as const,
-                ackMessage.encoded,
-                `server-${client.id}`,
-              );
-
-              wideEvent.outcome = "success";
-              wideEvent.status_code = 200;
-            } catch (error) {
-              wideEvent.outcome = "error";
-              wideEvent.status_code = 500;
-              wideEvent.error = error;
-              throw error;
-            } finally {
-              wideEvent.duration_ms = Date.now() - startTime;
-              emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
-            }
-          },
-        }),
-      )
-      .catch((err) => {
+            wideEvent.outcome = "success";
+            wideEvent.status_code = 200;
+          } catch (error) {
+            wideEvent.outcome = "error";
+            wideEvent.status_code = 500;
+            wideEvent.error = error;
+            throw error;
+          } finally {
+            wideEvent.duration_ms = Date.now() - startTime;
+            emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
+          }
+        });
+      } catch (err) {
         emitWideEvent("error", {
           event_type: "client_stream_error",
           timestamp: new Date().toISOString(),
           client_id: id,
           error: err,
         });
-      })
-      .finally(() => {
+      } finally {
         this.disconnectClient(client.id, "stream-ended");
-      });
+      }
+    })();
 
     // Record client connect metric
     this.#metrics.clientsActive.inc();

@@ -1,17 +1,19 @@
 import { uuidv4 } from "lib0/random";
 import type { PubSubTopic, ServerContext, Transport } from "teleportal";
+import { encodeMessageArray } from "teleportal";
 import type { Client, Server } from "teleportal/server";
 import {
   compose,
+  connect,
+  createChannel,
   getHTTPSource,
   getPubSubSink,
   getPubSubSource,
   getSSESink,
-  pipe,
-  toMessageArrayStream,
   withAckTrackingSink,
 } from "teleportal/transports";
 import { emitWideEvent } from "teleportal/server";
+import { toReadableStream } from "../lib/iter";
 import { getDocumentsFromQueryParams } from "./utils";
 
 /**
@@ -188,7 +190,10 @@ export function getSSEWriterEndpoint<Context extends ServerContext>({
         abortSignal: req.signal,
       });
 
-      await Promise.all([httpSource.handleHTTPRequest(req), pipe(httpSource, trackedSink)]);
+      // `handleHTTPRequest` buffers the whole body into the source channel and
+      // closes it, so draining afterwards is sequential — no concurrency needed.
+      await httpSource.handleHTTPRequest(req);
+      await connect(httpSource, trackedSink);
 
       try {
         await trackedSink.waitForAcks();
@@ -263,14 +268,21 @@ export function getHTTPEndpoint<Context extends ServerContext>({
         ...(await getContext(req)),
       } as Context;
 
-      const transformStream = toMessageArrayStream();
+      const responseChannel = createChannel<Uint8Array>();
 
-      req.signal.addEventListener("abort", async (e) => {
-        await transformStream.writable.abort(e);
+      const httpSource = getHTTPSource({ context });
+
+      const httpTransport = compose(httpSource, {
+        write(message) {
+          responseChannel.send(encodeMessageArray([message]) as unknown as Uint8Array);
+        },
+        close() {
+          responseChannel.close();
+        },
       });
 
-      const httpTransport = compose(getHTTPSource({ context }), {
-        writable: transformStream.writable,
+      req.signal.addEventListener("abort", () => {
+        httpTransport.close();
       });
 
       await server.createClient({
@@ -282,7 +294,8 @@ export function getHTTPEndpoint<Context extends ServerContext>({
       await httpTransport.handleHTTPRequest(req);
       wideEvent.outcome = "success";
       wideEvent.status_code = 200;
-      return new Response(transformStream.readable as ReadableStream<Uint8Array>, {
+
+      return new Response(toReadableStream(responseChannel), {
         headers: {
           "Content-Type": "application/octet-stream",
           "x-powered-by": "teleportal",

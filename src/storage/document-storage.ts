@@ -16,6 +16,11 @@ import {
 } from "../lib/protocol/encryption/encoding";
 import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "./types";
 
+/**
+ * Internal representation of a document's persisted state: a merged V2
+ * structure update plus its associated encrypted sidecars. For unencrypted
+ * documents the sidecars array is empty.
+ */
 export type DocumentState = {
   update: Uint8Array;
   sidecars: IndexedSidecar[];
@@ -82,6 +87,10 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     return cb();
   }
 
+  /**
+   * Respond to a sync-step-1 by computing a V2 diff against the client's
+   * state vector and returning only the sidecars relevant to that diff.
+   */
   async handleSyncStep1(key: string, syncStep1: StateVector): Promise<Document> {
     const now = Date.now();
     const metadata = normalizeMetadata(await this.getDocumentMetadata(key), now, this.encrypted);
@@ -123,6 +132,12 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     } as unknown as VersionedUpdate);
   }
 
+  /**
+   * Persist a Y.js update to storage. Decodes the content-encrypted payload,
+   * merges the structure update with any existing state, and appends new
+   * sidecars. Handles sidecar compaction when the update carries a compaction
+   * record.
+   */
   async handleUpdate(
     key: string,
     update: VersionedUpdate,
@@ -200,6 +215,12 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     });
   }
 
+  /**
+   * Replace all sidecars with a single compacted sidecar, provided the
+   * document's state vector still matches {@link baseSV}. Returns `true` if
+   * the compaction was applied, `false` if the document changed since the
+   * caller computed the compaction.
+   */
   async handleCompaction(
     key: string,
     compactedSidecar: IndexedSidecar,
@@ -217,6 +238,10 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     });
   }
 
+  /**
+   * Retrieve the full document from storage, encoding the stored V2 update and
+   * sidecars into a content-encrypted payload.
+   */
   async getDocument(key: string): Promise<Document | null> {
     const now = Date.now();
     const state = await this.getDocumentState(key);

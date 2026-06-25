@@ -9,7 +9,8 @@ import {
   Source,
   Transport,
 } from "teleportal";
-import { compose, getMessageReader } from "../utils";
+import { compose, decodeMessages } from "../utils";
+import { createChannel } from "../../lib/iter";
 
 /**
  * Generic publisher sink that publishes messages to a topic using the provided backend
@@ -42,12 +43,11 @@ export function getPubSubSink<Context extends ServerContext>({
 > {
   return {
     pubSub,
-    writable: new WritableStream({
-      async write(chunk) {
-        const topic = topicResolver(chunk);
-        await pubSub.publish(topic, chunk.encoded, sourceId);
-      },
-    }),
+    async write(message: Message<Context>) {
+      const topic = topicResolver(message);
+      await pubSub.publish(topic, message.encoded, sourceId);
+    },
+    close() {},
   };
 }
 
@@ -90,8 +90,8 @@ export function getPubSubSource<Context extends ServerContext>({
     pubSub: PubSub;
   }
 > {
+  const channel = createChannel<BinaryMessage>();
   const subscribedTopics = new Map<PubSubTopic, () => Promise<void>>();
-  let controller: ReadableStreamDefaultController<BinaryMessage>;
 
   return {
     pubSub,
@@ -101,7 +101,7 @@ export function getPubSubSource<Context extends ServerContext>({
           if (messageSourceId === sourceId) {
             return;
           }
-          controller.enqueue(message);
+          channel.trySend(message);
         });
         subscribedTopics.set(topic, unsubscribe);
       }
@@ -118,15 +118,7 @@ export function getPubSubSource<Context extends ServerContext>({
         subscribedTopics.delete(topic);
       }
     },
-    readable: new ReadableStream<BinaryMessage>({
-      async start(_controller) {
-        controller = _controller;
-      },
-      async cancel() {
-        await Promise.all([...subscribedTopics.values()].map((unsubscribe) => unsubscribe()));
-        subscribedTopics.clear();
-      },
-    }).pipeThrough(getMessageReader(getContext)),
+    source: decodeMessages<Context>(getContext)(channel),
   };
 }
 
@@ -172,18 +164,8 @@ export function getPubSubTransport<Context extends ServerContext>({
     pubSub: PubSub;
   }
 > {
-  const transport = compose(
-    getPubSubSource({
-      getContext,
-      pubSub,
-      sourceId,
-    }),
-    getPubSubSink({
-      pubSub,
-      topicResolver,
-      sourceId,
-    }),
+  return compose(
+    getPubSubSource({ getContext, pubSub, sourceId }),
+    getPubSubSink({ pubSub, topicResolver, sourceId }),
   );
-
-  return transport;
 }

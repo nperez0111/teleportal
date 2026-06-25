@@ -25,12 +25,7 @@ import { createAttributionRpc } from "../../protocols/attribution/client";
 type Ctx = ServerContext;
 
 function createServerClient(id: string, onMessage: (msg: Message<Ctx>) => void): Client<Ctx> {
-  const writable = new WritableStream<Message<Ctx>>({
-    async write(chunk) {
-      onMessage(chunk);
-    },
-  });
-  return new Client<Ctx>({ id, writable });
+  return new Client<Ctx>({ id, write: (chunk) => onMessage(chunk) });
 }
 
 // ─── Unit-level encrypted sync tests (no real transport) ───────────────────
@@ -372,6 +367,8 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
         // Best-effort teardown; ignore errors from already-closed resources.
       }
     }
+    // Let any dangling rejections (e.g. ydoc transport synced promise) settle.
+    await new Promise((r) => setTimeout(r, 0));
   });
 
   function createWsConnection(opts?: { connect?: boolean }) {
@@ -402,7 +399,11 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: opts?.encryptionKey ?? false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => provider.destroy());
+    cleanups.push(() => {
+      // Swallow the synced promise rejection that destroy triggers
+      provider.transport.synced?.catch(() => {});
+      provider.destroy();
+    });
     return { provider, connection: conn };
   }
 
@@ -556,7 +557,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       enableOfflinePersistence: true,
       offlineStorage: makeStore(),
     });
-    cleanups.push(() => p1.destroy());
+    cleanups.push(() => { p1.transport.synced?.catch(() => {}); p1.destroy(); });
     await waitForSync(p1);
 
     p1.doc.getText("body").insert(0, "secret offline data");
@@ -585,7 +586,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       enableOfflinePersistence: true,
       offlineStorage: makeStore(),
     });
-    cleanups.push(() => p2.destroy());
+    cleanups.push(() => { p2.transport.synced?.catch(() => {}); p2.destroy(); });
 
     // `loaded` resolves from the local replay, independent of any server.
     await p2.loaded;
@@ -609,7 +610,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       enableOfflinePersistence: true,
       offlineStorage: makeStore(),
     });
-    cleanups.push(() => p1.destroy());
+    cleanups.push(() => { p1.transport.synced?.catch(() => {}); p1.destroy(); });
     await waitForSync(p1);
     p1.doc.getText("body").insert(0, "data while online");
     await waitUntil(
@@ -630,7 +631,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       enableOfflinePersistence: true,
       offlineStorage: makeStore(),
     });
-    cleanups.push(() => p2.destroy());
+    cleanups.push(() => { p2.transport.synced?.catch(() => {}); p2.destroy(); });
 
     // loaded resolves and the doc is restored from local storage...
     await p2.loaded;
@@ -746,7 +747,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p2.destroy());
+    cleanups.push(() => { p2.transport.synced?.catch(() => {}); p2.destroy(); });
     await waitForSync(p2);
     await waitForContent(p2.doc, "body", (t) => t === "before disconnect");
 
@@ -804,7 +805,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p2.destroy());
+    cleanups.push(() => { p2.transport.synced?.catch(() => {}); p2.destroy(); });
     await waitForSync(p2);
     await waitForContent(p2.doc, "body", (t) => t === "before disconnect");
 
@@ -838,13 +839,14 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
     const messagesReceived: Message[] = [];
     const reader = conn.getReader();
-    reader.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
+    // Consume the reader's source in the background
+    (async () => {
+      for await (const batch of reader.source) {
+        for (const chunk of batch) {
           messagesReceived.push(chunk);
-        },
-      }),
-    );
+        }
+      }
+    })();
 
     const provider = await Provider.create({
       connection: conn,
@@ -852,7 +854,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => provider.destroy());
+    cleanups.push(() => { provider.transport.synced?.catch(() => {}); provider.destroy(); });
 
     // Wait up to 3s — server must respond with sync-step-2 and sync-step-1
     const deadline = Date.now() + 3000;
@@ -940,7 +942,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p1.destroy());
+    cleanups.push(() => { p1.transport.synced?.catch(() => {}); p1.destroy(); });
 
     const p2 = await Provider.create({
       connection: conn,
@@ -948,7 +950,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p2.destroy());
+    cleanups.push(() => { p2.transport.synced?.catch(() => {}); p2.destroy(); });
 
     await waitForSync(p1);
     await waitForSync(p2);
@@ -968,7 +970,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p1b.destroy());
+    cleanups.push(() => { p1b.transport.synced?.catch(() => {}); p1b.destroy(); });
 
     const p2b = await Provider.create({
       connection: conn2,
@@ -976,7 +978,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: false,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p2b.destroy());
+    cleanups.push(() => { p2b.transport.synced?.catch(() => {}); p2b.destroy(); });
 
     await waitForSync(p1b);
     await waitForSync(p2b);
@@ -1025,7 +1027,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p1.destroy());
+    cleanups.push(() => { p1.transport.synced?.catch(() => {}); p1.destroy(); });
 
     const p2 = await Provider.create({
       connection: conn,
@@ -1033,7 +1035,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p2.destroy());
+    cleanups.push(() => { p2.transport.synced?.catch(() => {}); p2.destroy(); });
 
     await waitForSync(p1);
     await waitForSync(p2);
@@ -1053,7 +1055,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p1b.destroy());
+    cleanups.push(() => { p1b.transport.synced?.catch(() => {}); p1b.destroy(); });
 
     const p2b = await Provider.create({
       connection: conn2,
@@ -1061,7 +1063,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
       encryptionKey: key,
       enableOfflinePersistence: false,
     });
-    cleanups.push(() => p2b.destroy());
+    cleanups.push(() => { p2b.transport.synced?.catch(() => {}); p2b.destroy(); });
 
     await waitForSync(p1b);
     await waitForSync(p2b);
@@ -1452,7 +1454,7 @@ describe("attribution e2e: full WebSocket transport", () => {
         attribution: createAttributionRpc,
       },
     });
-    cleanups.push(() => provider.destroy());
+    cleanups.push(() => { provider.transport.synced?.catch(() => {}); provider.destroy(); });
     return { provider, connection: conn };
   }
 

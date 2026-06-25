@@ -7,111 +7,121 @@ import {
   type AwarenessUpdateMessage,
   type Message,
   type StateVector,
-  type Transport,
   type Update,
   type VersionedUpdate,
   type VersionedSyncStep2Update,
 } from "teleportal";
+import { createChannel } from "../../lib/iter";
 import { noopTransport, withPassthrough } from ".";
 
-export function generateTestTransport(type: "doc" | "awareness"): Transport<{ test: string }> {
+export function generateTestTransport(type: "doc" | "awareness"): {
+  source: AsyncIterable<Message<{ test: string }>[]>;
+  write: (message: Message<{ test: string }>) => void;
+  close: () => void;
+} {
+  const ch = createChannel<Message<{ test: string }>>();
+
   if (type === "doc") {
+    // Push messages asynchronously
+    (async () => {
+      ch.send(
+        new DocMessage(
+          "test",
+          {
+            type: "sync-step-1",
+            sv: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as StateVector,
+          },
+          { test: "id-1" },
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      ch.send(
+        new DocMessage(
+          "test",
+          {
+            type: "sync-step-2",
+            update: {
+              version: 2,
+              data: new Uint8Array([0x01, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
+            } as VersionedSyncStep2Update,
+          },
+          { test: "id-2" },
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      ch.send(
+        new DocMessage(
+          "test",
+          {
+            type: "update",
+            update: {
+              version: 2,
+              data: new Uint8Array([0x02, 0x00, 0x01, 0x02, 0x03]) as Update,
+            } as VersionedUpdate,
+          },
+          { test: "id-3" },
+        ),
+      );
+
+      ch.close();
+    })();
+
     return {
-      readable: new ReadableStream<Message<{ test: string }>>({
-        async start(controller) {
-          controller.enqueue(
-            new DocMessage(
-              "test",
-              {
-                type: "sync-step-1",
-                sv: new Uint8Array([0x00, 0x00, 0x01, 0x02, 0x03]) as StateVector,
-              },
-              { test: "id-1" },
-            ),
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, 0));
-
-          controller.enqueue(
-            new DocMessage(
-              "test",
-              {
-                type: "sync-step-2",
-                update: {
-                  version: 2,
-                  data: new Uint8Array([0x01, 0x00, 0x01, 0x02, 0x03]) as SyncStep2Update,
-                } as VersionedSyncStep2Update,
-              },
-              { test: "id-2" },
-            ),
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, 0));
-
-          controller.enqueue(
-            new DocMessage(
-              "test",
-              {
-                type: "update",
-                update: {
-                  version: 2,
-                  data: new Uint8Array([0x02, 0x00, 0x01, 0x02, 0x03]) as Update,
-                } as VersionedUpdate,
-              },
-              { test: "id-3" },
-            ),
-          );
-
-          controller.close();
-        },
-      }),
-      writable: new WritableStream<Message<{ test: string }>>(),
+      source: ch,
+      write() {},
+      close() {},
     };
   } else {
+    // Push messages asynchronously
+    (async () => {
+      ch.send(
+        new AwarenessMessage(
+          "test",
+          {
+            type: "awareness-update",
+            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
+          },
+          { test: "id-1" },
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      ch.send(
+        new AwarenessMessage(
+          "test",
+          {
+            type: "awareness-update",
+            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
+          },
+          { test: "id-2" },
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      ch.send(
+        new AwarenessMessage(
+          "test",
+          {
+            type: "awareness-update",
+            update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
+          },
+          { test: "id-3" },
+        ),
+      );
+
+      ch.close();
+    })();
+
     return {
-      writable: new WritableStream<Message<{ test: string }>>(),
-      readable: new ReadableStream<Message<{ test: string }>>({
-        async start(controller) {
-          controller.enqueue(
-            new AwarenessMessage(
-              "test",
-              {
-                type: "awareness-update",
-                update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
-              },
-              { test: "id-1" },
-            ),
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, 0));
-
-          controller.enqueue(
-            new AwarenessMessage(
-              "test",
-              {
-                type: "awareness-update",
-                update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
-              },
-              { test: "id-2" },
-            ),
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, 0));
-
-          controller.enqueue(
-            new AwarenessMessage(
-              "test",
-              {
-                type: "awareness-update",
-                update: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as AwarenessUpdateMessage,
-              },
-              { test: "id-3" },
-            ),
-          );
-
-          controller.close();
-        },
-      }),
+      source: ch,
+      write() {},
+      close() {},
     };
   }
 }
@@ -120,27 +130,33 @@ describe("transport", () => {
   it("can read doc", async () => {
     const transport = generateTestTransport("doc");
 
-    let count = 1;
-    await transport.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
-          expect(chunk.context.test).toBe(`id-${count++}`);
-        },
-      }),
-    );
+    const received: Message<{ test: string }>[] = [];
+    for await (const batch of transport.source) {
+      for (const chunk of batch) {
+        received.push(chunk);
+      }
+    }
+
+    expect(received.length).toBe(3);
+    expect(received[0].context.test).toBe("id-1");
+    expect(received[1].context.test).toBe("id-2");
+    expect(received[2].context.test).toBe("id-3");
   });
 
   it("can read awareness", async () => {
     const transport = generateTestTransport("awareness");
 
-    let count = 1;
-    await transport.readable.pipeTo(
-      new WritableStream({
-        write(chunk) {
-          expect(chunk.context.test).toBe(`id-${count++}`);
-        },
-      }),
-    );
+    const received: Message<{ test: string }>[] = [];
+    for await (const batch of transport.source) {
+      for (const chunk of batch) {
+        received.push(chunk);
+      }
+    }
+
+    expect(received.length).toBe(3);
+    expect(received[0].context.test).toBe("id-1");
+    expect(received[1].context.test).toBe("id-2");
+    expect(received[2].context.test).toBe("id-3");
   });
 
   it("can write doc", async () => {
@@ -150,8 +166,7 @@ describe("transport", () => {
         expect(chunk.context.test).toBe(`id-${count++}`);
       },
     });
-    const writer = transport.writable.getWriter();
-    writer.write(
+    transport.write(
       new DocMessage(
         "test",
         {
@@ -164,7 +179,7 @@ describe("transport", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    writer.write(
+    transport.write(
       new DocMessage(
         "test",
         {
@@ -177,7 +192,7 @@ describe("transport", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    writer.write(
+    transport.write(
       new DocMessage(
         "test",
         {
@@ -201,8 +216,7 @@ describe("transport", () => {
         expect(chunk.context.test).toBe(`id-${count++}`);
       },
     });
-    const writer = transport.writable.getWriter();
-    writer.write(
+    transport.write(
       new AwarenessMessage(
         "test",
         {
@@ -215,7 +229,7 @@ describe("transport", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    writer.write(
+    transport.write(
       new AwarenessMessage(
         "test",
         {
@@ -228,7 +242,7 @@ describe("transport", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    writer.write(
+    transport.write(
       new AwarenessMessage(
         "test",
         {

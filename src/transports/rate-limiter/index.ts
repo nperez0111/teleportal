@@ -1,4 +1,5 @@
 import type { Message, ServerContext, Transport } from "teleportal";
+import { mapMessages } from "../utils";
 import type { MetricsCollector } from "../../monitoring";
 import {
   createInitialState,
@@ -179,8 +180,9 @@ export class RateLimitedTransport<
   Context extends ServerContext,
   AdditionalProps extends Record<string, unknown>,
 > {
-  public readable: ReadableStream<Message<Context>>;
-  public writable: WritableStream<Message<Context>>;
+  public source: AsyncIterable<Message<Context>[]>;
+  public write: (message: Message<Context>) => Promise<void>;
+  public close: () => void;
 
   private rules: RateLimitRule<Context>[];
   private maxMessageSize: number;
@@ -196,7 +198,6 @@ export class RateLimitedTransport<
   private checkPermission?: (message: Message<Context>) => Promise<boolean> | boolean;
   private shouldSkipRateLimitFunc?: (message: Message<Context>) => Promise<boolean> | boolean;
 
-  // In-memory buckets for transport-level tracking (one per rule)
   private transportBuckets: Map<string, TokenBucket> = new Map();
 
   constructor(transport: Transport<Context, AdditionalProps>, options: RateLimitOptions<Context>) {
@@ -205,7 +206,7 @@ export class RateLimitedTransport<
     }
 
     this.rules = options.rules;
-    this.maxMessageSize = options.maxMessageSize ?? 1024 * 1024 * 10; // 10MB default
+    this.maxMessageSize = options.maxMessageSize ?? 1024 * 1024 * 10;
     this.onRateLimitExceeded = options.onRateLimitExceeded;
     this.onMessageSizeExceeded = options.onMessageSizeExceeded;
     this.onPermissionDenied = options.onPermissionDenied;
@@ -218,18 +219,27 @@ export class RateLimitedTransport<
     this.checkPermission = options.checkPermission;
     this.shouldSkipRateLimitFunc = options.shouldSkipRateLimit;
 
-    // Initialize transport streams with rate limiting
-    this.readable = this.createRateLimitedReadable(transport.readable);
-    this.writable = this.createRateLimitedWritable(transport.writable);
+    this.source = this.createRateLimitedSource(transport.source);
+    const originalWrite = transport.write.bind(transport);
+    const originalClose = transport.close.bind(transport);
+    this.write = async (message: Message<Context>) => {
+      if (!this.checkMessageSize(message)) {
+        throw new Error("Message size limit exceeded");
+      }
+      const exceeded = await this.checkRateLimit(message);
+      if (exceeded) {
+        return;
+      }
+      await originalWrite(message);
+    };
+    this.close = originalClose;
   }
 
   private async resolveLimit(
     resolver: LimitResolver<Context>,
     message: Message<Context>,
   ): Promise<number> {
-    if (typeof resolver === "number") {
-      return resolver;
-    }
+    if (typeof resolver === "number") return resolver;
     return await resolver(message);
   }
 
@@ -243,28 +253,18 @@ export class RateLimitedTransport<
   ) {
     const now = Date.now();
     const bucket = this.transportBuckets.get(ruleId);
-
     if (!bucket) {
-      this.transportBuckets.set(ruleId, {
-        tokens: currentMaxMessages,
-        lastRefill: now,
-      });
+      this.transportBuckets.set(ruleId, { tokens: currentMaxMessages, lastRefill: now });
       return;
     }
-
     const state = {
       tokens: bucket.tokens,
       lastRefill: bucket.lastRefill,
       windowMs: currentWindowMs,
       maxMessages: currentMaxMessages,
     };
-
     const newState = refillRateLimitState(state, now);
-
-    this.transportBuckets.set(ruleId, {
-      tokens: newState.tokens,
-      lastRefill: newState.lastRefill,
-    });
+    this.transportBuckets.set(ruleId, { tokens: newState.tokens, lastRefill: newState.lastRefill });
   }
 
   /**
@@ -277,10 +277,7 @@ export class RateLimitedTransport<
   ): string | null {
     const getUserId = rule.getUserId ?? this.defaultGetUserId;
     const getDocumentId = rule.getDocumentId ?? this.defaultGetDocumentId;
-    const userId = getUserId?.(message);
-    const documentId = getDocumentId?.(message);
-
-    return getRateLimitKey(ruleId, userId, documentId, rule.trackBy);
+    return getRateLimitKey(ruleId, getUserId?.(message), getDocumentId?.(message), rule.trackBy);
   }
 
   /**
@@ -290,17 +287,11 @@ export class RateLimitedTransport<
    */
   private async shouldRateLimit(message: Message<Context>): Promise<boolean> {
     if (this.shouldSkipRateLimitFunc) {
-      if (await this.shouldSkipRateLimitFunc(message)) {
-        return false;
-      }
+      if (await this.shouldSkipRateLimitFunc(message)) return false;
     }
-
     if (this.checkPermission) {
       const hasPermission = await this.checkPermission(message);
       if (!hasPermission) {
-        // Permission denied, so we skip rate limiting
-        // The permission system (elsewhere) should reject this message
-        // But we want to avoid consuming tokens for invalid messages
         this.onPermissionDenied?.(message);
         return false;
       }
@@ -316,41 +307,27 @@ export class RateLimitedTransport<
     rule: RateLimitRule<Context>,
     message: Message<Context>,
   ): Promise<RateLimitExceededData<Context> | null> {
-    // Skip this rule if shouldSkipRule returns true
     if (rule.shouldSkipRule) {
-      if (await rule.shouldSkipRule(message)) {
-        return null;
-      }
+      if (await rule.shouldSkipRule(message)) return null;
     }
-
-    // Resolve dynamic limits
     const currentMaxMessages = await this.resolveLimit(rule.maxMessages, message);
     const currentWindowMs = await this.resolveLimit(rule.windowMs, message);
-
-    // Get storage for this rule (rule-specific or default)
     const storage = rule.rateLimitStorage ?? this.defaultRateLimitStorage;
     const key = this.getRateLimitKey(rule.id, rule, message);
 
-    // If persistent storage is configured and we have a key, use it
     if (storage && key) {
-      // Use transaction to ensure atomicity
       return storage.transaction(key, async () => {
         const now = Date.now();
         let state = await storage.getState(key);
         this.metricsCollector?.recordRateLimitStateOperation("get", rule.trackBy);
-
         if (!state) {
           state = createInitialState(currentWindowMs, currentMaxMessages);
         } else {
-          // Update state with potentially new limits to ensure correct refill calculation
           state.maxMessages = currentMaxMessages;
           state.windowMs = currentWindowMs;
           state = refillRateLimitState(state, now);
         }
-
-        // At this point, state is guaranteed to be non-null
         const currentState = state;
-
         if (currentState.tokens < 1) {
           const getUserId = rule.getUserId ?? this.defaultGetUserId;
           const getDocumentId = rule.getDocumentId ?? this.defaultGetDocumentId;
@@ -374,15 +351,11 @@ export class RateLimitedTransport<
             );
             this.eventEmitter?.call("rate-limit-exceeded", exceededData);
           } catch (err) {
-            // Observability hooks must not break the non-fatal drop guarantee.
             console.warn("Rate limit observability hook threw:", err);
           }
           return exceededData;
         }
-
-        // Consume token
         currentState.tokens -= 1;
-
         await storage.setState(key, currentState, currentWindowMs);
         this.metricsCollector?.recordRateLimitStateOperation("set", rule.trackBy);
         this.eventEmitter?.call("rate-limit-state-updated", {
@@ -391,16 +364,13 @@ export class RateLimitedTransport<
           tokens: currentState.tokens,
           trackBy: rule.trackBy,
         });
-
         return null;
       });
     }
 
-    // Fallback to in-memory transport-level tracking
     if (rule.trackBy === "transport") {
       this.refillTransportBucket(rule.id, currentMaxMessages, currentWindowMs);
       const bucket = this.transportBuckets.get(rule.id)!;
-
       if (bucket.tokens < 1) {
         const exceededData: RateLimitExceededData<Context> = {
           ruleId: rule.id,
@@ -416,18 +386,14 @@ export class RateLimitedTransport<
           this.metricsCollector?.recordRateLimitExceeded("unknown", undefined, "transport");
           this.eventEmitter?.call("rate-limit-exceeded", exceededData);
         } catch (err) {
-          // Observability hooks must not break the non-fatal drop guarantee.
           console.warn("Rate limit observability hook threw:", err);
         }
         return exceededData;
       }
-
       bucket.tokens--;
       return null;
     }
 
-    // If we don't have storage and it's not transport-level, we can't track it
-    // This shouldn't happen in practice, but fail open for safety
     return null;
   }
 
@@ -439,20 +405,11 @@ export class RateLimitedTransport<
   private async checkRateLimit(
     message: Message<Context>,
   ): Promise<RateLimitExceededData<Context> | null> {
-    // 1. Check global permissions first
-    if (!(await this.shouldRateLimit(message))) {
-      return null;
-    }
-
-    // 2. Check all rules sequentially
-    // If any rule fails, reject immediately
+    if (!(await this.shouldRateLimit(message))) return null;
     for (const rule of this.rules) {
       const exceeded = await this.checkRule(rule, message);
-      if (exceeded) {
-        return exceeded;
-      }
+      if (exceeded) return exceeded;
     }
-
     return null;
   }
 
@@ -462,66 +419,26 @@ export class RateLimitedTransport<
   private checkMessageSize(message: Message<Context>): boolean {
     const size = new TextEncoder().encode(JSON.stringify(message)).length;
     if (size > this.maxMessageSize) {
-      this.onMessageSizeExceeded?.({
-        size,
-        maxSize: this.maxMessageSize,
-        message,
-      });
+      this.onMessageSizeExceeded?.({ size, maxSize: this.maxMessageSize, message });
       return false;
     }
     return true;
   }
 
   /**
-   * Create a rate-limited writable stream.
+   * Create a rate-limited source iterable.
    * Rate-limited messages are silently dropped (never thrown) to keep the stream alive.
    */
-  private createRateLimitedWritable(
-    writable: WritableStream<Message<Context>>,
-  ): WritableStream<Message<Context>> {
-    const writer = writable.getWriter();
-
-    return new WritableStream<Message<Context>>({
-      write: async (chunk) => {
-        if (!this.checkMessageSize(chunk)) {
-          throw new Error("Message size limit exceeded");
-        }
-
-        const exceeded = await this.checkRateLimit(chunk);
-        if (exceeded) {
-          return;
-        }
-
-        return writer.write(chunk);
-      },
-      close: () => writer.close(),
-      abort: (reason) => writer.abort(reason),
-    });
-  }
-
-  /**
-   * Create a rate-limited readable stream.
-   * Rate-limited messages are silently dropped (never thrown) to keep the stream alive.
-   */
-  private createRateLimitedReadable(
-    readable: ReadableStream<Message<Context>>,
-  ): ReadableStream<Message<Context>> {
-    return readable.pipeThrough(
-      new TransformStream<Message<Context>, Message<Context>>({
-        transform: async (chunk, controller) => {
-          if (!this.checkMessageSize(chunk)) {
-            throw new Error("Message size limit exceeded");
-          }
-
-          const exceeded = await this.checkRateLimit(chunk);
-          if (exceeded) {
-            return;
-          }
-
-          controller.enqueue(chunk);
-        },
-      }),
-    );
+  private createRateLimitedSource(
+    source: AsyncIterable<Message<Context>[]>,
+  ): AsyncIterable<Message<Context>[]> {
+    return mapMessages(async (msg: Message<Context>) => {
+      if (!this.checkMessageSize(msg)) {
+        throw new Error("Message size limit exceeded");
+      }
+      // Rate-limited messages are silently dropped (returned as null).
+      return (await this.checkRateLimit(msg)) ? null : msg;
+    })(source);
   }
 }
 
@@ -536,10 +453,10 @@ export function withRateLimit<
   options: RateLimitOptions<Context>,
 ): Transport<Context, AdditionalProps> {
   const rateLimited = new RateLimitedTransport(transport, options);
-
   return {
     ...transport,
-    readable: rateLimited.readable,
-    writable: rateLimited.writable,
+    source: rateLimited.source,
+    write: rateLimited.write,
+    close: rateLimited.close,
   };
 }

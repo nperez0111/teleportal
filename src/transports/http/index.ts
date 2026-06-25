@@ -2,10 +2,13 @@ import {
   type ClientContext,
   encodeMessageArray,
   type Message,
+  type MessageArray,
   type Sink,
   type Source,
+  decodeMessageArray,
 } from "teleportal";
-import { BatchingOptions, fromMessageArrayStream, getBatchingTransform } from "../utils";
+import { batch, consume, createChannel } from "../../lib/iter";
+import type { BatchingOptions } from "../utils";
 
 /**
  * Transport which receives a binary message from an HTTP request
@@ -24,16 +27,19 @@ export function getHTTPSource<Context extends ClientContext>({
     handleHTTPRequest: (request: Request) => Promise<void>;
   }
 > {
-  const transform = new TransformStream<Message, Message>();
+  const channel = createChannel<Message<Context>>();
+
   return {
-    readable: transform.readable,
+    source: channel,
     handleHTTPRequest: async (request) => {
-      await request
-        .body!.pipeThrough(
-          fromMessageArrayStream(context) as TransformStream<Uint8Array, Message<Context>>,
-        )
-        .pipeTo(transform.writable);
-      return;
+      const body = await request.arrayBuffer();
+      const messageArray = new Uint8Array(body) as MessageArray;
+      const messages = decodeMessageArray(messageArray);
+      for (const msg of messages) {
+        Object.assign(msg.context, context);
+        channel.send(msg as Message<Context>);
+      }
+      channel.close();
     },
   };
 }
@@ -61,15 +67,15 @@ export function getHTTPSink<Context extends ClientContext>({
    */
   batchingOptions?: BatchingOptions;
 }): Sink<Context> {
-  const batchingTransform = getBatchingTransform(
-    batchingOptions ?? {
-      maxBatchSize: 10,
-      maxBatchDelay: 100,
-    },
-  );
-  batchingTransform.readable.pipeTo(
-    new WritableStream({
-      async write(messages) {
+  const { maxBatchSize = 10, maxBatchDelay = 100 } = batchingOptions ?? {};
+  const channel = createChannel<Message<Context>>();
+
+  // Drain the channel through the shared time/size batcher; each batch becomes
+  // one POST. Failures drop their batch but keep the drain alive.
+  void consume(
+    batch(channel, { maxSize: maxBatchSize, maxDelayMs: maxBatchDelay }),
+    async (messages) => {
+      try {
         await request({
           requestOptions: {
             method: "POST",
@@ -82,10 +88,18 @@ export function getHTTPSink<Context extends ClientContext>({
             body: encodeMessageArray(messages) as unknown as BodyInit,
           },
         });
-      },
-    }),
+      } catch {
+        // Drop this batch; later writes still flow through the channel.
+      }
+    },
   );
+
   return {
-    writable: batchingTransform.writable,
+    write(message: Message<Context>) {
+      channel.trySend(message);
+    },
+    close() {
+      channel.close();
+    },
   };
 }

@@ -44,52 +44,22 @@ export function withAckSink<
     context: Context;
   },
 ): Sink<Context, AdditionalProperties> {
-  const writer = sink.writable.getWriter();
-
   return {
     ...sink,
-    writable: new WritableStream({
-      async write(message) {
-        // Write to the underlying sink
-        await writer.write(message);
+    async write(message) {
+      await sink.write(message);
 
-        // Send ACK for non-ACK messages (to avoid ACK loops)
-        if (message.type !== "ack") {
-          const ackMessage = new AckMessage(
-            {
-              type: "ack",
-              messageId: message.id,
-            },
-            context,
-          );
-
-          // Publish ACK to the ACK topic
-          await pubSub.publish(ackTopic, ackMessage.encoded, sourceId);
-        }
-      },
-      async close() {
-        try {
-          await writer.close();
-        } finally {
-          try {
-            writer.releaseLock();
-          } catch {
-            // Ignore errors when releasing lock (it might already be released)
-          }
-        }
-      },
-      async abort(reason) {
-        try {
-          await writer.abort(reason);
-        } finally {
-          try {
-            writer.releaseLock();
-          } catch {
-            // Ignore errors when releasing lock (it might already be released)
-          }
-        }
-      },
-    }),
+      if (message.type !== "ack") {
+        const ackMessage = new AckMessage(
+          {
+            type: "ack",
+            messageId: message.id,
+          },
+          context,
+        );
+        await pubSub.publish(ackTopic, ackMessage.encoded, sourceId);
+      }
+    },
   };
 }
 
@@ -148,7 +118,6 @@ export function withAckTrackingSink<
     unsubscribe: () => Promise<void>;
   }
 > {
-  // Track pending messages waiting for ACKs
   const pendingAcks = new Map<
     string,
     {
@@ -157,22 +126,17 @@ export function withAckTrackingSink<
       timeout: ReturnType<typeof setTimeout>;
     }
   >();
-
-  // Track messages that need ACKs
   const messagesToAck: Promise<void>[] = [];
-
-  // Subscribe to ACK topic
   let unsubscribeAck: (() => Promise<void>) | null = null;
+  let subscriptionReady = false;
 
   const setupAckSubscription = async () => {
     if (unsubscribeAck) return;
 
     unsubscribeAck = await pubSub.subscribe(ackTopic, (message, messageSourceId) => {
-      // Ignore messages from the same source to avoid processing our own ACKs
       if (messageSourceId === sourceId) {
         return;
       }
-
       const decoded = decodeMessage(message);
       if (decoded instanceof AckMessage) {
         const messageId = decoded.payload.messageId;
@@ -184,12 +148,11 @@ export function withAckTrackingSink<
         }
       }
     });
+    subscriptionReady = true;
   };
 
-  // Set up abort handler
   if (abortSignal) {
     abortSignal.addEventListener("abort", () => {
-      // Reject all pending ACKs
       for (const pending of pendingAcks.values()) {
         clearTimeout(pending.timeout);
         pending.reject(new Error("Request aborted"));
@@ -199,74 +162,46 @@ export function withAckTrackingSink<
     });
   }
 
-  // Wrap the sink to track messages that need ACKs
-  const writer = sink.writable.getWriter();
+  // Eagerly start subscription
+  const subscriptionPromise = setupAckSubscription();
+
   const trackedSink: Sink<Context, AdditionalProperties> = {
     ...sink,
-    writable: new WritableStream({
-      async start() {
-        await setupAckSubscription();
-      },
-      async write(message) {
-        // Track non-ACK messages for ACK waiting
-        if (message.type !== "ack") {
-          const ackPromise = new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              pendingAcks.delete(message.id);
-              reject(new Error(`ACK timeout for message ${message.id}`));
-            }, ackTimeout);
+    async write(message) {
+      if (!subscriptionReady) await subscriptionPromise;
 
-            pendingAcks.set(message.id, {
-              resolve: () => {
-                clearTimeout(timeout);
-                resolve();
-              },
-              reject: (error) => {
-                clearTimeout(timeout);
-                reject(error);
-              },
-              timeout,
-            });
+      if (message.type !== "ack") {
+        const ackPromise = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            pendingAcks.delete(message.id);
+            reject(new Error(`ACK timeout for message ${message.id}`));
+          }, ackTimeout);
+
+          pendingAcks.set(message.id, {
+            resolve: () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            reject: (error) => {
+              clearTimeout(timeout);
+              reject(error);
+            },
+            timeout,
           });
+        });
+        messagesToAck.push(ackPromise);
+      }
 
-          messagesToAck.push(ackPromise);
-        }
-
-        // Write to the underlying sink
-        await writer.write(message);
-      },
-      async close() {
-        try {
-          await writer.close();
-        } finally {
-          try {
-            writer.releaseLock();
-          } catch {
-            // Ignore errors when releasing lock (it might already be released)
-          }
-        }
-      },
-      async abort(reason) {
-        try {
-          await writer.abort(reason);
-        } finally {
-          try {
-            writer.releaseLock();
-          } catch {
-            // Ignore errors when releasing lock (it might already be released)
-          }
-        }
-      },
-    }),
+      await sink.write(message);
+    },
   };
 
   return Object.assign(trackedSink, {
     waitForAcks: async () => {
-      await setupAckSubscription();
+      await subscriptionPromise;
       await Promise.all(messagesToAck);
     },
     unsubscribe: async () => {
-      // Clean up remaining pending ACKs
       for (const pending of pendingAcks.values()) {
         clearTimeout(pending.timeout);
         pending.reject(new Error("Unsubscribed"));

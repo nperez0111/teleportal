@@ -1,5 +1,5 @@
 import { type Message, type Sink, type Source, type Transport } from "teleportal";
-import { compose } from "teleportal/transports";
+import { compose, createChannel, filterMessages } from "teleportal/transports";
 
 /**
  * A {@link Sink} that wraps another sink and passes all updates through.
@@ -13,21 +13,14 @@ export function withPassthroughSink<
     onWrite?: (chunk: Message<Context>) => boolean | void;
   },
 ): Sink<Context, AdditionalProperties> {
-  const writer = sink.writable.getWriter();
-
   return {
     ...sink,
-    writable: new WritableStream({
-      async write(chunk) {
-        if (options?.onWrite?.(chunk) === false) {
-          return;
-        }
-
-        await writer.write(chunk);
-      },
-      close: sink.writable.close,
-      abort: sink.writable.abort,
-    }),
+    write(message: Message<Context>) {
+      if (options?.onWrite?.(message) === false) {
+        return;
+      }
+      return sink.write(message);
+    },
   };
 }
 
@@ -43,19 +36,11 @@ export function withPassthroughSource<
     onRead?: (chunk: Message<Context>) => boolean | void;
   },
 ): Source<Context, AdditionalProperties> {
+  if (!options?.onRead) return source;
+  const { onRead } = options;
   return {
     ...source,
-    readable: source.readable.pipeThrough(
-      new TransformStream({
-        transform(chunk, controller) {
-          if (options?.onRead?.(chunk) === false) {
-            return;
-          }
-
-          controller.enqueue(chunk);
-        },
-      }),
-    ),
+    source: filterMessages<Message<Context>>((msg) => onRead(msg) !== false)(source.source),
   };
 }
 
@@ -85,8 +70,13 @@ export function withPassthrough<
  * A transport that does nothing.
  */
 export function noopTransport<Context extends Record<string, unknown>>(): Transport<Context> {
+  const channel = createChannel<Message<Context>>();
+  channel.close();
   return {
-    readable: new ReadableStream(),
-    writable: new WritableStream(),
+    source: channel,
+    write() {},
+    close() {
+      channel.close();
+    },
   };
 }

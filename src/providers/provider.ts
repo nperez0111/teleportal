@@ -17,6 +17,8 @@ import {
   getEncryptedTransport,
   EncryptionClient,
   createSerialQueue,
+  connect,
+  forEachMessage,
   type SerialQueue,
   type FanOutReader,
 } from "teleportal/transports";
@@ -156,14 +158,14 @@ export class Provider<
 > extends Observable<ProviderEvents> {
   public doc: Y.Doc;
   public awareness: Awareness;
-  public transport: T;
+  public transport!: T;
   public document: string;
   public encryptionKey?: CryptoKey | false;
   public subdocs: Map<string, Provider<any, any>> = new Map();
   public rpc: RpcNamespace<R>;
 
-  #connection: Connection;
-  #messageReader: FanOutReader<RawReceivedMessage>;
+  #connection!: Connection;
+  #messageReader!: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions<T, R>["getTransport"];
   #rpcClient: RpcClient;
   #extensions: RpcExtension<any>[] = [];
@@ -248,37 +250,21 @@ export class Provider<
       this.#initExtensions(rpc);
     }
 
-    // Pipe transport ↔ connection
-    this.transport.readable.pipeTo(
-      new WritableStream({
-        write: (message) => {
-          this.#persistDocMessage(message);
-          this.#connection.send(message);
-        },
-      }),
-    );
+    // Pipe transport source → connection (outbound)
+    void forEachMessage(this.transport.source, (message) => {
+      this.#persistDocMessage(message);
+      this.#connection.send(message);
+    });
 
     if (this.#enableOfflinePersistence) {
-      // A single serial queue feeds the transport. Both network messages and
-      // the local replay go through it, processed strictly in order. Each
-      // enqueue resolves only once the transport has applied that message, so
-      // replay can await actual application (see #replayFromLocalStorage) and
-      // bursts can't race a stream writer lock.
-      const transportWriter = this.transport.writable.getWriter();
-      this.#applyQueue = createSerialQueue<RawReceivedMessage>((msg) => transportWriter.write(msg));
-      this.#messageReader.readable.pipeTo(
-        new WritableStream({
-          write: (chunk) => {
-            this.#persistDocMessage(chunk);
-            // Ordered, but not awaited here: network delivery needs no
-            // backpressure and the queue preserves order on its own.
-            void this.#applyQueue!.enqueue(chunk);
-          },
-        }),
-      );
+      this.#applyQueue = createSerialQueue<RawReceivedMessage>((msg) => this.transport.write(msg));
+      void forEachMessage(this.#messageReader.source, (chunk) => {
+        this.#persistDocMessage(chunk);
+        void this.#applyQueue!.enqueue(chunk);
+      });
       this.#initOfflinePersistence(offlineStorage);
     } else {
-      this.#messageReader.readable.pipeTo(this.transport.writable);
+      void connect(this.#messageReader.source, this.transport);
     }
 
     this.doc.on("subdocs", this.#subdocListener);
@@ -675,8 +661,7 @@ export class Provider<
     this.#applyQueue?.close();
 
     try {
-      this.transport.readable.cancel().catch(() => {});
-      this.transport.writable.close().catch(() => {});
+      this.transport.close();
     } catch {
       // ignore
     }
