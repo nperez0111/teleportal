@@ -1211,7 +1211,9 @@ describe("Server", () => {
       // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
       // Override write to capture messages
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = server.createClient({
         transport,
@@ -1247,7 +1249,9 @@ describe("Server", () => {
       // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
       // Override write to capture messages
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = server.createClient({
         transport,
@@ -1298,7 +1302,9 @@ describe("Server", () => {
       // Create a transport that captures messages sent to client
       const transport = new MockTransport<ServerContext>();
       // Override write to capture messages
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = server.createClient({
         transport,
@@ -1349,7 +1355,9 @@ describe("Server", () => {
       });
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithFailingHandler.createClient({
         transport,
@@ -1407,7 +1415,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1455,7 +1465,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1514,7 +1526,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1571,7 +1585,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1628,7 +1644,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1686,7 +1704,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1762,7 +1782,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,
@@ -1835,7 +1857,9 @@ describe("Server", () => {
       const writtenMessages: Message<ServerContext>[] = [];
 
       const transport = new MockTransport<ServerContext>();
-      transport.write = (chunk: Message<ServerContext>) => { writtenMessages.push(chunk); };
+      transport.write = (chunk: Message<ServerContext>) => {
+        writtenMessages.push(chunk);
+      };
 
       const _client = serverWithToken.createClient({
         transport,

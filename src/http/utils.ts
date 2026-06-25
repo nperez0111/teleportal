@@ -59,9 +59,7 @@ export function getDocumentsFromQueryParams(
  * Decodes a {@link Response} containing a {@link ReadableStream} of {@link MessageArray}s
  * into a batched async iterable of {@link Message}s.
  */
-export function decodeHTTPRequest(
-  response: Response,
-): AsyncIterable<Message<ClientContext>[]> {
+export function decodeHTTPRequest(response: Response): AsyncIterable<Message<ClientContext>[]> {
   const transform = fromMessageArrayTransform({
     clientId: response.headers.get("x-teleportal-client-id")!,
   });

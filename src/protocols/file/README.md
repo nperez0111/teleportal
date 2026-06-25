@@ -112,7 +112,7 @@ try {
   await provider.rpc.file.upload(myFile);
 } catch (error) {
   if (error instanceof RpcOperationError) {
-    console.log(error.protocol);  // "file"
+    console.log(error.protocol); // "file"
     console.log(error.operation); // "upload"
   }
 }
