@@ -117,9 +117,9 @@ try {
   await provider.rpc.milestones.create("v1");
 } catch (error) {
   if (error instanceof RpcOperationError) {
-    console.log(error.protocol);  // "milestone"
+    console.log(error.protocol); // "milestone"
     console.log(error.operation); // "create"
-    console.log(error.cause);     // underlying RPC error
+    console.log(error.cause); // underlying RPC error
   }
 }
 ```

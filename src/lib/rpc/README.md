@@ -45,26 +45,34 @@ import { createHandlers, ok, err } from "teleportal/rpc";
 import { commentProtocol } from "./methods";
 
 export function getCommentRpcHandlers(db: CommentDB) {
-  return createHandlers(commentProtocol, { db }, {
-    list: ({ db }) => async (payload, ctx) => {
-      const result = await db.comments.find({
-        documentId: ctx.documentId,
-        cursor: payload.cursor,
-        limit: payload.limit ?? 50,
-      });
-      return ok({ comments: result.items, nextCursor: result.nextCursor });
-    },
+  return createHandlers(
+    commentProtocol,
+    { db },
+    {
+      list:
+        ({ db }) =>
+        async (payload, ctx) => {
+          const result = await db.comments.find({
+            documentId: ctx.documentId,
+            cursor: payload.cursor,
+            limit: payload.limit ?? 50,
+          });
+          return ok({ comments: result.items, nextCursor: result.nextCursor });
+        },
 
-    create: ({ db }) => async (payload, ctx) => {
-      if (!ctx.userId) return err(401, "Authentication required");
-      const comment = await db.comments.insert({
-        documentId: ctx.documentId,
-        text: payload.text,
-        userId: ctx.userId,
-      });
-      return ok({ comment });
+      create:
+        ({ db }) =>
+        async (payload, ctx) => {
+          if (!ctx.userId) return err(401, "Authentication required");
+          const comment = await db.comments.insert({
+            documentId: ctx.documentId,
+            text: payload.text,
+            userId: ctx.userId,
+          });
+          return ok({ comment });
+        },
     },
-  });
+  );
 }
 ```
 
@@ -178,9 +186,9 @@ try {
   await provider.rpc.comments.create({ text: "" });
 } catch (error) {
   if (error instanceof RpcOperationError) {
-    error.protocol;  // "comments"
+    error.protocol; // "comments"
     error.operation; // "create"
-    error.cause;     // underlying RPC error
+    error.cause; // underlying RPC error
   }
 }
 ```
