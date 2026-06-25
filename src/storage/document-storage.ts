@@ -149,11 +149,18 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
 
       const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
       const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
-      const incomingSidecars: IndexedSidecar[] = decoded.encryptedSidecars.map((encrypted) => ({
-        encrypted,
-        index,
-        hash: hashSidecar(encrypted),
-      }));
+      // An empty index means the incoming update carries no insert structs
+      // (e.g. a delete-only diff). Any encrypted sidecars on such a payload
+      // are guaranteed to encode zero content entries, so drop them rather
+      // than persist empty sidecars that would only grow storage.
+      const incomingSidecars: IndexedSidecar[] =
+        index.length === 0
+          ? []
+          : decoded.encryptedSidecars.map((encrypted) => ({
+              encrypted,
+              index,
+              hash: hashSidecar(encrypted),
+            }));
 
       const now = Date.now();
       const existing = await this.getDocumentState(key);
@@ -162,17 +169,16 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       let newSidecars: IndexedSidecar[];
 
       if (existing) {
+        // Merge unconditionally and persist the result. Y.mergeUpdatesV2 is
+        // idempotent, so a re-sent or already-known update produces an
+        // equivalent merged structure with no extra logical state. We don't
+        // try to detect that case: comparing state vectors misses delete-only
+        // updates (the SV doesn't advance), and byte-comparing the merged
+        // binary against `existing.update` is O(doc size) — expensive for
+        // large documents and the very thing this check is trying to avoid.
+        // True empty diffs already short-circuited at the
+        // `structureUpdate.length === 0` check above.
         merged = Y.mergeUpdatesV2([existing.update, decoded.structureUpdate]);
-
-        const svBefore = Y.encodeStateVectorFromUpdateV2(existing.update);
-        const svAfter = Y.encodeStateVectorFromUpdateV2(merged);
-        const isNoOp = arraysEqual(svBefore, svAfter);
-        if (isNoOp && !decoded.compaction) return;
-
-        // When the update adds no new state, keep the existing update unchanged
-        // and don't append a sidecar for the empty diff.
-        if (isNoOp) merged = existing.update;
-        const appendedSidecars = isNoOp ? [] : incomingSidecars;
 
         if (decoded.compaction) {
           const matchedIndices = new Set<number>();
@@ -188,12 +194,12 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
               hash: decoded.compaction.hash,
             };
             const keptSidecars = existing.sidecars.filter((_, i) => !matchedIndices.has(i));
-            newSidecars = [compactedSidecar, ...keptSidecars, ...appendedSidecars];
+            newSidecars = [compactedSidecar, ...keptSidecars, ...incomingSidecars];
           } else {
-            newSidecars = [...existing.sidecars, ...appendedSidecars];
+            newSidecars = [...existing.sidecars, ...incomingSidecars];
           }
         } else {
-          newSidecars = [...existing.sidecars, ...appendedSidecars];
+          newSidecars = [...existing.sidecars, ...incomingSidecars];
         }
       } else {
         merged = decoded.structureUpdate;

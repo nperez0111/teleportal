@@ -713,7 +713,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 
   // ── 6. Duplicate update is deduped ─────────────────────────────────────────
 
-  it("duplicate update is deduped (state vector unchanged)", async () => {
+  it("duplicate update is CRDT-idempotent (state vector unchanged)", async () => {
     const doc = new Y.Doc();
     doc.getMap("root").set("key", "value");
     const v2Update = Y.encodeStateAsUpdateV2(doc);
@@ -731,8 +731,9 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     const svAfterSecond = Y.encodeStateVectorFromUpdateV2(stateAfterSecond!.update);
 
     expect(new Uint8Array(svAfterSecond)).toEqual(new Uint8Array(svAfterFirst));
-    // Sidecars should not accumulate on dedup
-    expect(stateAfterSecond!.sidecars.length).toBe(stateAfterFirst!.sidecars.length);
+    // Sidecars may accumulate on duplicate ciphertexts — cheap dedup at
+    // write time costs an O(doc-size) byte compare. Compaction is the
+    // mechanism that collapses redundant sidecars.
   });
 
   // ── 7. Multi-client updates merge correctly ────────────────────────────────
@@ -1022,7 +1023,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     expect(document).not.toBeNull();
   });
 
-  it("handleSyncStep2 deduplicates (state unchanged on duplicate)", async () => {
+  it("handleSyncStep2 is CRDT-idempotent on duplicates", async () => {
     const doc = new Y.Doc();
     doc.getMap("root").set("synced", true);
     const v2Update = Y.encodeStateAsUpdateV2(doc);
@@ -1034,6 +1035,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     } as unknown as VersionedSyncStep2Update);
 
     const stateAfterFirst = await storage.getDocumentState("doc-1");
+    const svAfterFirst = Y.encodeStateVectorFromUpdateV2(stateAfterFirst!.update);
 
     await storage.handleSyncStep2("doc-1", {
       version: 2,
@@ -1041,8 +1043,8 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     } as unknown as VersionedSyncStep2Update);
 
     const stateAfterSecond = await storage.getDocumentState("doc-1");
-    // Sidecars should not accumulate on dedup
-    expect(stateAfterSecond!.sidecars.length).toBe(stateAfterFirst!.sidecars.length);
+    const svAfterSecond = Y.encodeStateVectorFromUpdateV2(stateAfterSecond!.update);
+    expect(new Uint8Array(svAfterSecond)).toEqual(new Uint8Array(svAfterFirst));
   });
 
   // ── 11. Compaction ─────────────────────────────────────────────────────────

@@ -356,9 +356,44 @@ describe.each(backends)("AbstractDocumentStorage encrypted sync ($name)", (backe
     expect(reconstructed.getMap("root").get("key-3")).toBe(3);
   });
 
-  // ── 4. No-op update ────────────────────────────────────────────────────────
+  // ── 3c. Delete-only update persists and round-trips correctly ──────────────
 
-  it("no-op update does not append a sidecar or change the state vector", async () => {
+  it("delete-only update is persisted and a fresh client sees the deletion", async () => {
+    const docKey = "doc-delete";
+
+    // Client inserts "Hello World".
+    const doc = new Y.Doc();
+    doc.clientID = 111;
+    doc.getText("body").insert(0, "Hello World");
+    const svAfterInsert = Y.encodeStateVector(doc);
+    await storage.handleUpdate(
+      docKey,
+      await makeEncryptedUpdate(key, Y.encodeStateAsUpdateV2(doc)),
+    );
+
+    // Client deletes "World" — this update carries only a delete set, no
+    // new struct items, so the state vector does NOT advance.
+    doc.getText("body").delete(6, 5);
+    expect(doc.getText("body").toString()).toBe("Hello ");
+    const deleteOnlyDiff = Y.encodeStateAsUpdateV2(doc, svAfterInsert);
+    await storage.handleUpdate(docKey, await makeEncryptedUpdate(key, deleteOnlyDiff));
+
+    // The stored state should reflect the deletion: a fresh client syncing
+    // from scratch must see "Hello ", not "Hello World".
+    const result = await storage.handleSyncStep1(docKey, getEmptyStateVector());
+    const restored = await decryptPayload(key, result.content.update);
+    const reconstructed = applyV2(restored);
+    expect(reconstructed.getText("body").toString()).toBe("Hello ");
+
+    // No spurious sidecar growth — the delete-only update has no new
+    // encrypted content, so only the original sidecar should remain.
+    const state = await storage.getDocumentState(docKey);
+    expect(state!.sidecars.length).toBe(1);
+  });
+
+  // ── 4. Re-applied update ───────────────────────────────────────────────────
+
+  it("re-applied insert update is idempotent on state vector (sidecar compaction handles dup ciphertexts)", async () => {
     const docKey = "doc-noop";
 
     const doc = new Y.Doc();
@@ -372,21 +407,21 @@ describe.each(backends)("AbstractDocumentStorage encrypted sync ($name)", (backe
     const svFirst = Y.encodeStateVectorFromUpdateV2(first!.update);
     expect(first!.sidecars.length).toBe(1);
 
-    // Re-apply the exact same update — adds no new state.
+    // Re-apply the exact same update. The CRDT state is idempotent under the
+    // merge, so the state vector does not change. Sidecars DO accumulate
+    // (deterring duplicates cheaply on the hot path costs an O(doc) byte
+    // compare, which doesn't scale to large docs — compaction is the
+    // mechanism for cleaning these up).
     await storage.handleUpdate(docKey, update);
     const second = await storage.getDocumentState(docKey);
     const svSecond = Y.encodeStateVectorFromUpdateV2(second!.update);
-
-    // No new sidecar appended, state vector unchanged.
-    expect(second!.sidecars.length).toBe(1);
     expect(new Uint8Array(svSecond)).toEqual(new Uint8Array(svFirst));
 
     // A re-encrypted (different ciphertext) but content-identical update is
-    // also a no-op — proves dedup is keyed on CRDT state, not bytes.
+    // also CRDT-idempotent.
     const reEncrypted = await makeEncryptedUpdate(key, v2);
     await storage.handleUpdate(docKey, reEncrypted);
     const third = await storage.getDocumentState(docKey);
-    expect(third!.sidecars.length).toBe(1);
     expect(new Uint8Array(Y.encodeStateVectorFromUpdateV2(third!.update))).toEqual(
       new Uint8Array(svFirst),
     );
