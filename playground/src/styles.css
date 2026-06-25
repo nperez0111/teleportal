@@ -103,6 +103,20 @@ select:focus-visible {
   background: #718096;
 }
 
+/* Make the editor fill available vertical space */
+.bn-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.bn-container > .bn-editor {
+  flex: 1;
+}
+
+.bn-container > .bn-root {
+  height: auto;
+}
+
 /* Safe area insets for mobile devices with notches */
 @supports (padding: max(0px)) {
   body {
