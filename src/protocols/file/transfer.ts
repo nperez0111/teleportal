@@ -2,7 +2,7 @@ import { toBase64, fromBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
 import {
   CHUNK_SIZE,
-  createMerkleTreeTransformStream,
+  chunkFile,
   ENCRYPTED_CHUNK_SIZE,
   verifyMerkleProof,
 } from "teleportal/merkle-tree";
@@ -329,51 +329,43 @@ class FileClientHandler implements ClientRpcHandler {
       throw new Error("File handler not initialized");
     }
 
-    const transformStream = createMerkleTreeTransformStream(
+    const parts = chunkFile(
+      uploadState.file.stream(),
       uploadState.file.size,
       uploadState.encryptionKey
         ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
     );
 
-    await uploadState.file
-      .stream()
-      .pipeThrough(transformStream)
-      .pipeTo(
-        new WritableStream({
-          write: async (chunk) => {
-            if (chunk.rootHash.length > 0 && !uploadState.fileId) {
-              uploadState.fileId = toBase64(chunk.rootHash);
-            }
+    for await (const chunk of parts) {
+      if (chunk.rootHash.length > 0 && !uploadState.fileId) {
+        uploadState.fileId = toBase64(chunk.rootHash);
+      }
 
-            const filePart: FilePartStream = {
-              fileId: uploadState.uploadId,
-              chunkIndex: chunk.chunkIndex,
-              chunkData: chunk.chunkData,
-              merkleProof: chunk.merkleProof,
-              totalChunks: chunk.totalChunks,
-              bytesUploaded: chunk.bytesProcessed,
-              encrypted: chunk.encrypted,
-            };
+      const filePart: FilePartStream = {
+        fileId: uploadState.uploadId,
+        chunkIndex: chunk.chunkIndex,
+        chunkData: chunk.chunkData,
+        merkleProof: chunk.merkleProof,
+        totalChunks: chunk.totalChunks,
+        bytesUploaded: chunk.bytesProcessed,
+        encrypted: chunk.encrypted,
+      };
 
-            const message = new RpcMessage<any>(
-              uploadState.document,
-              { type: "success", payload: filePart },
-              "fileUpload",
-              "stream",
-              originalRequestId ?? uploadState.uploadId,
-              context ?? { documentId: uploadState.document },
-              chunk.encrypted,
-            );
-
-            uploadState.sentChunks.add(message.id);
-
-            if (this.#sendStreamMessage) {
-              await this.#sendStreamMessage(message);
-            }
-          },
-        }),
+      const message = new RpcMessage<any>(
+        uploadState.document,
+        { type: "success", payload: filePart },
+        "fileUpload",
+        "stream",
+        originalRequestId ?? uploadState.uploadId,
+        context ?? { documentId: uploadState.document },
+        chunk.encrypted,
       );
+
+      uploadState.sentChunks.add(message.id);
+
+      await this.#sendStreamMessage(message);
+    }
 
     // Mark all chunks as sent - upload can now resolve when all ACKs received
     uploadState.allChunksSent = true;
