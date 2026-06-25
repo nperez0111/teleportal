@@ -38,8 +38,8 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
       : undefined,
     domAttributes: {
       editor: {
-        class: "flex-1 w-full min-h-full",
-        style: "min-height: calc(100vh - 200px);",
+        class: "w-full",
+        style: "",
       },
     },
     async uploadFile(file, blockId) {
@@ -110,7 +110,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
 
   return (
     <div className="h-full w-full flex flex-col touch-manipulation">
-      <BlockNoteView editor={editor} className="h-full w-full flex flex-col" />
+      <BlockNoteView editor={editor} className="h-full w-full" />
     </div>
   );
 }
