@@ -152,3 +152,6 @@ export async function decryptUpdate(
     throw new Error(`Decryption failed: ${error}`);
   }
 }
+
+export * from "./key-wrapping";
+export * from "./key-resolver";
