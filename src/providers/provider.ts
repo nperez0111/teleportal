@@ -50,7 +50,7 @@ export type DefaultTransportProperties = {
   };
 };
 
-export const teleportalEventClient = new EventClient<{
+type TeleportalEventMap = {
   "teleportal-provider:load-subdoc": {
     subdoc: Y.Doc;
     provider: Provider<any, any>;
@@ -86,9 +86,12 @@ export const teleportalEventClient = new EventClient<{
     provider: Provider<any, any>;
     connection: Connection;
   };
-}>({
-  pluginId: "teleportal-provider",
-});
+};
+
+export const teleportalEventClient: EventClient<TeleportalEventMap> =
+  new EventClient({
+    pluginId: "teleportal-provider",
+  });
 
 export type ProviderOptions<
   T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
