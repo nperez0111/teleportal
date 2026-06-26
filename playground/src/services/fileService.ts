@@ -92,17 +92,31 @@ class FileService extends Observable<{
     const documentId = options.id ?? this.generateId(options.encrypted ?? false);
     let wrappingKey = options.wrappingKey;
 
-    // For encrypted docs without a pre-existing key, mint via the backend
+    // For encrypted docs without a pre-existing key, get one from the backend.
+    // Try granting access first (the document key may already exist from another
+    // user). If no key exists yet, mint a new one.
     if (options.encrypted && !options.encryptedKey && !options.wrappingKey) {
       const { getIdentity } = await import("../utils/identity");
       const identity = getIdentity();
-      const res = await fetch(`/keys/${documentId}/mint`, {
+      const headers = { "Content-Type": "application/json" };
+      const body = { userId: identity.name, room: "docs" };
+
+      const grantRes = await fetch(`/keys/${documentId}/grant`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: identity.name, room: "docs" }),
+        headers,
+        body: JSON.stringify(body),
       });
-      const data = await res.json();
-      wrappingKey = data.wrappingKey;
+
+      if (grantRes.ok) {
+        wrappingKey = (await grantRes.json()).wrappingKey;
+      } else {
+        const mintRes = await fetch(`/keys/${documentId}/mint`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+        wrappingKey = (await mintRes.json()).wrappingKey;
+      }
     }
 
     const newDocument: Document = {
@@ -112,7 +126,9 @@ class FileService extends Observable<{
       updatedAt: new Date().toISOString(),
       // When using registry-based key distribution (wrappingKey), the document
       // key lives on the server — no local CryptoKey needed.
-      encryptedKey: options.encryptedKey ?? (options.encrypted && !wrappingKey ? await createEncryptionKey() : undefined),
+      encryptedKey:
+        options.encryptedKey ??
+        (options.encrypted && !wrappingKey ? await createEncryptionKey() : undefined),
       wrappingKey,
     };
 

@@ -54,12 +54,10 @@ export function registryKey(opts: {
         const response = await rpc.sendRequest<{
           wrappedKey: Uint8Array;
           generation: number;
-        }>(document, "keysGet", {});
+        }>(document, "keysGet", {}, { encrypted: true });
 
         const wk =
-          typeof opts.wrappingKey === "function"
-            ? await opts.wrappingKey()
-            : opts.wrappingKey;
+          typeof opts.wrappingKey === "function" ? await opts.wrappingKey() : opts.wrappingKey;
 
         const wrappedKey =
           response.wrappedKey instanceof Uint8Array
