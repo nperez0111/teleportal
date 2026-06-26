@@ -446,6 +446,360 @@ describe("TieredDocumentStorage (unstorage slow tier)", () => {
     await tiered[Symbol.asyncDispose]();
   });
 
+  // ── Recovery & correctness ──────────────────────────────────────────────
+
+  it("recovers from slow tier after crash (unflushed data lost)", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    // Session 1: write "hello", flush, write " world" (NOT flushed)
+    const fast1 = new MemoryDocumentStorage(false);
+    const tiered1 = new TieredDocumentStorage(fast1, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const { versioned: u1 } = makeUpdate("hello");
+    await tiered1.handleUpdate("doc1", u1);
+    await tiered1.flush("doc1");
+
+    // Second update — not flushed (simulates crash)
+    const afterFlush = await tiered1.getDocument("doc1");
+    const doc2 = new Y.Doc();
+    const { structureUpdate } = decodeContentEncryptedPayload(
+      afterFlush!.content.update as EncryptedUpdatePayload,
+    );
+    Y.applyUpdateV2(doc2, structureUpdate);
+    doc2.getText("text").insert(5, " world");
+    await tiered1.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(doc2)));
+
+    // Verify fast tier has "hello world"
+    const beforeCrash = await tiered1.getDocument("doc1");
+    expect(docFromStorageUpdate(beforeCrash!.content.update).getText("text").toString()).toBe("hello world");
+
+    // "Crash" — dispose WITHOUT flushing (clear the timer, don't call flushAll)
+    // We can't prevent flushAll in dispose, so just create a new tiered without disposing.
+
+    // Session 2: fresh fast tier, same slow tier
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    // Should recover "hello" (the flushed state), not "hello world"
+    const recovered = await tiered2.getDocument("doc1");
+    expect(recovered).not.toBeNull();
+    const recoveredText = docFromStorageUpdate(recovered!.content.update).getText("text").toString();
+    expect(recoveredText).toBe("hello");
+
+    await tiered2[Symbol.asyncDispose]();
+  });
+
+  it("new updates merge correctly on top of recovered state", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    // Session 1: write and flush
+    const fast1 = new MemoryDocumentStorage(false);
+    const tiered1 = new TieredDocumentStorage(fast1, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const { versioned: u1 } = makeUpdate("aaa");
+    await tiered1.handleUpdate("doc1", u1);
+    await tiered1[Symbol.asyncDispose]();
+
+    // Session 2: recover, then apply new update
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const recovered = await tiered2.getDocument("doc1");
+    const base = new Y.Doc();
+    Y.applyUpdateV2(
+      base,
+      decodeContentEncryptedPayload(recovered!.content.update as EncryptedUpdatePayload).structureUpdate,
+    );
+    base.getText("text").insert(3, "bbb");
+    await tiered2.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(base)));
+
+    const merged = await tiered2.getDocument("doc1");
+    expect(docFromStorageUpdate(merged!.content.update).getText("text").toString()).toBe("aaabbb");
+
+    // Flush and verify slow tier has merged state
+    await tiered2.flush("doc1");
+    const slowDoc = await slow.getDocument("doc1");
+    expect(docFromStorageUpdate(slowDoc!.content.update).getText("text").toString()).toBe("aaabbb");
+
+    await tiered2[Symbol.asyncDispose]();
+  });
+
+  it("sync protocol works correctly after recovery", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    // Session 1: write and flush
+    const fast1 = new MemoryDocumentStorage(false);
+    const tiered1 = new TieredDocumentStorage(fast1, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const { versioned: u1 } = makeUpdate("sync-recover");
+    await tiered1.handleUpdate("doc1", u1);
+    await tiered1[Symbol.asyncDispose]();
+
+    // Session 2: recover, sync with empty client
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const emptySV = Y.encodeStateVector(new Y.Doc()) as StateVector;
+    const syncResult = await tiered2.handleSyncStep1("doc1", emptySV);
+
+    // Client should be able to reconstruct the document from the sync diff
+    const clientDoc = new Y.Doc();
+    const { structureUpdate } = decodeContentEncryptedPayload(
+      syncResult.content.update as EncryptedUpdatePayload,
+    );
+    if (structureUpdate.length > 0) Y.applyUpdateV2(clientDoc, structureUpdate);
+    expect(clientDoc.getText("text").toString()).toBe("sync-recover");
+
+    // Sync with a client that already has the data → should get empty diff
+    const fullSV = Y.encodeStateVector(clientDoc) as StateVector;
+    const noopSync = await tiered2.handleSyncStep1("doc1", fullSV);
+    const noopUpdate = decodeContentEncryptedPayload(
+      noopSync.content.update as EncryptedUpdatePayload,
+    ).structureUpdate;
+    // Applying an empty/noop diff to a doc with the same state should be harmless
+    const clientDoc2 = new Y.Doc();
+    Y.applyUpdateV2(clientDoc2, Y.encodeStateAsUpdateV2(clientDoc));
+    if (noopUpdate.length > 0) Y.applyUpdateV2(clientDoc2, noopUpdate);
+    expect(clientDoc2.getText("text").toString()).toBe("sync-recover");
+
+    await tiered2[Symbol.asyncDispose]();
+  });
+
+  it("multiple flush cycles produce correct state in slow tier", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    const fast = new MemoryDocumentStorage(false);
+    const tiered = new TieredDocumentStorage(fast, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    // Build up document incrementally with flushes between
+    const doc = new Y.Doc();
+    doc.getText("text").insert(0, "one");
+    await tiered.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(doc)));
+    await tiered.flush("doc1");
+
+    const sv1 = Y.encodeStateVector(doc);
+    doc.getText("text").insert(3, "-two");
+    await tiered.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(doc, sv1)));
+    await tiered.flush("doc1");
+
+    const sv2 = Y.encodeStateVector(doc);
+    doc.getText("text").insert(7, "-three");
+    await tiered.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(doc, sv2)));
+    await tiered.flush("doc1");
+
+    // Slow tier should have the fully merged state
+    const slowDoc = await slow.getDocument("doc1");
+    expect(docFromStorageUpdate(slowDoc!.content.update).getText("text").toString()).toBe("one-two-three");
+
+    // Fresh recovery should see the same
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+    const recovered = await tiered2.getDocument("doc1");
+    expect(docFromStorageUpdate(recovered!.content.update).getText("text").toString()).toBe("one-two-three");
+
+    await tiered[Symbol.asyncDispose]();
+    await tiered2[Symbol.asyncDispose]();
+  });
+
+  it("partial flush — only flushed docs survive crash", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    const fast1 = new MemoryDocumentStorage(false);
+    const tiered1 = new TieredDocumentStorage(fast1, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    // Write two docs, flush only one
+    const { versioned: u1 } = makeUpdate("flushed");
+    const { versioned: u2 } = makeUpdate("not-flushed");
+    await tiered1.handleUpdate("doc-a", u1);
+    await tiered1.handleUpdate("doc-b", u2);
+    await tiered1.flush("doc-a"); // only doc-a flushed
+
+    // "Crash" — new session
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    // doc-a should be recoverable
+    const docA = await tiered2.getDocument("doc-a");
+    expect(docA).not.toBeNull();
+    expect(docFromStorageUpdate(docA!.content.update).getText("text").toString()).toBe("flushed");
+
+    // doc-b should be gone
+    const docB = await tiered2.getDocument("doc-b");
+    expect(docB).toBeNull();
+
+    await tiered2[Symbol.asyncDispose]();
+  });
+
+  it("metadata survives recovery via slow tier", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    const fast1 = new MemoryDocumentStorage(false);
+    const tiered1 = new TieredDocumentStorage(fast1, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const { versioned } = makeUpdate("meta-recovery");
+    await tiered1.handleUpdate("doc1", versioned);
+    await tiered1.writeDocumentMetadata("doc1", {
+      createdAt: 1000,
+      updatedAt: 2000,
+      encrypted: false,
+      files: ["file-a", "file-b"],
+    });
+    await tiered1[Symbol.asyncDispose](); // flushes
+
+    // Recover
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const meta = await tiered2.getDocumentMetadata("doc1");
+    expect(meta.files).toEqual(["file-a", "file-b"]);
+    expect(meta.createdAt).toBe(1000);
+
+    await tiered2[Symbol.asyncDispose]();
+  });
+
+  it("evict-then-reload produces same content as before eviction", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    MemoryDocumentStorage.docs.clear();
+    const fast = new MemoryDocumentStorage(false);
+    const tiered = new TieredDocumentStorage(fast, slow, {
+      persistIntervalMs: 1,
+      maxDirtyAgeMs: 0,
+      evictAfterMs: 1,
+    });
+
+    // Write, let it persist + evict
+    const doc = new Y.Doc();
+    doc.getText("text").insert(0, "before-eviction");
+    await tiered.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(doc)));
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Confirm evicted from fast
+    expect(await fast.getDocumentState("doc1")).toBeNull();
+
+    // Reload by accessing
+    const reloaded = await tiered.getDocument("doc1");
+    expect(reloaded).not.toBeNull();
+    expect(docFromStorageUpdate(reloaded!.content.update).getText("text").toString()).toBe("before-eviction");
+
+    // Continue editing after reload
+    const base = new Y.Doc();
+    Y.applyUpdateV2(
+      base,
+      decodeContentEncryptedPayload(reloaded!.content.update as EncryptedUpdatePayload).structureUpdate,
+    );
+    const sv = Y.encodeStateVector(base);
+    base.getText("text").insert(15, "-after");
+    await tiered.handleUpdate("doc1", versionedUpdate(Y.encodeStateAsUpdateV2(base, sv)));
+
+    const final = await tiered.getDocument("doc1");
+    expect(docFromStorageUpdate(final!.content.update).getText("text").toString()).toBe("before-eviction-after");
+
+    await tiered[Symbol.asyncDispose]();
+  });
+
+  it("idempotent flush — flushing twice does not corrupt slow tier", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    const fast = new MemoryDocumentStorage(false);
+    const tiered = new TieredDocumentStorage(fast, slow, {
+      persistIntervalMs: 60_000,
+    });
+
+    const { versioned } = makeUpdate("idempotent");
+    await tiered.handleUpdate("doc1", versioned);
+
+    await tiered.flush("doc1");
+    await tiered.flush("doc1"); // second flush is a no-op (not dirty)
+
+    const slowDoc = await slow.getDocument("doc1");
+    expect(docFromStorageUpdate(slowDoc!.content.update).getText("text").toString()).toBe("idempotent");
+
+    await tiered[Symbol.asyncDispose]();
+  });
+
+  it("delete in slow tier is respected on fresh load", async () => {
+    const store = createStorage();
+    openStorages.push(store);
+    const slow = new UnstorageDocumentStorage(store, { encrypted: false });
+
+    // Session 1: create and flush
+    const fast1 = new MemoryDocumentStorage(false);
+    const tiered1 = new TieredDocumentStorage(fast1, slow, {
+      persistIntervalMs: 60_000,
+    });
+    const { versioned } = makeUpdate("will-be-deleted");
+    await tiered1.handleUpdate("doc1", versioned);
+    await tiered1[Symbol.asyncDispose]();
+
+    // Delete via tiered (removes from both tiers)
+    MemoryDocumentStorage.docs.clear();
+    const fast2 = new MemoryDocumentStorage(false);
+    const tiered2 = new TieredDocumentStorage(fast2, slow, {
+      persistIntervalMs: 60_000,
+    });
+    await tiered2.deleteDocument("doc1");
+    await tiered2[Symbol.asyncDispose]();
+
+    // Session 3: verify doc is gone
+    MemoryDocumentStorage.docs.clear();
+    const fast3 = new MemoryDocumentStorage(false);
+    const tiered3 = new TieredDocumentStorage(fast3, slow, {
+      persistIntervalMs: 60_000,
+    });
+    const doc = await tiered3.getDocument("doc1");
+    expect(doc).toBeNull();
+
+    await tiered3[Symbol.asyncDispose]();
+  });
+
   it("loads from unstorage slow tier into memory fast tier", async () => {
     const store = createStorage();
     openStorages.push(store);
