@@ -1,11 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { InMemoryKeyRegistryStorage } from "../../storage/in-memory/key-registry-storage";
 import { getKeyRegistryHandlers } from "./http";
-import {
-  deriveWrappingKey,
-  unwrapDocumentKey,
-  importWrappingKey,
-} from "teleportal/encryption-key";
+import { deriveWrappingKey, unwrapDocumentKey, importWrappingKey } from "teleportal/encryption-key";
 
 const MASTER_SECRET = crypto.getRandomValues(new Uint8Array(32));
 
@@ -15,11 +11,7 @@ function makeHandler() {
   return { storage, handler };
 }
 
-function req(
-  method: string,
-  path: string,
-  body?: Record<string, unknown>,
-): Request {
+function req(method: string, path: string, body?: Record<string, unknown>): Request {
   return new Request(`http://localhost${path}`, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -43,9 +35,7 @@ describe("Key Registry HTTP Handlers", () => {
     const { handler } = makeHandler();
 
     await handler(req("POST", "/keys/doc-1/mint", { userId: "alice" }));
-    const res = await handler(
-      req("POST", "/keys/doc-1/grant", { userId: "bob" }),
-    );
+    const res = await handler(req("POST", "/keys/doc-1/grant", { userId: "bob" }));
 
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -56,9 +46,7 @@ describe("Key Registry HTTP Handlers", () => {
     const { handler } = makeHandler();
 
     await handler(req("POST", "/keys/doc-1/mint", { userId: "alice" }));
-    const res = await handler(
-      req("POST", "/keys/doc-1/grant", { userIds: ["bob", "charlie"] }),
-    );
+    const res = await handler(req("POST", "/keys/doc-1/grant", { userIds: ["bob", "charlie"] }));
 
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -69,9 +57,7 @@ describe("Key Registry HTTP Handlers", () => {
 
   it("should return 404 when granting before minting", async () => {
     const { handler } = makeHandler();
-    const res = await handler(
-      req("POST", "/keys/doc-1/grant", { userId: "bob" }),
-    );
+    const res = await handler(req("POST", "/keys/doc-1/grant", { userId: "bob" }));
 
     expect(res.status).toBe(404);
   });
@@ -94,9 +80,7 @@ describe("Key Registry HTTP Handlers", () => {
 
     await handler(req("POST", "/keys/doc-1/mint", { userId: "alice" }));
     await handler(req("POST", "/keys/doc-1/grant", { userId: "bob" }));
-    await handler(
-      req("DELETE", "/keys/doc-1/revoke", { userIds: ["bob"] }),
-    );
+    await handler(req("DELETE", "/keys/doc-1/revoke", { userIds: ["bob"] }));
 
     const res = await handler(req("GET", "/keys/doc-1/meta"));
     const body = await res.json();
@@ -109,9 +93,7 @@ describe("Key Registry HTTP Handlers", () => {
     await handler(req("POST", "/keys/doc-1/mint", { userId: "alice" }));
     await handler(req("POST", "/keys/doc-1/grant", { userId: "bob" }));
 
-    const res = await handler(
-      req("POST", "/keys/doc-1/rotate", { excludeUserIds: ["bob"] }),
-    );
+    const res = await handler(req("POST", "/keys/doc-1/rotate", { excludeUserIds: ["bob"] }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.generation).toBe(1);
@@ -179,18 +161,14 @@ describe("Key Registry HTTP Handlers", () => {
       authorize: async (_req, _docId, action) => action !== "mint",
     });
 
-    const res = await handler(
-      req("POST", "/keys/doc-1/mint", { userId: "alice" }),
-    );
+    const res = await handler(req("POST", "/keys/doc-1/mint", { userId: "alice" }));
     expect(res.status).toBe(403);
   });
 
   it("should namespace documentId with room when provided", async () => {
     const { handler, storage } = makeHandler();
 
-    await handler(
-      req("POST", "/keys/doc-1/mint", { userId: "alice", room: "myroom" }),
-    );
+    await handler(req("POST", "/keys/doc-1/mint", { userId: "alice", room: "myroom" }));
 
     // Key should be stored under the composite ID
     const record = await storage.get("myroom/doc-1", "alice");
@@ -223,9 +201,7 @@ describe("Key Registry HTTP Handlers", () => {
       expect(meta.userIds.sort()).toEqual(["alice", "bob", "charlie"]);
 
       // Revoke charlie
-      await handler(
-        req("DELETE", "/keys/doc-1/revoke", { userIds: ["charlie"] }),
-      );
+      await handler(req("DELETE", "/keys/doc-1/revoke", { userIds: ["charlie"] }));
 
       // Rotate (excludes charlie)
       const rotate = await (

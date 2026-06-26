@@ -89,10 +89,9 @@ type TeleportalEventMap = {
   };
 };
 
-export const teleportalEventClient: EventClient<TeleportalEventMap> =
-  new EventClient({
-    pluginId: "teleportal-provider",
-  });
+export const teleportalEventClient: EventClient<TeleportalEventMap> = new EventClient({
+  pluginId: "teleportal-provider",
+});
 
 export type ProviderOptions<
   T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
@@ -219,11 +218,7 @@ export class Provider<
           `encryption with \`encryptionKey: false\`.`,
       );
     }
-    if (
-      encryptionKey &&
-      typeof encryptionKey === "object" &&
-      "resolve" in encryptionKey
-    ) {
+    if (encryptionKey && typeof encryptionKey === "object" && "resolve" in encryptionKey) {
       throw new Error(
         `Provider for document "${document}" received a KeyResolver in the sync constructor. ` +
           `KeyResolvers must be resolved before construction — use Provider.create() instead.`,
@@ -655,10 +650,7 @@ export class Provider<
       // (never `undefined`, since the parent was successfully constructed).
       // KeyResolvers are not supported in the sync openDocument — use
       // openDocumentAsync instead.
-      encryptionKey: (options.encryptionKey ?? this.encryptionKey) as
-        | CryptoKey
-        | false
-        | undefined,
+      encryptionKey: (options.encryptionKey ?? this.encryptionKey) as CryptoKey | false | undefined,
       rpc: options.rpc ?? this.#rpcOptions,
       document: options.document,
     });
@@ -695,8 +687,7 @@ export class Provider<
       ydoc: doc,
       awareness,
       getTransport: options.getTransport ?? (this.#getTransport as any),
-      enableOfflinePersistence:
-        options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
+      enableOfflinePersistence: options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix ?? this.#indexedDBPrefix,
       encryptionKey: resolvedKey,
       rpc: options.rpc ?? this.#rpcOptions,

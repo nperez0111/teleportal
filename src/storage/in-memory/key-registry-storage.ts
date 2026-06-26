@@ -24,10 +24,7 @@ export class InMemoryKeyRegistryStorage implements KeyRegistryStorage {
     return state;
   }
 
-  async get(
-    documentId: string,
-    userId: string,
-  ): Promise<KeyRegistryRecord | null> {
+  async get(documentId: string, userId: string): Promise<KeyRegistryRecord | null> {
     const state = this.#docs.get(documentId);
     if (!state) return null;
     const wrappedKey = state.keys.get(userId);
@@ -35,9 +32,7 @@ export class InMemoryKeyRegistryStorage implements KeyRegistryStorage {
     return { wrappedKey, generation: state.generation };
   }
 
-  async getAny(
-    documentId: string,
-  ): Promise<(KeyRegistryRecord & { userId: string }) | null> {
+  async getAny(documentId: string): Promise<(KeyRegistryRecord & { userId: string }) | null> {
     const state = this.#docs.get(documentId);
     if (!state || state.keys.size === 0) return null;
     const [userId, wrappedKey] = state.keys.entries().next().value!;

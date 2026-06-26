@@ -16,24 +16,13 @@ export type KeyRegistryMeta = {
 export interface KeyRegistryStorage {
   readonly type: "key-registry-storage";
 
-  get(
-    documentId: string,
-    userId: string,
-  ): Promise<KeyRegistryRecord | null>;
+  get(documentId: string, userId: string): Promise<KeyRegistryRecord | null>;
 
-  getAny(
-    documentId: string,
-  ): Promise<(KeyRegistryRecord & { userId: string }) | null>;
+  getAny(documentId: string): Promise<(KeyRegistryRecord & { userId: string }) | null>;
 
-  set(
-    documentId: string,
-    entries: WrappedKeyEntry[],
-  ): Promise<number>;
+  set(documentId: string, entries: WrappedKeyEntry[]): Promise<number>;
 
-  revoke(
-    documentId: string,
-    userIds: string[],
-  ): Promise<number>;
+  revoke(documentId: string, userIds: string[]): Promise<number>;
 
   getMeta(documentId: string): Promise<KeyRegistryMeta>;
 
