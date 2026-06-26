@@ -6,6 +6,7 @@ import {
   type Message,
 } from "teleportal";
 import type { ConnectionTransport, TransportConnectContext } from "./types";
+import type { Timer } from "../utils";
 
 export interface WebSocketTransportOptions {
   /**
@@ -224,6 +225,63 @@ export function websocketTransport(options?: WebSocketTransportOptions): Connect
           // no-op
         }
       }
+    },
+
+    probe(ctx: { url?: string; token?: string; timer: Timer }): Promise<boolean> {
+      return new Promise<boolean>((resolve) => {
+        if (!ctx.url) {
+          resolve(false);
+          return;
+        }
+
+        const url = new URL(ctx.url);
+        url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
+        if (ctx.token) {
+          url.searchParams.set("token", ctx.token);
+        }
+
+        let settled = false;
+        let socket: WebSocket | null = null;
+        let probeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+        const settle = (result: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (probeTimeout) {
+            ctx.timer.clearTimeout(probeTimeout);
+            probeTimeout = null;
+          }
+          if (socket) {
+            try {
+              socket.removeEventListener("open", onOpen);
+              socket.removeEventListener("error", onFail);
+              socket.removeEventListener("close", onFail);
+              socket.close(1000);
+            } catch {
+              // ignore
+            }
+            socket = null;
+          }
+          resolve(result);
+        };
+
+        const onOpen = () => settle(true);
+        const onFail = () => settle(false);
+
+        probeTimeout = ctx.timer.setTimeout(() => {
+          probeTimeout = null;
+          settle(false);
+        }, timeoutMs);
+
+        try {
+          socket = new WebSocketImpl(url.toString(), protocols);
+          socket.addEventListener("open", onOpen);
+          socket.addEventListener("error", onFail);
+          socket.addEventListener("close", onFail);
+        } catch {
+          settle(false);
+        }
+      });
     },
   };
 

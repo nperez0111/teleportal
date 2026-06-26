@@ -13,6 +13,8 @@ export interface ConnectionTransport {
   sendHeartbeat?(): void;
 
   timeout?: number;
+
+  probe?(ctx: { url?: string; token?: string; timer: Timer }): Promise<boolean>;
 }
 
 export interface TransportConnectContext {
