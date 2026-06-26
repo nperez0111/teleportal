@@ -51,7 +51,8 @@ describe("passwordKey", () => {
     const resolver = passwordKey("my-secret");
     const key = await resolver.resolve({ document: "doc-1", connection: {} as any });
 
-    expect(key.algorithm).toEqual({ name: "AES-GCM", length: 256 });
+    expect((key.algorithm as any).name).toBe("AES-GCM");
+    expect((key.algorithm as any).length).toBe(256);
 
     const plaintext = new Uint8Array([10, 20, 30]);
     const encrypted = await encryptUpdate(key, plaintext);

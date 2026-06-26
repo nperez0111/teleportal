@@ -42,7 +42,8 @@ describe("Key Wrapping", () => {
 
     it("should produce an AES-KW key with wrapKey/unwrapKey usages", async () => {
       const key = await deriveWrappingKey(MASTER_SECRET, "alice");
-      expect(key.algorithm).toEqual({ name: "AES-KW", length: 256 });
+      expect((key.algorithm as any).name).toBe("AES-KW");
+      expect((key.algorithm as any).length).toBe(256);
       expect(key.usages).toContain("wrapKey");
       expect(key.usages).toContain("unwrapKey");
     });

@@ -9,6 +9,10 @@ import { importEncryptionKey } from "teleportal/encryption-key";
 import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+import {
+  getKeyRegistryRpcHandlers,
+  getKeyRegistryHandlers,
+} from "teleportal/protocols/key-registry";
 import { Server, checkPermissionWithTokenManager } from "teleportal/server";
 import {
   createEncryptedDriver,
@@ -17,6 +21,7 @@ import {
   UnstorageMilestoneStorage,
   UnstorageRateLimitStorage,
   UnstorageTemporaryUploadStorage,
+  InMemoryKeyRegistryStorage,
 } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { defaultRateLimitRules } from "teleportal/transports/rate-limiter";
@@ -68,6 +73,10 @@ const fileHandlers = getFileRpcHandlers(fileStorage);
 // Create rate limit storage using the same backing storage
 const rateLimitStorage = new UnstorageRateLimitStorage(memoryStorage);
 
+// Key registry for E2E encryption key distribution
+const keyRegistryStorage = new InMemoryKeyRegistryStorage();
+const MASTER_SECRET = new TextEncoder().encode("playground-master-secret-change-in-production");
+
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
   expiresIn: 3600, // 1 hour
@@ -86,8 +95,8 @@ const server = new Server<TokenPayload & { clientId: string }>({
   rpcHandlers: {
     ...milestoneHandlers,
     ...fileHandlers,
-    // Read-only attribution queries (authorship timeline + ContentMap).
     ...getAttributionRpcHandlers(),
+    ...getKeyRegistryRpcHandlers(keyRegistryStorage),
   },
   checkPermission: checkPermissionWithTokenManager(tokenManager),
   // pubSub: new RedisPubSub({
@@ -109,9 +118,20 @@ const ws = crossws({
   }),
 });
 
+const keyHandlers = getKeyRegistryHandlers({
+  storage: keyRegistryStorage,
+  masterSecret: MASTER_SECRET,
+});
+
 const httpHandler = tokenAuthenticatedHTTPHandler({
   server,
   tokenManager,
+  fetch: (req) => {
+    if (new URL(req.url).pathname.startsWith("/keys/")) {
+      return keyHandlers(req);
+    }
+    return new Response("Not Found", { status: 404 });
+  },
 });
 
 const instance = Bun.serve({
@@ -138,6 +158,18 @@ const instance = Bun.serve({
     // Just serve the index.html file for the root path
     if (pathname === "/") {
       return new Response(Bun.file(distDir + "/index.html"));
+    }
+
+    // Token API — frontend requests a token from the backend
+    if (pathname === "/api/token" && request.method === "POST") {
+      const { userId, room = "docs" } = (await request.json()) as {
+        userId: string;
+        room?: string;
+      };
+      const token = await tokenManager.createToken(userId, room, [
+        { pattern: "*", permissions: ["admin"] },
+      ]);
+      return Response.json({ token });
     }
 
     // Look in the dist folder for the file

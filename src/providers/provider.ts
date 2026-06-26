@@ -35,6 +35,7 @@ import type {
   RpcExtensionMap,
   RpcNamespace,
 } from "./rpc-extension";
+import type { KeyResolver } from "teleportal/encryption-key";
 
 export type PresenceEvent = {
   awarenessId: number;
@@ -119,8 +120,12 @@ export type ProviderOptions<
    * `createEncryptionKey`/`importEncryptionKey` from `teleportal/encryption-key`)
    * to encrypt document content. Omitting this throws — to deliberately run an
    * unencrypted document, pass `false`.
+   *
+   * A {@link KeyResolver} can be passed to resolve the key asynchronously —
+   * it will be resolved inside `Provider.create` after the connection is ready.
+   * Use `passwordKey()` or `registryKey()` from `teleportal/encryption-key`.
    */
-  encryptionKey?: CryptoKey | false;
+  encryptionKey?: CryptoKey | false | KeyResolver;
   rpc?: R;
   getTransport?: (ctx: {
     ydoc: Y.Doc;
@@ -167,6 +172,8 @@ export class Provider<
   public subdocs: Map<string, Provider<any, any>> = new Map();
   public rpc: RpcNamespace<R>;
 
+  _keyResolver?: KeyResolver;
+
   #connection!: Connection;
   #messageReader!: FanOutReader<RawReceivedMessage>;
   #getTransport: ProviderOptions<T, R>["getTransport"];
@@ -210,6 +217,16 @@ export class Provider<
           `End-to-end encryption is required by default — pass an encryptionKey ` +
           `(a CryptoKey from teleportal/encryption-key), or explicitly opt out of ` +
           `encryption with \`encryptionKey: false\`.`,
+      );
+    }
+    if (
+      encryptionKey &&
+      typeof encryptionKey === "object" &&
+      "resolve" in encryptionKey
+    ) {
+      throw new Error(
+        `Provider for document "${document}" received a KeyResolver in the sync constructor. ` +
+          `KeyResolvers must be resolved before construction — use Provider.create() instead.`,
       );
     }
     this.doc = ydoc;
@@ -636,10 +653,57 @@ export class Provider<
       // `??` is deliberate: an explicit `false` override is non-nullish so it
       // takes effect, while omitting the option inherits the parent's key/`false`
       // (never `undefined`, since the parent was successfully constructed).
-      encryptionKey: options.encryptionKey ?? this.encryptionKey,
+      // KeyResolvers are not supported in the sync openDocument — use
+      // openDocumentAsync instead.
+      encryptionKey: (options.encryptionKey ?? this.encryptionKey) as
+        | CryptoKey
+        | false
+        | undefined,
       rpc: options.rpc ?? this.#rpcOptions,
       document: options.document,
     });
+  }
+
+  /**
+   * Open a new document on the same connection, resolving a `KeyResolver` if
+   * the parent was created with one. Use this instead of `openDocument` when
+   * the encryption key needs async resolution per document.
+   */
+  public async openDocumentAsync(
+    options: Omit<ProviderOptions<T, R>, "connection">,
+  ): Promise<Provider<T, R>> {
+    let resolvedKey: CryptoKey | false | undefined;
+    const ek = options.encryptionKey;
+    if (ek && typeof ek === "object" && "resolve" in ek) {
+      resolvedKey = await ek.resolve({
+        document: options.document,
+        connection: this.#connection,
+      });
+    } else if (this._keyResolver && ek === undefined) {
+      resolvedKey = await this._keyResolver.resolve({
+        document: options.document,
+        connection: this.#connection,
+      });
+    } else {
+      resolvedKey = (ek ?? this.encryptionKey) as CryptoKey | false | undefined;
+    }
+
+    const doc = options.ydoc ?? new Y.Doc();
+    const awareness = options.awareness ?? new Awareness(doc);
+    const provider = new Provider<T, R>({
+      connection: this.#connection,
+      ydoc: doc,
+      awareness,
+      getTransport: options.getTransport ?? (this.#getTransport as any),
+      enableOfflinePersistence:
+        options.enableOfflinePersistence ?? this.#enableOfflinePersistence,
+      indexedDBPrefix: options.indexedDBPrefix ?? this.#indexedDBPrefix,
+      encryptionKey: resolvedKey,
+      rpc: options.rpc ?? this.#rpcOptions,
+      document: options.document,
+    });
+    if (this._keyResolver) provider._keyResolver = this._keyResolver;
+    return provider;
   }
 
   // --- Destroy ---
@@ -731,7 +795,21 @@ export class Provider<
 
     await connection.connected;
 
-    return new Provider({
+    let resolvedKey: CryptoKey | false | undefined = undefined;
+    let keyResolver: KeyResolver | undefined;
+    const ek = options.encryptionKey;
+
+    if (ek && typeof ek === "object" && "resolve" in ek) {
+      keyResolver = ek;
+      resolvedKey = await keyResolver.resolve({
+        document: options.document,
+        connection,
+      });
+    } else {
+      resolvedKey = ek as CryptoKey | false | undefined;
+    }
+
+    const provider = new Provider({
       connection,
       ydoc: options.ydoc,
       document: options.document,
@@ -740,8 +818,10 @@ export class Provider<
       enableOfflinePersistence: options.enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix,
       offlineStorage: options.offlineStorage,
-      encryptionKey: options.encryptionKey,
+      encryptionKey: resolvedKey,
       rpc: options.rpc,
     });
+    if (keyResolver) provider._keyResolver = keyResolver;
+    return provider;
   }
 }
