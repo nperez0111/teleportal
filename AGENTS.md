@@ -26,7 +26,8 @@ There are several sub-packages built with documentation:
 - [`teleportal/providers`](./src/providers/README.md) - Provider and connection architecture
 - [`teleportal/transports`](./src/transports/README.md) - Transport middleware
 - [`teleportal/token`](./src/token/README.md) - JWT token utilities
-- [`teleportal/encryption-key`](./src/encryption-key/README.md) - Encryption key utilities
+- [`teleportal/encryption-key`](./src/encryption-key/README.md) - Encryption key utilities, key wrapping, and key resolvers
+- [`teleportal/protocols/key-registry`](./src/protocols/key-registry/README.md) - Key distribution RPC + HTTP management
 - [`teleportal/monitoring`](./src/monitoring/README.md) - Metrics and monitoring (prometheus & HTTP endpoints)
 - [`teleportal/devtools`](./src/devtools/README.md) - DevTools integration
 

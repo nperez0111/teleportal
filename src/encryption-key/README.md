@@ -88,12 +88,72 @@ const sharedKey = keyString ? await importEncryptionKey(keyString) : await creat
 
 `keyFromUrlFragment` accepts the raw `location.hash` (with or without a leading `#`) and returns `null` when no `token` is present.
 
+### Key Resolvers
+
+For multi-user key distribution, the `encryptionKey` option on `Provider.create` accepts a `KeyResolver` — an object that asynchronously resolves the key after the connection is ready. Two built-in resolvers are provided:
+
+**Password-based** — derives a per-document key from a shared passphrase. No server involvement:
+
+```ts
+import { passwordKey } from "teleportal/encryption-key";
+
+const provider = await Provider.create({
+  url: "wss://...",
+  document: "my-doc",
+  encryptionKey: passwordKey("shared-passphrase"),
+});
+```
+
+**Registry-based** — fetches a wrapped key from the server's key registry and unwraps it locally. See the [Key Registry Protocol](../protocols/key-registry/README.md) for the full setup:
+
+```ts
+import { registryKey, importWrappingKey } from "teleportal/encryption-key";
+import { createKeyRegistryRpc } from "teleportal/protocols/key-registry";
+
+const wrappingKey = await importWrappingKey(wrappingKeyFromJwt);
+
+const provider = await Provider.create({
+  url: "wss://...",
+  document: "my-doc",
+  encryptionKey: registryKey({ wrappingKey }),
+  rpc: { keys: createKeyRegistryRpc },
+});
+```
+
+### Key Wrapping
+
+For server-side key management, utilities are provided for deriving per-user wrapping keys and wrapping/unwrapping document keys. These are used internally by the [Key Registry HTTP handlers](../protocols/key-registry/README.md) — you only need them for lower-level control.
+
+```ts
+import {
+  deriveWrappingKey,
+  wrapDocumentKey,
+  unwrapDocumentKey,
+  exportWrappingKey,
+  importWrappingKey,
+} from "teleportal/encryption-key";
+
+// Derive a per-user wrapping key from the app's master secret
+const wrappingKey = await deriveWrappingKey(masterSecret, userId);
+
+// Wrap a document key for storage
+const wrapped = await wrapDocumentKey(wrappingKey, documentKey);
+
+// Unwrap it back
+const unwrapped = await unwrapDocumentKey(wrappingKey, wrapped);
+
+// Export/import for embedding in JWT claims
+const keyString = await exportWrappingKey(wrappingKey);
+const imported = await importWrappingKey(keyString);
+```
+
 ## API
 
 ### Types
 
 - `DecryptedBinary` - A Y.js update as a `Uint8Array`
 - `EncryptedBinary` - An encrypted Y.js update as a `Uint8Array`
+- `KeyResolver` - Async key resolution interface for `Provider.create`
 
 ### Functions
 
@@ -106,6 +166,13 @@ const sharedKey = keyString ? await importEncryptionKey(keyString) : await creat
 | `keyFromUrlFragment(hash)`            | Parses a key string out of a URL fragment (`string \| null`)         |
 | `encryptUpdate(key, data)`            | Encrypts a Y.js update                                               |
 | `decryptUpdate(key, encryptedBinary)` | Decrypts an encrypted update                                         |
+| `passwordKey(passphrase)`             | Returns a `KeyResolver` that derives per-document keys via PBKDF2    |
+| `registryKey({ wrappingKey })`        | Returns a `KeyResolver` that fetches + unwraps from the key registry |
+| `deriveWrappingKey(secret, userId)`   | HKDF-SHA256 → AES-KW wrapping key, domain-separated per user        |
+| `wrapDocumentKey(wrappingKey, key)`   | AES-KW wrap → `Uint8Array` blob for storage                         |
+| `unwrapDocumentKey(wrappingKey, blob)`| AES-KW unwrap → usable `CryptoKey`                                  |
+| `exportWrappingKey(key)`              | Export wrapping key to JWK string                                    |
+| `importWrappingKey(keyString)`        | Import wrapping key from JWK string                                  |
 
 ## Security
 
