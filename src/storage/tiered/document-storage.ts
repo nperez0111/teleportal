@@ -1,0 +1,302 @@
+import type { IndexedSidecar } from "../../lib/protocol/encryption/content-cipher";
+import { AbstractDocumentStorage, type DocumentState } from "../document-storage";
+import type { DocumentMetadata, DocumentStorage, EncodedContentMap } from "../types";
+
+export interface TieredDocumentStorageOptions {
+  /** Interval in ms between persist sweeps (default: 5000) */
+  persistIntervalMs?: number;
+  /** Max time in ms a document can stay dirty before forced persist (default: 30000) */
+  maxDirtyAgeMs?: number;
+  /** Max documents to persist per sweep (default: 50) */
+  persistBatchSize?: number;
+  /** Evict clean documents from fast tier after this many ms of inactivity (default: undefined = never) */
+  evictAfterMs?: number;
+  /** Callback for background persist failures */
+  onPersistError?: (documentId: string, error: unknown) => void;
+}
+
+const defaults = {
+  persistIntervalMs: 5000,
+  maxDirtyAgeMs: 30_000,
+  persistBatchSize: 50,
+} satisfies Partial<TieredDocumentStorageOptions>;
+
+/**
+ * Composes two {@link AbstractDocumentStorage} instances into a two-tier
+ * storage system following the yhub pattern:
+ *
+ * - **fast tier** (intermediate): quick-access store for active documents
+ *   (e.g. in-memory).
+ * - **slow tier** (persistence): durable store for all documents
+ *   (e.g. Redis/PostgreSQL via unstorage).
+ *
+ * Documents are loaded from the slow tier on first access. All subsequent
+ * reads/writes operate on the fast tier. Dirty documents are periodically
+ * flushed back to the slow tier for durability.
+ */
+export class TieredDocumentStorage extends AbstractDocumentStorage {
+  #fast: AbstractDocumentStorage;
+  #slow: AbstractDocumentStorage;
+  #options: Required<Pick<TieredDocumentStorageOptions, "persistIntervalMs" | "maxDirtyAgeMs" | "persistBatchSize">> &
+    Pick<TieredDocumentStorageOptions, "evictAfterMs" | "onPersistError">;
+
+  #loaded = new Set<string>();
+  #dirty = new Map<string, number>();
+  #lastAccess = new Map<string, number>();
+  #loading = new Map<string, Promise<void>>();
+  #pendingAttributions = new Map<string, EncodedContentMap[]>();
+  #attributionLoaded = new Set<string>();
+  #persistTimer: ReturnType<typeof setInterval> | null = null;
+  #disposed = false;
+
+  constructor(
+    fast: AbstractDocumentStorage,
+    slow: AbstractDocumentStorage,
+    options?: TieredDocumentStorageOptions,
+  ) {
+    super(fast.encrypted);
+    this.#fast = fast;
+    this.#slow = slow;
+    this.#options = {
+      persistIntervalMs: options?.persistIntervalMs ?? defaults.persistIntervalMs,
+      maxDirtyAgeMs: options?.maxDirtyAgeMs ?? defaults.maxDirtyAgeMs,
+      persistBatchSize: options?.persistBatchSize ?? defaults.persistBatchSize,
+      evictAfterMs: options?.evictAfterMs,
+      onPersistError: options?.onPersistError,
+    };
+
+    this.#startPersistTimer();
+  }
+
+  // ── Abstract method overrides ──────────────────────────────────────────
+
+  async getDocumentState(key: string): Promise<DocumentState | null> {
+    await this.#ensureLoaded(key);
+    return this.#fast.getDocumentState(key);
+  }
+
+  async replaceDocumentState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
+    // Called by base class handleUpdate/handleCompaction after getDocumentState,
+    // which already ensured loading. Skip the redundant slow-tier check.
+    if (!this.#loaded.has(key)) {
+      this.#loaded.add(key);
+      this.#lastAccess.set(key, Date.now());
+    }
+    await this.#fast.replaceDocumentState(key, update, sidecars);
+    this.#markDirty(key);
+  }
+
+  async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
+    await this.#ensureLoaded(key);
+    return this.#fast.getDocumentMetadata(key);
+  }
+
+  async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
+    await this.#ensureLoaded(key);
+    await this.#fast.writeDocumentMetadata(key, metadata);
+    this.#markDirty(key);
+  }
+
+  async deleteDocument(key: string): Promise<void> {
+    await Promise.all([this.#fast.deleteDocument(key), this.#slow.deleteDocument(key)]);
+    this.#loaded.delete(key);
+    this.#dirty.delete(key);
+    this.#lastAccess.delete(key);
+    this.#loading.delete(key);
+    this.#pendingAttributions.delete(key);
+    this.#attributionLoaded.delete(key);
+  }
+
+  // ── Transaction ────────────────────────────────────────────────────────
+
+  override async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
+    return this.#fast.transaction(key, cb);
+  }
+
+  // ── Attribution ────────────────────────────────────────────────────────
+
+  override async storeAttribution(key: string, attribution: EncodedContentMap): Promise<void> {
+    await this.#fast.storeAttribution(key, attribution);
+
+    const existing = this.#pendingAttributions.get(key) ?? [];
+    existing.push(attribution);
+    this.#pendingAttributions.set(key, existing);
+    this.#markDirty(key);
+  }
+
+  async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
+    await this.#ensureLoaded(documentId);
+
+    // Lazy-load attribution from slow tier on first request. This avoids
+    // the expensive getKeys scan in #loadFromSlow for every document load.
+    if (!this.#attributionLoaded.has(documentId)) {
+      const slowAttr = await (this.#slow as DocumentStorage).retrieveAttribution?.(documentId);
+      if (slowAttr) {
+        await this.#fast.storeAttribution(documentId, slowAttr);
+      }
+      this.#attributionLoaded.add(documentId);
+    }
+
+    const fast = this.#fast as DocumentStorage;
+    if (fast.retrieveAttribution) {
+      return fast.retrieveAttribution(documentId);
+    }
+    return null;
+  }
+
+  // ── Load-on-first-access ───────────────────────────────────────────────
+
+  async #ensureLoaded(key: string): Promise<void> {
+    if (this.#loaded.has(key)) {
+      this.#lastAccess.set(key, Date.now());
+      return;
+    }
+
+    const inflight = this.#loading.get(key);
+    if (inflight) {
+      await inflight;
+      return;
+    }
+
+    const loadPromise = this.#loadFromSlow(key);
+    this.#loading.set(key, loadPromise);
+    try {
+      await loadPromise;
+    } finally {
+      this.#loading.delete(key);
+    }
+  }
+
+  async #loadFromSlow(key: string): Promise<void> {
+    // Load state + metadata in parallel. Attribution is loaded lazily
+    // in retrieveAttribution() to avoid expensive key scans on every load.
+    const [state, metadata] = await Promise.all([
+      this.#slow.getDocumentState(key),
+      this.#slow.getDocumentMetadata(key),
+    ]);
+
+    if (state) {
+      await this.#fast.replaceDocumentState(key, state.update, state.sidecars);
+      await this.#fast.writeDocumentMetadata(key, metadata);
+    }
+
+    this.#loaded.add(key);
+    this.#lastAccess.set(key, Date.now());
+  }
+
+  // ── Dirty tracking ─────────────────────────────────────────────────────
+
+  #markDirty(key: string) {
+    if (!this.#dirty.has(key)) {
+      this.#dirty.set(key, Date.now());
+    }
+    this.#lastAccess.set(key, Date.now());
+  }
+
+  // ── Persist (fast → slow) ──────────────────────────────────────────────
+
+  #startPersistTimer() {
+    if (this.#persistTimer) return;
+    this.#persistTimer = setInterval(() => {
+      void this.#persistSweep();
+    }, this.#options.persistIntervalMs);
+    if (typeof this.#persistTimer === "object" && "unref" in this.#persistTimer) {
+      (this.#persistTimer as { unref: () => void }).unref();
+    }
+  }
+
+  async #persistSweep(): Promise<void> {
+    if (this.#disposed) return;
+
+    const now = Date.now();
+    const toPersist: string[] = [];
+
+    for (const [key, dirtyTime] of this.#dirty) {
+      if (now - dirtyTime >= this.#options.maxDirtyAgeMs || toPersist.length < this.#options.persistBatchSize) {
+        toPersist.push(key);
+      }
+      if (toPersist.length >= this.#options.persistBatchSize) break;
+    }
+
+    for (const key of toPersist) {
+      try {
+        await this.#persistDocument(key);
+      } catch (error) {
+        this.#options.onPersistError?.(key, error);
+      }
+    }
+
+    if (this.#options.evictAfterMs != null) {
+      const evictBefore = now - this.#options.evictAfterMs;
+      for (const [key, lastAccess] of this.#lastAccess) {
+        if (lastAccess < evictBefore && !this.#dirty.has(key)) {
+          await this.#evictDocument(key);
+        }
+      }
+    }
+  }
+
+  async #persistDocument(key: string): Promise<void> {
+    const state = await this.#fast.getDocumentState(key);
+    const metadata = await this.#fast.getDocumentMetadata(key);
+
+    if (state) {
+      await this.#slow.transaction(key, async () => {
+        await this.#slow.replaceDocumentState(key, state.update, state.sidecars);
+        await this.#slow.writeDocumentMetadata(key, metadata);
+      });
+    }
+
+    const attributions = this.#pendingAttributions.get(key);
+    if (attributions?.length) {
+      for (const attr of attributions) {
+        await this.#slow.storeAttribution(key, attr);
+      }
+      this.#pendingAttributions.delete(key);
+    }
+
+    this.#dirty.delete(key);
+  }
+
+  async #evictDocument(key: string): Promise<void> {
+    if (this.#dirty.has(key)) return;
+    await this.#fast.deleteDocument(key);
+    this.#loaded.delete(key);
+    this.#lastAccess.delete(key);
+    this.#attributionLoaded.delete(key);
+  }
+
+  // ── Public flush / dispose ─────────────────────────────────────────────
+
+  /** Force-persist a single document immediately. */
+  async flush(documentId: string): Promise<void> {
+    if (this.#dirty.has(documentId)) {
+      await this.#persistDocument(documentId);
+    }
+  }
+
+  /** Force-persist all dirty documents. */
+  async flushAll(): Promise<void> {
+    const keys = [...this.#dirty.keys()];
+    for (const key of keys) {
+      try {
+        await this.#persistDocument(key);
+      } catch (error) {
+        this.#options.onPersistError?.(key, error);
+      }
+    }
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    this.#disposed = true;
+    if (this.#persistTimer) {
+      clearInterval(this.#persistTimer);
+      this.#persistTimer = null;
+    }
+    await this.flushAll();
+  }
+}

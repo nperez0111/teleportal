@@ -81,7 +81,7 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
   abstract writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void>;
   abstract deleteDocument(key: string): Promise<void>;
 
-  protected async storeAttribution(_key: string, _attribution: EncodedContentMap): Promise<void> {}
+  async storeAttribution(_key: string, _attribution: EncodedContentMap): Promise<void> {}
 
   transaction<T>(_key: string, cb: () => Promise<T>): Promise<T> {
     return cb();

@@ -139,7 +139,7 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     };
   }
 
-  protected override async storeAttribution(
+  override async storeAttribution(
     key: string,
     attribution: EncodedContentMap,
   ): Promise<void> {
