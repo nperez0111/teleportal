@@ -4,18 +4,19 @@ import * as decoding from "lib0/decoding";
 import { toBase64, fromBase64, toHexString } from "lib0/buffer";
 import type { IndexedSidecar, SidecarIndex } from "../../lib/protocol/encryption/content-cipher";
 import { EncryptedBinary } from "../../encryption-key";
-import { AbstractDocumentStorage, type DocumentState } from "../document-storage";
+import type { SidecarCompaction } from "../../lib/protocol/encryption/encoding";
+import {
+  AbstractDocumentStorage,
+  type DocumentState,
+  type PendingUpdate,
+} from "../document-storage";
 import type { DocumentMetadata } from "../types";
 
 const STATE_STORE = "state";
 const META_STORE = "meta";
 const SIDECAR_STORE = "sidecars";
+const PENDING_STORE = "pending";
 
-/**
- * Encodes the document's structure update plus the ordered list of sidecar
- * hashes that make up its current state. Sidecar *content* lives in its own
- * store (keyed by hash), so this row stays small and only references them.
- */
 function encodeStateRow(update: Uint8Array, sidecarHashes: Uint8Array[]): string {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint8Array(encoder, update);
@@ -37,7 +38,6 @@ function decodeStateRow(b64: string): { update: Uint8Array; sidecarHashes: Uint8
   return { update, sidecarHashes };
 }
 
-/** Encodes a single sidecar (encrypted content + its CRDT index) for its own row. */
 function encodeSidecarRow(encrypted: Uint8Array, index: SidecarIndex): string {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint8Array(encoder, encrypted);
@@ -65,38 +65,106 @@ function decodeSidecarRow(b64: string): { encrypted: EncryptedBinary; index: Sid
   return { encrypted, index };
 }
 
+function encodePendingUpdate(entry: PendingUpdate): string {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint8Array(encoder, entry.structureUpdate);
+
+  encoding.writeVarUint(encoder, entry.sidecars.length);
+  for (const s of entry.sidecars) {
+    encoding.writeVarUint8Array(encoder, s.encrypted);
+    encoding.writeVarUint(encoder, s.index.length);
+    for (const r of s.index) {
+      encoding.writeVarUint(encoder, r.clientId);
+      encoding.writeVarUint(encoder, r.minClock);
+      encoding.writeVarUint(encoder, r.maxClock);
+    }
+    encoding.writeVarUint8Array(encoder, s.hash);
+  }
+
+  encoding.writeUint8(encoder, entry.compaction ? 1 : 0);
+  if (entry.compaction) {
+    encoding.writeVarUint8Array(encoder, entry.compaction.sidecar);
+    encoding.writeVarUint(encoder, entry.compaction.index.length);
+    for (const r of entry.compaction.index) {
+      encoding.writeVarUint(encoder, r.clientId);
+      encoding.writeVarUint(encoder, r.minClock);
+      encoding.writeVarUint(encoder, r.maxClock);
+    }
+    encoding.writeVarUint8Array(encoder, entry.compaction.hash);
+    encoding.writeVarUint(encoder, entry.compaction.sourceHashes.length);
+    for (const h of entry.compaction.sourceHashes) {
+      encoding.writeVarUint8Array(encoder, h);
+    }
+  }
+
+  return toBase64(encoding.toUint8Array(encoder));
+}
+
+function decodePendingUpdate(b64: string): PendingUpdate {
+  const decoder = decoding.createDecoder(fromBase64(b64));
+  const structureUpdate = decoding.readVarUint8Array(decoder);
+
+  const sidecarCount = decoding.readVarUint(decoder);
+  const sidecars: IndexedSidecar[] = [];
+  for (let i = 0; i < sidecarCount; i++) {
+    const encrypted = decoding.readVarUint8Array(decoder) as EncryptedBinary;
+    const indexCount = decoding.readVarUint(decoder);
+    const index: SidecarIndex = [];
+    for (let j = 0; j < indexCount; j++) {
+      index.push({
+        clientId: decoding.readVarUint(decoder),
+        minClock: decoding.readVarUint(decoder),
+        maxClock: decoding.readVarUint(decoder),
+      });
+    }
+    const hash = decoding.readVarUint8Array(decoder);
+    sidecars.push({ encrypted, index, hash });
+  }
+
+  let compaction: SidecarCompaction | undefined;
+  if (decoding.readUint8(decoder) === 1) {
+    const sidecar = decoding.readVarUint8Array(decoder) as EncryptedBinary;
+    const indexCount = decoding.readVarUint(decoder);
+    const index: SidecarIndex = [];
+    for (let j = 0; j < indexCount; j++) {
+      index.push({
+        clientId: decoding.readVarUint(decoder),
+        minClock: decoding.readVarUint(decoder),
+        maxClock: decoding.readVarUint(decoder),
+      });
+    }
+    const hash = decoding.readVarUint8Array(decoder);
+    const sourceCount = decoding.readVarUint(decoder);
+    const sourceHashes: Uint8Array[] = [];
+    for (let j = 0; j < sourceCount; j++) {
+      sourceHashes.push(decoding.readVarUint8Array(decoder));
+    }
+    compaction = { sidecar, index, hash, sourceHashes };
+  }
+
+  return { structureUpdate, sidecars, compaction };
+}
+
 /**
  * IndexedDB-backed document storage.
  *
- * One IndexedDB database per document. Three object stores:
- * - `meta`     — document metadata (one row, keyed by document id; JSON string)
- * - `state`    — the merged structure update + ordered sidecar-hash list
- *                (one row, keyed by document id; base64)
- * - `sidecars` — encrypted content blobs, one row each, keyed by content hash.
- *
- * Sidecars are immutable and content-addressed, so a `replaceDocumentState`
- * only *adds* newly-seen sidecars and *deletes* the ones a compaction dropped —
- * the unchanged sidecar rows (the bulk of the data) are never rewritten.
+ * One IndexedDB database per document. Four object stores:
+ * - `state`    — the compacted structure update + ordered sidecar-hash list
+ * - `meta`     — document metadata (JSON string)
+ * - `sidecars` — encrypted content blobs, keyed by content hash
+ * - `pending`  — unmerged update log entries, keyed by auto-increment index
  */
 export class IdbDocumentStorage extends AbstractDocumentStorage {
   #db: IDBDatabase | null = null;
   #dbPromise: Promise<IDBDatabase> | null = null;
   readonly #dbName: string;
 
-  // Active transaction stores — set by transaction() so primitives
-  // called inside a transaction() callback reuse the same IDB transaction.
   #activeStores: IDBObjectStore[] | null = null;
 
-  // Serializes all IDB operations. Persistence is fired concurrently from
-  // multiple seams (outgoing edits, incoming server updates) without being
-  // awaited, so without this two operations could interleave and clobber the
-  // shared #activeStores / IDB transaction. The queue guarantees one operation
-  // at a time, which also gives the atomic read-merge-write needed across tabs.
   #queue: Promise<unknown> = Promise.resolve();
 
   #run<T>(fn: () => Promise<T>): Promise<T> {
     const result = this.#queue.then(fn, fn);
-    // Keep the chain alive regardless of individual op success/failure.
     this.#queue = result.then(
       () => undefined,
       () => undefined,
@@ -113,7 +181,7 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
     if (this.#db) return this.#db;
     if (this.#dbPromise) return this.#dbPromise;
     this.#dbPromise = idb.openDB(this.#dbName, (db: IDBDatabase) => {
-      idb.createStores(db, [[STATE_STORE], [META_STORE], [SIDECAR_STORE]]);
+      idb.createStores(db, [[STATE_STORE], [META_STORE], [SIDECAR_STORE], [PENDING_STORE]]);
     });
     this.#db = await this.#dbPromise;
     this.#dbPromise = null;
@@ -134,7 +202,11 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
   override transaction<T>(_key: string, cb: () => Promise<T>): Promise<T> {
     return this.#run(async () => {
       const db = await this.#open();
-      const stores = idb.transact(db, [STATE_STORE, META_STORE, SIDECAR_STORE], "readwrite");
+      const stores = idb.transact(
+        db,
+        [STATE_STORE, META_STORE, SIDECAR_STORE, PENDING_STORE],
+        "readwrite",
+      );
       this.#activeStores = stores;
       try {
         return await cb();
@@ -144,19 +216,47 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
     });
   }
 
-  // Reads run outside a transaction() (e.g. getDocument during replay), so route
-  // them through the same queue to avoid overlapping a write's #activeStores
-  // window. Safe from re-entrancy: getDocument does not call transaction().
   override getDocument(key: string) {
     return this.#run(() => super.getDocument(key));
   }
 
-  // Inside a transaction() call the DB is already open.  We MUST NOT
-  // `await` anything before issuing the first IDB request — even
-  // `await undefined` yields a microtask that lets the IDB transaction
-  // auto-commit.  Guard every primitive with this pattern instead.
+  // ── Pending log ────────────────────────────────────────────────────────
 
-  async getDocumentState(key: string): Promise<DocumentState | null> {
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
+    if (!this.#activeStores) await this.#open();
+    const store = this.#getStore(PENDING_STORE, "readwrite");
+    const raw = (await idb.get(store, key)) as unknown as string | undefined;
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    list.push(encodePendingUpdate(entry));
+    await idb.put(store, JSON.stringify(list), key);
+  }
+
+  async getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }> {
+    if (!this.#activeStores) await this.#open();
+    const store = this.#getStore(PENDING_STORE);
+    const raw = (await idb.get(store, key)) as unknown as string | undefined;
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return {
+      updates: list.map(decodePendingUpdate),
+      cursor: list.length,
+    };
+  }
+
+  async clearPendingUpdates(key: string, upToCursor: number): Promise<void> {
+    if (!this.#activeStores) await this.#open();
+    const store = this.#getStore(PENDING_STORE, "readwrite");
+    const raw = (await idb.get(store, key)) as unknown as string | undefined;
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    if (upToCursor >= list.length) {
+      await idb.del(store, key);
+    } else {
+      await idb.put(store, JSON.stringify(list.slice(upToCursor)), key);
+    }
+  }
+
+  // ── Base state ─────────────────────────────────────────────────────────
+
+  async getBaseState(key: string): Promise<DocumentState | null> {
     if (!this.#activeStores) await this.#open();
     const stateStore = this.#getStore(STATE_STORE);
     const raw = (await idb.get(stateStore, key)) as unknown as string | undefined;
@@ -167,14 +267,14 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
     const sidecars: IndexedSidecar[] = [];
     for (const hash of sidecarHashes) {
       const row = (await idb.get(sidecarStore, toHexString(hash))) as unknown as string | undefined;
-      if (!row) continue; // referenced sidecar missing — skip defensively
+      if (!row) continue;
       const { encrypted, index } = decodeSidecarRow(row);
       sidecars.push({ encrypted, index, hash });
     }
     return { update, sidecars };
   }
 
-  async replaceDocumentState(
+  async replaceBaseState(
     key: string,
     update: Uint8Array,
     sidecars: IndexedSidecar[],
@@ -182,8 +282,6 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
     if (!this.#activeStores) await this.#open();
     const stateStore = this.#getStore(STATE_STORE, "readwrite");
 
-    // Read the previously-referenced sidecar hashes so we can delete the ones
-    // that this new state no longer references (e.g. dropped by a compaction).
     const prevRaw = (await idb.get(stateStore, key)) as unknown as string | undefined;
     const prevHexes = prevRaw
       ? decodeStateRow(prevRaw).sidecarHashes.map((h) => toHexString(h))
@@ -194,25 +292,24 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
     const newHexSet = new Set(newHexes);
     const prevHexSet = new Set(prevHexes);
 
-    // Rewrite the (small) state row — structure update + ordered hash list.
     await idb.put(stateStore, encodeStateRow(update, newHashes), key);
 
     const sidecarStore = this.#getStore(SIDECAR_STORE, "readwrite");
 
-    // Add only sidecars we haven't stored before (content-addressed & immutable).
     for (let i = 0; i < sidecars.length; i++) {
       if (prevHexSet.has(newHexes[i])) continue;
       const s = sidecars[i];
       await idb.put(sidecarStore, encodeSidecarRow(s.encrypted, s.index), newHexes[i]);
     }
 
-    // Delete sidecars no longer referenced (compaction wipes the superseded rows).
     for (const hex of prevHexes) {
       if (!newHexSet.has(hex)) {
         await idb.del(sidecarStore, hex);
       }
     }
   }
+
+  // ── Metadata ───────────────────────────────────────────────────────────
 
   async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
     if (!this.#activeStores) await this.#open();
@@ -237,19 +334,19 @@ export class IdbDocumentStorage extends AbstractDocumentStorage {
     await idb.put(store, JSON.stringify(metadata), key);
   }
 
+  // ── Delete ─────────────────────────────────────────────────────────────
+
   deleteDocument(key: string): Promise<void> {
-    // Serialize + run as one atomic transaction (the base class never calls
-    // deleteDocument from inside a transaction, so this can't re-enter).
     return this.transaction(key, async () => {
       const stateStore = this.#getStore(STATE_STORE, "readwrite");
       const metaStore = this.#getStore(META_STORE, "readwrite");
-      // One DB per document, so the sidecars store only holds this document's
-      // sidecars — clearing it wholesale is correct and cheaper than per-key dels.
       const sidecarStore = this.#getStore(SIDECAR_STORE, "readwrite");
+      const pendingStore = this.#getStore(PENDING_STORE, "readwrite");
       await Promise.all([
         idb.del(stateStore, key),
         idb.del(metaStore, key),
         idb.rtop(sidecarStore.clear()),
+        idb.del(pendingStore, key),
       ]);
     });
   }

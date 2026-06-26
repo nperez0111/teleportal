@@ -680,6 +680,7 @@ describe("Session", () => {
 
       it("stores attribution for encrypted updates", async () => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
         const encStorage = new MemoryDocumentStorage(true);
 
@@ -738,6 +739,7 @@ describe("Session", () => {
 
       it("emits document-attribution event for encrypted updates", async () => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
         const encStorage = new MemoryDocumentStorage(true);
 
@@ -1151,6 +1153,7 @@ describe("Session", () => {
 
       beforeEach(() => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
         encStorage = new MemoryDocumentStorage(true);
         encPubSub = new InMemoryPubSub();

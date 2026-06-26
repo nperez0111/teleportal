@@ -35,6 +35,7 @@ describe("IDB-like storage round-trip (via MemoryDocumentStorage)", () => {
 
   beforeEach(() => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     storage = new MemoryDocumentStorage(true);
   });
 
@@ -151,6 +152,7 @@ describe("at-rest secrecy (encrypted vs plaintext)", () => {
   it("encrypted content does not contain plaintext marker in stored state", async () => {
     const key = await createEncryptionKey();
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     const storage = new MemoryDocumentStorage(true);
 
     const doc = new Y.Doc();
@@ -195,6 +197,7 @@ describe("at-rest secrecy (encrypted vs plaintext)", () => {
 
   it("plaintext content DOES contain marker in stored state (expected exposure)", async () => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     const storage = new MemoryDocumentStorage(false);
 
     const doc = new Y.Doc();

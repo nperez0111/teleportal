@@ -1,11 +1,10 @@
 import type { IndexedSidecar } from "../../lib/protocol/encryption/content-cipher";
-import { AbstractDocumentStorage, type DocumentState } from "../document-storage";
-import type {
-  Document,
-  DocumentMetadata,
-  DocumentStorage,
-  EncodedContentMap,
-} from "../types";
+import {
+  AbstractDocumentStorage,
+  type DocumentState,
+  type PendingUpdate,
+} from "../document-storage";
+import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "../types";
 import type { StateVector, VersionedSyncStep2Update, VersionedUpdate } from "teleportal";
 
 export interface TieredDocumentStorageOptions {
@@ -29,12 +28,11 @@ const defaults = {
 
 /**
  * Composes two {@link AbstractDocumentStorage} instances into a two-tier
- * storage system following the yhub pattern:
+ * storage system following the yhub pattern. Merge-strategy-agnostic — the
+ * fast and slow tiers each decide their own merge behavior.
  *
- * - **fast tier** (intermediate): quick-access store for active documents
- *   (e.g. in-memory).
- * - **slow tier** (persistence): durable store for all documents
- *   (e.g. Redis/PostgreSQL via unstorage).
+ * - **fast tier** (intermediate): quick-access store for active documents.
+ * - **slow tier** (persistence): durable store for all documents.
  *
  * Documents are loaded from the slow tier on first access. All subsequent
  * reads/writes operate on the fast tier. Dirty documents are periodically
@@ -43,7 +41,9 @@ const defaults = {
 export class TieredDocumentStorage extends AbstractDocumentStorage {
   #fast: AbstractDocumentStorage;
   #slow: AbstractDocumentStorage;
-  #options: Required<Pick<TieredDocumentStorageOptions, "persistIntervalMs" | "maxDirtyAgeMs" | "persistBatchSize">> &
+  #options: Required<
+    Pick<TieredDocumentStorageOptions, "persistIntervalMs" | "maxDirtyAgeMs" | "persistBatchSize">
+  > &
     Pick<TieredDocumentStorageOptions, "evictAfterMs" | "onPersistError">;
 
   #loaded = new Set<string>();
@@ -74,25 +74,38 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
     this.#startPersistTimer();
   }
 
-  // ── Abstract method overrides ──────────────────────────────────────────
+  // ── Abstract primitive implementations (delegate to fast tier) ─────────
 
-  async getDocumentState(key: string): Promise<DocumentState | null> {
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
     await this.#ensureLoaded(key);
-    return this.#fast.getDocumentState(key);
+    await this.#fast.appendUpdate(key, entry);
+    this.#markDirty(key);
   }
 
-  async replaceDocumentState(
+  async getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }> {
+    await this.#ensureLoaded(key);
+    return this.#fast.getPendingUpdates(key);
+  }
+
+  async clearPendingUpdates(key: string, upToCursor: number): Promise<void> {
+    await this.#fast.clearPendingUpdates(key, upToCursor);
+  }
+
+  async getBaseState(key: string): Promise<DocumentState | null> {
+    await this.#ensureLoaded(key);
+    return this.#fast.getBaseState(key);
+  }
+
+  async replaceBaseState(
     key: string,
     update: Uint8Array,
     sidecars: IndexedSidecar[],
   ): Promise<void> {
-    // Called by base class handleUpdate/handleCompaction after getDocumentState,
-    // which already ensured loading. Skip the redundant slow-tier check.
     if (!this.#loaded.has(key)) {
       this.#loaded.add(key);
       this.#lastAccess.set(key, Date.now());
     }
-    await this.#fast.replaceDocumentState(key, update, sidecars);
+    await this.#fast.replaceBaseState(key, update, sidecars);
     this.#markDirty(key);
   }
 
@@ -123,12 +136,9 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
     return this.#fast.transaction(key, cb);
   }
 
-  // ── Hot-path overrides ────────────────────────────────────────────────
-  // The base class methods (handleUpdate, getDocument, handleSyncStep1)
-  // call multiple abstract methods (getDocumentState, replaceDocumentState,
-  // getDocumentMetadata, writeDocumentMetadata), each of which triggers
-  // #ensureLoaded. By ensuring load once and delegating to the fast tier
-  // directly, we eliminate 2–3 redundant async hops per operation.
+  // ── Hot-path overrides ─────────────────────────────────────────────────
+  // Ensure load once and delegate to fast tier directly, eliminating
+  // redundant async hops through the abstract methods.
 
   override async handleUpdate(
     key: string,
@@ -141,6 +151,24 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
     if (attribution) {
       await this.storeAttribution(key, attribution);
     }
+  }
+
+  override async getDocumentState(key: string): Promise<DocumentState | null> {
+    await this.#ensureLoaded(key);
+    return this.#fast.getDocumentState(key);
+  }
+
+  override async replaceDocumentState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
+    if (!this.#loaded.has(key)) {
+      this.#loaded.add(key);
+      this.#lastAccess.set(key, Date.now());
+    }
+    await this.#fast.replaceDocumentState(key, update, sidecars);
+    this.#markDirty(key);
   }
 
   override async getDocument(key: string): Promise<Document | null> {
@@ -173,8 +201,6 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
   async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
     await this.#ensureLoaded(documentId);
 
-    // Lazy-load attribution from slow tier on first request. This avoids
-    // the expensive getKeys scan in #loadFromSlow for every document load.
     if (!this.#attributionLoaded.has(documentId)) {
       const slowAttr = await (this.#slow as DocumentStorage).retrieveAttribution?.(documentId);
       if (slowAttr) {
@@ -214,8 +240,6 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
   }
 
   async #loadFromSlow(key: string): Promise<void> {
-    // Load state + metadata in parallel. Attribution is loaded lazily
-    // in retrieveAttribution() to avoid expensive key scans on every load.
     const [state, metadata] = await Promise.all([
       this.#slow.getDocumentState(key),
       this.#slow.getDocumentMetadata(key),
@@ -258,7 +282,10 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
     const toPersist: string[] = [];
 
     for (const [key, dirtyTime] of this.#dirty) {
-      if (now - dirtyTime >= this.#options.maxDirtyAgeMs || toPersist.length < this.#options.persistBatchSize) {
+      if (
+        now - dirtyTime >= this.#options.maxDirtyAgeMs ||
+        toPersist.length < this.#options.persistBatchSize
+      ) {
         toPersist.push(key);
       }
       if (toPersist.length >= this.#options.persistBatchSize) break;
@@ -291,6 +318,9 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
         await this.#slow.replaceDocumentState(key, state.update, state.sidecars);
         await this.#slow.writeDocumentMetadata(key, metadata);
       });
+      // Compact fast tier: clears the pending log so the same updates
+      // aren't re-materialized on subsequent reads.
+      await this.#fast.replaceDocumentState(key, state.update, state.sidecars);
     }
 
     const attributions = this.#pendingAttributions.get(key);
@@ -314,14 +344,12 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
 
   // ── Public flush / dispose ─────────────────────────────────────────────
 
-  /** Force-persist a single document immediately. */
   async flush(documentId: string): Promise<void> {
     if (this.#dirty.has(documentId)) {
       await this.#persistDocument(documentId);
     }
   }
 
-  /** Force-persist all dirty documents. */
   async flushAll(): Promise<void> {
     const keys = [...this.#dirty.keys()];
     for (const key of keys) {

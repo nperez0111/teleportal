@@ -1,6 +1,10 @@
 import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import type { IndexedSidecar } from "../../lib/protocol/encryption/content-cipher";
-import { AbstractDocumentStorage, type DocumentState } from "../document-storage";
+import {
+  AbstractDocumentStorage,
+  type DocumentState,
+  type PendingUpdate,
+} from "../document-storage";
 import type { DocumentMetadata, EncodedContentMap } from "../types";
 
 type DocumentRecord = {
@@ -8,21 +12,20 @@ type DocumentRecord = {
   state: DocumentState | null;
 };
 
-/**
- * In-memory document storage backed by a static Map (or user-supplied
- * read/write/delete callbacks). Useful for tests and ephemeral servers.
- */
 export class MemoryDocumentStorage extends AbstractDocumentStorage {
   public static docs = new Map<string, DocumentRecord>();
   public static attributionMaps = new Map<string, EncodedContentMap[]>();
+  public static pendingUpdates = new Map<string, PendingUpdate[]>();
+
+  #pending: Map<string, PendingUpdate[]>;
 
   constructor(
-    // Encrypted by default; pass `false` to tag documents as plaintext.
     encrypted: boolean = true,
     private options: {
       write: (key: string, doc: DocumentRecord) => Promise<void>;
       fetch: (key: string) => Promise<DocumentRecord | undefined>;
       delete: (key: string) => Promise<void>;
+      pendingMap?: Map<string, PendingUpdate[]>;
     } = {
       write: async (key, doc) => {
         MemoryDocumentStorage.docs.set(key, doc);
@@ -36,7 +39,58 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
     },
   ) {
     super(encrypted);
+    this.#pending = options.pendingMap ?? MemoryDocumentStorage.pendingUpdates;
   }
+
+  // ── Pending log (merge-on-read) ────────────────────────────────────────
+
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
+    const list = this.#pending.get(key) ?? [];
+    list.push(entry);
+    this.#pending.set(key, list);
+  }
+
+  async getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }> {
+    const list = this.#pending.get(key) ?? [];
+    return { updates: [...list], cursor: list.length };
+  }
+
+  async clearPendingUpdates(key: string, upToCursor: number): Promise<void> {
+    const list = this.#pending.get(key);
+    if (!list) return;
+    if (upToCursor >= list.length) {
+      this.#pending.delete(key);
+    } else {
+      list.splice(0, upToCursor);
+    }
+  }
+
+  // ── Base state ─────────────────────────────────────────────────────────
+
+  async getBaseState(key: string): Promise<DocumentState | null> {
+    const doc = await this.options.fetch(key);
+    return doc?.state ?? null;
+  }
+
+  async replaceBaseState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
+    const now = Date.now();
+    const existing =
+      (await this.options.fetch(key)) ??
+      ({
+        metadata: { createdAt: now, updatedAt: now, encrypted: this.encrypted },
+        state: null,
+      } satisfies DocumentRecord);
+    await this.options.write(key, {
+      ...existing,
+      state: { update, sidecars },
+    });
+  }
+
+  // ── Metadata ───────────────────────────────────────────────────────────
 
   async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
     const existing = await this.options.fetch(key);
@@ -61,33 +115,9 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
     };
   }
 
-  async getDocumentState(key: string): Promise<DocumentState | null> {
-    const doc = await this.options.fetch(key);
-    return doc?.state ?? null;
-  }
+  // ── Attribution ────────────────────────────────────────────────────────
 
-  async replaceDocumentState(
-    key: string,
-    update: Uint8Array,
-    sidecars: IndexedSidecar[],
-  ): Promise<void> {
-    const now = Date.now();
-    const existing =
-      (await this.options.fetch(key)) ??
-      ({
-        metadata: { createdAt: now, updatedAt: now, encrypted: this.encrypted },
-        state: null,
-      } satisfies DocumentRecord);
-    await this.options.write(key, {
-      ...existing,
-      state: { update, sidecars },
-    });
-  }
-
-  override async storeAttribution(
-    key: string,
-    attribution: EncodedContentMap,
-  ): Promise<void> {
+  override async storeAttribution(key: string, attribution: EncodedContentMap): Promise<void> {
     let list = MemoryDocumentStorage.attributionMaps.get(key);
     if (!list) {
       list = [];
@@ -96,18 +126,19 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
     list.push(attribution);
   }
 
-  async deleteDocument(key: string): Promise<void> {
-    // Route through the same backing store as write/fetch; deleting from the
-    // static map directly would no-op for instances backed by custom options.
-    await this.options.delete(key);
-    MemoryDocumentStorage.attributionMaps.delete(key);
-  }
-
   async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
     const list = MemoryDocumentStorage.attributionMaps.get(documentId);
     if (!list || list.length === 0) return null;
     if (list.length === 1) return list[0];
     const merged = mergeContentMaps(list.map((m) => decodeContentMap(m)));
     return encodeContentMap(merged) as EncodedContentMap;
+  }
+
+  // ── Delete ─────────────────────────────────────────────────────────────
+
+  async deleteDocument(key: string): Promise<void> {
+    await this.options.delete(key);
+    this.#pending.delete(key);
+    MemoryDocumentStorage.attributionMaps.delete(key);
   }
 }

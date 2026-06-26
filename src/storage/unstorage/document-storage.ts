@@ -5,7 +5,12 @@ import type { Storage } from "unstorage";
 import { EncryptedBinary } from "teleportal/encryption-key";
 import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import type { IndexedSidecar, SidecarIndex } from "teleportal/protocol/encryption";
-import { AbstractDocumentStorage, type DocumentState } from "../document-storage";
+import type { SidecarCompaction } from "../../lib/protocol/encryption/encoding";
+import {
+  AbstractDocumentStorage,
+  type DocumentState,
+  type PendingUpdate,
+} from "../document-storage";
 import type { DocumentMetadata, EncodedContentMap } from "../types";
 import { withTransaction } from "./transaction";
 
@@ -16,8 +21,19 @@ type StoredIndexedSidecar = {
 };
 
 type StoredState = {
-  update: string; // base64-encoded V2 update
+  update: string;
   sidecars: StoredIndexedSidecar[];
+};
+
+type StoredPendingUpdate = {
+  structureUpdate: string;
+  sidecars: StoredIndexedSidecar[];
+  compaction?: {
+    sidecar: string;
+    index: SidecarIndex;
+    hash: string;
+    sourceHashes: string[];
+  };
 };
 
 function serializeState(state: DocumentState): StoredState {
@@ -42,13 +58,53 @@ function deserializeState(record: StoredState): DocumentState {
   };
 }
 
+function serializePendingUpdate(entry: PendingUpdate): StoredPendingUpdate {
+  return {
+    structureUpdate: toBase64(entry.structureUpdate),
+    sidecars: entry.sidecars.map((s) => ({
+      encrypted: toBase64(s.encrypted),
+      index: s.index,
+      hash: toBase64(s.hash),
+    })),
+    compaction: entry.compaction
+      ? {
+          sidecar: toBase64(entry.compaction.sidecar),
+          index: entry.compaction.index,
+          hash: toBase64(entry.compaction.hash),
+          sourceHashes: entry.compaction.sourceHashes.map((h) => toBase64(h)),
+        }
+      : undefined,
+  };
+}
+
+function deserializePendingUpdate(stored: StoredPendingUpdate): PendingUpdate {
+  const compaction: SidecarCompaction | undefined = stored.compaction
+    ? {
+        sidecar: fromBase64(stored.compaction.sidecar) as EncryptedBinary,
+        index: stored.compaction.index,
+        hash: fromBase64(stored.compaction.hash),
+        sourceHashes: stored.compaction.sourceHashes.map((h) => fromBase64(h)),
+      }
+    : undefined;
+  return {
+    structureUpdate: fromBase64(stored.structureUpdate),
+    sidecars: stored.sidecars.map((s) => ({
+      encrypted: fromBase64(s.encrypted) as EncryptedBinary,
+      index: s.index,
+      hash: fromBase64(s.hash),
+    })),
+    compaction,
+  };
+}
+
 /**
  * Unstorage-backed document storage.
  *
  * Storage layout:
- * - `{prefix}:{key}:state` -- JSON blob with base64 V2 update + sidecars
- * - `{prefix}:{key}:meta`  -- JSON document metadata
- * - `{prefix}:{key}:attribution:{uuid}` -- raw attribution blobs
+ * - `{prefix}:{key}:state`               -- JSON: base64 V2 update + sidecars
+ * - `{prefix}:{key}:meta`                -- JSON: document metadata
+ * - `{prefix}:{key}:pending`             -- JSON: array of pending updates
+ * - `{prefix}:{key}:attribution:{uuid}`  -- raw attribution blobs
  */
 export class UnstorageDocumentStorage extends AbstractDocumentStorage {
   private readonly storage: Storage;
@@ -62,7 +118,6 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
       encrypted?: boolean;
     },
   ) {
-    // Encrypted by default; pass `encrypted: false` to tag documents as plaintext.
     super(options?.encrypted ?? true);
     this.storage = storage;
     this.options = { ttl: 5 * 1000, keyPrefix: "", ...options };
@@ -80,6 +135,10 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     return this.#getKey(key) + ":state";
   }
 
+  #getPendingKey(key: string): string {
+    return this.#getKey(key) + ":pending";
+  }
+
   #getAttributionKeyPrefix(key: string): string {
     return this.#getKey(key) + ":attribution";
   }
@@ -88,11 +147,6 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     return this.#getAttributionKeyPrefix(key) + ":" + uuidv4();
   }
 
-  /**
-   * Lock a key for 5 seconds.
-   * @param key - The key to lock
-   * @param cb - The callback to execute
-   */
   async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     const prefixedKey = this.#getKey(key);
     return withTransaction(this.storage, prefixedKey, async () => cb(), {
@@ -100,25 +154,54 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     });
   }
 
-  /**
-   * Retrieve the stored V2 update and sidecars from the unstorage backend.
-   */
-  async getDocumentState(key: string): Promise<DocumentState | null> {
+  // ── Pending log ────────────────────────────────────────────────────────
+
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
+    const stored =
+      ((await this.storage.getItem(this.#getPendingKey(key))) as StoredPendingUpdate[] | null) ??
+      [];
+    stored.push(serializePendingUpdate(entry));
+    await this.storage.setItem(this.#getPendingKey(key), stored);
+  }
+
+  async getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }> {
+    const stored =
+      ((await this.storage.getItem(this.#getPendingKey(key))) as StoredPendingUpdate[] | null) ??
+      [];
+    return {
+      updates: stored.map(deserializePendingUpdate),
+      cursor: stored.length,
+    };
+  }
+
+  async clearPendingUpdates(key: string, upToCursor: number): Promise<void> {
+    const stored =
+      ((await this.storage.getItem(this.#getPendingKey(key))) as StoredPendingUpdate[] | null) ??
+      [];
+    if (upToCursor >= stored.length) {
+      await this.storage.removeItem(this.#getPendingKey(key));
+    } else {
+      await this.storage.setItem(this.#getPendingKey(key), stored.slice(upToCursor));
+    }
+  }
+
+  // ── Base state ─────────────────────────────────────────────────────────
+
+  async getBaseState(key: string): Promise<DocumentState | null> {
     const stored = (await this.storage.getItem(this.#getStateKey(key))) as StoredState | null;
     if (!stored) return null;
     return deserializeState(stored);
   }
 
-  /**
-   * Persist a V2 update and its sidecars, replacing any previously stored state.
-   */
-  async replaceDocumentState(
+  async replaceBaseState(
     key: string,
     update: Uint8Array,
     sidecars: IndexedSidecar[],
   ): Promise<void> {
     await this.storage.setItem(this.#getStateKey(key), serializeState({ update, sidecars }));
   }
+
+  // ── Metadata ───────────────────────────────────────────────────────────
 
   async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
     await this.storage.setItem(this.#getMetadataKey(key), metadata);
@@ -139,10 +222,9 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     };
   }
 
-  override async storeAttribution(
-    key: string,
-    attribution: EncodedContentMap,
-  ): Promise<void> {
+  // ── Attribution ────────────────────────────────────────────────────────
+
+  override async storeAttribution(key: string, attribution: EncodedContentMap): Promise<void> {
     await this.storage.setItemRaw(this.#getAttributionKey(key), attribution);
   }
 
@@ -161,19 +243,19 @@ export class UnstorageDocumentStorage extends AbstractDocumentStorage {
     return encodeContentMap(merged) as EncodedContentMap;
   }
 
+  // ── Delete ─────────────────────────────────────────────────────────────
+
   async deleteDocument(key: string): Promise<void> {
     const promises: Promise<unknown>[] = [];
 
-    // Delete state
     promises.push(this.storage.removeItem(this.#getStateKey(key)));
+    promises.push(this.storage.removeItem(this.#getPendingKey(key)));
 
-    // Delete attribution data
     const attrKeys = await this.storage.getKeys(this.#getAttributionKeyPrefix(key));
     if (attrKeys.length > 0) {
       promises.push(...attrKeys.map((k) => this.storage.removeItem(k)));
     }
 
-    // Delete metadata
     promises.push(this.storage.removeItem(this.#getMetadataKey(key)));
 
     await Promise.all(promises);

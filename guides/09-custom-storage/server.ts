@@ -1,26 +1,53 @@
 import { serve } from "crossws/server";
 import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
-import { AbstractDocumentStorage, type DocumentState, DocumentMetadata } from "teleportal/storage";
+import {
+  AbstractDocumentStorage,
+  type DocumentState,
+  type PendingUpdate,
+  DocumentMetadata,
+} from "teleportal/storage";
 import type { IndexedSidecar } from "teleportal/protocol/encryption";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 // A custom document storage implementation, this is just for illustration purposes,
-// it stores the merged V2 update + sidecars in memory.
+// it stores the base state + pending update log in memory.
 class CustomDocumentStorage extends AbstractDocumentStorage {
-  private stateMap = new Map<string, DocumentState>();
+  private baseMap = new Map<string, DocumentState>();
+  private pendingMap = new Map<string, PendingUpdate[]>();
   private metadataMap = new Map<string, DocumentMetadata>();
 
-  async getDocumentState(key: string): Promise<DocumentState | null> {
-    return this.stateMap.get(key) ?? null;
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
+    const list = this.pendingMap.get(key) ?? [];
+    list.push(entry);
+    this.pendingMap.set(key, list);
   }
 
-  async replaceDocumentState(
+  async getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }> {
+    const list = this.pendingMap.get(key) ?? [];
+    return { updates: [...list], cursor: list.length };
+  }
+
+  async clearPendingUpdates(key: string, upToCursor: number): Promise<void> {
+    const list = this.pendingMap.get(key);
+    if (!list) return;
+    if (upToCursor >= list.length) {
+      this.pendingMap.delete(key);
+    } else {
+      list.splice(0, upToCursor);
+    }
+  }
+
+  async getBaseState(key: string): Promise<DocumentState | null> {
+    return this.baseMap.get(key) ?? null;
+  }
+
+  async replaceBaseState(
     key: string,
     update: Uint8Array,
     sidecars: IndexedSidecar[],
   ): Promise<void> {
-    this.stateMap.set(key, { update, sidecars });
+    this.baseMap.set(key, { update, sidecars });
   }
 
   async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
@@ -38,7 +65,8 @@ class CustomDocumentStorage extends AbstractDocumentStorage {
   }
 
   async deleteDocument(key: string): Promise<void> {
-    this.stateMap.delete(key);
+    this.baseMap.delete(key);
+    this.pendingMap.delete(key);
     this.metadataMap.delete(key);
   }
 }

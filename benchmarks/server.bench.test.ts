@@ -73,6 +73,7 @@ describe("Server Benchmarks", () => {
 
   beforeEach(() => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
     pubSub = new InMemoryPubSub();
     storage = new MemoryDocumentStorage(false);
