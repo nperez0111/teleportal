@@ -87,8 +87,16 @@ const server = new Server({
     ],
     // rate-limiting tracking is single-node by default, if using multiple nodes, they need an external store
     rateLimitStorage: new UnstorageRateLimitStorage(backingStorage),
+    // callback when a rate limit is exceeded, user will be disconnected automatically
+    onRateLimitExceeded: (details) => {
+      console.warn("Rate limit exceeded", details);
+    },
     // track message sizes for abuse
     maxMessageSize: 10 * 1024 * 1024, // 10MB as the max acceptable message size
+    // callback when a message size limit is exceeded, user is disconnected automatically
+    onMessageSizeExceeded: (details) => {
+      console.warn("Message size exceeded", details);
+    },
   },
 });
 
