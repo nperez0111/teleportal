@@ -6,10 +6,11 @@ import {
   websocketTransport,
   httpTransport,
 } from "teleportal/providers";
-import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { createMilestoneRpc } from "teleportal/protocols/milestone";
 import { createAttributionRpc } from "teleportal/protocols/attribution";
 import { createFileRpc } from "teleportal/protocols/file";
+import { createKeyRegistryRpc } from "teleportal/protocols/key-registry";
+import { registryKey, importWrappingKey } from "teleportal/encryption-key";
 import { IdbFileCache } from "teleportal/storage";
 
 import { getEncryptedTransport } from "./encrypted";
@@ -26,6 +27,7 @@ export type PlaygroundRpcExtensions = {
   milestones: typeof createMilestoneRpc;
   attribution: typeof createAttributionRpc;
   files: () => ReturnType<typeof createFileRpc>;
+  keys: typeof createKeyRegistryRpc;
 };
 
 /**
@@ -37,11 +39,15 @@ export type PlaygroundProvider = Provider<
   PlaygroundRpcExtensions
 >;
 
-const tokenManager = createTokenManager({
-  secret: "your-secret-key-here", // In production, use a strong secret
-  expiresIn: 3600, // 1 hour
-  issuer: "my-collaborative-app",
-});
+async function fetchToken(userId: string): Promise<string> {
+  const res = await fetch("/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  const { token } = await res.json();
+  return token;
+}
 
 // Singleton provider manager to ensure only one provider instance exists (workaround for strict mode)
 class ProviderManager {
@@ -61,70 +67,81 @@ class ProviderManager {
 
   private async getProviderConnection(): Promise<Connection> {
     if (!this.websocketConnection) {
-      this.websocketConnection = tokenManager
-        .createToken(
-          // The token subject becomes the authenticated userId, which the server
-          // records as the author of every edit from this tab.
-          getIdentity().name,
-          "docs",
-          // TODO probably make token gen configurable callback
-          new DocumentAccessBuilder()
-            .admin("*")
-            // .write("Testy")
-            // .readOnly("test-this")
-            .build(),
-        )
-        .then((token) => {
-          return new Connection({
-            url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
-            transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
-          });
+      this.websocketConnection = fetchToken(getIdentity().name).then((token) => {
+        return new Connection({
+          url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
+          transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
         });
+      });
     }
     return this.websocketConnection;
   }
 
-  async getProvider(documentId: string, key: CryptoKey | undefined): Promise<PlaygroundProvider> {
+  async getProvider(
+    documentId: string,
+    key: CryptoKey | undefined,
+    wrappingKeyString: string | undefined,
+  ): Promise<PlaygroundProvider> {
+    const useRegistry = Boolean(wrappingKeyString);
+
+    const makeRpc = (resolvedKey: CryptoKey | undefined) => ({
+      milestones: createMilestoneRpc,
+      attribution: createAttributionRpc,
+      files: () => createFileRpc({ encryptionKey: resolvedKey, cache: fileCache }),
+      keys: createKeyRegistryRpc,
+    });
+
+    const makeTransport = (resolvedKey: CryptoKey | undefined) =>
+      ({ document, ydoc, awareness, getDefaultTransport }: any) => {
+        if (resolvedKey) {
+          return getEncryptedTransport(resolvedKey)({ document, ydoc, awareness });
+        }
+        return getDefaultTransport();
+      };
+
     if (!this.provider) {
       const connection = await this.getProviderConnection();
-      this.provider = (await Provider.create({
-        connection,
-        document: documentId,
-        // `undefined` would throw (encryption is required by default); map the
-        // playground's "no key selected" state to the explicit plaintext opt-out.
-        encryptionKey: key ?? false,
-        rpc: {
-          milestones: createMilestoneRpc,
-          attribution: createAttributionRpc,
-          files: () => createFileRpc({ encryptionKey: key, cache: fileCache }),
-        },
-        getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
-          const baseTransport = key
-            ? getEncryptedTransport(key)({ document, ydoc, awareness })
-            : getDefaultTransport();
-          return baseTransport as any;
-        },
-        enableOfflinePersistence: true,
-      })) as PlaygroundProvider;
+
+      if (useRegistry) {
+        const resolver = registryKey({ wrappingKey: await importWrappingKey(wrappingKeyString!) });
+        this.provider = (await Provider.create({
+          connection,
+          document: documentId,
+          encryptionKey: resolver,
+          rpc: makeRpc(undefined),
+          enableOfflinePersistence: true,
+        })) as PlaygroundProvider;
+      } else {
+        this.provider = (await Provider.create({
+          connection,
+          document: documentId,
+          encryptionKey: key ?? false,
+          rpc: makeRpc(key),
+          getTransport: makeTransport(key),
+          enableOfflinePersistence: true,
+        })) as PlaygroundProvider;
+      }
     } else {
-      // Switch document on existing provider
-      this.provider = this.provider.switchDocument({
-        document: documentId,
-        // `undefined` would throw (encryption is required by default); map the
-        // playground's "no key selected" state to the explicit plaintext opt-out.
-        encryptionKey: key ?? false,
-        rpc: {
-          milestones: createMilestoneRpc,
-          attribution: createAttributionRpc,
-          files: () => createFileRpc({ encryptionKey: key, cache: fileCache }),
-        },
-        getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
-          const baseTransport = key
-            ? getEncryptedTransport(key)({ document, ydoc, awareness })
-            : getDefaultTransport();
-          return baseTransport as any;
-        },
-      });
+      if (useRegistry) {
+        // Async document switch — resolves the key from the registry
+        this.provider.destroy({ destroyConnection: false });
+        const connection = await this.getProviderConnection();
+        const resolver = registryKey({ wrappingKey: await importWrappingKey(wrappingKeyString!) });
+        this.provider = (await Provider.create({
+          connection,
+          document: documentId,
+          encryptionKey: resolver,
+          rpc: makeRpc(undefined),
+          enableOfflinePersistence: true,
+        })) as PlaygroundProvider;
+      } else {
+        this.provider = this.provider.switchDocument({
+          document: documentId,
+          encryptionKey: key ?? false,
+          rpc: makeRpc(key),
+          getTransport: makeTransport(key),
+        });
+      }
     }
 
     // Notify all subscribers
@@ -155,6 +172,7 @@ class ProviderManager {
 export function useProvider(
   documentId: string | null | undefined,
   key: CryptoKey | undefined,
+  wrappingKey?: string,
 ): {
   provider: PlaygroundProvider | null;
 } {
@@ -171,12 +189,12 @@ export function useProvider(
     const unsubscribe = providerManager.subscribe(setProvider);
 
     // Get or create the provider
-    providerManager.getProvider(documentId, key).catch(console.error);
+    providerManager.getProvider(documentId, key, wrappingKey).catch(console.error);
 
     return () => {
       unsubscribe();
     };
-  }, [documentId, key]);
+  }, [documentId, key, wrappingKey]);
 
   return {
     provider,

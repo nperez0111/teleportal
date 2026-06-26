@@ -12,6 +12,7 @@ export type Document = {
   createdAt: string;
   updatedAt: string;
   encryptedKey: CryptoKey | undefined;
+  wrappingKey?: string;
 };
 
 class FileService extends Observable<{
@@ -35,6 +36,7 @@ class FileService extends Observable<{
               encryptedKey: doc.encryptedKey
                 ? await importEncryptionKey(doc.encryptedKey)
                 : undefined,
+              wrappingKey: doc.wrappingKey,
             }),
           ),
         )
@@ -56,6 +58,7 @@ class FileService extends Observable<{
               encryptedKey: doc.encryptedKey
                 ? await exportEncryptionKey(doc.encryptedKey)
                 : undefined,
+              wrappingKey: doc.wrappingKey,
             })),
         ),
       ),
@@ -79,18 +82,38 @@ class FileService extends Observable<{
     name: string;
     encrypted?: boolean;
     encryptedKey?: CryptoKey;
+    wrappingKey?: string;
   }): Promise<Document> {
     const documents = await this.getDocuments();
     if (documents.find((doc) => doc.id === options.id)) {
       return documents.find((doc) => doc.id === options.id)!;
     }
+
+    const documentId = options.id ?? this.generateId(options.encrypted ?? false);
+    let wrappingKey = options.wrappingKey;
+
+    // For encrypted docs without a pre-existing key, mint via the backend
+    if (options.encrypted && !options.encryptedKey && !options.wrappingKey) {
+      const { getIdentity } = await import("../utils/identity");
+      const identity = getIdentity();
+      const res = await fetch(`/keys/${documentId}/mint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: identity.name, room: "docs" }),
+      });
+      const data = await res.json();
+      wrappingKey = data.wrappingKey;
+    }
+
     const newDocument: Document = {
-      id: options.id ?? this.generateId(options.encrypted ?? false),
+      id: documentId,
       name: options.name,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      encryptedKey:
-        options.encryptedKey ?? (options.encrypted ? await createEncryptionKey() : undefined),
+      // When using registry-based key distribution (wrappingKey), the document
+      // key lives on the server — no local CryptoKey needed.
+      encryptedKey: options.encryptedKey ?? (options.encrypted && !wrappingKey ? await createEncryptionKey() : undefined),
+      wrappingKey,
     };
 
     documents.push(newDocument);

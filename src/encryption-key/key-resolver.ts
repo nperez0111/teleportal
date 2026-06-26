@@ -1,4 +1,6 @@
 import type { Connection } from "teleportal/providers";
+import { RpcClient } from "../providers/rpc-client";
+import { unwrapDocumentKey } from "./key-wrapping";
 
 const encoder = new TextEncoder();
 
@@ -25,6 +27,64 @@ export type KeyResolver = {
  * no server involvement, no key registry. Good for "share a link with a
  * password" use cases. The trade-off: no per-user revocation.
  */
+/**
+ * Resolve the document encryption key from the server's key registry.
+ *
+ * On connect, sends a `keysGet` RPC to fetch the wrapped key blob, then
+ * unwraps it locally using the provided wrapping key. The wrapping key is
+ * typically derived by the app server via `deriveWrappingKey()` and embedded
+ * in the user's JWT token.
+ *
+ * Handles key rotation notifications: when the server broadcasts
+ * `keysRotated`, the cached key is invalidated and re-fetched on the next
+ * operation.
+ */
+export function registryKey(opts: {
+  wrappingKey: CryptoKey | (() => Promise<CryptoKey>);
+}): KeyResolver {
+  let cachedKey: CryptoKey | undefined;
+  let invalidateCallback: ((document: string) => void) | undefined;
+
+  return {
+    async resolve({ document, connection }) {
+      if (cachedKey) return cachedKey;
+
+      const rpc = new RpcClient(connection);
+      try {
+        const response = await rpc.sendRequest<{
+          wrappedKey: Uint8Array;
+          generation: number;
+        }>(document, "keysGet", {});
+
+        const wk =
+          typeof opts.wrappingKey === "function"
+            ? await opts.wrappingKey()
+            : opts.wrappingKey;
+
+        const wrappedKey =
+          response.wrappedKey instanceof Uint8Array
+            ? response.wrappedKey
+            : new Uint8Array(response.wrappedKey as any);
+
+        cachedKey = await unwrapDocumentKey(wk, wrappedKey);
+        return cachedKey;
+      } finally {
+        rpc.destroy();
+      }
+    },
+
+    onInvalidate(callback) {
+      invalidateCallback = callback;
+    },
+
+    /** @internal Called by the key-registry RPC extension on rotation */
+    _invalidate(document: string) {
+      cachedKey = undefined;
+      invalidateCallback?.(document);
+    },
+  } as KeyResolver & { _invalidate(document: string): void };
+}
+
 export function passwordKey(passphrase: string): KeyResolver {
   const cache = new Map<string, CryptoKey>();
   return {

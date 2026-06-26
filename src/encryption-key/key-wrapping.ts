@@ -10,9 +10,13 @@ export async function deriveWrappingKey(
   masterSecret: Uint8Array,
   userId: string,
 ): Promise<CryptoKey> {
-  const keyMaterial = await crypto.subtle.importKey("raw", masterSecret, "HKDF", false, [
-    "deriveKey",
-  ]);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new Uint8Array(masterSecret) as any,
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
   return crypto.subtle.deriveKey(
     {
       name: "HKDF",
@@ -49,7 +53,7 @@ export async function unwrapDocumentKey(
 ): Promise<CryptoKey> {
   return crypto.subtle.unwrapKey(
     "raw",
-    wrappedKey,
+    new Uint8Array(wrappedKey) as any,
     wrappingKey,
     "AES-KW",
     { name: "AES-GCM", length: 256 },

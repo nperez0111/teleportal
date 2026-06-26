@@ -17,7 +17,7 @@ interface DocumentEditorProps {
 export function DocumentEditor({ documentId, isSidebarOpen, toggleSidebar }: DocumentEditorProps) {
   const document = fileService.getDocument(documentId);
   const [, forceUpdate] = useState<number>(0);
-  const { provider } = useProvider(document?.id, document?.encryptedKey);
+  const { provider } = useProvider(document?.id, document?.encryptedKey, document?.wrappingKey);
   const [isMilestonePanelOpen, setIsMilestonePanelOpen] = useState(false);
   const [isAttributionPanelOpen, setIsAttributionPanelOpen] = useState(false);
   const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(null);

@@ -38,6 +38,7 @@
     "./protocols/milestone": "./dist/protocols/milestone/index.mjs",
     "./protocols/file": "./dist/protocols/file/index.mjs",
     "./protocols/attribution": "./dist/protocols/attribution/index.mjs",
+    "./protocols/key-registry": "./dist/protocols/key-registry/index.mjs",
     "./protocol/encryption": "./dist/lib/protocol/encryption/index.mjs",
     "./providers": "./dist/providers/index.mjs",
     "./transports/redis": "./dist/transports/redis/index.mjs",
