@@ -190,7 +190,9 @@ class FileService extends Observable<{
       ? await exportEncryptionKey(document.encryptedKey)
       : undefined;
 
-    return `${window.location.origin}?name=${encodeURIComponent(document.name)}&id=${encodeURIComponent(id)}${key ? `&token=${encodeURIComponent(key)}` : ""}`;
+    const isEncrypted = Boolean(key || document.wrappingKey);
+
+    return `${window.location.origin}?name=${encodeURIComponent(document.name)}&id=${encodeURIComponent(id)}${key ? `&token=${encodeURIComponent(key)}` : ""}${isEncrypted && !key ? "&encrypted=true" : ""}`;
   }
 
   async loadDocumentFromUrl(url: string): Promise<Document | null> {
@@ -198,6 +200,7 @@ class FileService extends Observable<{
     const documentId = urlParams.get("id");
     const name = urlParams.get("name");
     const token = urlParams.get("token");
+    const encryptedParam = urlParams.get("encrypted") === "true";
     let key: CryptoKey | undefined;
     if (token) {
       key = await importEncryptionKey(token);
@@ -210,7 +213,7 @@ class FileService extends Observable<{
     const document = await this.createDocument({
       id: documentId,
       name,
-      encrypted: Boolean(key),
+      encrypted: Boolean(key) || encryptedParam,
       encryptedKey: key,
     });
 
