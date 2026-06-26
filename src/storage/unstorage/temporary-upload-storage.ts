@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import type { MerkleTree } from "teleportal/merkle-tree";
-import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import { buildMerkleTree, serializeMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { Storage } from "unstorage";
 import type {
   File,
@@ -60,7 +60,11 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     const sessionKey = this.#getUploadSessionKey(uploadId);
     const existing = await this.#storage.getItem(sessionKey);
     if (existing) {
-      throw new Error(`Upload session ${uploadId} already exists`);
+      await this.#storage.setItem(sessionKey, {
+        ...(existing as Record<string, unknown>),
+        lastActivity: Date.now(),
+      });
+      return;
     }
 
     await this.#storage.setItem(sessionKey, {
@@ -191,6 +195,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       progress,
       fileId: finalFileId,
       contentId: rootHash,
+      serializedMerkleTree: serializeMerkleTree(merkleTree),
       getChunk: async (chunkIndex: number) => {
         // Check if chunk was already fetched (one-time use)
         if (fetchedChunks.has(chunkIndex)) {

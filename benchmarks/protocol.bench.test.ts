@@ -14,7 +14,9 @@ describe("Protocol Benchmarks", () => {
     it("encode - empty payload", async () => {
       await bench(
         "encode empty payload",
-        () => { getEmptyContentEncryptedPayload(); },
+        () => {
+          getEmptyContentEncryptedPayload();
+        },
         { iterations: 5000 },
       );
     });
@@ -65,7 +67,9 @@ describe("Protocol Benchmarks", () => {
 
       await bench(
         "decode payload (1K chars)",
-        () => { decodeContentEncryptedPayload(encoded); },
+        () => {
+          decodeContentEncryptedPayload(encoded);
+        },
         { iterations: 2000 },
       );
     });
@@ -92,11 +96,7 @@ describe("Protocol Benchmarks", () => {
 
   describe("Encryption", () => {
     it("createEncryptionKey", async () => {
-      await bench(
-        "createEncryptionKey",
-        () => createEncryptionKey(),
-        { iterations: 200 },
-      );
+      await bench("createEncryptionKey", () => createEncryptionKey(), { iterations: 200 });
     });
 
     it("EncryptionClient - encrypt small update", async () => {

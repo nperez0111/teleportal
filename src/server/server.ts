@@ -572,7 +572,37 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           }
           return false;
         },
-        onRateLimitExceeded: config.onRateLimitExceeded,
+        onRateLimitExceeded: (details) => {
+          emitWideEvent("error", {
+            event_type: "rate_limit_exceeded",
+            timestamp: new Date().toISOString(),
+            rule_id: details.ruleId,
+            user_id: details.userId,
+            document_id: details.documentId,
+            track_by: details.trackBy,
+            max_messages: details.maxMessages,
+            window_ms: details.windowMs,
+            reset_at: details.resetAt,
+            message_type: details.message.type,
+            rpc_method:
+              details.message.type === "rpc"
+                ? (details.message as RpcMessage<any>).rpcMethod
+                : undefined,
+          });
+          config.onRateLimitExceeded?.(details);
+        },
+        onRateLimitDrop: (message, exceeded, write) => {
+          const retryAfter = Math.max(0, exceeded.resetAt - Date.now());
+          Promise.resolve(
+            write(
+              new AckMessage({
+                type: "ack",
+                messageId: message.id,
+                retryAfter: retryAfter || exceeded.windowMs,
+              }),
+            ),
+          ).catch(() => {});
+        },
         onMessageSizeExceeded: config.onMessageSizeExceeded,
         metricsCollector: this.#metrics,
         eventEmitter: this as any,

@@ -61,11 +61,7 @@ describe("Sync & Provider Benchmarks", () => {
       await conn.connect();
 
       const msg = new DocMessage("doc", { type: "sync-done" }, {}, false);
-      await bench(
-        "Connection.send (memory transport)",
-        () => conn.send(msg),
-        { iterations: 1000 },
-      );
+      await bench("Connection.send (memory transport)", () => conn.send(msg), { iterations: 1000 });
 
       conn.destroy();
     });
@@ -185,7 +181,9 @@ describe("Sync & Provider Benchmarks", () => {
         const doc = createLargeDoc(size);
         const rawUpdate = Y.encodeStateAsUpdateV2(doc);
         const wrappedUpdate = wrapV2(rawUpdate);
-        console.log(`    ${size} chars → ${formatBytes(rawUpdate.byteLength)} (raw), ${formatBytes(wrappedUpdate.byteLength)} (wrapped)`);
+        console.log(
+          `    ${size} chars → ${formatBytes(rawUpdate.byteLength)} (raw), ${formatBytes(wrappedUpdate.byteLength)} (wrapped)`,
+        );
 
         const { provider, serverConn } = await createTestProvider(`large-${size}`);
 
@@ -271,8 +269,16 @@ describe("Sync & Provider Benchmarks", () => {
         enableOfflinePersistence: false,
       });
 
-      const serverConn1 = new Connection({ transports: [t1server], connect: false, batchIntervalMs: 0 });
-      const serverConn2 = new Connection({ transports: [t2server], connect: false, batchIntervalMs: 0 });
+      const serverConn1 = new Connection({
+        transports: [t1server],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn2 = new Connection({
+        transports: [t2server],
+        connect: false,
+        batchIntervalMs: 0,
+      });
       await Promise.all([serverConn1.connect(), serverConn2.connect()]);
 
       await sendSyncDone(serverConn1, "shared-doc");

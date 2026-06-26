@@ -133,6 +133,12 @@ export type DecodedAckMessage = {
    * The id of the message that was acknowledged.
    */
   messageId: string;
+  /**
+   * When set, indicates the message was rejected due to rate limiting.
+   * The value is the number of milliseconds the client should wait
+   * before retransmitting.
+   */
+  retryAfter?: number;
 };
 
 /**

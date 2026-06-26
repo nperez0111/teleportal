@@ -67,6 +67,7 @@ export class UnstorageFileStorage implements FileStorage {
       metadata: FileMetadata;
       contentId: number[];
       chunkKeys: string[];
+      serializedMerkleTree?: number[];
     }>(fileKey);
 
     if (!serialized) return null;
@@ -81,6 +82,9 @@ export class UnstorageFileStorage implements FileStorage {
       metadata: serialized.metadata,
       chunks: validChunks,
       contentId: new Uint8Array(serialized.contentId),
+      serializedMerkleTree: serialized.serializedMerkleTree
+        ? new Uint8Array(serialized.serializedMerkleTree)
+        : undefined,
     };
   }
 
@@ -116,11 +120,12 @@ export class UnstorageFileStorage implements FileStorage {
 
     const fileKey = this.#getFileKey(uploadResult.fileId);
 
-    // Store file metadata first
+    // Store file metadata + serialized merkle tree
     await this.#storage.setItem(fileKey, {
       metadata: uploadResult.progress.metadata,
       contentId: Array.from(uploadResult.contentId),
       chunkKeys: Array.from({ length: expectedChunks }, (_, i) => this.#getChunkKey(fileKey, i)),
+      serializedMerkleTree: Array.from(uploadResult.serializedMerkleTree),
     });
 
     // Fetch and store chunks incrementally

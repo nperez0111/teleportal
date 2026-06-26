@@ -12,6 +12,9 @@ import {
 import { InMemoryFileStorage } from "../src/storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../src/storage/in-memory/temporary-upload-storage";
 import type { FileMetadata } from "../src/storage/types";
+import { createEncryptionKey } from "../src/encryption-key";
+import { encryptUpdate, decryptUpdate } from "../src/encryption-key";
+import { FileHandler } from "../src/protocols/file/server";
 import { bench, benchBatch, formatBytes } from "./helpers";
 
 function makeChunks(fileSize: number): Uint8Array[] {
@@ -66,7 +69,9 @@ describe("File Upload & Download Benchmarks", () => {
         console.log(`    ${count} chunks → ${formatBytes(count * CHUNK_SIZE)}`);
         await bench(
           `buildMerkleTree (${count} chunks)`,
-          () => { buildMerkleTree(chunks); },
+          () => {
+            buildMerkleTree(chunks);
+          },
           { iterations: count > 100 ? 20 : 100 },
         );
       }
@@ -79,7 +84,9 @@ describe("File Upload & Download Benchmarks", () => {
       let i = 0;
       await bench(
         "generateMerkleProof (100-chunk tree)",
-        () => { generateMerkleProof(tree, i++ % 100); },
+        () => {
+          generateMerkleProof(tree, i++ % 100);
+        },
         { iterations: 1000 },
       );
     });
@@ -107,7 +114,9 @@ describe("File Upload & Download Benchmarks", () => {
 
       await bench(
         "serializeMerkleTree (100 chunks)",
-        () => { serializeMerkleTree(tree); },
+        () => {
+          serializeMerkleTree(tree);
+        },
         { iterations: 500 },
       );
 
@@ -116,7 +125,9 @@ describe("File Upload & Download Benchmarks", () => {
 
       await bench(
         "deserializeMerkleTree (100 chunks)",
-        () => { deserializeMerkleTree(serialized, 100); },
+        () => {
+          deserializeMerkleTree(serialized, 100);
+        },
         { iterations: 500 },
       );
     });
@@ -174,11 +185,9 @@ describe("File Upload & Download Benchmarks", () => {
     it("beginUpload", async () => {
       const temp = new InMemoryTemporaryUploadStorage();
       let i = 0;
-      await bench(
-        "beginUpload",
-        () => temp.beginUpload(`upload-${i++}`, makeMetadata(1024)),
-        { iterations: 1000 },
-      );
+      await bench("beginUpload", () => temp.beginUpload(`upload-${i++}`, makeMetadata(1024)), {
+        iterations: 1000,
+      });
     });
 
     it("storeChunk - single chunk", async () => {
@@ -262,11 +271,9 @@ describe("File Upload & Download Benchmarks", () => {
         const fileStorage = new InMemoryFileStorage({ temporaryUploadStorage: temp });
         const fileId = await uploadFile(temp, fileStorage, chunks, fileSize);
 
-        await bench(
-          `getFile (${sizeMB}MB)`,
-          () => fileStorage.getFile(fileId),
-          { iterations: 500 },
-        );
+        await bench(`getFile (${sizeMB}MB)`, () => fileStorage.getFile(fileId), {
+          iterations: 500,
+        });
       }
     });
 
@@ -354,6 +361,131 @@ describe("File Upload & Download Benchmarks", () => {
         },
         { batchSize: count, iterations: 10 },
       );
+    });
+  });
+
+  describe("Encrypted Download Breakdown", () => {
+    it("server: streamFileParts (build tree + proofs + yield)", async () => {
+      for (const sizeMB of [0.5, 1, 5]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const chunks = makeChunks(fileSize);
+        const temp = new InMemoryTemporaryUploadStorage();
+        const fileStorage = new InMemoryFileStorage({ temporaryUploadStorage: temp });
+        const fileId = await uploadFile(temp, fileStorage, chunks, fileSize);
+        const handler = new FileHandler(fileStorage);
+
+        await bench(
+          `streamFileParts (${sizeMB}MB, ${chunks.length} chunks)`,
+          async () => {
+            for await (const _part of handler.streamFileParts(fileId)) {
+              // consume
+            }
+          },
+          { iterations: sizeMB >= 5 ? 5 : 20 },
+        );
+      }
+    });
+
+    it("client: decrypt all chunks", async () => {
+      const key = await createEncryptionKey();
+
+      for (const sizeMB of [0.5, 1, 5]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const chunkCount = Math.ceil(fileSize / CHUNK_SIZE);
+        const encrypted: Uint8Array[] = [];
+        for (let i = 0; i < chunkCount; i++) {
+          const plain = new Uint8Array(CHUNK_SIZE);
+          crypto.getRandomValues(plain);
+          encrypted.push(await encryptUpdate(key, plain));
+        }
+
+        await bench(
+          `decrypt ${chunkCount} chunks (${sizeMB}MB)`,
+          async () => {
+            for (const enc of encrypted) {
+              await decryptUpdate(key, enc);
+            }
+          },
+          { iterations: sizeMB >= 5 ? 5 : 20 },
+        );
+      }
+    });
+
+    it("client: verify all chunks (merkle proof)", async () => {
+      for (const sizeMB of [0.5, 1, 5]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const chunks = makeChunks(fileSize);
+        const tree = buildMerkleTree(chunks);
+        const root = tree.nodes.at(-1)!.hash!;
+        const proofs = chunks.map((_, i) => generateMerkleProof(tree, i));
+
+        await bench(
+          `verify ${chunks.length} chunks (${sizeMB}MB)`,
+          () => {
+            for (let i = 0; i < chunks.length; i++) {
+              verifyMerkleProof(chunks[i], proofs[i], root, i);
+            }
+          },
+          { iterations: sizeMB >= 5 ? 5 : 20 },
+        );
+      }
+    });
+
+    it("client: reassemble file from chunks", async () => {
+      for (const sizeMB of [0.5, 1, 5]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const chunks = makeChunks(fileSize);
+        const chunkMap = new Map(chunks.map((c, i) => [i, c]));
+
+        await bench(
+          `reassemble (${sizeMB}MB, ${chunks.length} chunks)`,
+          () => {
+            const buf = new Uint8Array(chunks.length * CHUNK_SIZE);
+            let offset = 0;
+            for (let i = 0; i < chunks.length; i++) {
+              const chunk = chunkMap.get(i)!;
+              buf.set(chunk, offset);
+              offset += chunk.length;
+            }
+            new File([buf.slice(0, offset)], "bench.bin", { type: "application/octet-stream" });
+          },
+          { iterations: 20 },
+        );
+      }
+    });
+
+    it("full encrypted download (optimized: parallel verify+decrypt, BlobParts)", async () => {
+      const key = await createEncryptionKey();
+
+      for (const sizeMB of [0.5, 1, 3, 5]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const chunkCount = Math.ceil(fileSize / CHUNK_SIZE);
+
+        const plainChunks = makeChunks(fileSize);
+        const encryptedChunks: Uint8Array[] = [];
+        for (const chunk of plainChunks) {
+          encryptedChunks.push(await encryptUpdate(key, chunk));
+        }
+
+        const tree = buildMerkleTree(encryptedChunks);
+        const root = tree.nodes.at(-1)!.hash!;
+        const proofs = encryptedChunks.map((_, i) => generateMerkleProof(tree, i));
+
+        await bench(
+          `full encrypted download (${sizeMB}MB, ${chunkCount} chunks)`,
+          async () => {
+            const parts: Uint8Array[] = [];
+            for (let i = 0; i < chunkCount; i++) {
+              // Kick off decrypt before sync verify (matches optimized client code)
+              const decryptPromise = decryptUpdate(key, encryptedChunks[i]);
+              verifyMerkleProof(encryptedChunks[i], proofs[i], root, i);
+              parts.push(await decryptPromise);
+            }
+            new File(parts as BlobPart[], "bench.bin", { type: "image/png" });
+          },
+          { iterations: sizeMB >= 5 ? 5 : 10 },
+        );
+      }
     });
   });
 });

@@ -56,6 +56,11 @@ export interface FileUploadResult {
    * Chunks can only be fetched once and are deleted after fetching.
    */
   getChunk: (chunkIndex: number) => Promise<Uint8Array>;
+  /**
+   * Serialized merkle tree built during completion.
+   * Stored alongside the file so downloads skip the tree rebuild.
+   */
+  serializedMerkleTree: Uint8Array;
 }
 
 /**
@@ -166,6 +171,10 @@ export interface File {
    * Merkle tree root hash (contentId)
    */
   contentId: Uint8Array;
+  /**
+   * Serialized merkle tree, cached at upload time so downloads skip the rebuild.
+   */
+  serializedMerkleTree?: Uint8Array;
 }
 
 export interface FileStorage {

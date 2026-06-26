@@ -1,10 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
-import {
-  CHUNK_SIZE,
-  chunkFile,
-  ENCRYPTED_CHUNK_SIZE,
-} from "teleportal/merkle-tree";
+import { CHUNK_SIZE, chunkFile, ENCRYPTED_CHUNK_SIZE } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "./message-types";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
@@ -283,6 +279,12 @@ export namespace FileTransferProtocol {
         return;
       }
 
+      if (handler.chunks.has(payload.chunkIndex)) return;
+
+      const decryptPromise = handler.encryptionKey
+        ? decryptUpdate(handler.encryptionKey, payload.chunkData)
+        : null;
+
       const isValid = this.verifyChunk(payload, handler.fileId);
       if (!isValid) {
         handler.reject(new Error(`Chunk ${payload.chunkIndex} failed merkle proof verification`));
@@ -290,13 +292,11 @@ export namespace FileTransferProtocol {
         return;
       }
 
-      if (!handler.chunks.has(payload.chunkIndex)) {
-        if (handler.encryptionKey) {
-          payload.chunkData = await decryptUpdate(handler.encryptionKey, payload.chunkData);
-        }
-        handler.chunks.set(payload.chunkIndex, payload.chunkData);
-        await this.checkDownloadCompletion(handler);
-      }
+      handler.chunks.set(
+        payload.chunkIndex,
+        decryptPromise ? await decryptPromise : payload.chunkData,
+      );
+      await this.checkDownloadCompletion(handler);
     }
 
     private async checkDownloadCompletion(handler: DownloadState) {
@@ -308,17 +308,15 @@ export namespace FileTransferProtocol {
         handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / chunkSize);
       if (handler.chunks.size >= expectedChunks) {
         try {
-          const fileData = new Uint8Array(expectedChunks * CHUNK_SIZE);
-          let offset = 0;
+          const parts: Uint8Array[] = [];
           for (let i = 0; i < expectedChunks; i++) {
             const chunk = handler.chunks.get(i);
             if (!chunk) {
               throw new Error(`Missing chunk ${i}`);
             }
-            fileData.set(chunk, offset);
-            offset += chunk.length;
+            parts.push(chunk);
           }
-          const file = new File([fileData.slice(0, offset)], handler.fileMetadata.filename, {
+          const file = new File(parts as BlobPart[], handler.fileMetadata.filename, {
             type: handler.fileMetadata.mimeType,
           });
           await this.onDownloadComplete(handler, file);

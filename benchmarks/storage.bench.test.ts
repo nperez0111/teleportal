@@ -4,12 +4,7 @@ import { MemoryDocumentStorage } from "../src/storage/in-memory/document-storage
 import { VirtualStorage } from "../src/storage/virtual-storage";
 import { encodeContentEncryptedPayload } from "../src/lib/protocol/encryption/encoding";
 import type { VersionedUpdate, Update, StateVector } from "teleportal";
-import {
-  bench,
-  benchBatch,
-  createLargeDoc,
-  formatBytes,
-} from "./helpers";
+import { bench, benchBatch, createLargeDoc, formatBytes } from "./helpers";
 
 function wrapUpdate(rawV2: Uint8Array): VersionedUpdate {
   const payload = encodeContentEncryptedPayload({
@@ -77,11 +72,9 @@ describe("Storage Benchmarks", () => {
 
     it("handleSyncStep1 - empty doc", async () => {
       const sv = Y.encodeStateVector(new Y.Doc()) as StateVector;
-      await bench(
-        "handleSyncStep1 (empty doc)",
-        () => storage.handleSyncStep1("empty-doc", sv),
-        { iterations: 1000 },
-      );
+      await bench("handleSyncStep1 (empty doc)", () => storage.handleSyncStep1("empty-doc", sv), {
+        iterations: 1000,
+      });
     });
 
     it("handleSyncStep1 - doc with content", async () => {
@@ -89,11 +82,9 @@ describe("Storage Benchmarks", () => {
       await storage.handleUpdate("full-doc", update);
 
       const sv = Y.encodeStateVector(new Y.Doc()) as StateVector;
-      await bench(
-        "handleSyncStep1 (1K char doc)",
-        () => storage.handleSyncStep1("full-doc", sv),
-        { iterations: 500 },
-      );
+      await bench("handleSyncStep1 (1K char doc)", () => storage.handleSyncStep1("full-doc", sv), {
+        iterations: 500,
+      });
     });
 
     it("handleSyncStep1 - large doc with partial sync", async () => {
@@ -114,11 +105,9 @@ describe("Storage Benchmarks", () => {
       const update = wrapUpdate(Y.encodeStateAsUpdateV2(createLargeDoc(5_000)));
       await storage.handleUpdate("get-doc", update);
 
-      await bench(
-        "getDocument (5K chars)",
-        () => storage.getDocument("get-doc"),
-        { iterations: 1000 },
-      );
+      await bench("getDocument (5K chars)", () => storage.getDocument("get-doc"), {
+        iterations: 1000,
+      });
     });
 
     it("writeDocumentMetadata + getDocumentMetadata", async () => {
@@ -184,7 +173,9 @@ describe("Storage Benchmarks", () => {
         const doc = createLargeDoc(size);
         await bench(
           `encodeStateAsUpdateV2 (${size} chars)`,
-          () => { Y.encodeStateAsUpdateV2(doc); },
+          () => {
+            Y.encodeStateAsUpdateV2(doc);
+          },
           { iterations: size > 10_000 ? 50 : 200 },
         );
         const encoded = Y.encodeStateAsUpdateV2(doc);
@@ -203,7 +194,9 @@ describe("Storage Benchmarks", () => {
 
       await bench(
         "mergeUpdatesV2 (100 updates)",
-        () => { Y.mergeUpdatesV2(updates); },
+        () => {
+          Y.mergeUpdatesV2(updates);
+        },
         { iterations: 200 },
       );
     });
@@ -216,7 +209,9 @@ describe("Storage Benchmarks", () => {
 
       await bench(
         "diffUpdateV2 (10K doc, 50% diff)",
-        () => { Y.diffUpdateV2(fullUpdate, sv); },
+        () => {
+          Y.diffUpdateV2(fullUpdate, sv);
+        },
         { iterations: 200 },
       );
     });

@@ -3,7 +3,11 @@ import type { Message } from "teleportal/protocol";
 import type { ServerContext } from "teleportal";
 import type { FileStorage, TemporaryUploadStorage } from "teleportal/storage";
 import { emitWideEvent } from "teleportal/server";
-import { buildMerkleTree, generateMerkleProof } from "teleportal/merkle-tree";
+import {
+  buildMerkleTree,
+  deserializeMerkleTree,
+  generateMerkleProof,
+} from "teleportal/merkle-tree";
 import {
   type FileUploadRequest,
   type FileDownloadResponse,
@@ -192,7 +196,9 @@ export class FileHandler {
     });
 
     const chunks = file.chunks;
-    const merkleTree = buildMerkleTree(chunks);
+    const merkleTree = file.serializedMerkleTree
+      ? deserializeMerkleTree(file.serializedMerkleTree, chunks.length)
+      : buildMerkleTree(chunks);
     let bytesSent = 0;
 
     for (let i = 0; i < chunks.length; i++) {
@@ -214,6 +220,7 @@ export class FileHandler {
 
   /**
    * Initiate an upload session.
+   * Returns the list of chunk indexes already stored (for resumable uploads).
    */
   async initiateUpload(
     fileId: string,
@@ -224,7 +231,7 @@ export class FileHandler {
       encrypted: boolean;
     },
     document: string,
-  ): Promise<void> {
+  ): Promise<{ existingChunks: number[] }> {
     if (!this.#temporaryUploadStorage) {
       throw new Error("File uploads are not enabled: missing fileStorage.temporaryUploadStorage");
     }
@@ -242,14 +249,20 @@ export class FileHandler {
       documentId: document,
     });
 
+    const progress = await this.#temporaryUploadStorage.getUploadProgress(fileId);
+    const existingChunks = progress ? [...progress.chunks.keys()] : [];
+
     emitWideEvent("info", {
-      event_type: "file_upload_initiated",
+      event_type: existingChunks.length > 0 ? "file_upload_resumed" : "file_upload_initiated",
       timestamp: new Date().toISOString(),
       file_id: fileId,
       document_id: document,
       filename: metadata.filename,
       size: metadata.size,
+      existing_chunks: existingChunks.length,
     });
+
+    return { existingChunks };
   }
 
   /**
@@ -343,7 +356,7 @@ export function getFileRpcHandlers(
             });
           }
 
-          await fileHandler.initiateUpload(
+          const { existingChunks } = await fileHandler.initiateUpload(
             payload.fileId,
             {
               filename: payload.filename,
@@ -357,6 +370,7 @@ export function getFileRpcHandlers(
           return ok({
             fileId: payload.fileId,
             allowed: true,
+            existingChunks: existingChunks.length > 0 ? existingChunks : undefined,
           });
         },
         streamHandler: async (payload, context, messageId, sendMessage) => {

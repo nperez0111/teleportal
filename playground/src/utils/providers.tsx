@@ -10,8 +10,11 @@ import { createTokenManager, DocumentAccessBuilder } from "teleportal/token";
 import { createMilestoneRpc } from "teleportal/protocols/milestone";
 import { createAttributionRpc } from "teleportal/protocols/attribution";
 import { createFileRpc } from "teleportal/protocols/file";
+import { IdbFileCache } from "teleportal/storage";
 
 import { getEncryptedTransport } from "./encrypted";
+
+const fileCache = new IdbFileCache();
 import { ClientContext, Transport } from "teleportal";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
 import { getIdentity } from "./identity";
@@ -93,7 +96,7 @@ class ProviderManager {
         rpc: {
           milestones: createMilestoneRpc,
           attribution: createAttributionRpc,
-          files: () => createFileRpc({ encryptionKey: key }),
+          files: () => createFileRpc({ encryptionKey: key, cache: fileCache }),
         },
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
           const baseTransport = key
@@ -113,7 +116,7 @@ class ProviderManager {
         rpc: {
           milestones: createMilestoneRpc,
           attribution: createAttributionRpc,
-          files: () => createFileRpc({ encryptionKey: key }),
+          files: () => createFileRpc({ encryptionKey: key, cache: fileCache }),
         },
         getTransport: ({ document, ydoc, awareness, getDefaultTransport }) => {
           const baseTransport = key

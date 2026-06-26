@@ -1,6 +1,7 @@
 import type { AckMessage, RpcMessage } from "teleportal/protocol";
 import { RpcOperationError, type RpcExtension, type RpcExtensionContext } from "teleportal/rpc";
 import { getFileClientHandlers, type FileClientHandlerOptions } from "./transfer";
+import type { FileCache } from "../../storage/idb/file-cache";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -8,11 +9,24 @@ import { getFileClientHandlers, type FileClientHandlerOptions } from "./transfer
 
 export interface FileRpcOptions {
   encryptionKey?: CryptoKey;
+  cache?: FileCache;
+}
+
+export interface FileUploadOptions {
+  fileId?: string;
+  encryptionKey?: CryptoKey;
+  cache?: boolean;
+}
+
+export interface FileDownloadOptions {
+  encryptionKey?: CryptoKey;
+  timeout?: number;
+  cache?: boolean;
 }
 
 export interface FileRpc {
-  upload(file: File, fileId?: string, encryptionKey?: CryptoKey): Promise<string>;
-  download(fileId: string, encryptionKey?: CryptoKey, timeout?: number): Promise<File>;
+  upload(file: File, options?: FileUploadOptions): Promise<string>;
+  download(fileId: string, options?: FileDownloadOptions): Promise<File>;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,15 +44,17 @@ export interface FileRpc {
  * ```ts
  * import { createFileRpc } from "teleportal/protocols/file";
  * import { createEncryptionKey } from "teleportal/encryption-key";
+ * import { IdbFileCache } from "teleportal/storage";
  *
  * const encryptionKey = await createEncryptionKey();
+ * const cache = new IdbFileCache();
  *
  * const provider = await Provider.create({
  *   url: "wss://...",
  *   document: "my-doc",
  *   encryptionKey,
  *   rpc: {
- *     file: () => createFileRpc({ encryptionKey }),
+ *     file: () => createFileRpc({ encryptionKey, cache }),
  *   },
  * });
  *
@@ -49,6 +65,7 @@ export interface FileRpc {
 export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
   const handlerOptions: FileClientHandlerOptions = {
     encryptionKey: options?.encryptionKey,
+    cache: options?.cache,
   };
   const handlers = getFileClientHandlers(handlerOptions);
   const handler = handlers.fileUpload as any;
@@ -64,26 +81,28 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
       });
 
       return {
-        async upload(file: File, fileId?: string, encryptionKey?: CryptoKey): Promise<string> {
+        async upload(file: File, opts?: FileUploadOptions): Promise<string> {
           try {
             return await handler.uploadFile(
               file,
               document,
-              fileId,
-              encryptionKey ?? ctx.encryptionKey,
+              opts?.fileId,
+              opts?.encryptionKey ?? ctx.encryptionKey,
+              opts?.cache === false ? true : undefined,
             );
           } catch (error) {
             throw new RpcOperationError("file", "upload", error);
           }
         },
 
-        async download(fileId: string, encryptionKey?: CryptoKey, timeout?: number): Promise<File> {
+        async download(fileId: string, opts?: FileDownloadOptions): Promise<File> {
           try {
             return await handler.downloadFile(
               fileId,
               document,
-              encryptionKey ?? ctx.encryptionKey,
-              timeout,
+              opts?.encryptionKey ?? ctx.encryptionKey,
+              opts?.timeout,
+              opts?.cache === false ? true : undefined,
             );
           } catch (error) {
             throw new RpcOperationError("file", "download", error);

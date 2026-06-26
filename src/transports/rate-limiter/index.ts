@@ -1,4 +1,5 @@
 import type { Message, ServerContext, Transport } from "teleportal";
+import { RpcMessage } from "teleportal/protocol";
 import { mapMessages } from "../utils";
 import type { MetricsCollector } from "../../monitoring";
 import {
@@ -157,6 +158,16 @@ export interface RateLimitOptions<Context extends ServerContext> {
   }) => void;
 
   /**
+   * Called when an incoming message is dropped due to rate limiting.
+   * Use this to send a nack/response back to the client so it can back off.
+   */
+  onRateLimitDrop?: (
+    message: Message<Context>,
+    exceeded: RateLimitExceededData<Context>,
+    write: (msg: Message<Context>) => void | Promise<void>,
+  ) => void;
+
+  /**
    * Metrics collector for recording rate limit metrics
    */
   metricsCollector?: MetricsCollector;
@@ -189,6 +200,7 @@ export class RateLimitedTransport<
   private onRateLimitExceeded?: RateLimitOptions<Context>["onRateLimitExceeded"];
   private onMessageSizeExceeded?: RateLimitOptions<Context>["onMessageSizeExceeded"];
   private onPermissionDenied?: RateLimitOptions<Context>["onPermissionDenied"];
+  private onRateLimitDrop?: RateLimitOptions<Context>["onRateLimitDrop"];
   private metricsCollector?: MetricsCollector;
   private eventEmitter?: RateLimitEmitter<Context>;
 
@@ -210,6 +222,7 @@ export class RateLimitedTransport<
     this.onRateLimitExceeded = options.onRateLimitExceeded;
     this.onMessageSizeExceeded = options.onMessageSizeExceeded;
     this.onPermissionDenied = options.onPermissionDenied;
+    this.onRateLimitDrop = options.onRateLimitDrop;
     this.metricsCollector = options.metricsCollector;
     this.eventEmitter = options.eventEmitter;
 
@@ -219,8 +232,8 @@ export class RateLimitedTransport<
     this.checkPermission = options.checkPermission;
     this.shouldSkipRateLimitFunc = options.shouldSkipRateLimit;
 
-    this.source = this.createRateLimitedSource(transport.source);
     const originalWrite = transport.write.bind(transport);
+    this.source = this.createRateLimitedSource(transport.source, originalWrite);
     const originalClose = transport.close.bind(transport);
     this.write = async (message: Message<Context>) => {
       if (!this.checkMessageSize(message)) {
@@ -431,13 +444,24 @@ export class RateLimitedTransport<
    */
   private createRateLimitedSource(
     source: AsyncIterable<Message<Context>[]>,
+    write: (msg: Message<Context>) => void | Promise<void>,
   ): AsyncIterable<Message<Context>[]> {
     return mapMessages(async (msg: Message<Context>) => {
       if (!this.checkMessageSize(msg)) {
         throw new Error("Message size limit exceeded");
       }
-      // Rate-limited messages are silently dropped (returned as null).
-      return (await this.checkRateLimit(msg)) ? null : msg;
+      const exceeded = await this.checkRateLimit(msg);
+      if (exceeded) {
+        if (this.onRateLimitDrop) {
+          try {
+            this.onRateLimitDrop(msg, exceeded, write);
+          } catch {
+            // Swallow errors from the drop callback
+          }
+        }
+        return null;
+      }
+      return msg;
     })(source);
   }
 }
@@ -459,4 +483,49 @@ export function withRateLimit<
     write: rateLimited.write,
     close: rateLimited.close,
   };
+}
+
+/**
+ * Returns true if the message is a file transfer chunk (upload or download stream).
+ */
+export function isFileTransferMessage(message: Message<any>): boolean {
+  return (
+    message instanceof RpcMessage &&
+    (message.rpcMethod === "fileUpload" || message.rpcMethod === "fileDownload") &&
+    message.requestType === "stream"
+  );
+}
+
+/**
+ * Default rate limit rules with separate budgets for sync messages and file transfers.
+ *
+ * - Sync: 300 msgs/s per user, 1500 msgs/10s per document
+ * - File transfers: 50 chunks/s per user (≈ 3.2 MB/s at 64KB chunks)
+ *
+ * File initiation requests (non-stream RPC) count toward the sync budget.
+ */
+export function defaultRateLimitRules<Context extends ServerContext>(): RateLimitRule<Context>[] {
+  return [
+    {
+      id: "sync-per-user",
+      maxMessages: 300,
+      windowMs: 1000,
+      trackBy: "user",
+      shouldSkipRule: (msg) => isFileTransferMessage(msg),
+    },
+    {
+      id: "sync-per-document",
+      maxMessages: 1500,
+      windowMs: 10_000,
+      trackBy: "document",
+      shouldSkipRule: (msg) => isFileTransferMessage(msg),
+    },
+    {
+      id: "file-transfer-per-user",
+      maxMessages: 200,
+      windowMs: 1000,
+      trackBy: "user",
+      shouldSkipRule: (msg) => !isFileTransferMessage(msg),
+    },
+  ];
 }

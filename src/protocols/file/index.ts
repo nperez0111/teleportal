@@ -1,7 +1,7 @@
 export { getFileRpcHandlers, FileHandler } from "./server";
 export { getFileClientHandlers } from "./transfer";
 export { createFileRpc } from "./client";
-export type { FileRpc, FileRpcOptions } from "./client";
+export type { FileRpc, FileRpcOptions, FileUploadOptions, FileDownloadOptions } from "./client";
 
 export { fileProtocol, fileUpload, fileDownload } from "./methods";
 
@@ -15,3 +15,5 @@ export type {
   FileDownloadResponse,
   FilePartStream,
 } from "./methods";
+
+export type { FileCache, CachedFileMetadata } from "../../storage/idb/file-cache";
