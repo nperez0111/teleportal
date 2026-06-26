@@ -1,6 +1,12 @@
 import type { IndexedSidecar } from "../../lib/protocol/encryption/content-cipher";
 import { AbstractDocumentStorage, type DocumentState } from "../document-storage";
-import type { DocumentMetadata, DocumentStorage, EncodedContentMap } from "../types";
+import type {
+  Document,
+  DocumentMetadata,
+  DocumentStorage,
+  EncodedContentMap,
+} from "../types";
+import type { StateVector, VersionedSyncStep2Update, VersionedUpdate } from "teleportal";
 
 export interface TieredDocumentStorageOptions {
   /** Interval in ms between persist sweeps (default: 5000) */
@@ -115,6 +121,42 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
 
   override async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
     return this.#fast.transaction(key, cb);
+  }
+
+  // ── Hot-path overrides ────────────────────────────────────────────────
+  // The base class methods (handleUpdate, getDocument, handleSyncStep1)
+  // call multiple abstract methods (getDocumentState, replaceDocumentState,
+  // getDocumentMetadata, writeDocumentMetadata), each of which triggers
+  // #ensureLoaded. By ensuring load once and delegating to the fast tier
+  // directly, we eliminate 2–3 redundant async hops per operation.
+
+  override async handleUpdate(
+    key: string,
+    update: VersionedUpdate,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
+    await this.#ensureLoaded(key);
+    await this.#fast.handleUpdate(key, update);
+    this.#markDirty(key);
+    if (attribution) {
+      await this.storeAttribution(key, attribution);
+    }
+  }
+
+  override async getDocument(key: string): Promise<Document | null> {
+    await this.#ensureLoaded(key);
+    return this.#fast.getDocument(key);
+  }
+
+  override async handleSyncStep1(key: string, syncStep1: StateVector): Promise<Document> {
+    await this.#ensureLoaded(key);
+    return this.#fast.handleSyncStep1(key, syncStep1);
+  }
+
+  override async handleSyncStep2(key: string, syncStep2: VersionedSyncStep2Update): Promise<void> {
+    await this.#ensureLoaded(key);
+    await this.#fast.handleSyncStep2(key, syncStep2);
+    this.#markDirty(key);
   }
 
   // ── Attribution ────────────────────────────────────────────────────────
