@@ -40,6 +40,7 @@ import {
 
 import type { AbstractDocumentStorage } from "./document-storage";
 import { MemoryDocumentStorage } from "./in-memory/document-storage";
+import { TieredDocumentStorage } from "./tiered/document-storage";
 import { UnstorageDocumentStorage } from "./unstorage/document-storage";
 
 // ── Backend harness ───────────────────────────────────────────────────────────
@@ -75,6 +76,25 @@ const backends: Backend[] = [
       return new UnstorageDocumentStorage(store, { encrypted: true });
     },
     cleanup: async () => {
+      await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
+    },
+  },
+  {
+    name: "TieredDocumentStorage",
+    make: () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+      const store = createStorage();
+      openStorages.push(store);
+      return new TieredDocumentStorage(
+        new MemoryDocumentStorage(true),
+        new UnstorageDocumentStorage(store, { encrypted: true }),
+        { persistIntervalMs: 60_000 },
+      );
+    },
+    cleanup: async () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
       await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
     },
   },
