@@ -28,6 +28,7 @@ describe("Automatic Milestones via Handler Factory", () => {
   beforeEach(() => {
     // Clear static maps to ensure test isolation
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
 
     storage = new MemoryDocumentStorage();

@@ -153,16 +153,25 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     key = await createEncryptionKey();
   });
 
-  it("creates the three object stores and round-trips an encrypted edit", async () => {
+  it("creates the four object stores and round-trips an encrypted edit", async () => {
     const dbName = "teleportal-doc-rt";
     const storage = new IdbDocumentStorage(dbName, true);
     const ydoc = new Y.Doc();
 
     await persistEdit(storage, "doc", ydoc, key, (d) => d.getText("body").insert(0, "hello world"));
 
-    expect(Array.from(databases.get(dbName)!.keys()).sort()).toEqual(["meta", "sidecars", "state"]);
-    expect(storeSizes(dbName)).toEqual({ state: 1, meta: 1, sidecars: 1 });
+    expect(Array.from(databases.get(dbName)!.keys()).sort()).toEqual([
+      "meta",
+      "pending",
+      "sidecars",
+      "state",
+    ]);
     expect(await reconstruct(storage, "doc", key)).toBe("hello world");
+
+    // Compact to move data from pending to base state stores
+    const state = await storage.getDocumentState("doc");
+    await storage.replaceDocumentState("doc", state!.update, state!.sidecars);
+    expect(storeSizes(dbName)).toEqual({ state: 1, meta: 1, sidecars: 1 });
   });
 
   it("keeps the state row small and stores each sidecar in its own content-addressed row", async () => {
@@ -173,15 +182,15 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     const encA = await persistEdit(storage, "doc", ydoc, key, (d) =>
       d.getText("body").insert(0, "AAA"),
     );
-    const stateRowAfterA = databases.get(dbName)!.get("state")!.get("doc") as string;
-    const sidecarRowA = databases
-      .get(dbName)!
-      .get("sidecars")!
-      .get(toHexString(hashSidecar(encA)));
-
     const encB = await persistEdit(storage, "doc", ydoc, key, (d) =>
       d.getText("body").insert(3, "BBB"),
     );
+
+    expect(await reconstruct(storage, "doc", key)).toBe("AAABBB");
+
+    // Compact to move sidecars from pending into the sidecar store
+    const state = await storage.getDocumentState("doc");
+    await storage.replaceDocumentState("doc", state!.update, state!.sidecars);
 
     // Two distinct sidecars, each keyed by its content hash.
     expect(storeSizes(dbName).sidecars).toBe(2);
@@ -189,20 +198,9 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
       [toHexString(hashSidecar(encA)), toHexString(hashSidecar(encB))].sort(),
     );
 
-    // The first sidecar row is untouched by the second write (content-addressed
-    // & immutable — only the new sidecar is added).
-    expect(
-      databases
-        .get(dbName)!
-        .get("sidecars")!
-        .get(toHexString(hashSidecar(encA))),
-    ).toBe(sidecarRowA);
-    // The state row was rewritten (references both sidecars now) but stays tiny.
-    const stateRowAfterB = databases.get(dbName)!.get("state")!.get("doc") as string;
-    expect(stateRowAfterB).not.toBe(stateRowAfterA);
-    expect(stateRowAfterB.length).toBeLessThan(200);
-
-    expect(await reconstruct(storage, "doc", key)).toBe("AAABBB");
+    // The state row stays tiny (references both sidecars, doesn't inline them).
+    const stateRow = databases.get(dbName)!.get("state")!.get("doc") as string;
+    expect(stateRow.length).toBeLessThan(200);
   });
 
   it("compaction wipes superseded sidecar rows and still reconstructs", async () => {
@@ -216,7 +214,6 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     const encB = await persistEdit(storage, "doc", ydoc, key, (d) =>
       d.getText("body").insert(5, " world"),
     );
-    expect(storeSizes(dbName).sidecars).toBe(2);
 
     // Build a compaction that collapses sidecars A and B, riding on a real edit.
     const compacted = (await compactSidecars(key, [encA, encB]))!;
@@ -238,13 +235,17 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     });
     await storage.handleUpdate("doc", envelope(payload));
 
+    expect(await reconstruct(storage, "doc", key)).toBe("hello world!");
+
+    // Compact to materialize and apply sidecar compaction to base state
+    const state = await storage.getDocumentState("doc");
+    await storage.replaceDocumentState("doc", state!.update, state!.sidecars);
+
     // A and B rows are gone; the compacted row + the new edit's row remain.
     expect(sidecarKeys(dbName)).not.toContain(toHexString(hashSidecar(encA)));
     expect(sidecarKeys(dbName)).not.toContain(toHexString(hashSidecar(encB)));
     expect(sidecarKeys(dbName)).toContain(toHexString(compacted.hash));
     expect(storeSizes(dbName).sidecars).toBe(2);
-
-    expect(await reconstruct(storage, "doc", key)).toBe("hello world!");
   });
 
   it("converges: many edits then a full compaction collapses the sidecar rows", async () => {
@@ -262,7 +263,6 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
         ),
       );
     }
-    expect(storeSizes(dbName).sidecars).toBe(N);
     expect(await reconstruct(storage, "doc", key)).toBe("abcdefghijkl");
 
     // Compact ALL accumulated sidecars into one, riding a final edit.
@@ -287,9 +287,14 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
       ),
     );
 
+    expect(await reconstruct(storage, "doc", key)).toBe("abcdefghijkl!");
+
+    // Compact to materialize into base state stores
+    const state = await storage.getDocumentState("doc");
+    await storage.replaceDocumentState("doc", state!.update, state!.sidecars);
+
     // N sidecar rows collapse to 2 (the compacted blob + the final edit).
     expect(storeSizes(dbName).sidecars).toBe(2);
-    expect(await reconstruct(storage, "doc", key)).toBe("abcdefghijkl!");
   });
 
   it("idempotent: replaying the same update does not grow the stored rows", async () => {
@@ -352,10 +357,11 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     const storage = new IdbDocumentStorage(dbName, true);
     const ydoc = new Y.Doc();
     await persistEdit(storage, "doc", ydoc, key, (d) => d.getText("body").insert(0, "bye"));
-    expect(storeSizes(dbName).sidecars).toBeGreaterThan(0);
 
     await storage.deleteDocument("doc");
     expect(storeSizes(dbName)).toEqual({ state: 0, meta: 0, sidecars: 0 });
+    // Pending store should also be empty
+    expect(databases.get(dbName)!.get("pending")!.size).toBe(0);
     expect(await storage.getDocument("doc")).toBeNull();
   });
 });

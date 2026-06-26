@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, it } from "bun:test";
+import { afterAll, beforeAll, describe, it } from "bun:test";
 import * as Y from "yjs";
 import { createStorage, type Storage } from "unstorage";
 import fsDriver from "unstorage/drivers/fs";
@@ -7,7 +7,7 @@ import { UnstorageDocumentStorage } from "../src/storage/unstorage/document-stor
 import { TieredDocumentStorage } from "../src/storage/tiered/document-storage";
 import { encodeContentEncryptedPayload } from "../src/lib/protocol/encryption/encoding";
 import type { VersionedUpdate, Update, StateVector } from "teleportal";
-import { bench, createLargeDoc, formatBytes, formatDuration } from "./helpers";
+import { bench, createLargeDoc, formatBytes } from "./helpers";
 import type { AbstractDocumentStorage } from "../src/storage/document-storage";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,11 +52,13 @@ function makeBackends(): BackendSetup[] {
       name: "Memory",
       make: () => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
         return new MemoryDocumentStorage(false);
       },
       cleanup: async () => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
       },
     },
@@ -75,6 +77,7 @@ function makeBackends(): BackendSetup[] {
       name: "Tiered (mem+fs)",
       make: () => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
         const store = createStorage({ driver: fsDriver({ base: tmpDir }) });
         openStorages.push(store);
@@ -86,6 +89,7 @@ function makeBackends(): BackendSetup[] {
       },
       cleanup: async () => {
         MemoryDocumentStorage.docs.clear();
+        MemoryDocumentStorage.pendingUpdates.clear();
         MemoryDocumentStorage.attributionMaps.clear();
         await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
       },
@@ -110,11 +114,9 @@ describe("Tiered Storage Benchmarks", () => {
         const storage = backend.make();
         const update = makeUpdate("hello world");
         let i = 0;
-        await bench(
-          backend.name,
-          () => storage.handleUpdate(`doc-${i++}`, update),
-          { iterations: 500 },
-        );
+        await bench(backend.name, () => storage.handleUpdate(`doc-${i++}`, update), {
+          iterations: 500,
+        });
         await backend.cleanup();
       });
     }
@@ -147,11 +149,9 @@ describe("Tiered Storage Benchmarks", () => {
         const update = wrapUpdate(Y.encodeStateAsUpdateV2(largeDoc));
         console.log(`    update size: ${formatBytes(update.data.byteLength)}`);
         let i = 0;
-        await bench(
-          backend.name,
-          () => storage.handleUpdate(`doc-${i++}`, update),
-          { iterations: 100 },
-        );
+        await bench(backend.name, () => storage.handleUpdate(`doc-${i++}`, update), {
+          iterations: 100,
+        });
         await backend.cleanup();
       });
     }
@@ -163,11 +163,7 @@ describe("Tiered Storage Benchmarks", () => {
         const storage = backend.make();
         const update = wrapUpdate(Y.encodeStateAsUpdateV2(createLargeDoc(5_000)));
         await storage.handleUpdate("get-doc", update);
-        await bench(
-          backend.name,
-          () => storage.getDocument("get-doc"),
-          { iterations: 500 },
-        );
+        await bench(backend.name, () => storage.getDocument("get-doc"), { iterations: 500 });
         await backend.cleanup();
       });
     }
@@ -180,11 +176,9 @@ describe("Tiered Storage Benchmarks", () => {
         const update = wrapUpdate(Y.encodeStateAsUpdateV2(createLargeDoc(1_000)));
         await storage.handleUpdate("sync-doc", update);
         const sv = Y.encodeStateVector(new Y.Doc()) as StateVector;
-        await bench(
-          backend.name,
-          () => storage.handleSyncStep1("sync-doc", sv),
-          { iterations: 500 },
-        );
+        await bench(backend.name, () => storage.handleSyncStep1("sync-doc", sv), {
+          iterations: 500,
+        });
         await backend.cleanup();
       });
     }
@@ -216,6 +210,7 @@ describe("Tiered Storage Benchmarks", () => {
   describe("write burst then flush — tiered-specific", () => {
     it("100 updates then flush", async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       const store = createStorage({ driver: fsDriver({ base: tmpDir }) });
 
@@ -244,6 +239,7 @@ describe("Tiered Storage Benchmarks", () => {
 
       // Compare: 100 direct writes to unstorage
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       i = 0;
       await bench(
         "100 writes direct to unstorage (no tier)",
@@ -260,6 +256,7 @@ describe("Tiered Storage Benchmarks", () => {
       await tiered[Symbol.asyncDispose]();
       await store.dispose();
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
     });
   });
@@ -288,12 +285,11 @@ describe("Tiered Storage Benchmarks", () => {
       // Benchmark: tiered cold read (first access loads from slow)
       idx = 0;
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
-      const tiered = new TieredDocumentStorage(
-        new MemoryDocumentStorage(false),
-        slow,
-        { persistIntervalMs: 60_000 },
-      );
+      const tiered = new TieredDocumentStorage(new MemoryDocumentStorage(false), slow, {
+        persistIntervalMs: 60_000,
+      });
 
       await bench(
         "Tiered cold getDocument (1st access)",
@@ -312,6 +308,7 @@ describe("Tiered Storage Benchmarks", () => {
       await tiered[Symbol.asyncDispose]();
       await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
     });
   });
@@ -319,6 +316,7 @@ describe("Tiered Storage Benchmarks", () => {
   describe("tiered overhead isolation — fast tier vs tiered delegation", () => {
     it("handleUpdate: Memory direct vs Tiered (mem-only) overhead", async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
 
       const memDirect = new MemoryDocumentStorage(false);
@@ -341,6 +339,7 @@ describe("Tiered Storage Benchmarks", () => {
 
       // Same workload through tiered layer (mem fast, no slow involved)
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       const tieredStore = new TieredDocumentStorage(
         new MemoryDocumentStorage(false),
@@ -371,6 +370,7 @@ describe("Tiered Storage Benchmarks", () => {
 
     it("getDocument: Memory direct vs Tiered (warm) overhead", async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
 
       const memDirect = new MemoryDocumentStorage(false);
@@ -384,6 +384,7 @@ describe("Tiered Storage Benchmarks", () => {
       );
 
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       const tieredStore = new TieredDocumentStorage(
         new MemoryDocumentStorage(false),
@@ -406,6 +407,7 @@ describe("Tiered Storage Benchmarks", () => {
 
     it("handleSyncStep1: Memory direct vs Tiered (warm) overhead", async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
 
       const memDirect = new MemoryDocumentStorage(false);
@@ -420,6 +422,7 @@ describe("Tiered Storage Benchmarks", () => {
       );
 
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       const tieredStore = new TieredDocumentStorage(
         new MemoryDocumentStorage(false),

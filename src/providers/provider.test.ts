@@ -1051,6 +1051,7 @@ describe("Provider", () => {
         delete: async (key) => {
           docs.delete(key);
         },
+        pendingMap: new Map(),
       });
       return storage;
     }

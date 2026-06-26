@@ -17,6 +17,7 @@ describe("Agent", () => {
     pubSub = new InMemoryPubSub();
     // Clear any existing docs from previous tests
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     mockGetStorage = () => Promise.resolve(new MemoryDocumentStorage());
 
     server = new Server({

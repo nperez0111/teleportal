@@ -20,6 +20,7 @@ describe("encrypted client integration", () => {
 
   beforeEach(() => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     storage = new MemoryDocumentStorage(true);
   });
 

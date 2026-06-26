@@ -8,9 +8,7 @@ import {
   decodeContentEncryptedPayload,
   type EncryptedUpdatePayload,
 } from "../src/lib/protocol/encryption/encoding";
-import {
-  buildSidecarIndexFromUpdateMeta,
-} from "../src/lib/protocol/encryption/content-cipher";
+import { buildSidecarIndexFromUpdateMeta } from "../src/lib/protocol/encryption/content-cipher";
 import { bench, benchBatch, createLargeDoc, formatBytes } from "./helpers";
 
 function wrapUpdate(rawV2: Uint8Array): VersionedUpdate {
@@ -40,6 +38,7 @@ describe("Storage Benchmarks", () => {
 
     beforeEach(() => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       storage = new MemoryDocumentStorage(false);
     });
@@ -151,6 +150,7 @@ describe("Storage Benchmarks", () => {
   describe("VirtualStorage (write batching)", () => {
     it("handleUpdate - buffered writes vs direct", async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
 
       const inner = new MemoryDocumentStorage(false);
@@ -245,7 +245,9 @@ describe("Storage Benchmarks", () => {
         const update = Y.encodeStateAsUpdateV2(doc);
         await bench(
           `parseUpdateMetaV2 (${size} chars)`,
-          () => { Y.parseUpdateMetaV2(update); },
+          () => {
+            Y.parseUpdateMetaV2(update);
+          },
           { iterations: size > 5_000 ? 100 : 500 },
         );
       }
@@ -270,7 +272,9 @@ describe("Storage Benchmarks", () => {
         const vUpdate = wrapUpdate(Y.encodeStateAsUpdateV2(doc));
         await bench(
           `decodeContentEncryptedPayload (${size} chars)`,
-          () => { decodeContentEncryptedPayload(vUpdate.data as EncryptedUpdatePayload); },
+          () => {
+            decodeContentEncryptedPayload(vUpdate.data as EncryptedUpdatePayload);
+          },
           { iterations: size > 5_000 ? 200 : 1000 },
         );
       }
@@ -278,6 +282,7 @@ describe("Storage Benchmarks", () => {
 
     it("handleUpdate breakdown — incremental update on growing doc", async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       const storage = new MemoryDocumentStorage(false);
 
@@ -307,7 +312,9 @@ describe("Storage Benchmarks", () => {
 
       await bench(
         "mergeUpdatesV2 alone (500-char base + 1 char)",
-        () => { Y.mergeUpdatesV2([existing, incremental]); },
+        () => {
+          Y.mergeUpdatesV2([existing, incremental]);
+        },
         { iterations: 500 },
       );
     });

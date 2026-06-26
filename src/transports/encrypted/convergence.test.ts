@@ -38,6 +38,7 @@ describe("encrypted convergence (in-process session harness)", () => {
 
   beforeEach(async () => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
     storage = new MemoryDocumentStorage(true);
     pubSub = new InMemoryPubSub();

@@ -14,6 +14,7 @@ import {
   encodeContentEncryptedPayload,
   getEmptyContentEncryptedPayload,
 } from "../lib/protocol/encryption/encoding";
+import type { SidecarCompaction } from "../lib/protocol/encryption/encoding";
 import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "./types";
 
 /**
@@ -26,7 +27,16 @@ export type DocumentState = {
   sidecars: IndexedSidecar[];
 };
 
-function normalizeMetadata(
+/**
+ * A decoded but unmerged update waiting in the pending log.
+ */
+export type PendingUpdate = {
+  structureUpdate: Uint8Array;
+  sidecars: IndexedSidecar[];
+  compaction?: SidecarCompaction;
+};
+
+export function normalizeMetadata(
   metadata: DocumentMetadata | null,
   now: number,
   encrypted: boolean,
@@ -40,7 +50,7 @@ function normalizeMetadata(
   };
 }
 
-function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+export function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i] !== b[i]) return false;
@@ -49,12 +59,62 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * Document storage base class.
+ * Build {@link IndexedSidecar}s from a decoded content-encrypted payload.
+ * Returns an empty array when the payload carries no sidecars or the update
+ * has no insert structs (delete-only diff).
+ */
+export function buildIncomingSidecars(
+  decoded: import("../lib/protocol/encryption/encoding").ContentEncryptedPayload,
+): IndexedSidecar[] {
+  if (decoded.encryptedSidecars.length === 0) return [];
+  const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
+  const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
+  if (index.length === 0) return [];
+  return decoded.encryptedSidecars.map((encrypted) => ({
+    encrypted,
+    index,
+    hash: hashSidecar(encrypted),
+  }));
+}
+
+/**
+ * Apply incoming sidecars (and an optional compaction record) to an existing
+ * sidecar list. Returns the new combined list.
+ */
+export function applySidecarUpdate(
+  existing: IndexedSidecar[],
+  incoming: IndexedSidecar[],
+  compaction?: import("../lib/protocol/encryption/encoding").SidecarCompaction,
+): IndexedSidecar[] {
+  if (compaction) {
+    const matchedIndices = new Set<number>();
+    for (const sourceHash of compaction.sourceHashes) {
+      const idx = existing.findIndex((s) => arraysEqual(s.hash, sourceHash));
+      if (idx !== -1) matchedIndices.add(idx);
+    }
+    if (matchedIndices.size === compaction.sourceHashes.length) {
+      const compactedSidecar: IndexedSidecar = {
+        encrypted: compaction.sidecar,
+        index: compaction.index,
+        hash: compaction.hash,
+      };
+      const keptSidecars = existing.filter((_, i) => !matchedIndices.has(i));
+      return [compactedSidecar, ...keptSidecars, ...incoming];
+    }
+  }
+  return incoming.length === 0 ? existing : [...existing, ...incoming];
+}
+
+/**
+ * Document storage base class — merge-on-read by default.
  *
- * All updates arrive and leave in content-encrypted envelope format
- * (structure update V2 + sidecars). Internally stores as V2 + sidecars.
- * For unencrypted documents, sidecars are empty and the structure update
- * is the full Y.js update.
+ * Updates are appended to a pending log on write (O(1)). Reads materialize
+ * the log by batch-merging all pending updates with the base state via a
+ * single {@link Y.mergeUpdatesV2} call. This trades storage for CPU: writes
+ * are cheaper, reads pay the merge cost.
+ *
+ * Subclasses implement the storage primitives (append, get base, etc.).
+ * Wrap with a merge-on-write decorator to get eager merging instead.
  */
 export abstract class AbstractDocumentStorage implements DocumentStorage {
   readonly type = "document-storage" as const;
@@ -64,19 +124,35 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     return this.encrypted ? "encrypted" : "unencrypted";
   }
 
-  // Encrypted by default — pass `false` to tag this storage's documents as
-  // plaintext. The flag only tags metadata; the storage handles encrypted and
-  // plaintext content identically (content is opaque to the server).
   constructor(encrypted: boolean = true) {
     this.encrypted = encrypted;
   }
 
-  abstract getDocumentState(key: string): Promise<DocumentState | null>;
-  abstract replaceDocumentState(
+  // ── Abstract primitives (subclass implements) ──────────────────────────
+
+  /** Append an unmerged update to the pending log. */
+  abstract appendUpdate(key: string, entry: PendingUpdate): Promise<void>;
+
+  /**
+   * Return all pending updates and a cursor marking how many were read.
+   * {@link clearPendingUpdates} uses the cursor to remove only the entries
+   * that were consumed, so updates appended concurrently survive.
+   */
+  abstract getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }>;
+
+  /** Remove the first {@link upToCursor} entries from the pending log. */
+  abstract clearPendingUpdates(key: string, upToCursor: number): Promise<void>;
+
+  /** Return the last compacted (fully merged) state, or null for new documents. */
+  abstract getBaseState(key: string): Promise<DocumentState | null>;
+
+  /** Overwrite the compacted base state. */
+  abstract replaceBaseState(
     key: string,
     update: Uint8Array,
     sidecars: IndexedSidecar[],
   ): Promise<void>;
+
   abstract getDocumentMetadata(key: string): Promise<DocumentMetadata>;
   abstract writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void>;
   abstract deleteDocument(key: string): Promise<void>;
@@ -87,10 +163,67 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     return cb();
   }
 
+  // ── Concrete: materialize on read ──────────────────────────────────────
+
   /**
-   * Respond to a sync-step-1 by computing a V2 diff against the client's
-   * state vector and returning only the sidecars relevant to that diff.
+   * Materializes the document state by batch-merging any pending updates
+   * with the base state. Returns the fully merged result.
    */
+  async getDocumentState(key: string): Promise<DocumentState | null> {
+    const base = await this.getBaseState(key);
+    const { updates: pending } = await this.getPendingUpdates(key);
+    if (pending.length === 0) return base;
+    return materialize(base, pending);
+  }
+
+  /**
+   * Set the canonical document state: replaces the base and clears the
+   * entire pending log. Called by {@link handleCompaction} and by
+   * {@link TieredDocumentStorage} flush.
+   */
+  async replaceDocumentState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
+    await this.replaceBaseState(key, update, sidecars);
+    await this.clearPendingUpdates(key, Infinity);
+  }
+
+  // ── Concrete: append on write ──────────────────────────────────────────
+
+  /**
+   * Append an update to the pending log (O(1), no merge).
+   */
+  async handleUpdate(
+    key: string,
+    update: VersionedUpdate,
+    attribution?: EncodedContentMap,
+  ): Promise<void> {
+    await this.transaction(key, async () => {
+      const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
+      if (decoded.structureUpdate.length === 0) return;
+
+      const incomingSidecars = buildIncomingSidecars(decoded);
+
+      await this.appendUpdate(key, {
+        structureUpdate: decoded.structureUpdate,
+        sidecars: incomingSidecars,
+        compaction: decoded.compaction,
+      });
+
+      const now = Date.now();
+      const metadata = normalizeMetadata(await this.getDocumentMetadata(key), now, this.encrypted);
+      await this.writeDocumentMetadata(key, { ...metadata, updatedAt: now });
+
+      if (attribution) {
+        await this.storeAttribution(key, attribution);
+      }
+    });
+  }
+
+  // ── Inherited read methods (work via getDocumentState) ─────────────────
+
   async handleSyncStep1(key: string, syncStep1: StateVector): Promise<Document> {
     const now = Date.now();
     const metadata = normalizeMetadata(await this.getDocumentMetadata(key), now, this.encrypted);
@@ -139,112 +272,6 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     } as unknown as VersionedUpdate);
   }
 
-  /**
-   * Persist a Y.js update to storage. Decodes the content-encrypted payload,
-   * merges the structure update with any existing state, and appends new
-   * sidecars. Handles sidecar compaction when the update carries a compaction
-   * record.
-   */
-  async handleUpdate(
-    key: string,
-    update: VersionedUpdate,
-    attribution?: EncodedContentMap,
-  ): Promise<void> {
-    await this.transaction(key, async () => {
-      const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
-      if (decoded.structureUpdate.length === 0) return;
-
-      let incomingSidecars: IndexedSidecar[];
-      if (decoded.encryptedSidecars.length === 0) {
-        incomingSidecars = [];
-      } else {
-        const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
-        const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
-        // An empty index means the incoming update carries no insert structs
-        // (e.g. a delete-only diff). Any encrypted sidecars on such a payload
-        // are guaranteed to encode zero content entries, so drop them rather
-        // than persist empty sidecars that would only grow storage.
-        incomingSidecars =
-          index.length === 0
-            ? []
-            : decoded.encryptedSidecars.map((encrypted) => ({
-                encrypted,
-                index,
-                hash: hashSidecar(encrypted),
-              }));
-      }
-
-      const now = Date.now();
-      const existing = await this.getDocumentState(key);
-
-      let merged: Uint8Array;
-      let newSidecars: IndexedSidecar[];
-
-      if (existing) {
-        // Merge unconditionally and persist the result. Y.mergeUpdatesV2 is
-        // idempotent, so a re-sent or already-known update produces an
-        // equivalent merged structure with no extra logical state. We don't
-        // try to detect that case: comparing state vectors misses delete-only
-        // updates (the SV doesn't advance), and byte-comparing the merged
-        // binary against `existing.update` is O(doc size) — expensive for
-        // large documents and the very thing this check is trying to avoid.
-        // True empty diffs already short-circuited at the
-        // `structureUpdate.length === 0` check above.
-        merged = Y.mergeUpdatesV2([existing.update, decoded.structureUpdate]);
-
-        if (decoded.compaction) {
-          const matchedIndices = new Set<number>();
-          for (const sourceHash of decoded.compaction.sourceHashes) {
-            const idx = existing.sidecars.findIndex((s) => arraysEqual(s.hash, sourceHash));
-            if (idx !== -1) matchedIndices.add(idx);
-          }
-
-          if (matchedIndices.size === decoded.compaction.sourceHashes.length) {
-            const compactedSidecar: IndexedSidecar = {
-              encrypted: decoded.compaction.sidecar,
-              index: decoded.compaction.index,
-              hash: decoded.compaction.hash,
-            };
-            const keptSidecars = existing.sidecars.filter((_, i) => !matchedIndices.has(i));
-            newSidecars = [compactedSidecar, ...keptSidecars, ...incomingSidecars];
-          } else {
-            newSidecars =
-              incomingSidecars.length === 0
-                ? existing.sidecars
-                : [...existing.sidecars, ...incomingSidecars];
-          }
-        } else {
-          newSidecars =
-            incomingSidecars.length === 0
-              ? existing.sidecars
-              : [...existing.sidecars, ...incomingSidecars];
-        }
-      } else {
-        merged = decoded.structureUpdate;
-        newSidecars = [...incomingSidecars];
-      }
-
-      await this.replaceDocumentState(key, merged, newSidecars);
-
-      const metadata = normalizeMetadata(await this.getDocumentMetadata(key), now, this.encrypted);
-      await this.writeDocumentMetadata(key, {
-        ...metadata,
-        updatedAt: now,
-        sizeBytes: merged.length + newSidecars.reduce((s, b) => s + b.encrypted.length, 0),
-      });
-
-      if (attribution) {
-        await this.storeAttribution(key, attribution);
-      }
-    });
-  }
-
-  /**
-   * Replace all sidecars with a single compacted sidecar, provided the
-   * document's state vector still matches {@link baseSV}. Returns `true` if
-   * the compaction was applied, `false` if the document changed since the
-   * caller computed the compaction.
-   */
   async handleCompaction(
     key: string,
     compactedSidecar: IndexedSidecar,
@@ -262,10 +289,6 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     });
   }
 
-  /**
-   * Retrieve the full document from storage, encoding the stored V2 update and
-   * sidecars into a content-encrypted payload.
-   */
   async getDocument(key: string): Promise<Document | null> {
     const now = Date.now();
     const state = await this.getDocumentState(key);
@@ -285,4 +308,20 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       content: { update, stateVector: serverSV },
     };
   }
+}
+
+/**
+ * Batch-merge pending updates with an optional base state.
+ */
+function materialize(base: DocumentState | null, pending: PendingUpdate[]): DocumentState {
+  const updates: Uint8Array[] = base ? [base.update] : [];
+  for (const p of pending) updates.push(p.structureUpdate);
+  const merged = updates.length === 1 ? updates[0] : Y.mergeUpdatesV2(updates);
+
+  let sidecars = base ? [...base.sidecars] : [];
+  for (const p of pending) {
+    sidecars = applySidecarUpdate(sidecars, p.sidecars, p.compaction);
+  }
+
+  return { update: merged, sidecars };
 }

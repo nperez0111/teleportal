@@ -40,6 +40,7 @@ import {
 
 import type { AbstractDocumentStorage } from "./document-storage";
 import { MemoryDocumentStorage } from "./in-memory/document-storage";
+import { MergeOnWriteStorage } from "./merge-on-write-storage";
 import { TieredDocumentStorage } from "./tiered/document-storage";
 import { UnstorageDocumentStorage } from "./unstorage/document-storage";
 
@@ -60,11 +61,13 @@ const backends: Backend[] = [
     name: "MemoryDocumentStorage",
     make: () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       return new MemoryDocumentStorage(true);
     },
     cleanup: async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
     },
   },
@@ -83,6 +86,7 @@ const backends: Backend[] = [
     name: "TieredDocumentStorage",
     make: () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       const store = createStorage();
       openStorages.push(store);
@@ -94,8 +98,23 @@ const backends: Backend[] = [
     },
     cleanup: async () => {
       MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
       MemoryDocumentStorage.attributionMaps.clear();
       await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
+    },
+  },
+  {
+    name: "MergeOnWriteStorage",
+    make: () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+      return new MergeOnWriteStorage(new MemoryDocumentStorage(true));
+    },
+    cleanup: async () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.pendingUpdates.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
     },
   },
 ];

@@ -87,6 +87,7 @@ describe("MemoryDocumentStorage (unencrypted)", () => {
 
   beforeEach(() => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
     storage = new MemoryDocumentStorage(false);
   });
@@ -560,6 +561,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 
   beforeEach(() => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
     storage = new MemoryDocumentStorage(true);
   });
@@ -1533,6 +1535,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 describe("MemoryDocumentStorage with custom backing options", () => {
   beforeEach(() => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
   });
 

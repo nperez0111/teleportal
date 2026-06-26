@@ -38,6 +38,7 @@ describe("encrypted sync e2e: two clients via server", () => {
 
   beforeEach(async () => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     storage = new MemoryDocumentStorage(true);
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
@@ -313,6 +314,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
   beforeEach(async () => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
 
@@ -1238,36 +1240,41 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
     pA.doc.getText("body").insert(0, secretText);
 
-    // Poll until the update reaches server storage (key is namespaced as room/docId)
+    // Poll until the update reaches server storage (key is namespaced as room/docId).
+    // With merge-on-read, updates land in the pending log, not in the base state.
     const storageKey = `test/${docId}`;
     const deadline = Date.now() + 5000;
-    let state: NonNullable<
-      NonNullable<ReturnType<typeof MemoryDocumentStorage.docs.get>>["state"]
-    > | null = null;
+    let pending: import("../../storage/document-storage").PendingUpdate[] | null = null;
     while (Date.now() < deadline) {
-      const record = MemoryDocumentStorage.docs.get(storageKey);
-      if (record?.state && record.state.sidecars.length > 0) {
-        state = record.state;
+      const list = MemoryDocumentStorage.pendingUpdates.get(storageKey);
+      if (list && list.some((p) => p.sidecars.length > 0)) {
+        pending = list;
         break;
       }
       await new Promise((r) => setTimeout(r, 1));
     }
-    expect(state).not.toBeNull();
-    if (!state) throw new Error("unreachable");
+    expect(pending).not.toBeNull();
+    if (!pending) throw new Error("unreachable");
 
     const secretBytes = new TextEncoder().encode(secretText);
 
-    // The V2 structure update must not contain the plaintext
-    expect(containsSubarray(new Uint8Array(state.update), secretBytes)).toBe(false);
-
-    // Encrypted sidecars must not contain the plaintext
-    for (const sidecar of state.sidecars) {
-      expect(containsSubarray(new Uint8Array(sidecar.encrypted), secretBytes)).toBe(false);
+    // Structure updates must not contain the plaintext
+    for (const entry of pending) {
+      expect(containsSubarray(new Uint8Array(entry.structureUpdate), secretBytes)).toBe(false);
     }
 
-    // Applying only the structure update (without sidecars) must not reveal the text
+    // Encrypted sidecars must not contain the plaintext
+    for (const entry of pending) {
+      for (const sidecar of entry.sidecars) {
+        expect(containsSubarray(new Uint8Array(sidecar.encrypted), secretBytes)).toBe(false);
+      }
+    }
+
+    // Applying only the structure updates (without sidecars) must not reveal the text
     const stripped = new Y.Doc();
-    Y.applyUpdateV2(stripped, state.update);
+    for (const entry of pending) {
+      Y.applyUpdateV2(stripped, entry.structureUpdate);
+    }
     expect(stripped.getText("body").toString()).not.toBe(secretText);
 
     // But a client with the correct key can still read the content
@@ -1411,6 +1418,7 @@ describe("attribution e2e: full WebSocket transport", () => {
 
   beforeEach(async () => {
     MemoryDocumentStorage.docs.clear();
+    MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
