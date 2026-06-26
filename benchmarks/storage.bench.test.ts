@@ -4,6 +4,13 @@ import { MemoryDocumentStorage } from "../src/storage/in-memory/document-storage
 import { VirtualStorage } from "../src/storage/virtual-storage";
 import { encodeContentEncryptedPayload } from "../src/lib/protocol/encryption/encoding";
 import type { VersionedUpdate, Update, StateVector } from "teleportal";
+import {
+  decodeContentEncryptedPayload,
+  type EncryptedUpdatePayload,
+} from "../src/lib/protocol/encryption/encoding";
+import {
+  buildSidecarIndexFromUpdateMeta,
+} from "../src/lib/protocol/encryption/content-cipher";
 import { bench, benchBatch, createLargeDoc, formatBytes } from "./helpers";
 
 function wrapUpdate(rawV2: Uint8Array): VersionedUpdate {
@@ -227,6 +234,81 @@ describe("Storage Benchmarks", () => {
           Y.applyUpdateV2(doc, update);
         },
         { iterations: 200 },
+      );
+    });
+  });
+
+  describe("handleUpdate sub-system overhead", () => {
+    it("parseUpdateMetaV2 — cost that's skipped for unencrypted", async () => {
+      for (const size of [100, 1_000, 10_000]) {
+        const doc = createLargeDoc(size);
+        const update = Y.encodeStateAsUpdateV2(doc);
+        await bench(
+          `parseUpdateMetaV2 (${size} chars)`,
+          () => { Y.parseUpdateMetaV2(update); },
+          { iterations: size > 5_000 ? 100 : 500 },
+        );
+      }
+    });
+
+    it("parseUpdateMetaV2 + buildSidecarIndex — skipped for unencrypted", async () => {
+      const doc = createLargeDoc(1_000);
+      const update = Y.encodeStateAsUpdateV2(doc);
+      await bench(
+        "parseUpdateMetaV2 + buildSidecarIndex (1K)",
+        () => {
+          const meta = Y.parseUpdateMetaV2(update);
+          buildSidecarIndexFromUpdateMeta(meta);
+        },
+        { iterations: 500 },
+      );
+    });
+
+    it("decodeContentEncryptedPayload — per-update envelope cost", async () => {
+      for (const size of [100, 1_000, 10_000]) {
+        const doc = createLargeDoc(size);
+        const vUpdate = wrapUpdate(Y.encodeStateAsUpdateV2(doc));
+        await bench(
+          `decodeContentEncryptedPayload (${size} chars)`,
+          () => { decodeContentEncryptedPayload(vUpdate.data as EncryptedUpdatePayload); },
+          { iterations: size > 5_000 ? 200 : 1000 },
+        );
+      }
+    });
+
+    it("handleUpdate breakdown — incremental update on growing doc", async () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+      const storage = new MemoryDocumentStorage(false);
+
+      const doc = new Y.Doc();
+      // Pre-populate with 500 chars so we measure steady-state cost
+      for (let i = 0; i < 500; i++) {
+        doc.getText("content").insert(i, "x");
+      }
+      const fullUpdate = wrapUpdate(Y.encodeStateAsUpdateV2(doc));
+      await storage.handleUpdate("breakdown-doc", fullUpdate);
+
+      let j = 0;
+      await bench(
+        "handleUpdate incremental (500-char doc, steady state)",
+        () => {
+          const update = makeIncrementalUpdate(doc, "y", j++ % 100);
+          return storage.handleUpdate("breakdown-doc", update);
+        },
+        { iterations: 300 },
+      );
+
+      // Breakdown: what does mergeUpdatesV2 cost alone at this doc size?
+      const existing = Y.encodeStateAsUpdateV2(doc);
+      const sv = Y.encodeStateVector(doc);
+      doc.getText("content").insert(0, "z");
+      const incremental = Y.encodeStateAsUpdateV2(doc, sv);
+
+      await bench(
+        "mergeUpdatesV2 alone (500-char base + 1 char)",
+        () => { Y.mergeUpdatesV2([existing, incremental]); },
+        { iterations: 500 },
       );
     });
   });

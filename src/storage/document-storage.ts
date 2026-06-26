@@ -110,12 +110,19 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
     const diff = Y.diffUpdateV2(state.update, syncStep1);
     const serverSV = Y.encodeStateVectorFromUpdateV2(state.update) as StateVector;
 
-    const diffMeta = Y.parseUpdateMetaV2(diff);
-    const relevantSidecars = state.sidecars.filter((s) => sidecarOverlapsDiff(s.index, diffMeta));
+    let encryptedSidecars: Uint8Array[];
+    if (state.sidecars.length === 0) {
+      encryptedSidecars = [];
+    } else {
+      const diffMeta = Y.parseUpdateMetaV2(diff);
+      encryptedSidecars = state.sidecars
+        .filter((s) => sidecarOverlapsDiff(s.index, diffMeta))
+        .map((s) => s.encrypted);
+    }
 
     const update = encodeContentEncryptedPayload({
       structureUpdate: diff,
-      encryptedSidecars: relevantSidecars.map((s) => s.encrypted),
+      encryptedSidecars,
     }) as unknown as UpdateV2;
 
     return {
@@ -147,20 +154,25 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
       if (decoded.structureUpdate.length === 0) return;
 
-      const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
-      const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
-      // An empty index means the incoming update carries no insert structs
-      // (e.g. a delete-only diff). Any encrypted sidecars on such a payload
-      // are guaranteed to encode zero content entries, so drop them rather
-      // than persist empty sidecars that would only grow storage.
-      const incomingSidecars: IndexedSidecar[] =
-        index.length === 0
-          ? []
-          : decoded.encryptedSidecars.map((encrypted) => ({
-              encrypted,
-              index,
-              hash: hashSidecar(encrypted),
-            }));
+      let incomingSidecars: IndexedSidecar[];
+      if (decoded.encryptedSidecars.length === 0) {
+        incomingSidecars = [];
+      } else {
+        const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
+        const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
+        // An empty index means the incoming update carries no insert structs
+        // (e.g. a delete-only diff). Any encrypted sidecars on such a payload
+        // are guaranteed to encode zero content entries, so drop them rather
+        // than persist empty sidecars that would only grow storage.
+        incomingSidecars =
+          index.length === 0
+            ? []
+            : decoded.encryptedSidecars.map((encrypted) => ({
+                encrypted,
+                index,
+                hash: hashSidecar(encrypted),
+              }));
+      }
 
       const now = Date.now();
       const existing = await this.getDocumentState(key);
@@ -196,10 +208,16 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
             const keptSidecars = existing.sidecars.filter((_, i) => !matchedIndices.has(i));
             newSidecars = [compactedSidecar, ...keptSidecars, ...incomingSidecars];
           } else {
-            newSidecars = [...existing.sidecars, ...incomingSidecars];
+            newSidecars =
+              incomingSidecars.length === 0
+                ? existing.sidecars
+                : [...existing.sidecars, ...incomingSidecars];
           }
         } else {
-          newSidecars = [...existing.sidecars, ...incomingSidecars];
+          newSidecars =
+            incomingSidecars.length === 0
+              ? existing.sidecars
+              : [...existing.sidecars, ...incomingSidecars];
         }
       } else {
         merged = decoded.structureUpdate;

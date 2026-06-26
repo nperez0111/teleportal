@@ -315,4 +315,129 @@ describe("Tiered Storage Benchmarks", () => {
       MemoryDocumentStorage.attributionMaps.clear();
     });
   });
+
+  describe("tiered overhead isolation — fast tier vs tiered delegation", () => {
+    it("handleUpdate: Memory direct vs Tiered (mem-only) overhead", async () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+
+      const memDirect = new MemoryDocumentStorage(false);
+      const doc = new Y.Doc();
+      for (let i = 0; i < 200; i++) {
+        doc.getText("content").insert(i, "x");
+      }
+      const fullUpdate = wrapUpdate(Y.encodeStateAsUpdateV2(doc));
+      await memDirect.handleUpdate("overhead-doc", fullUpdate);
+
+      let j = 0;
+      const baseResult = await bench(
+        "Memory direct (200-char base)",
+        () => {
+          const update = makeIncrementalUpdate(doc, "a", j++ % 100);
+          return memDirect.handleUpdate("overhead-doc", update);
+        },
+        { iterations: 300 },
+      );
+
+      // Same workload through tiered layer (mem fast, no slow involved)
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+      const tieredStore = new TieredDocumentStorage(
+        new MemoryDocumentStorage(false),
+        new MemoryDocumentStorage(false),
+        { persistIntervalMs: 60_000 },
+      );
+      const doc2 = new Y.Doc();
+      for (let i = 0; i < 200; i++) {
+        doc2.getText("content").insert(i, "x");
+      }
+      await tieredStore.handleUpdate("overhead-doc", wrapUpdate(Y.encodeStateAsUpdateV2(doc2)));
+
+      j = 0;
+      const tieredResult = await bench(
+        "Tiered delegation (200-char base)",
+        () => {
+          const update = makeIncrementalUpdate(doc2, "a", j++ % 100);
+          return tieredStore.handleUpdate("overhead-doc", update);
+        },
+        { iterations: 300 },
+      );
+
+      const overhead = tieredResult.avgMs - baseResult.avgMs;
+      console.log(`    Tiered overhead: ${(overhead * 1000).toFixed(0)}μs per handleUpdate`);
+
+      await tieredStore[Symbol.asyncDispose]();
+    });
+
+    it("getDocument: Memory direct vs Tiered (warm) overhead", async () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+
+      const memDirect = new MemoryDocumentStorage(false);
+      const update = wrapUpdate(Y.encodeStateAsUpdateV2(createLargeDoc(1_000)));
+      await memDirect.handleUpdate("read-doc", update);
+
+      const baseResult = await bench(
+        "Memory direct getDocument (1K)",
+        () => memDirect.getDocument("read-doc"),
+        { iterations: 1000 },
+      );
+
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+      const tieredStore = new TieredDocumentStorage(
+        new MemoryDocumentStorage(false),
+        new MemoryDocumentStorage(false),
+        { persistIntervalMs: 60_000 },
+      );
+      await tieredStore.handleUpdate("read-doc", update);
+
+      const tieredResult = await bench(
+        "Tiered warm getDocument (1K)",
+        () => tieredStore.getDocument("read-doc"),
+        { iterations: 1000 },
+      );
+
+      const overhead = tieredResult.avgMs - baseResult.avgMs;
+      console.log(`    Tiered overhead: ${(overhead * 1000).toFixed(0)}μs per getDocument`);
+
+      await tieredStore[Symbol.asyncDispose]();
+    });
+
+    it("handleSyncStep1: Memory direct vs Tiered (warm) overhead", async () => {
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+
+      const memDirect = new MemoryDocumentStorage(false);
+      const update = wrapUpdate(Y.encodeStateAsUpdateV2(createLargeDoc(1_000)));
+      await memDirect.handleUpdate("sync-doc", update);
+      const sv = Y.encodeStateVector(new Y.Doc()) as StateVector;
+
+      const baseResult = await bench(
+        "Memory direct handleSyncStep1 (1K)",
+        () => memDirect.handleSyncStep1("sync-doc", sv),
+        { iterations: 500 },
+      );
+
+      MemoryDocumentStorage.docs.clear();
+      MemoryDocumentStorage.attributionMaps.clear();
+      const tieredStore = new TieredDocumentStorage(
+        new MemoryDocumentStorage(false),
+        new MemoryDocumentStorage(false),
+        { persistIntervalMs: 60_000 },
+      );
+      await tieredStore.handleUpdate("sync-doc", update);
+
+      const tieredResult = await bench(
+        "Tiered warm handleSyncStep1 (1K)",
+        () => tieredStore.handleSyncStep1("sync-doc", sv),
+        { iterations: 500 },
+      );
+
+      const overhead = tieredResult.avgMs - baseResult.avgMs;
+      console.log(`    Tiered overhead: ${(overhead * 1000).toFixed(0)}μs per handleSyncStep1`);
+
+      await tieredStore[Symbol.asyncDispose]();
+    });
+  });
 });
