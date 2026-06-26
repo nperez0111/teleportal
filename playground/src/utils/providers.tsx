@@ -91,7 +91,8 @@ class ProviderManager {
       keys: createKeyRegistryRpc,
     });
 
-    const makeTransport = (resolvedKey: CryptoKey | undefined) =>
+    const makeTransport =
+      (resolvedKey: CryptoKey | undefined) =>
       ({ document, ydoc, awareness, getDefaultTransport }: any) => {
         if (resolvedKey) {
           return getEncryptedTransport(resolvedKey)({ document, ydoc, awareness });

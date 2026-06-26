@@ -12,11 +12,9 @@ export const keysSet = defineMethod<
   { generation: number }
 >("keysSet");
 
-export const keysRevoke = defineMethod<
+export const keysRevoke = defineMethod<"keysRevoke", { userIds: string[] }, { generation: number }>(
   "keysRevoke",
-  { userIds: string[] },
-  { generation: number }
->("keysRevoke");
+);
 
 export const keysMeta = defineMethod<
   "keysMeta",

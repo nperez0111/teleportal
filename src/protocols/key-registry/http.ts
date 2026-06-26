@@ -14,11 +14,7 @@ export function getKeyRegistryHandlers({
 }: {
   storage: KeyRegistryStorage;
   masterSecret: Uint8Array;
-  authorize?: (
-    req: Request,
-    documentId: string,
-    action: string,
-  ) => Promise<boolean> | boolean;
+  authorize?: (req: Request, documentId: string, action: string) => Promise<boolean> | boolean;
 }) {
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -35,9 +31,7 @@ export function getKeyRegistryHandlers({
 
     // When a `room` is provided, construct the composite document ID
     // that matches the server's namespaced session IDs.
-    const documentId = body.room
-      ? `${body.room}/${rawDocumentId}`
-      : rawDocumentId;
+    const documentId = body.room ? `${body.room}/${rawDocumentId}` : rawDocumentId;
 
     if (authorize && !(await authorize(req, documentId, action))) {
       return new Response("Forbidden", { status: 403 });
@@ -50,9 +44,7 @@ export function getKeyRegistryHandlers({
           const documentKey = await createEncryptionKey();
           const wrappingKey = await deriveWrappingKey(masterSecret, userId);
           const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
-          const generation = await storage.set(documentId, [
-            { userId, wrappedKey },
-          ]);
+          const generation = await storage.set(documentId, [{ userId, wrappedKey }]);
           return Response.json({
             generation,
             wrappingKey: await exportWrappingKey(wrappingKey),
@@ -62,10 +54,7 @@ export function getKeyRegistryHandlers({
         case "grant": {
           const userIds = body.userIds ?? (body.userId ? [body.userId] : []);
           if (userIds.length === 0) {
-            return Response.json(
-              { error: "userId or userIds required" },
-              { status: 400 },
-            );
+            return Response.json({ error: "userId or userIds required" }, { status: 400 });
           }
 
           const existing = await storage.getAny(documentId);
@@ -75,14 +64,8 @@ export function getKeyRegistryHandlers({
               { status: 404 },
             );
           }
-          const existingWK = await deriveWrappingKey(
-            masterSecret,
-            existing.userId,
-          );
-          const documentKey = await unwrapDocumentKey(
-            existingWK,
-            existing.wrappedKey,
-          );
+          const existingWK = await deriveWrappingKey(masterSecret, existing.userId);
+          const documentKey = await unwrapDocumentKey(existingWK, existing.wrappedKey);
 
           const wrappingKeys: Record<string, string> = {};
           const entries: { userId: string; wrappedKey: Uint8Array }[] = [];
@@ -117,9 +100,7 @@ export function getKeyRegistryHandlers({
           const meta = await storage.getMeta(documentId);
           const newDocKey = await createEncryptionKey();
 
-          const remainingUserIds = meta.userIds.filter(
-            (id) => !excludeUserIds.includes(id),
-          );
+          const remainingUserIds = meta.userIds.filter((id) => !excludeUserIds.includes(id));
           const entries = await Promise.all(
             remainingUserIds.map(async (userId) => ({
               userId,
@@ -130,11 +111,7 @@ export function getKeyRegistryHandlers({
             })),
           );
 
-          const generation = await storage.rotate(
-            documentId,
-            entries,
-            meta.generation,
-          );
+          const generation = await storage.rotate(documentId, entries, meta.generation);
           return Response.json({ generation });
         }
 
@@ -150,10 +127,7 @@ export function getKeyRegistryHandlers({
       if (e.message?.includes("conflict")) {
         return Response.json({ error: e.message }, { status: 409 });
       }
-      return Response.json(
-        { error: e.message ?? "Internal error" },
-        { status: 500 },
-      );
+      return Response.json({ error: e.message ?? "Internal error" }, { status: 500 });
     }
   };
 }

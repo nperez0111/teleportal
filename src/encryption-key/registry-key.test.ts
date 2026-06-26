@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createEncryptionKey, encryptUpdate, decryptUpdate } from "./index";
-import {
-  deriveWrappingKey,
-  wrapDocumentKey,
-  unwrapDocumentKey,
-} from "./key-wrapping";
+import { deriveWrappingKey, wrapDocumentKey } from "./key-wrapping";
 import { registryKey } from "./key-resolver";
 import { RpcMessage } from "teleportal/protocol";
 
@@ -69,9 +65,7 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(
-      new Map([["keysGet", { wrappedKey, generation: 0 }]]),
-    );
+    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
 
     const resolver = registryKey({ wrappingKey });
     const resolved = await resolver.resolve({
@@ -89,9 +83,7 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(
-      new Map([["keysGet", { wrappedKey, generation: 0 }]]),
-    );
+    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
 
     const resolver = registryKey({ wrappingKey });
     const resolved = await resolver.resolve({
@@ -110,9 +102,7 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(
-      new Map([["keysGet", { wrappedKey, generation: 0 }]]),
-    );
+    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
 
     const resolver = registryKey({ wrappingKey });
     const key1 = await resolver.resolve({
@@ -132,9 +122,7 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(
-      new Map([["keysGet", { wrappedKey, generation: 0 }]]),
-    );
+    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
 
     const resolver = registryKey({
       wrappingKey: async () => wrappingKey,

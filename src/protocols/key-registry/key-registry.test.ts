@@ -22,11 +22,7 @@ function makeHandler() {
   return { storage, handler };
 }
 
-function req(
-  method: string,
-  path: string,
-  body?: Record<string, unknown>,
-): Request {
+function req(method: string, path: string, body?: Record<string, unknown>): Request {
   return new Request(`http://localhost${path}`, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -51,17 +47,17 @@ describe("Key Registry — end-to-end", () => {
     // Alice decrypts via her wrapping key
     const aliceWK = await importWrappingKey(mintRes.wrappingKey);
     // Bob decrypts via his wrapping key
-    const bobWK = await importWrappingKey(grantRes.wrappingKey);
+    const _bobWK = await importWrappingKey(grantRes.wrappingKey);
 
     // Simulate: alice encrypts content
-    const aliceDocKey = await unwrapDocumentKey(
+    const _aliceDocKey = await unwrapDocumentKey(
       aliceWK,
       // Derive her wrapping key the same way the server did, then unwrap
-      (await (async () => {
+      await (async () => {
         const wk = await deriveWrappingKey(MASTER_SECRET, "alice");
         const docKey = await createEncryptionKey();
         return await wrapDocumentKey(wk, docKey);
-      })()),
+      })(),
     ).catch(() => null);
 
     // Actually, let's use the storage directly for a cleaner test

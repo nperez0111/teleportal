@@ -7,9 +7,7 @@ type KeyRegistryDeps = {
   storage: KeyRegistryStorage;
 };
 
-export function getKeyRegistryRpcHandlers(
-  storage: KeyRegistryStorage,
-): RpcHandlerRegistry {
+export function getKeyRegistryRpcHandlers(storage: KeyRegistryStorage): RpcHandlerRegistry {
   const deps: KeyRegistryDeps = { storage };
 
   return createHandlers(keyRegistryProtocol, deps, {
