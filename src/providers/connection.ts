@@ -41,6 +41,8 @@ export type ConnectionOptions = {
   inFlightMessageTimeout?: number;
   batchIntervalMs?: number;
   maxBatchIntervalMs?: number;
+  upgradeProbeInterval?: number;
+  maxUpgradeProbeInterval?: number;
   timer?: Timer;
   eventTarget?: EventTarget;
   isOnline?: boolean;
@@ -74,6 +76,8 @@ const DEFAULT_RECONNECT_DELAY_JITTER = 0;
 const DEFAULT_MAX_BUFFERED_MESSAGES = Number.POSITIVE_INFINITY;
 const DEFAULT_RECONNECT_BACKOFF_FACTOR = 1.3;
 const DEFAULT_IN_FLIGHT_MESSAGE_TIMEOUT = 30_000;
+const DEFAULT_UPGRADE_PROBE_INTERVAL = 30_000;
+const DEFAULT_MAX_UPGRADE_PROBE_INTERVAL = 300_000;
 const MIN_BATCH_INTERVAL_MS = 10;
 
 export class Connection extends Observable<{
@@ -110,6 +114,13 @@ export class Connection extends Observable<{
   #minUptimeTimer: ReturnType<typeof setTimeout> | null = null;
   #reconnectDelayJitter: number;
   #maxBufferedMessages: number;
+
+  // Transport upgrade probe
+  #upgradeProbeIntervalMs: number;
+  #maxUpgradeProbeIntervalMs: number;
+  #currentUpgradeProbeIntervalMs: number;
+  #upgradeProbeTimer: ReturnType<typeof setTimeout> | null = null;
+  #probeInProgress = false;
 
   // Online/offline
   #eventTarget: EventTarget;
@@ -167,6 +178,8 @@ export class Connection extends Observable<{
     inFlightMessageTimeout = DEFAULT_IN_FLIGHT_MESSAGE_TIMEOUT,
     batchIntervalMs = 100,
     maxBatchIntervalMs = 5000,
+    upgradeProbeInterval = DEFAULT_UPGRADE_PROBE_INTERVAL,
+    maxUpgradeProbeInterval = DEFAULT_MAX_UPGRADE_PROBE_INTERVAL,
     timer,
     eventTarget,
     isOnline,
@@ -196,6 +209,9 @@ export class Connection extends Observable<{
     this.#inFlightMessageTimeoutMs = inFlightMessageTimeout;
     this.#batchIntervalMs = batchIntervalMs;
     this.#maxBatchIntervalMs = maxBatchIntervalMs;
+    this.#upgradeProbeIntervalMs = upgradeProbeInterval;
+    this.#maxUpgradeProbeIntervalMs = maxUpgradeProbeInterval;
+    this.#currentUpgradeProbeIntervalMs = upgradeProbeInterval;
 
     // Online/offline
     if (globalThis.window === undefined) {
@@ -327,6 +343,8 @@ export class Connection extends Observable<{
     this.#reconnectAttempt = 0;
     this.#backoff.reset();
     this.#activeTransportIndex = -1;
+    this.#currentUpgradeProbeIntervalMs = this.#upgradeProbeIntervalMs;
+    this.#clearUpgradeProbeTimer();
     if ((this.#state.type === "disconnected" || this.#state.type === "errored") && this.#isOnline) {
       await this.#initConnection();
     }
@@ -359,6 +377,7 @@ export class Connection extends Observable<{
 
     this.#clearMinUptimeTimer();
     this.#clearTokenRefreshTimer();
+    this.#clearUpgradeProbeTimer();
     this.#timerManager.clearAll();
     this.#messageBuffer = [];
 
@@ -493,6 +512,7 @@ export class Connection extends Observable<{
     if (previousState.type === "connected" && state.type !== "connected") {
       this.#clearMinUptimeTimer();
       this.#clearTokenRefreshTimer();
+      this.#clearUpgradeProbeTimer();
     }
 
     this.#state = state;
@@ -528,6 +548,7 @@ export class Connection extends Observable<{
         if (this.#messageBuffer.length > 0) {
           this.#sendBufferedMessages();
         }
+        this.#scheduleUpgradeProbe();
         break;
       }
       case "disconnected": {
@@ -794,6 +815,7 @@ export class Connection extends Observable<{
         this.#timerManager.clearTimeout(this.#reconnectTimeout);
         this.#reconnectTimeout = null;
       }
+      this.#clearUpgradeProbeTimer();
     };
 
     this.#eventTarget.addEventListener("online", handleOnline);
@@ -905,6 +927,83 @@ export class Connection extends Observable<{
     if (this.#tokenRefreshTimer) {
       this.#timerManager.clearTimeout(this.#tokenRefreshTimer);
       this.#tokenRefreshTimer = null;
+    }
+  }
+
+  // --- Transport upgrade probe ---
+
+  #scheduleUpgradeProbe(): void {
+    this.#clearUpgradeProbeTimer();
+
+    if (
+      this.#upgradeProbeIntervalMs <= 0 ||
+      this.#activeTransportIndex <= 0 ||
+      this.#transports.length < 2 ||
+      this.#connectionIntent !== "auto"
+    ) {
+      return;
+    }
+
+    const preferredTransport = this.#transports[0];
+    if (!preferredTransport?.probe) return;
+
+    this.#upgradeProbeTimer = this.#timerManager.setTimeout(() => {
+      this.#upgradeProbeTimer = null;
+      this.#performUpgradeProbe();
+    }, this.#currentUpgradeProbeIntervalMs);
+  }
+
+  async #performUpgradeProbe(): Promise<void> {
+    if (
+      this.#probeInProgress ||
+      this.destroyed ||
+      this.#state.type !== "connected" ||
+      this.#activeTransportIndex <= 0
+    ) {
+      return;
+    }
+
+    this.#probeInProgress = true;
+    try {
+      const preferredTransport = this.#transports[0];
+      if (!preferredTransport?.probe) return;
+
+      const succeeded = await preferredTransport.probe({
+        url: this.#url,
+        token: this.#token,
+        timer: this.#timerManager.underlyingTimer,
+      });
+
+      if (this.destroyed || this.#state.type !== "connected" || this.#activeTransportIndex <= 0) {
+        return;
+      }
+
+      if (succeeded) {
+        this.#currentUpgradeProbeIntervalMs = this.#upgradeProbeIntervalMs;
+        this.#activeTransportIndex = 0;
+        await this.#closeActiveTransport();
+      } else {
+        this.#currentUpgradeProbeIntervalMs = Math.min(
+          this.#currentUpgradeProbeIntervalMs * 2,
+          this.#maxUpgradeProbeIntervalMs,
+        );
+        this.#scheduleUpgradeProbe();
+      }
+    } catch {
+      this.#currentUpgradeProbeIntervalMs = Math.min(
+        this.#currentUpgradeProbeIntervalMs * 2,
+        this.#maxUpgradeProbeIntervalMs,
+      );
+      this.#scheduleUpgradeProbe();
+    } finally {
+      this.#probeInProgress = false;
+    }
+  }
+
+  #clearUpgradeProbeTimer(): void {
+    if (this.#upgradeProbeTimer) {
+      this.#timerManager.clearTimeout(this.#upgradeProbeTimer);
+      this.#upgradeProbeTimer = null;
     }
   }
 
