@@ -4,12 +4,7 @@ import { Connection } from "../src/providers/connection";
 import { Provider } from "../src/providers/provider";
 import { MemoryDocumentStorage } from "../src/storage/in-memory/document-storage";
 import { createMemoryTransportPair } from "../src/providers/transports/memory";
-import {
-  InMemoryPubSub,
-  type Message,
-  type ServerContext,
-  type Transport,
-} from "teleportal";
+import { InMemoryPubSub, type Message, type ServerContext, type Transport } from "teleportal";
 import { createChannel } from "../src/lib/iter";
 
 class BenchTransport<Context extends ServerContext> implements Transport<Context> {
@@ -47,18 +42,14 @@ export function createBenchServer(storage?: MemoryDocumentStorage) {
   return { server, storage: docStorage, pubSub };
 }
 
-export async function createBenchServerWithClient(
-  storage?: MemoryDocumentStorage,
-) {
+export async function createBenchServerWithClient(storage?: MemoryDocumentStorage) {
   const { server, storage: docStorage, pubSub } = createBenchServer(storage);
   const transport = new BenchTransport<ServerContext>();
   const client = server.createClient({ transport });
   return { server, storage: docStorage, pubSub, transport, client };
 }
 
-export async function createConnectedProviderPair(opts?: {
-  document?: string;
-}) {
+export async function createConnectedProviderPair(opts?: { document?: string }) {
   const document = opts?.document ?? "bench-doc";
   const storage = new MemoryDocumentStorage(false);
   const { server, pubSub } = createBenchServer(storage);

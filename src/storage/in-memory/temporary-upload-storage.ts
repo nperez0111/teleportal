@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import type { MerkleTree } from "teleportal/merkle-tree";
-import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import { buildMerkleTree, serializeMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
 import type {
   File,
   FileMetadata,
@@ -33,8 +33,10 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
   }
 
   async beginUpload(uploadId: string, metadata: FileMetadata): Promise<void> {
-    if (this.#sessions.has(uploadId)) {
-      throw new Error(`Upload session ${uploadId} already exists`);
+    const existing = this.#sessions.get(uploadId);
+    if (existing) {
+      existing.lastActivity = Date.now();
+      return;
     }
 
     this.#sessions.set(uploadId, {
@@ -142,6 +144,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
       progress,
       fileId: finalFileId,
       contentId: rootHash,
+      serializedMerkleTree: serializeMerkleTree(merkleTree),
       getChunk: async (chunkIndex: number) => {
         // Check if chunk was already fetched (one-time use)
         if (fetchedChunks.has(chunkIndex)) {

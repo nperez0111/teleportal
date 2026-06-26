@@ -323,6 +323,12 @@ export function deserializeMerkleTree(data: Uint8Array, chunkCount: number): Mer
       }
     }
   }
+  // Odd-level nodes duplicate left as right in buildMerkleTree
+  for (const node of nodes) {
+    if (node.left !== undefined && node.right === undefined) {
+      node.right = node.left;
+    }
+  }
 
   return {
     nodes,
@@ -527,9 +533,7 @@ export async function* chunkFile(
       pendingChunks.delete(index);
       const proof = tree.generateProof(index);
       const rootHash =
-        index === totalChunks - 1
-          ? (tree.getRootHash() ?? new Uint8Array(0))
-          : new Uint8Array(0);
+        index === totalChunks - 1 ? (tree.getRootHash() ?? new Uint8Array(0)) : new Uint8Array(0);
       bytesProcessed += data.length;
       yield {
         chunkData: data,

@@ -44,7 +44,7 @@ export function Editor({ provider, user, selectedMilestone }: EditorProps) {
     },
     async uploadFile(file, blockId) {
       try {
-        const fileId = await provider.rpc.files.upload(file, blockId);
+        const fileId = await provider.rpc.files.upload(file, { fileId: blockId });
 
         return `teleportal://${fileId}`;
       } catch (error) {

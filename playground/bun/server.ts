@@ -19,7 +19,7 @@ import {
   UnstorageTemporaryUploadStorage,
 } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
-import type { RateLimitRule } from "teleportal/transports/rate-limiter";
+import { defaultRateLimitRules } from "teleportal/transports/rate-limiter";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import "../src/backend/logger";
@@ -74,21 +74,7 @@ const tokenManager = createTokenManager({
   issuer: "my-collaborative-app",
 });
 
-// Configure rate limit rules
-const rateLimitRules: RateLimitRule<TokenPayload & { clientId: string }>[] = [
-  {
-    id: "per-user",
-    maxMessages: 100, // 100 messages per window
-    windowMs: 1000, // 1 second window
-    trackBy: "user",
-  },
-  {
-    id: "per-document",
-    maxMessages: 500, // 500 messages per window per document
-    windowMs: 10000, // 10 second window
-    trackBy: "document",
-  },
-];
+const rateLimitRules = defaultRateLimitRules<TokenPayload & { clientId: string }>();
 
 const server = new Server<TokenPayload & { clientId: string }>({
   storage: async (ctx) => {
@@ -113,12 +99,6 @@ const server = new Server<TokenPayload & { clientId: string }>({
     maxMessageSize: 10 * 1024 * 1024, // 10MB
     getUserId: (message) => message.context?.userId,
     getDocumentId: (message) => message.document,
-    onRateLimitExceeded: (details) => {
-      console.warn("Rate limit exceeded", details);
-    },
-    onMessageSizeExceeded: (details) => {
-      console.warn("Message size exceeded", details);
-    },
   },
 });
 

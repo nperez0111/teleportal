@@ -49,6 +49,7 @@ export type FileUploadResponse = {
   allowed: boolean;
   reason?: string;
   statusCode?: number;
+  existingChunks?: number[];
 };
 
 export type FileDownloadRequest = {

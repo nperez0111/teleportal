@@ -61,6 +61,7 @@ export class InMemoryFileStorage implements FileStorage {
       metadata: uploadResult.progress.metadata,
       chunks,
       contentId: uploadResult.contentId,
+      serializedMerkleTree: uploadResult.serializedMerkleTree,
     };
 
     await this.storeFile(file);
