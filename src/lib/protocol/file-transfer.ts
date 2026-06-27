@@ -56,7 +56,7 @@ export namespace FileTransferProtocol {
 
       let encryptionOverhead = 0;
       if (encryptionKey) {
-        const numberOfChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const numberOfChunks = file.size === 0 ? 1 : Math.ceil(file.size / ENCRYPTED_CHUNK_SIZE);
         encryptionOverhead = numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
       }
 
