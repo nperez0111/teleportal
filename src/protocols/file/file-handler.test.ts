@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { toBase64 } from "lib0/buffer";
 import { AckMessage, type Message, type RpcServerContext, type ServerContext } from "teleportal";
-import { buildMerkleTree, CHUNK_SIZE, generateMerkleProof } from "teleportal/merkle-tree";
+import {
+  buildMerkleTree,
+  CHUNK_SIZE,
+  ENCRYPTED_CHUNK_SIZE,
+  generateMerkleProof,
+} from "teleportal/merkle-tree";
 import { InMemoryFileStorage } from "../../storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../../storage/in-memory/temporary-upload-storage";
 import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
@@ -133,6 +138,122 @@ describe("FileHandler", () => {
     // Verify document metadata was updated with the file
     const metadata = await documentStorage.getDocumentMetadata(documentId);
     expect(metadata.files).toContain(fileId);
+  });
+
+  it("rejects encrypted upload when size is computed with CHUNK_SIZE instead of ENCRYPTED_CHUNK_SIZE", async () => {
+    const fileStorage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    fileStorage.temporaryUploadStorage = temp;
+
+    const documentStorage = new MemoryDocumentStorage();
+    const documentId = "test-doc";
+    const context = createMockContext(documentId, documentStorage);
+
+    const fileHandler = new FileHandler(fileStorage);
+
+    // A file just over ENCRYPTED_CHUNK_SIZE triggers the boundary:
+    // ceil(rawSize / CHUNK_SIZE) = 1 but ceil(rawSize / ENCRYPTED_CHUNK_SIZE) = 2
+    const rawSize = ENCRYPTED_CHUNK_SIZE + 1;
+    const encryptedChunk0 = new Uint8Array(CHUNK_SIZE);
+    encryptedChunk0.fill(0xaa);
+    const encryptedChunk1 = new Uint8Array(1 + 28);
+    encryptedChunk1.fill(0xbb);
+    const encryptedChunks = [encryptedChunk0, encryptedChunk1];
+
+    const buggyChunkCount = Math.ceil(rawSize / CHUNK_SIZE);
+    const buggySize = rawSize + buggyChunkCount * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
+    expect(buggyChunkCount).toBe(1);
+
+    const fileId = toBase64(buildMerkleTree(encryptedChunks).nodes.at(-1)!.hash!);
+    await temp.beginUpload(fileId, {
+      filename: "encrypted.bin",
+      size: buggySize,
+      mimeType: "application/octet-stream",
+      encrypted: true,
+      lastModified: Date.now(),
+      documentId,
+    });
+
+    const sent: Message<ServerContext>[] = [];
+    const tree = buildMerkleTree(encryptedChunks);
+
+    for (let i = 0; i < encryptedChunks.length; i++) {
+      const proof = generateMerkleProof(tree, i);
+      const part: FilePartStream = {
+        fileId,
+        chunkIndex: i,
+        chunkData: encryptedChunks[i],
+        merkleProof: proof,
+        totalChunks: encryptedChunks.length,
+        bytesUploaded: encryptedChunks.slice(0, i + 1).reduce((s, c) => s + c.length, 0),
+        encrypted: true,
+      };
+
+      if (i < encryptedChunks.length - 1) {
+        await fileHandler.handleFilePart(part, `msg-${i}`, async (m) => sent.push(m), context);
+      } else {
+        await expect(
+          fileHandler.handleFilePart(part, `msg-${i}`, async (m) => sent.push(m), context),
+        ).rejects.toThrow("Size mismatch");
+      }
+    }
+  });
+
+  it("completes encrypted upload when size is computed with ENCRYPTED_CHUNK_SIZE", async () => {
+    const fileStorage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    fileStorage.temporaryUploadStorage = temp;
+
+    const documentStorage = new MemoryDocumentStorage();
+    const documentId = "test-doc";
+    const context = createMockContext(documentId, documentStorage);
+
+    const fileHandler = new FileHandler(fileStorage);
+
+    const rawSize = ENCRYPTED_CHUNK_SIZE + 1;
+    const encryptedChunk0 = new Uint8Array(CHUNK_SIZE);
+    encryptedChunk0.fill(0xaa);
+    const encryptedChunk1 = new Uint8Array(1 + 28);
+    encryptedChunk1.fill(0xbb);
+    const encryptedChunks = [encryptedChunk0, encryptedChunk1];
+
+    const correctChunkCount = Math.ceil(rawSize / ENCRYPTED_CHUNK_SIZE);
+    const correctSize = rawSize + correctChunkCount * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
+    expect(correctChunkCount).toBe(2);
+    expect(correctSize).toBe(encryptedChunk0.length + encryptedChunk1.length);
+
+    const fileId = toBase64(buildMerkleTree(encryptedChunks).nodes.at(-1)!.hash!);
+    await temp.beginUpload(fileId, {
+      filename: "encrypted.bin",
+      size: correctSize,
+      mimeType: "application/octet-stream",
+      encrypted: true,
+      lastModified: Date.now(),
+      documentId,
+    });
+
+    const sent: Message<ServerContext>[] = [];
+    const tree = buildMerkleTree(encryptedChunks);
+
+    for (let i = 0; i < encryptedChunks.length; i++) {
+      const proof = generateMerkleProof(tree, i);
+      const part: FilePartStream = {
+        fileId,
+        chunkIndex: i,
+        chunkData: encryptedChunks[i],
+        merkleProof: proof,
+        totalChunks: encryptedChunks.length,
+        bytesUploaded: encryptedChunks.slice(0, i + 1).reduce((s, c) => s + c.length, 0),
+        encrypted: true,
+      };
+
+      await fileHandler.handleFilePart(part, `msg-${i}`, async (m) => sent.push(m), context);
+    }
+
+    expect(sent.length).toBe(2);
+    const file = await fileStorage.getFile(fileId);
+    expect(file).not.toBeNull();
+    expect(file!.chunks.length).toBe(2);
   });
 
   it("serves downloads from file storage via streamFileParts generator", async () => {
