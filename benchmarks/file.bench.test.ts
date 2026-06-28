@@ -49,7 +49,7 @@ async function uploadFile(
   fileSize: number,
 ) {
   const uploadId = `upload-${Math.random()}`;
-  const merkleTree = buildMerkleTree(chunks);
+  const merkleTree = await buildMerkleTree(chunks);
   const fileId = toBase64(merkleTree.nodes.at(-1)!.hash!);
 
   await temp.beginUpload(uploadId, makeMetadata(fileSize));
@@ -69,8 +69,8 @@ describe("File Upload & Download Benchmarks", () => {
         console.log(`    ${count} chunks → ${formatBytes(count * CHUNK_SIZE)}`);
         await bench(
           `buildMerkleTree (${count} chunks)`,
-          () => {
-            buildMerkleTree(chunks);
+          async () => {
+            await buildMerkleTree(chunks);
           },
           { iterations: count > 100 ? 20 : 100 },
         );
@@ -79,7 +79,7 @@ describe("File Upload & Download Benchmarks", () => {
 
     it("generateMerkleProof", async () => {
       const chunks = makeChunks(100 * CHUNK_SIZE);
-      const tree = buildMerkleTree(chunks);
+      const tree = await buildMerkleTree(chunks);
 
       let i = 0;
       await bench(
@@ -93,7 +93,7 @@ describe("File Upload & Download Benchmarks", () => {
 
     it("verifyMerkleProof", async () => {
       const chunks = makeChunks(100 * CHUNK_SIZE);
-      const tree = buildMerkleTree(chunks);
+      const tree = await buildMerkleTree(chunks);
       const root = tree.nodes.at(-1)!.hash!;
       const proofs = chunks.map((_, i) => generateMerkleProof(tree, i));
 
@@ -110,7 +110,7 @@ describe("File Upload & Download Benchmarks", () => {
 
     it("serialize + deserialize merkle tree", async () => {
       const chunks = makeChunks(100 * CHUNK_SIZE);
-      const tree = buildMerkleTree(chunks);
+      const tree = await buildMerkleTree(chunks);
 
       await bench(
         "serializeMerkleTree (100 chunks)",
@@ -162,7 +162,7 @@ describe("File Upload & Download Benchmarks", () => {
 
         await bench(
           `plain chunk+tree+proofs (${sizeMB}MB)`,
-          () => {
+          async () => {
             const chunks: Uint8Array[] = [];
             let offset = 0;
             while (offset < fileSize) {
@@ -170,7 +170,7 @@ describe("File Upload & Download Benchmarks", () => {
               chunks.push(data.subarray(offset, end));
               offset = end;
             }
-            const tree = buildMerkleTree(chunks);
+            const tree = await buildMerkleTree(chunks);
             for (let i = 0; i < chunks.length; i++) {
               generateMerkleProof(tree, i);
             }
@@ -242,7 +242,7 @@ describe("File Upload & Download Benchmarks", () => {
       for (const count of [1, 10, 100]) {
         const fileSize = count * CHUNK_SIZE;
         const chunks = makeChunks(fileSize);
-        const merkleTree = buildMerkleTree(chunks);
+        const merkleTree = await buildMerkleTree(chunks);
         const fileId = toBase64(merkleTree.nodes.at(-1)!.hash!);
 
         await bench(
@@ -283,8 +283,8 @@ describe("File Upload & Download Benchmarks", () => {
 
         await bench(
           `build tree + all proofs (${count} chunks)`,
-          () => {
-            const tree = buildMerkleTree(chunks);
+          async () => {
+            const tree = await buildMerkleTree(chunks);
             for (let i = 0; i < count; i++) {
               generateMerkleProof(tree, i);
             }
@@ -307,7 +307,7 @@ describe("File Upload & Download Benchmarks", () => {
           async () => {
             const file = await fileStorage.getFile(fileId);
             if (!file) throw new Error("File not found");
-            const tree = buildMerkleTree(file.chunks);
+            const tree = await buildMerkleTree(file.chunks);
             const root = tree.nodes.at(-1)!.hash!;
             for (let i = 0; i < file.chunks.length; i++) {
               const proof = generateMerkleProof(tree, i);
@@ -343,7 +343,7 @@ describe("File Upload & Download Benchmarks", () => {
       const count = 100;
       const fileSize = count * CHUNK_SIZE;
       const chunks = makeChunks(fileSize);
-      const merkleTree = buildMerkleTree(chunks);
+      const merkleTree = await buildMerkleTree(chunks);
       const fileId = toBase64(merkleTree.nodes.at(-1)!.hash!);
 
       await benchBatch(
@@ -415,7 +415,7 @@ describe("File Upload & Download Benchmarks", () => {
       for (const sizeMB of [0.5, 1, 5]) {
         const fileSize = Math.floor(sizeMB * 1024 * 1024);
         const chunks = makeChunks(fileSize);
-        const tree = buildMerkleTree(chunks);
+        const tree = await buildMerkleTree(chunks);
         const root = tree.nodes.at(-1)!.hash!;
         const proofs = chunks.map((_, i) => generateMerkleProof(tree, i));
 
@@ -467,7 +467,7 @@ describe("File Upload & Download Benchmarks", () => {
           encryptedChunks.push(await encryptUpdate(key, chunk));
         }
 
-        const tree = buildMerkleTree(encryptedChunks);
+        const tree = await buildMerkleTree(encryptedChunks);
         const root = tree.nodes.at(-1)!.hash!;
         const proofs = encryptedChunks.map((_, i) => generateMerkleProof(tree, i));
 

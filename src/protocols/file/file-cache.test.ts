@@ -55,7 +55,7 @@ function makeFileData(size: number, fill: number = 0xab): Uint8Array {
   return data;
 }
 
-function makeContentAddressedFile(data: Uint8Array) {
+async function makeContentAddressedFile(data: Uint8Array) {
   const totalChunks = data.length === 0 ? 1 : Math.ceil(data.length / CHUNK_SIZE);
   const chunks: Uint8Array[] = [];
   for (let i = 0; i < totalChunks; i++) {
@@ -65,7 +65,7 @@ function makeContentAddressedFile(data: Uint8Array) {
   }
   if (chunks.length === 0) chunks.push(new Uint8Array(0));
 
-  const tree = buildMerkleTree(chunks);
+  const tree = await buildMerkleTree(chunks);
   const root = tree.nodes.at(-1)!.hash!;
   const fileId = toBase64(root);
 
@@ -143,7 +143,7 @@ async function simulateUpload(
 async function simulateDownload(
   handler: any,
   fileId: string,
-  fileData: { chunks: Uint8Array[]; tree: ReturnType<typeof buildMerkleTree> },
+  fileData: { chunks: Uint8Array[]; tree: Awaited<ReturnType<typeof buildMerkleTree>> },
   metadata: { filename: string; size: number; mimeType: string },
   document: string,
   skipCache?: boolean,
@@ -251,7 +251,7 @@ describe("FileClientHandler cache integration", () => {
 
     // Pre-populate cache with a known file
     const data = makeFileData(50, 0xcd);
-    const { fileId, chunks } = makeContentAddressedFile(data);
+    const { fileId, chunks } = await makeContentAddressedFile(data);
 
     await cache.putMetadata(fileId, {
       filename: "cached.bin",
@@ -292,7 +292,7 @@ describe("FileClientHandler cache integration", () => {
     const handler = handlers.fileUpload as any;
 
     const data = makeFileData(200, 0xef);
-    const { fileId, chunks, tree } = makeContentAddressedFile(data);
+    const { fileId, chunks, tree } = await makeContentAddressedFile(data);
 
     const file = await simulateDownload(
       handler,
@@ -366,7 +366,7 @@ describe("FileClientHandler cache integration", () => {
 
     // Pre-populate cache
     const data = makeFileData(50);
-    const { fileId, chunks } = makeContentAddressedFile(data);
+    const { fileId, chunks } = await makeContentAddressedFile(data);
     await cache.putMetadata(fileId, {
       filename: "cached.bin",
       size: 50,
@@ -378,7 +378,7 @@ describe("FileClientHandler cache integration", () => {
     await cache.putChunk(fileId, 0, chunks[0]);
 
     // Download with skipCache=true — should hit the server (which we simulate)
-    const { tree } = makeContentAddressedFile(data);
+    const { tree } = await makeContentAddressedFile(data);
     const file = await simulateDownload(
       handler,
       fileId,
@@ -398,7 +398,7 @@ describe("FileClientHandler cache integration", () => {
 
     // Put metadata but no chunks — simulates an incomplete cache entry
     const data = makeFileData(50, 0xbb);
-    const { fileId, chunks, tree } = makeContentAddressedFile(data);
+    const { fileId, chunks, tree } = await makeContentAddressedFile(data);
     await cache.putMetadata(fileId, {
       filename: "incomplete.bin",
       size: 50,

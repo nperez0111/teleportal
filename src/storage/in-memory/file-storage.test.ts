@@ -13,7 +13,7 @@ describe("InMemoryFileStorage", () => {
     const uploadId = "test-upload-id";
     // For a small file (6 bytes), it should be a single chunk
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-    const merkleTree = buildMerkleTree(chunks);
+    const merkleTree = await buildMerkleTree(chunks);
     const root = merkleTree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
@@ -53,7 +53,7 @@ describe("InMemoryFileStorage", () => {
     const chunks = [new Uint8Array(CHUNK_SIZE), new Uint8Array(CHUNK_SIZE)];
     chunks[0].fill(1);
     chunks[1].fill(2);
-    const contentId = buildMerkleTree(chunks).nodes.at(-1)!.hash!;
+    const contentId = (await buildMerkleTree(chunks)).nodes.at(-1)!.hash!;
     const _fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
@@ -111,7 +111,7 @@ describe("InMemoryFileStorage", () => {
     const uploadId = "test-upload-id";
     // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
     const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
-    const merkleTree = buildMerkleTree(chunks);
+    const merkleTree = await buildMerkleTree(chunks);
     const root = merkleTree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
@@ -160,7 +160,7 @@ describe("InMemoryFileStorage", () => {
 
     const uploadId = "test-upload-id";
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-    const merkleTree = buildMerkleTree(chunks);
+    const merkleTree = await buildMerkleTree(chunks);
     const root = merkleTree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
@@ -201,7 +201,7 @@ describe("InMemoryFileStorage", () => {
     const uploadId = "test-upload-id";
     // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
     const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
-    const merkleTree = buildMerkleTree(chunks);
+    const merkleTree = await buildMerkleTree(chunks);
     const root = merkleTree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
@@ -244,7 +244,7 @@ describe("InMemoryFileStorage", () => {
 
       const documentId = "test-doc";
       const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-      const merkleTree = buildMerkleTree(chunks);
+      const merkleTree = await buildMerkleTree(chunks);
       const root = merkleTree.nodes.at(-1);
       expect(root).toBeDefined();
       expect(root?.hash).toBeDefined();

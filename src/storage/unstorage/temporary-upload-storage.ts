@@ -169,7 +169,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       );
     }
 
-    const merkleTree = buildMerkleTree(chunksInOrder);
+    const merkleTree = await buildMerkleTree(chunksInOrder);
     const root = merkleTree.nodes.at(-1);
     if (!root?.hash) {
       throw new Error(`Failed to compute root hash for upload ${uploadId}`);

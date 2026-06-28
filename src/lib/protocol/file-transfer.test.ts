@@ -38,7 +38,7 @@ describe("FileTransferProtocol.Client - file-part only", () => {
     const client = new TestClient();
 
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
-    const merkleTree = buildMerkleTree([fileData]);
+    const merkleTree = await buildMerkleTree([fileData]);
     const root = merkleTree.nodes.at(-1);
     expect(root).toBeDefined();
     const contentId = toBase64(root!.hash!);
@@ -152,7 +152,7 @@ describe("FileTransferProtocol.Server - file-part only", () => {
     };
 
     const fileData = new Uint8Array([1, 2, 3, 4, 5]);
-    const merkleTree = buildMerkleTree([fileData]);
+    const merkleTree = await buildMerkleTree([fileData]);
     const proof = generateMerkleProof(merkleTree, 0);
 
     const filePart: FilePartStream = {

@@ -6,3 +6,4 @@ export * from "./idb";
 export * from "./virtual-storage";
 export * from "./tiered";
 export * from "./merge-on-write-storage";
+export * from "./tiered-rate-limit-storage";

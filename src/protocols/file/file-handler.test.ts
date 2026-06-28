@@ -33,7 +33,7 @@ describe("FileHandler", () => {
     const fileHandler = new FileHandler(fileStorage);
 
     const chunks = [new Uint8Array([1, 2, 3])];
-    const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await fileHandler.initiateUpload(
       fileId,
@@ -68,7 +68,7 @@ describe("FileHandler", () => {
     const chunk2 = new Uint8Array(100);
     chunk2.fill(2);
     const chunks = [chunk1, chunk2];
-    const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await temp.beginUpload(fileId, {
       filename: "test.txt",
@@ -81,7 +81,7 @@ describe("FileHandler", () => {
 
     const sent: Message<ServerContext>[] = [];
 
-    const proof0 = generateMerkleProof(buildMerkleTree(chunks), 0);
+    const proof0 = generateMerkleProof(await buildMerkleTree(chunks), 0);
     const part0: FilePartStream = {
       fileId,
       chunkIndex: 0,
@@ -109,7 +109,7 @@ describe("FileHandler", () => {
     expect(p1).not.toBeNull();
     expect(p1!.chunks.get(0)).toBe(true);
 
-    const proof1 = generateMerkleProof(buildMerkleTree(chunks), 1);
+    const proof1 = generateMerkleProof(await buildMerkleTree(chunks), 1);
     const part1: FilePartStream = {
       fileId,
       chunkIndex: 1,
@@ -164,7 +164,7 @@ describe("FileHandler", () => {
     const buggySize = rawSize + buggyChunkCount * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
     expect(buggyChunkCount).toBe(1);
 
-    const fileId = toBase64(buildMerkleTree(encryptedChunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(encryptedChunks)).nodes.at(-1)!.hash!);
     await temp.beginUpload(fileId, {
       filename: "encrypted.bin",
       size: buggySize,
@@ -175,7 +175,7 @@ describe("FileHandler", () => {
     });
 
     const sent: Message<ServerContext>[] = [];
-    const tree = buildMerkleTree(encryptedChunks);
+    const tree = await buildMerkleTree(encryptedChunks);
 
     for (let i = 0; i < encryptedChunks.length; i++) {
       const proof = generateMerkleProof(tree, i);
@@ -222,7 +222,7 @@ describe("FileHandler", () => {
     expect(correctChunkCount).toBe(2);
     expect(correctSize).toBe(encryptedChunk0.length + encryptedChunk1.length);
 
-    const fileId = toBase64(buildMerkleTree(encryptedChunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(encryptedChunks)).nodes.at(-1)!.hash!);
     await temp.beginUpload(fileId, {
       filename: "encrypted.bin",
       size: correctSize,
@@ -233,7 +233,7 @@ describe("FileHandler", () => {
     });
 
     const sent: Message<ServerContext>[] = [];
-    const tree = buildMerkleTree(encryptedChunks);
+    const tree = await buildMerkleTree(encryptedChunks);
 
     for (let i = 0; i < encryptedChunks.length; i++) {
       const proof = generateMerkleProof(tree, i);
@@ -264,7 +264,7 @@ describe("FileHandler", () => {
     const fileHandler = new FileHandler(fileStorage);
 
     const chunks = [new Uint8Array([1, 2, 3])];
-    const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await temp.beginUpload(fileId, {
       filename: "test.txt",

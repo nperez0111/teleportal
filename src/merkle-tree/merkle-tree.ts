@@ -47,7 +47,9 @@ export interface MerkleTree {
 }
 
 /**
- * Hash two hashes together to create a parent hash
+ * Hash two hashes together to create a parent hash (sync, using lib0 digest).
+ * Used in verifyMerkleProof and StableIncrementalMerkleTree where async overhead
+ * would outweigh the crypto speedup.
  */
 function hashPair(left: Uint8Array, right: Uint8Array): Uint8Array {
   const combined = new Uint8Array(left.length + right.length);
@@ -57,13 +59,23 @@ function hashPair(left: Uint8Array, right: Uint8Array): Uint8Array {
 }
 
 /**
+ * Hardware-accelerated SHA-256 digest via Web Crypto API.
+ */
+async function digestAsync(data: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+}
+
+
+/**
  * Build a merkle tree from file chunks.
- * Uses SHA-256 for hashing and creates a binary tree structure.
+ * Uses hardware-accelerated SHA-256 (Web Crypto) for hashing and creates a
+ * binary tree structure. Leaf hashing and each level of internal node hashing
+ * are parallelized via Promise.all.
  *
  * @param chunks - Array of 64KB chunks
  * @returns The merkle tree
  */
-export function buildMerkleTree(chunks: Uint8Array[]): MerkleTree {
+export async function buildMerkleTree(chunks: Uint8Array[]): Promise<MerkleTree> {
   if (chunks.length === 0) {
     throw new Error("Cannot build merkle tree from empty chunks array");
   }
@@ -71,25 +83,27 @@ export function buildMerkleTree(chunks: Uint8Array[]): MerkleTree {
   const nodes: MerkleNode[] = [];
   const leafCount = chunks.length;
 
-  // Create leaf nodes (hash each chunk)
-  for (const chunk of chunks) {
-    nodes.push({
-      hash: digest(chunk),
-    });
+  // Hash all leaves in parallel using hardware-accelerated SHA-256
+  const leafHashes = await Promise.all(chunks.map((chunk) => digestAsync(chunk)));
+
+  // Create leaf nodes
+  for (const hash of leafHashes) {
+    nodes.push({ hash });
   }
 
-  // Build internal nodes bottom-up (breadth-first)
+  // Build internal nodes bottom-up using sync hashing. Internal nodes hash
+  // only 64 bytes (two concatenated SHA-256 digests), where the async overhead
+  // of crypto.subtle.digest would far exceed the computation cost.
   let currentLevelStart = 0;
   let currentLevelEnd = nodes.length;
 
   while (currentLevelEnd - currentLevelStart > 1) {
     const nextLevelStart = currentLevelEnd;
-    const _nextLevelEnd = nextLevelStart;
 
-    // Process pairs of nodes at current level
     for (let i = currentLevelStart; i < currentLevelEnd; i += 2) {
       const leftNode = nodes[i];
-      const rightNode = i + 1 < currentLevelEnd ? nodes[i + 1] : leftNode; // Use left node as right if odd number
+      const rightIdx = i + 1 < currentLevelEnd ? i + 1 : i;
+      const rightNode = nodes[rightIdx];
 
       const parentHash = hashPair(leftNode.hash!, rightNode.hash!);
       const parentIndex = nodes.length;
@@ -97,14 +111,13 @@ export function buildMerkleTree(chunks: Uint8Array[]): MerkleTree {
       const parentNode: MerkleNode = {
         hash: parentHash,
         left: i,
-        right: i + 1 < currentLevelEnd ? i + 1 : i,
+        right: rightIdx,
       };
 
       nodes.push(parentNode);
 
-      // Update parent references
       leftNode.parent = parentIndex;
-      if (i + 1 < currentLevelEnd) {
+      if (rightIdx !== i) {
         rightNode.parent = parentIndex;
       }
     }
@@ -384,14 +397,14 @@ class StableIncrementalMerkleTree {
     this.nodes = buildMerkleStructure(this.leafCount);
   }
 
-  addChunk(chunk: Uint8Array): number {
+  async addChunk(chunk: Uint8Array): Promise<number> {
     if (this.chunksAdded >= this.leafCount) {
       throw new Error("Cannot add more chunks than totalChunks");
     }
 
     const chunkIndex = this.chunksAdded;
     const node = this.nodes[chunkIndex];
-    node.hash = digest(chunk);
+    node.hash = await digestAsync(chunk);
     this.chunksAdded++;
 
     this.propagateParents(chunkIndex);
@@ -549,7 +562,7 @@ export async function* chunkFile(
 
   async function processChunk(raw: Uint8Array) {
     const encoded = encryptChunk ? await encryptChunk(raw) : raw;
-    const chunkIndex = tree.addChunk(encoded);
+    const chunkIndex = await tree.addChunk(encoded);
     pendingChunks.set(chunkIndex, encoded);
   }
 

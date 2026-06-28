@@ -8,14 +8,14 @@ import {
 } from "./merkle-tree";
 
 describe("Merkle Tree", () => {
-  it("should build a merkle tree from chunks", () => {
+  it("should build a merkle tree from chunks", async () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),
       new Uint8Array([4, 5, 6]),
       new Uint8Array([7, 8, 9]),
     ];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
 
     expect(tree.leafCount).toBe(3);
     expect(tree.nodes.length).toBeGreaterThan(3); // Should have internal nodes
@@ -24,20 +24,20 @@ describe("Merkle Tree", () => {
     expect(root?.hash).toBeDefined(); // Root hash
   });
 
-  it("should build a merkle tree from a single chunk", () => {
+  it("should build a merkle tree from a single chunk", async () => {
     const chunks = [new Uint8Array([1, 2, 3, 4, 5])];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
 
     expect(tree.leafCount).toBe(1);
     expect(tree.nodes.length).toBe(1); // Single node is both leaf and root
     expect(tree.nodes[0].hash).toBeDefined();
   });
 
-  it("should build a merkle tree from a single empty chunk (0-byte file)", () => {
+  it("should build a merkle tree from a single empty chunk (0-byte file)", async () => {
     const chunks = [new Uint8Array(0)];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
 
     expect(tree.leafCount).toBe(1);
     expect(tree.nodes.length).toBe(1); // Single node is both leaf and root
@@ -54,28 +54,28 @@ describe("Merkle Tree", () => {
     expect(isValid).toBe(true);
   });
 
-  it("should generate merkle proof for a chunk", () => {
+  it("should generate merkle proof for a chunk", async () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),
       new Uint8Array([4, 5, 6]),
       new Uint8Array([7, 8, 9]),
     ];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
     const proof = generateMerkleProof(tree, 0);
 
     expect(proof.length).toBeGreaterThan(0);
     expect(proof.every((p) => p.length === 32)).toBe(true); // SHA-256 hashes are 32 bytes
   });
 
-  it("should verify merkle proof correctly", () => {
+  it("should verify merkle proof correctly", async () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),
       new Uint8Array([4, 5, 6]),
       new Uint8Array([7, 8, 9]),
     ];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
     const root = tree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
@@ -85,10 +85,10 @@ describe("Merkle Tree", () => {
     expect(isValid).toBe(true);
   });
 
-  it("should reject invalid merkle proof", () => {
+  it("should reject invalid merkle proof", async () => {
     const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
     const root = tree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
@@ -100,14 +100,14 @@ describe("Merkle Tree", () => {
     expect(isValid).toBe(false);
   });
 
-  it("should serialize and deserialize merkle tree", () => {
+  it("should serialize and deserialize merkle tree", async () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),
       new Uint8Array([4, 5, 6]),
       new Uint8Array([7, 8, 9]),
     ];
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
     const serialized = serializeMerkleTree(tree);
     const deserialized = deserializeMerkleTree(serialized, chunks.length);
 
@@ -124,13 +124,13 @@ describe("Merkle Tree", () => {
     expect(deserializedRoot!.hash!).toEqual(originalRoot!.hash!);
   });
 
-  it("should handle large number of chunks", () => {
+  it("should handle large number of chunks", async () => {
     const chunks: Uint8Array[] = [];
     for (let i = 0; i < 100; i++) {
       chunks.push(new Uint8Array([i, i + 1, i + 2]));
     }
 
-    const tree = buildMerkleTree(chunks);
+    const tree = await buildMerkleTree(chunks);
     expect(tree.leafCount).toBe(100);
 
     // Verify all chunks can generate proofs

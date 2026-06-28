@@ -110,15 +110,39 @@ export function createKeyedTokenizer(keyBytes: Uint8Array): (str: string) => str
     opad[i] = b ^ 0x5c;
   }
 
+  // Cache previous results — metadata key names ("title", "body", etc.) repeat
+  // across every edit, so this avoids redundant SHA-256 computations. The cache
+  // lives as long as the tokenizer (which lives as long as the EncryptionClient).
+  const cache = new Map<string, string>();
+
+  // Pre-allocate a reusable ipad buffer to avoid allocating a new Uint8Array on
+  // every call. It grows only when a larger input is encountered.
+  const ipadFixedLen = HMAC_BLOCK_SIZE + label.length;
+  let ipad = new Uint8Array(ipadFixedLen + 128); // start with room for 128-byte strings
+  // Stamp the constant prefix + label into the initial buffer
+  ipad.set(ipadPrefix);
+  ipad.set(label, HMAC_BLOCK_SIZE);
+
   return (str: string) => {
+    const cached = cache.get(str);
+    if (cached !== undefined) return cached;
+
     const msgBytes = utf8Encoder.encode(str);
-    const inputLen = label.length + msgBytes.length;
-    const ipad = new Uint8Array(HMAC_BLOCK_SIZE + inputLen);
-    ipad.set(ipadPrefix);
-    ipad.set(label, HMAC_BLOCK_SIZE);
-    ipad.set(msgBytes, HMAC_BLOCK_SIZE + label.length);
-    opad.set(sha256(ipad), HMAC_BLOCK_SIZE);
-    return toHex(sha256(opad).subarray(0, TOKEN_BYTES));
+    const needed = ipadFixedLen + msgBytes.length;
+    if (ipad.length < needed) {
+      // Grow to at least 2x to amortize future resizes
+      ipad = new Uint8Array(Math.max(needed, ipad.length * 2));
+      // Re-stamp the constant prefix + label into the new buffer
+      ipad.set(ipadPrefix);
+      ipad.set(label, HMAC_BLOCK_SIZE);
+    }
+    // Only the variable message portion needs to be written each call
+    ipad.set(msgBytes, ipadFixedLen);
+    // sha256 reads exactly `needed` bytes, so pass a subarray of the right length
+    opad.set(sha256(ipad.subarray(0, needed)), HMAC_BLOCK_SIZE);
+    const result = toHex(sha256(opad).subarray(0, TOKEN_BYTES));
+    cache.set(str, result);
+    return result;
   };
 }
 

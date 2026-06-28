@@ -186,7 +186,8 @@ export function mapMessages<In, Out>(
     for await (const batch of source) {
       const out: Out[] = [];
       for (const item of batch) {
-        const mapped = await fn(item);
+        const result = fn(item);
+        const mapped = result instanceof Promise ? await result : result;
         if (mapped != null) out.push(mapped);
       }
       if (out.length > 0) yield out;
@@ -217,7 +218,8 @@ export function filterMessages<T>(
     for await (const batch of source) {
       const out: T[] = [];
       for (const item of batch) {
-        if (await predicate(item)) out.push(item);
+        const result = predicate(item);
+        if (result instanceof Promise ? await result : result) out.push(item);
       }
       if (out.length > 0) yield out;
     }
