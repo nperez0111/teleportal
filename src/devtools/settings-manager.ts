@@ -65,6 +65,7 @@ function saveSettings(settings: DevtoolsSettings) {
 export class SettingsManager {
   private settings: DevtoolsSettings;
   private listeners = new Set<() => void>();
+  private pendingNotify = false;
 
   constructor() {
     this.settings = loadSettings();
@@ -82,7 +83,12 @@ export class SettingsManager {
   }
 
   private emitChange() {
-    this.listeners.forEach((l) => l());
+    if (this.pendingNotify) return;
+    this.pendingNotify = true;
+    queueMicrotask(() => {
+      this.pendingNotify = false;
+      this.listeners.forEach((l) => l());
+    });
   }
 
   updateMessageLimit(limit: number) {

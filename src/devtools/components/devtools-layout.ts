@@ -13,6 +13,13 @@ export class DevtoolsLayout {
   private selectedMessage: DevtoolsMessage | null = null;
   private onClearMessages: (() => void) | null = null;
 
+  private prevFilteredMessages: DevtoolsMessage[] | null = null;
+  private prevConnectionState: ConnectionStateInfo | null = null;
+  private prevStatistics: Statistics | null = null;
+  private prevAvailableDocuments: string[] | null = null;
+  private prevAvailableMessageTypes: string[] | null = null;
+  private prevFilters: any = null;
+
   constructor(
     settingsManager: SettingsManager,
     filterManager: FilterManager,
@@ -73,7 +80,7 @@ export class DevtoolsLayout {
   }
 
   update(
-    messages: DevtoolsMessage[],
+    _messages: DevtoolsMessage[],
     filteredMessages: DevtoolsMessage[],
     connectionState: ConnectionStateInfo | null,
     statistics: Statistics | null,
@@ -81,25 +88,41 @@ export class DevtoolsLayout {
     availableMessageTypes: string[],
     filters: any,
   ) {
-    this.messageList.setMessages(filteredMessages);
-    if (this.selectedMessage) {
-      const stillExists = filteredMessages.some((m) => m.id === this.selectedMessage!.id);
-      if (stillExists) {
-        this.messageList.setSelectedMessageId(this.selectedMessage.id);
-      } else {
-        this.selectedMessage = null;
-        this.messageInspector.setMessage(null);
-        this.messageList.setSelectedMessageId(null);
+    if (filteredMessages !== this.prevFilteredMessages) {
+      this.messageList.setMessages(filteredMessages);
+      if (this.selectedMessage) {
+        const stillExists = filteredMessages.some((m) => m.id === this.selectedMessage!.id);
+        if (stillExists) {
+          this.messageList.setSelectedMessageId(this.selectedMessage.id);
+        } else {
+          this.selectedMessage = null;
+          this.messageInspector.setMessage(null);
+          this.messageList.setSelectedMessageId(null);
+        }
       }
+      this.prevFilteredMessages = filteredMessages;
     }
 
-    this.filtersPanel.update(
-      filters,
-      connectionState,
-      statistics,
-      availableDocuments,
-      availableMessageTypes,
-    );
+    if (
+      filters !== this.prevFilters ||
+      connectionState !== this.prevConnectionState ||
+      statistics !== this.prevStatistics ||
+      availableDocuments !== this.prevAvailableDocuments ||
+      availableMessageTypes !== this.prevAvailableMessageTypes
+    ) {
+      this.filtersPanel.update(
+        filters,
+        connectionState,
+        statistics,
+        availableDocuments,
+        availableMessageTypes,
+      );
+      this.prevFilters = filters;
+      this.prevConnectionState = connectionState;
+      this.prevStatistics = statistics;
+      this.prevAvailableDocuments = availableDocuments;
+      this.prevAvailableMessageTypes = availableMessageTypes;
+    }
   }
 
   getElement(): HTMLElement {

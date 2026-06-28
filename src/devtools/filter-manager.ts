@@ -2,9 +2,30 @@ import type { DevtoolsMessage } from "./types";
 import { getMessageTypeLabel } from "./utils/message-utils";
 import type { SettingsManager } from "./settings-manager";
 
+const searchCache = new WeakMap<DevtoolsMessage, string>();
+
+function getSearchString(msg: DevtoolsMessage): string {
+  let cached = searchCache.get(msg);
+  if (cached === undefined) {
+    cached = JSON.stringify(msg.message).toLowerCase();
+    searchCache.set(msg, cached);
+  }
+  return cached;
+}
+
 export class FilterManager {
   private settingsManager: SettingsManager;
   private listeners = new Set<() => void>();
+  private pendingNotify = false;
+
+  private cachedFiltered: DevtoolsMessage[] | null = null;
+  private cachedFilteredKey: string | null = null;
+  private cachedDocs: string[] | null = null;
+  private cachedDocsGen = -1;
+  private cachedDocsLen = -1;
+  private cachedTypes: string[] | null = null;
+  private cachedTypesGen = -1;
+  private cachedTypesLen = -1;
 
   constructor(settingsManager: SettingsManager) {
     this.settingsManager = settingsManager;
@@ -18,23 +39,31 @@ export class FilterManager {
   }
 
   private emitChange() {
-    this.listeners.forEach((l) => l());
+    if (this.pendingNotify) return;
+    this.pendingNotify = true;
+    queueMicrotask(() => {
+      this.pendingNotify = false;
+      this.listeners.forEach((l) => l());
+    });
   }
 
   getFilters() {
     return this.settingsManager.getSettings().filters;
   }
 
-  getFilteredMessages(messages: DevtoolsMessage[]): DevtoolsMessage[] {
+  getFilteredMessages(messages: DevtoolsMessage[], generation: number): DevtoolsMessage[] {
     const filters = this.getFilters();
+    const key = `${generation}:${filters.direction}:${filters.searchText}:${filters.documentIds.join(",")}:${filters.hiddenMessageTypes.join(",")}`;
 
-    return messages.filter((msg) => {
-      // Filter out ACK messages - they shouldn't appear in the list
+    if (this.cachedFilteredKey === key && this.cachedFiltered) {
+      return this.cachedFiltered;
+    }
+
+    const result = messages.filter((msg) => {
       if (msg.message.type === "ack") {
         return false;
       }
 
-      // Document filter
       if (
         filters.documentIds.length > 0 &&
         msg.document &&
@@ -43,19 +72,16 @@ export class FilterManager {
         return false;
       }
 
-      // Message type filter
       const type = getMessageTypeLabel(msg.message);
       if (filters.hiddenMessageTypes.includes(type)) return false;
 
-      // Direction filter
       if (filters.direction !== "all" && msg.direction !== filters.direction) {
         return false;
       }
 
-      // Search text filter
       if (filters.searchText) {
         const searchLower = filters.searchText.toLowerCase();
-        const payloadStr = JSON.stringify(msg.message).toLowerCase();
+        const payloadStr = getSearchString(msg);
         const docStr = (msg.document || "").toLowerCase();
         if (!payloadStr.includes(searchLower) && !docStr.includes(searchLower)) {
           return false;
@@ -64,35 +90,67 @@ export class FilterManager {
 
       return true;
     });
+
+    this.cachedFiltered = result;
+    this.cachedFilteredKey = key;
+    return result;
   }
 
-  getAvailableDocuments(messages: DevtoolsMessage[]): string[] {
+  getAvailableDocuments(messages: DevtoolsMessage[], generation: number): string[] {
+    if (
+      this.cachedDocs &&
+      this.cachedDocsGen === generation &&
+      this.cachedDocsLen === messages.length
+    ) {
+      return this.cachedDocs;
+    }
+
     const docs = new Set<string>();
-    messages.forEach((msg) => {
+    for (const msg of messages) {
       if (msg.document) {
         docs.add(msg.document);
       }
-    });
-    return Array.from(docs).sort();
+    }
+    const result = Array.from(docs).sort();
+    this.cachedDocs = result;
+    this.cachedDocsGen = generation;
+    this.cachedDocsLen = messages.length;
+    return result;
   }
 
-  getAvailableMessageTypes(messages: DevtoolsMessage[]): string[] {
+  getAvailableMessageTypes(messages: DevtoolsMessage[], generation: number): string[] {
+    if (
+      this.cachedTypes &&
+      this.cachedTypesGen === generation &&
+      this.cachedTypesLen === messages.length
+    ) {
+      return this.cachedTypes;
+    }
+
     const types = new Set<string>();
-    messages.forEach((msg) => {
+    for (const msg of messages) {
       if (msg.message.type !== "ack") {
         types.add(getMessageTypeLabel(msg.message));
       }
-    });
-    return Array.from(types).sort();
+    }
+    const result = Array.from(types).sort();
+    this.cachedTypes = result;
+    this.cachedTypesGen = generation;
+    this.cachedTypesLen = messages.length;
+    return result;
   }
 
   updateFilters(updates: Partial<typeof this.getFilters>) {
     this.settingsManager.updateFilters(updates);
+    this.cachedFiltered = null;
+    this.cachedFilteredKey = null;
     this.emitChange();
   }
 
   clearFilters() {
     this.settingsManager.clearFilters();
+    this.cachedFiltered = null;
+    this.cachedFilteredKey = null;
     this.emitChange();
   }
 }

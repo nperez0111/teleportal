@@ -1,5 +1,6 @@
 import type { DevtoolsMessage } from "../types";
 import { getMessageTypeLabel, getMessageTypeColor, formatTimestamp } from "../utils/message-utils";
+import { cloneSvg, ICON_ARROW_SENT, ICON_ARROW_RECEIVED } from "../utils/svg-cache";
 
 export function createMessageItem(
   message: DevtoolsMessage,
@@ -22,10 +23,9 @@ export function createMessageItem(
   const directionEl = document.createElement("div");
   directionEl.className = `devtools-direction-icon ${message.direction === "sent" ? "devtools-direction-sent" : "devtools-direction-received"}`;
   directionEl.title = message.direction === "sent" ? "Sent" : "Received";
-  directionEl.innerHTML =
-    message.direction === "sent"
-      ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 9.5L9.5 2.5M9.5 2.5H4.5M9.5 2.5V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-      : `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M9.5 2.5L2.5 9.5M2.5 9.5H7.5M2.5 9.5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  directionEl.append(
+    cloneSvg(message.direction === "sent" ? ICON_ARROW_SENT : ICON_ARROW_RECEIVED),
+  );
   container.append(directionEl);
 
   // Type badge - fixed width

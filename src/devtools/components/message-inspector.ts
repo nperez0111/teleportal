@@ -7,6 +7,20 @@ import {
   getMessageTypeLabel,
   getMessageTypeColor,
 } from "../utils/message-utils";
+import {
+  cloneSvg,
+  ICON_COPY,
+  ICON_CHECK,
+  ICON_MESSAGE,
+  ICON_INFO,
+  ICON_LOCK_OPEN,
+  ICON_LOCK_CLOSED,
+  ICON_PAYLOAD,
+  ICON_CHEVRON_UP,
+  ICON_CHEVRON_DOWN,
+  ICON_ARROW_SENT_SM,
+  ICON_ARROW_RECEIVED_SM,
+} from "../utils/svg-cache";
 
 export class MessageInspector {
   private element: HTMLElement;
@@ -28,21 +42,12 @@ export class MessageInspector {
   private copyToClipboard(text: string, button: HTMLElement) {
     navigator.clipboard.writeText(text).then(() => {
       button.classList.add("copied");
-      const originalHTML = button.innerHTML;
-      button.innerHTML = this.getCheckIcon();
+      button.replaceChildren(cloneSvg(ICON_CHECK));
       setTimeout(() => {
         button.classList.remove("copied");
-        button.innerHTML = originalHTML;
+        button.replaceChildren(cloneSvg(ICON_COPY));
       }, 1500);
     });
-  }
-
-  private getCopyIcon(): string {
-    return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-  }
-
-  private getCheckIcon(): string {
-    return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
   }
 
   private render() {
@@ -63,7 +68,7 @@ export class MessageInspector {
 
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-empty-icon";
-    icon.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+    icon.append(cloneSvg(ICON_MESSAGE));
     emptyState.append(icon);
 
     const text = document.createElement("div");
@@ -90,23 +95,24 @@ export class MessageInspector {
 
     const logBtn = document.createElement("button");
     logBtn.className = "devtools-inspector-copy-btn";
-    logBtn.innerHTML = `${this.getCopyIcon()} Copy Log`;
+    logBtn.append(cloneSvg(ICON_COPY), " Copy Log");
     logBtn.title = "Copy a one-line log entry (direction, type, doc, timing) for sharing";
     logBtn.addEventListener("click", () => {
       const entry = formatLogEntry(this.message!);
-      this.copyToClipboard(entry, logBtn);
-      logBtn.innerHTML = `${this.getCheckIcon()} Copied`;
-      logBtn.classList.add("copied");
-      setTimeout(() => {
-        logBtn.innerHTML = `${this.getCopyIcon()} Copy Log`;
-        logBtn.classList.remove("copied");
-      }, 1500);
+      navigator.clipboard.writeText(entry).then(() => {
+        logBtn.replaceChildren(cloneSvg(ICON_CHECK), " Copied");
+        logBtn.classList.add("copied");
+        setTimeout(() => {
+          logBtn.replaceChildren(cloneSvg(ICON_COPY), " Copy Log");
+          logBtn.classList.remove("copied");
+        }, 1500);
+      });
     });
     btnGroup.append(logBtn);
 
     const copyBtn = document.createElement("button");
     copyBtn.className = "devtools-inspector-copy-btn";
-    copyBtn.innerHTML = `${this.getCopyIcon()} Copy Payload`;
+    copyBtn.append(cloneSvg(ICON_COPY), " Copy Payload");
     copyBtn.title = "Copy the decoded payload JSON";
 
     payload.then((res) => {
@@ -116,13 +122,14 @@ export class MessageInspector {
 
       btnGroup.append(copyBtn);
       copyBtn.addEventListener("click", () => {
-        this.copyToClipboard(res, copyBtn);
-        copyBtn.innerHTML = `${this.getCheckIcon()} Copied`;
-        copyBtn.classList.add("copied");
-        setTimeout(() => {
-          copyBtn.innerHTML = `${this.getCopyIcon()} Copy Payload`;
-          copyBtn.classList.remove("copied");
-        }, 1500);
+        navigator.clipboard.writeText(res).then(() => {
+          copyBtn.replaceChildren(cloneSvg(ICON_CHECK), " Copied");
+          copyBtn.classList.add("copied");
+          setTimeout(() => {
+            copyBtn.replaceChildren(cloneSvg(ICON_COPY), " Copy Payload");
+            copyBtn.classList.remove("copied");
+          }, 1500);
+        });
       });
     });
 
@@ -149,9 +156,7 @@ export class MessageInspector {
         this.renderPayloadSection(
           decrypted,
           hasKey ? "Decrypted Payload" : "Raw Payload",
-          hasKey
-            ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`
-            : undefined,
+          hasKey ? ICON_LOCK_OPEN : undefined,
         ),
       );
 
@@ -161,7 +166,7 @@ export class MessageInspector {
           this.renderPayloadSection(
             Promise.resolve(envelope),
             "Encrypted Envelope",
-            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+            ICON_LOCK_CLOSED,
           ),
         );
       }
@@ -200,7 +205,7 @@ export class MessageInspector {
 
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-section-icon";
-    icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+    icon.append(cloneSvg(ICON_INFO));
     titleContainer.append(icon);
 
     const title = document.createElement("span");
@@ -278,7 +283,7 @@ export class MessageInspector {
     if (copyable && value !== "N/A") {
       const copyIcon = document.createElement("button");
       copyIcon.className = "devtools-inspector-copy-icon";
-      copyIcon.innerHTML = this.getCopyIcon();
+      copyIcon.append(cloneSvg(ICON_COPY));
       copyIcon.title = "Copy to clipboard";
       copyIcon.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -312,10 +317,9 @@ export class MessageInspector {
 
     const icon = document.createElement("span");
     icon.className = "devtools-inspector-direction-icon";
-    icon.innerHTML =
-      this.message!.direction === "sent"
-        ? `<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.5 9.5L9.5 2.5M9.5 2.5H4.5M9.5 2.5V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-        : `<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M9.5 2.5L2.5 9.5M2.5 9.5H7.5M2.5 9.5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    icon.append(
+      cloneSvg(this.message!.direction === "sent" ? ICON_ARROW_SENT_SM : ICON_ARROW_RECEIVED_SM),
+    );
     badge.append(icon);
 
     const text = document.createElement("span");
@@ -367,17 +371,10 @@ export class MessageInspector {
       encrypted ? "devtools-inspector-encrypted-yes" : "devtools-inspector-encrypted-no"
     }`;
 
-    if (encrypted) {
-      indicator.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
-      const text = document.createElement("span");
-      text.textContent = "Yes";
-      indicator.append(text);
-    } else {
-      indicator.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
-      const text = document.createElement("span");
-      text.textContent = "No";
-      indicator.append(text);
-    }
+    indicator.append(cloneSvg(encrypted ? ICON_LOCK_CLOSED : ICON_LOCK_OPEN));
+    const text = document.createElement("span");
+    text.textContent = encrypted ? "Yes" : "No";
+    indicator.append(text);
 
     valueEl.append(indicator);
     row.append(valueEl);
@@ -412,9 +409,7 @@ export class MessageInspector {
 
     const chevron = document.createElement("span");
     chevron.className = "devtools-inspector-ack-chevron";
-    chevron.innerHTML = this.showAckDetails
-      ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`
-      : `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    chevron.append(cloneSvg(this.showAckDetails ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
     ackButton.append(chevron);
 
     ackContainer.append(ackButton);
@@ -460,7 +455,7 @@ export class MessageInspector {
 
     const copyIcon = document.createElement("button");
     copyIcon.className = "devtools-inspector-ack-copy-icon";
-    copyIcon.innerHTML = this.getCopyIcon();
+    copyIcon.append(cloneSvg(ICON_COPY));
     copyIcon.title = "Copy to clipboard";
     copyIcon.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -485,9 +480,7 @@ export class MessageInspector {
 
     const icon = document.createElement("div");
     icon.className = "devtools-inspector-section-icon";
-    icon.innerHTML =
-      iconSvg ??
-      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+    icon.append(cloneSvg(iconSvg ?? ICON_PAYLOAD));
     titleContainer.append(icon);
 
     const title = document.createElement("span");
