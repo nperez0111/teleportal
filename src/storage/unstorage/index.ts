@@ -4,3 +4,4 @@ export * from "./milestone-storage";
 export * from "./temporary-upload-storage";
 export * from "./encrypted-driver";
 export * from "./rate-limit-storage";
+export * from "./key-registry-storage";

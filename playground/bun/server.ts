@@ -21,7 +21,7 @@ import {
   UnstorageMilestoneStorage,
   UnstorageRateLimitStorage,
   UnstorageTemporaryUploadStorage,
-  InMemoryKeyRegistryStorage,
+  UnstorageKeyRegistryStorage,
 } from "teleportal/storage";
 import { createTokenManager, TokenPayload } from "teleportal/token";
 import { defaultRateLimitRules } from "teleportal/transports/rate-limiter";
@@ -74,7 +74,9 @@ const fileHandlers = getFileRpcHandlers(fileStorage);
 const rateLimitStorage = new UnstorageRateLimitStorage(memoryStorage);
 
 // Key registry for E2E encryption key distribution
-const keyRegistryStorage = new InMemoryKeyRegistryStorage();
+const keyRegistryStorage = new UnstorageKeyRegistryStorage(backingStorage, {
+  keyPrefix: "key-registry",
+});
 const MASTER_SECRET = new TextEncoder().encode("playground-master-secret-change-in-production");
 
 const tokenManager = createTokenManager({
