@@ -52,10 +52,7 @@ const SENTENCES = [
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Capture an incremental update (not the full state) from a Y.Doc edit. */
-function captureIncrementalUpdate(
-  doc: Y.Doc,
-  editFn: (doc: Y.Doc) => void,
-): VersionedUpdate {
+function captureIncrementalUpdate(doc: Y.Doc, editFn: (doc: Y.Doc) => void): VersionedUpdate {
   let captured: Uint8Array | null = null;
   const handler = (update: Uint8Array) => {
     captured = update;
@@ -441,10 +438,9 @@ describe("Client Encryption Pipeline Benchmarks", () => {
       });
 
       awareness.setLocalState({ cursor: { anchor: 0, head: 5 }, user: { name: "test" } });
-      const awarenessUpdate = encodeAwarenessUpdate(
-        awareness,
-        [awareness.clientID],
-      ) as AwarenessUpdateMessage;
+      const awarenessUpdate = encodeAwarenessUpdate(awareness, [
+        awareness.clientID,
+      ]) as AwarenessUpdateMessage;
 
       await bench(
         "onAwarenessUpdate (encrypt)",
@@ -467,10 +463,9 @@ describe("Client Encryption Pipeline Benchmarks", () => {
       });
 
       awareness.setLocalState({ cursor: { anchor: 10, head: 20 }, user: { name: "peer" } });
-      const awarenessUpdate = encodeAwarenessUpdate(
-        awareness,
-        [awareness.clientID],
-      ) as AwarenessUpdateMessage;
+      const awarenessUpdate = encodeAwarenessUpdate(awareness, [
+        awareness.clientID,
+      ]) as AwarenessUpdateMessage;
       const encrypted = (await client.encryptUpdate(awarenessUpdate)) as AwarenessUpdateMessage;
 
       await bench(
@@ -754,11 +749,7 @@ describe("Client Encryption Pipeline Benchmarks", () => {
       const key = await createEncryptionKey();
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "hash test content");
-      const { encryptedSidecar } = await encryptUpdateContent(
-        key,
-        Y.encodeStateAsUpdateV2(doc),
-        2,
-      );
+      const { encryptedSidecar } = await encryptUpdateContent(key, Y.encodeStateAsUpdateV2(doc), 2);
 
       await bench(
         "hashSidecar (SHA-256)",
@@ -898,10 +889,7 @@ describe("Client Encryption Pipeline Benchmarks", () => {
       await bench(
         "local edit → outbound (encrypted)",
         async () => {
-          encProvider.doc.getText("content").insert(
-            encProvider.doc.getText("content").length,
-            "x",
-          );
+          encProvider.doc.getText("content").insert(encProvider.doc.getText("content").length, "x");
           await flush();
         },
         { iterations: 200 },
@@ -926,10 +914,7 @@ describe("Client Encryption Pipeline Benchmarks", () => {
       await bench(
         "local edit → outbound (plaintext)",
         async () => {
-          ptProvider.doc.getText("content").insert(
-            ptProvider.doc.getText("content").length,
-            "x",
-          );
+          ptProvider.doc.getText("content").insert(ptProvider.doc.getText("content").length, "x");
           await flush();
         },
         { iterations: 200 },
@@ -1020,10 +1005,7 @@ describe("Client Encryption Pipeline Benchmarks", () => {
       await bench(
         "two encrypted providers: edit + sync",
         async () => {
-          provider1.doc.getText("content").insert(
-            provider1.doc.getText("content").length,
-            "s",
-          );
+          provider1.doc.getText("content").insert(provider1.doc.getText("content").length, "s");
           await flush();
           await new Promise((r) => setTimeout(r, 0));
         },
@@ -1062,10 +1044,7 @@ describe("Client Encryption Pipeline Benchmarks", () => {
         await bench(
           `encrypted keystroke (doc=${size} chars)`,
           async () => {
-            provider.doc.getText("content").insert(
-              provider.doc.getText("content").length,
-              "z",
-            );
+            provider.doc.getText("content").insert(provider.doc.getText("content").length, "z");
             await flush();
           },
           { iterations: size > 5_000 ? 64 : 200 },

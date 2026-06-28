@@ -1,11 +1,6 @@
 import { describe, it } from "bun:test";
 import * as Y from "yjs";
-import {
-  InMemoryPubSub,
-  DocMessage,
-  type VersionedUpdate,
-  type Update,
-} from "teleportal";
+import { InMemoryPubSub, DocMessage, type VersionedUpdate, type Update } from "teleportal";
 import type { BinaryMessage, PubSubTopic } from "teleportal";
 import { Connection } from "../src/providers/connection";
 import { Provider } from "../src/providers/provider";
@@ -66,12 +61,9 @@ describe("PubSub Benchmarks", () => {
         console.log(
           `    ${subscriberCount} subscribers, msg: ${formatBytes(binaryMsg.byteLength)}`,
         );
-        await bench(
-          `publish to ${subscriberCount} subscribers`,
-          async () => {
-            await pubSub.publish(topic, binaryMsg, "node-1");
-          },
-        );
+        await bench(`publish to ${subscriberCount} subscribers`, async () => {
+          await pubSub.publish(topic, binaryMsg, "node-1");
+        });
 
         await pubSub[Symbol.asyncDispose]();
       });
@@ -92,12 +84,9 @@ describe("PubSub Benchmarks", () => {
         await pubSub.subscribe(topic, () => {});
 
         console.log(`    ${label}: ${formatBytes(binaryMsg.byteLength)}`);
-        await bench(
-          `publish (${label})`,
-          async () => {
-            await pubSub.publish(topic, binaryMsg, "node-1");
-          },
-        );
+        await bench(`publish (${label})`, async () => {
+          await pubSub.publish(topic, binaryMsg, "node-1");
+        });
 
         await pubSub[Symbol.asyncDispose]();
       });
@@ -109,13 +98,10 @@ describe("PubSub Benchmarks", () => {
       const pubSub = new InMemoryPubSub();
       const topic = "document/churn-doc" as PubSubTopic;
 
-      await bench(
-        "subscribe + unsubscribe",
-        async () => {
-          const unsub = await pubSub.subscribe(topic, () => {});
-          await unsub();
-        },
-      );
+      await bench("subscribe + unsubscribe", async () => {
+        const unsub = await pubSub.subscribe(topic, () => {});
+        await unsub();
+      });
 
       await pubSub[Symbol.asyncDispose]();
     });
@@ -135,12 +121,9 @@ describe("PubSub Benchmarks", () => {
       const binaryMsg = makeBinaryMessage("doc-50", "test");
 
       console.log("    100 topics, 1 subscriber each, publishing to 1 topic");
-      await bench(
-        "publish to 1 of 100 topics",
-        async () => {
-          await pubSub.publish(targetTopic, binaryMsg, "node-1");
-        },
-      );
+      await bench("publish to 1 of 100 topics", async () => {
+        await pubSub.publish(targetTopic, binaryMsg, "node-1");
+      });
 
       await pubSub[Symbol.asyncDispose]();
     });
@@ -164,12 +147,9 @@ describe("Connection Batching Benchmarks", () => {
           `    ${batchSize} payloads: input=${formatBytes(totalInputBytes)}, merged=${formatBytes((merged as Uint8Array).byteLength)}`,
         );
 
-        await bench(
-          `merge ${batchSize} payloads`,
-          () => {
-            mergeContentEncryptedPayloads(payloads);
-          },
-        );
+        await bench(`merge ${batchSize} payloads`, () => {
+          mergeContentEncryptedPayloads(payloads);
+        });
       });
     }
   });
@@ -183,24 +163,18 @@ describe("Connection Batching Benchmarks", () => {
         payloads.push(makePayload(doc, "z", i % 100));
       }
 
-      const singleResult = await bench(
-        "encode 10 updates individually",
-        () => {
-          for (const p of payloads) {
-            encodeContentEncryptedPayload({
-              structureUpdate: p as Uint8Array,
-              encryptedSidecars: [],
-            });
-          }
-        },
-      );
+      const singleResult = await bench("encode 10 updates individually", () => {
+        for (const p of payloads) {
+          encodeContentEncryptedPayload({
+            structureUpdate: p as Uint8Array,
+            encryptedSidecars: [],
+          });
+        }
+      });
 
-      const mergeResult = await bench(
-        "merge 10 updates in one batch",
-        () => {
-          mergeContentEncryptedPayloads(payloads);
-        },
-      );
+      const mergeResult = await bench("merge 10 updates in one batch", () => {
+        mergeContentEncryptedPayloads(payloads);
+      });
 
       console.log(
         `    10×single: avg=${(singleResult.avgMs * 1000).toFixed(0)}μs vs 1×merge: avg=${(mergeResult.avgMs * 1000).toFixed(0)}μs`,
@@ -236,9 +210,7 @@ describe("Connection Batching Benchmarks", () => {
           encryptionKey: false,
           enableOfflinePersistence: false,
         });
-        await serverConn.send(
-          new DocMessage(`multi-doc-${d}`, { type: "sync-done" }, {}, false),
-        );
+        await serverConn.send(new DocMessage(`multi-doc-${d}`, { type: "sync-done" }, {}, false));
         providers.push(provider);
       }
       await flush();
@@ -249,9 +221,7 @@ describe("Connection Batching Benchmarks", () => {
       await flush();
       await new Promise((r) => setTimeout(r, 60));
 
-      console.log(
-        `    ${DOC_COUNT} docs, ${UPDATES_PER_DOC} updates each, interleaved`,
-      );
+      console.log(`    ${DOC_COUNT} docs, ${UPDATES_PER_DOC} updates each, interleaved`);
 
       await bench(
         `interleaved updates (${DOC_COUNT} docs × ${UPDATES_PER_DOC})`,

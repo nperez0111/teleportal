@@ -11,7 +11,11 @@ describe("UnstorageKeyRegistryStorage", () => {
 
   beforeEach(() => {
     const unstorage = createStorage();
-    storage = new UnstorageKeyRegistryStorage(unstorage, { keyPrefix: "keys" }, { ttl: 5000, baseDelay: 1 });
+    storage = new UnstorageKeyRegistryStorage(
+      unstorage,
+      { keyPrefix: "keys" },
+      { ttl: 5000, baseDelay: 1 },
+    );
   });
 
   it("should return null for unknown document/user", async () => {
