@@ -80,9 +80,15 @@ function hmacSha256(keyBytes: Uint8Array, message: Uint8Array): Uint8Array {
   return sha256(opad);
 }
 
+const HEX: string[] = /* @__PURE__ */ (() => {
+  const t = new Array<string>(256);
+  for (let i = 0; i < 256; i++) t[i] = i.toString(16).padStart(2, "0");
+  return t;
+})();
+
 function toHex(bytes: Uint8Array): string {
   let s = "";
-  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, "0");
+  for (let i = 0; i < bytes.length; i++) s += HEX[bytes[i]];
   return s;
 }
 
@@ -93,12 +99,26 @@ function toHex(bytes: Uint8Array): string {
  */
 export function createKeyedTokenizer(keyBytes: Uint8Array): (str: string) => string {
   const label = utf8Encoder.encode(TOKEN_LABEL);
+
+  let key = keyBytes;
+  if (key.length > HMAC_BLOCK_SIZE) key = sha256(key);
+  const ipadPrefix = new Uint8Array(HMAC_BLOCK_SIZE);
+  const opad = new Uint8Array(HMAC_BLOCK_SIZE + 32);
+  for (let i = 0; i < HMAC_BLOCK_SIZE; i++) {
+    const b = i < key.length ? key[i] : 0;
+    ipadPrefix[i] = b ^ 0x36;
+    opad[i] = b ^ 0x5c;
+  }
+
   return (str: string) => {
     const msgBytes = utf8Encoder.encode(str);
-    const input = new Uint8Array(label.length + msgBytes.length);
-    input.set(label);
-    input.set(msgBytes, label.length);
-    return toHex(hmacSha256(keyBytes, input).subarray(0, TOKEN_BYTES));
+    const inputLen = label.length + msgBytes.length;
+    const ipad = new Uint8Array(HMAC_BLOCK_SIZE + inputLen);
+    ipad.set(ipadPrefix);
+    ipad.set(label, HMAC_BLOCK_SIZE);
+    ipad.set(msgBytes, HMAC_BLOCK_SIZE + label.length);
+    opad.set(sha256(ipad), HMAC_BLOCK_SIZE);
+    return toHex(sha256(opad).subarray(0, TOKEN_BYTES));
   };
 }
 
@@ -324,7 +344,7 @@ export function decodeSidecar(data: Uint8Array): Sidecar {
       const contentRef = refDec.read();
       const itemLength = itemLenDec.read();
       const dataLen = lenDec.read();
-      const data = allData.slice(dataOffset, dataOffset + dataLen);
+      const data = allData.subarray(dataOffset, dataOffset + dataLen);
       dataOffset += dataLen;
 
       entries.push({ clientId, clock, contentRef, data, itemLength });
@@ -338,7 +358,7 @@ export function mergeSidecars(sidecars: Sidecar[]): Sidecar {
   const entries: ContentEntry[] = [];
   const dictionary: MetadataDictionary = new Map();
   for (const s of sidecars) {
-    entries.push(...s.entries);
+    for (const e of s.entries) entries.push(e);
     for (const [token, original] of s.dictionary) {
       dictionary.set(token, original);
     }
@@ -585,20 +605,18 @@ function writeSlicedContentFromSidecar(
       break;
     case CONTENT_JSON: {
       const count = decoding.readVarUint(dec);
-      const strings: string[] = [];
-      for (let i = 0; i < count; i++) strings.push(decoding.readVarString(dec));
-      const tail = strings.slice(offset);
-      encoder.writeLen(tail.length);
-      for (const s of tail) encoder.writeString(s);
+      for (let i = 0; i < offset; i++) decoding.readVarString(dec);
+      const remaining = count - offset;
+      encoder.writeLen(remaining);
+      for (let i = 0; i < remaining; i++) encoder.writeString(decoding.readVarString(dec));
       break;
     }
     case CONTENT_ANY: {
       const count = decoding.readVarUint(dec);
-      const anys: unknown[] = [];
-      for (let i = 0; i < count; i++) anys.push(decoding.readAny(dec));
-      const tail = anys.slice(offset);
-      encoder.writeLen(tail.length);
-      for (const a of tail) encoder.writeAny(a);
+      for (let i = 0; i < offset; i++) decoding.readAny(dec);
+      const remaining = count - offset;
+      encoder.writeLen(remaining);
+      for (let i = 0; i < remaining; i++) encoder.writeAny(decoding.readAny(dec));
       break;
     }
     default:
@@ -831,7 +849,7 @@ export function restoreContent(
   outputVersion: 1 | 2 = 2,
 ): Uint8Array {
   const entryMap = buildSidecarMap(sidecar.entries);
-  const rangeIndex = buildSidecarRangeIndex(sidecar.entries);
+  let rangeIndex: Map<number, ContentEntry[]> | undefined;
   const rawDecoder = decoding.createDecoder(structureUpdate);
   const decoder = new Y.UpdateDecoderV2(rawDecoder);
   const encoder: UpdateEncoder =
@@ -885,6 +903,7 @@ export function restoreContent(
           // holds a prefix, so the struct's clock can fall inside an entry's
           // range rather than on its start. Locate the containing entry and
           // restore the matching tail.
+          rangeIndex ??= buildSidecarRangeIndex(sidecar.entries);
           const containing = findContainingEntry(rangeIndex.get(clientId), clock);
           if (containing) {
             entry = containing;
@@ -989,11 +1008,10 @@ export async function decryptContentPayload(
   encryptedSidecars: EncryptedBinary[],
   outputVersion: 1 | 2 = 2,
 ): Promise<Uint8Array> {
-  const sidecars: Sidecar[] = [];
-  for (const encrypted of encryptedSidecars) {
-    const bytes = await decryptUpdate(key, encrypted);
-    sidecars.push(decodeSidecar(bytes));
-  }
+  const decryptedBytes = await Promise.all(
+    encryptedSidecars.map((sc) => decryptUpdate(key, sc)),
+  );
+  const sidecars = decryptedBytes.map(decodeSidecar);
   return restoreContent(structureUpdate, mergeSidecars(sidecars), outputVersion);
 }
 
@@ -1024,20 +1042,24 @@ export async function compactSidecars(
 ): Promise<IndexedSidecar | null> {
   if (sidecars.length <= 1) return null;
 
-  const decoded: Sidecar[] = [];
-  for (const sidecar of sidecars) {
-    const bytes = await decryptUpdate(key, sidecar);
-    decoded.push(decodeSidecar(bytes));
-  }
-  const combined = mergeSidecars(decoded);
+  const decryptedBytes = await Promise.all(
+    sidecars.map((sc) => decryptUpdate(key, sc)),
+  );
 
   const deduped = new Map<string, ContentEntry>();
-  for (const entry of combined.entries) {
-    deduped.set(`${entry.clientId}:${entry.clock}`, entry);
+  const dictionary: MetadataDictionary = new Map();
+  for (const bytes of decryptedBytes) {
+    const sidecar = decodeSidecar(bytes);
+    for (const entry of sidecar.entries) {
+      deduped.set(`${entry.clientId}:${entry.clock}`, entry);
+    }
+    for (const [token, original] of sidecar.dictionary) {
+      dictionary.set(token, original);
+    }
   }
 
   const merged = [...deduped.values()];
-  const compactedBytes = encodeSidecar({ entries: merged, dictionary: combined.dictionary });
+  const compactedBytes = encodeSidecar({ entries: merged, dictionary });
   const encrypted = await encryptUpdate(key, compactedBytes);
   const index = buildSidecarIndex(merged);
 
