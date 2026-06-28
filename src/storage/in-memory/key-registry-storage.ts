@@ -84,4 +84,8 @@ export class InMemoryKeyRegistryStorage implements KeyRegistryStorage {
     state.generation++;
     return state.generation;
   }
+
+  transaction<T>(_documentId: string, cb: () => Promise<T>): Promise<T> {
+    return cb();
+  }
 }
