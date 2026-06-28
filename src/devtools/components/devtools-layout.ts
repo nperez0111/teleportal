@@ -17,6 +17,7 @@ export class DevtoolsLayout {
     settingsManager: SettingsManager,
     filterManager: FilterManager,
     onClearMessages?: () => void,
+    onTransportSwitch?: (name: string) => void,
   ) {
     this.onClearMessages = onClearMessages || null;
     this.element = document.createElement("div");
@@ -31,6 +32,7 @@ export class DevtoolsLayout {
       () => {
         filterManager.clearFilters();
       },
+      onTransportSwitch,
     );
 
     // Create message list

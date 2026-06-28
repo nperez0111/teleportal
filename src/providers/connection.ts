@@ -119,6 +119,7 @@ export class Connection extends Observable<{
   #upgradeProbeIntervalMs: number;
   #maxUpgradeProbeIntervalMs: number;
   #currentUpgradeProbeIntervalMs: number;
+  #manualTransportOverride = false;
   #upgradeProbeTimer: ReturnType<typeof setTimeout> | null = null;
   #probeInProgress = false;
 
@@ -282,6 +283,10 @@ export class Connection extends Observable<{
     return this.#activeTransport?.name ?? null;
   }
 
+  get availableTransports(): string[] {
+    return this.#transports.map((t) => t.name);
+  }
+
   get destroyed(): boolean {
     return this.#connectionIntent === "destroyed";
   }
@@ -340,6 +345,7 @@ export class Connection extends Observable<{
       throw new Error("Connection is destroyed, create a new instance");
     }
     this.#connectionIntent = "auto";
+    this.#manualTransportOverride = false;
     this.#reconnectAttempt = 0;
     this.#backoff.reset();
     this.#activeTransportIndex = -1;
@@ -351,9 +357,34 @@ export class Connection extends Observable<{
     return await this.connected;
   }
 
+  async switchTransport(name: string): Promise<void> {
+    if (this.destroyed) {
+      throw new Error("Connection is destroyed, create a new instance");
+    }
+
+    const targetIndex = this.#transports.findIndex((t) => t.name === name);
+    if (targetIndex === -1) {
+      throw new Error(
+        `Unknown transport: "${name}". Available: ${this.#transports.map((t) => t.name).join(", ")}`,
+      );
+    }
+
+    if (this.#activeTransportIndex === targetIndex && this.#state.type === "connected") {
+      return;
+    }
+
+    this.#manualTransportOverride = true;
+    this.#connectionIntent = "auto";
+    this.#reconnectAttempt = 0;
+    this.#backoff.reset();
+    this.#activeTransportIndex = targetIndex;
+    await this.#closeActiveTransport();
+  }
+
   async disconnect(): Promise<void> {
     if (this.destroyed) return;
     this.#connectionIntent = "manual";
+    this.#manualTransportOverride = false;
     if (this.#reconnectTimeout) {
       this.#timerManager.clearTimeout(this.#reconnectTimeout);
       this.#reconnectTimeout = null;
@@ -936,6 +967,7 @@ export class Connection extends Observable<{
     this.#clearUpgradeProbeTimer();
 
     if (
+      this.#manualTransportOverride ||
       this.#upgradeProbeIntervalMs <= 0 ||
       this.#activeTransportIndex <= 0 ||
       this.#transports.length < 2 ||

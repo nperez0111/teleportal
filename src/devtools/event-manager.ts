@@ -6,9 +6,11 @@ import type { SettingsManager } from "./settings-manager";
 
 export class EventManager {
   private messages: DevtoolsMessage[] = [];
+  private connection: any = null;
   private connectionState: ConnectionStateInfo | null = {
     type: "disconnected",
     transport: null,
+    availableTransports: [],
     timestamp: Date.now(),
   };
   private statistics: Statistics = {
@@ -48,6 +50,8 @@ export class EventManager {
       (event) => {
         const { message, provider, connection } = event.payload;
 
+        if (connection) this.connection = connection;
+
         // Check connection state from the connection object if available
         if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
@@ -60,6 +64,7 @@ export class EventManager {
             const newState: ConnectionStateInfo = {
               type: connState.type,
               transport,
+              availableTransports: connection.availableTransports ?? [],
               error:
                 connState.type === "errored"
                   ? connState.error?.message || String(connState.error)
@@ -155,6 +160,8 @@ export class EventManager {
       (event) => {
         const { message, provider, connection } = event.payload;
 
+        if (connection) this.connection = connection;
+
         // Check connection state from the connection object if available
         if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
@@ -163,6 +170,7 @@ export class EventManager {
               type: connState.type,
               transport:
                 connState.type === "connected" ? ((connState as any).transport ?? null) : null,
+              availableTransports: connection.availableTransports ?? [],
               error:
                 connState.type === "errored"
                   ? connState.error?.message || String(connState.error)
@@ -289,11 +297,14 @@ export class EventManager {
     const unsubConnected = teleportalEventClient.on(
       "teleportal-provider:connected",
       (event) => {
-        const connState = event.payload.connection?.state;
+        const connection = event.payload.connection;
+        if (connection) this.connection = connection;
+        const connState = connection?.state;
         const newState: ConnectionStateInfo = {
           type: "connected",
           transport:
             connState?.type === "connected" ? ((connState as any).transport ?? null) : null,
+          availableTransports: connection?.availableTransports ?? [],
           timestamp: Date.now(),
         };
         this.connectionState = newState;
@@ -307,9 +318,10 @@ export class EventManager {
     const unsubDisconnected = teleportalEventClient.on(
       "teleportal-provider:disconnected",
       (_event) => {
-        const newState = {
-          type: "disconnected" as const,
+        const newState: ConnectionStateInfo = {
+          type: "disconnected",
           transport: null,
+          availableTransports: this.connection?.availableTransports ?? [],
           timestamp: Date.now(),
         };
         this.connectionState = newState;
@@ -327,6 +339,7 @@ export class EventManager {
         const newState: ConnectionStateInfo = {
           type: state.type,
           transport: state.type === "connected" ? ((state as any).transport ?? null) : null,
+          availableTransports: this.connection?.availableTransports ?? [],
           error: state.type === "errored" ? state.error?.message || String(state.error) : undefined,
           timestamp: Date.now(),
         };
@@ -401,6 +414,12 @@ export class EventManager {
 
   getStatistics(): Statistics {
     return this.statistics;
+  }
+
+  async switchTransport(name: string): Promise<void> {
+    if (this.connection && typeof this.connection.switchTransport === "function") {
+      await this.connection.switchTransport(name);
+    }
   }
 
   clearMessages() {

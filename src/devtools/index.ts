@@ -38,9 +38,16 @@ export function createTeleportalDevtools(
 ): HTMLElement {
   injectStyles();
 
-  const layout = new DevtoolsLayout(settingsManager, filterManager, () => {
-    eventManager.clearMessages();
-  });
+  const layout = new DevtoolsLayout(
+    settingsManager,
+    filterManager,
+    () => {
+      eventManager.clearMessages();
+    },
+    (name: string) => {
+      eventManager.switchTransport(name);
+    },
+  );
 
   const updateUI = () => {
     const messages = eventManager.getMessages();
