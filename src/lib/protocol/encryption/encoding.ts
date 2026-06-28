@@ -172,23 +172,54 @@ export function mergeContentEncryptedPayloads(
   if (payloads.length === 0) return getEmptyContentEncryptedPayload();
   if (payloads.length === 1) return payloads[0];
 
-  const decoded = payloads.map(decodeContentEncryptedPayload);
-  // Y.mergeUpdatesV2 cannot parse a zero-length update (the form produced by
-  // getEmptyContentEncryptedPayload), so drop empty structure updates before
-  // merging. Sidecars are preserved regardless of structure-update length.
-  const structures = decoded.map((d) => d.structureUpdate).filter((u) => u.length > 0);
+  // Fast path for the 2-payload case (most common in batching).
+  // Avoids loop overhead and pre-sizes nothing.
+  if (payloads.length === 2) {
+    const a = decodeContentEncryptedPayload(payloads[0]);
+    const b = decodeContentEncryptedPayload(payloads[1]);
+    const structures: Uint8Array[] = [];
+    if (a.structureUpdate.length > 0) structures.push(a.structureUpdate);
+    if (b.structureUpdate.length > 0) structures.push(b.structureUpdate);
+    const mergedStructure =
+      structures.length === 0 ? new Uint8Array(0) : Y.mergeUpdatesV2(structures);
+    return encodeContentEncryptedPayload({
+      structureUpdate: mergedStructure,
+      encryptedSidecars: [...a.encryptedSidecars, ...b.encryptedSidecars],
+      compaction: a.compaction ?? b.compaction,
+    });
+  }
+
+  // General path: single-pass decode, collecting structures and sidecars
+  // directly instead of building an intermediate `decoded` array and then
+  // running .map() + .filter() + .flatMap() over it.
+  const structures: Uint8Array[] = [];
+  const allSidecars: EncryptedBinary[] = [];
+  let compaction: SidecarCompaction | undefined;
+
+  for (const payload of payloads) {
+    const decoded = decodeContentEncryptedPayload(payload);
+    // Y.mergeUpdatesV2 cannot parse a zero-length update (the form produced
+    // by getEmptyContentEncryptedPayload), so drop empty structure updates
+    // before merging. Sidecars are preserved regardless of structure-update
+    // length.
+    if (decoded.structureUpdate.length > 0) {
+      structures.push(decoded.structureUpdate);
+    }
+    for (const sc of decoded.encryptedSidecars) {
+      allSidecars.push(sc);
+    }
+    // Preserve a piggy-backed compaction through the merge. A compaction's
+    // sourceHashes reference already-stored server sidecars, so it stays
+    // valid regardless of which structure updates are merged with it. The
+    // payload format holds a single compaction; merging two is vanishingly
+    // rare, so keep the first and let the rest re-compact on a later round.
+    if (!compaction && decoded.compaction) {
+      compaction = decoded.compaction;
+    }
+  }
+
   const mergedStructure =
     structures.length === 0 ? new Uint8Array(0) : Y.mergeUpdatesV2(structures);
-  const allSidecars = decoded.flatMap((d) => d.encryptedSidecars);
-
-  // Preserve a piggy-backed compaction through the merge. A compaction's
-  // sourceHashes reference already-stored server sidecars, so it stays valid
-  // regardless of which structure updates are merged with it. Dropping it (the
-  // previous behavior) silently lost the compaction since the producer already
-  // cleared its pending state, leaving superseded sidecars uncollapsed. The
-  // payload format holds a single compaction; merging two is vanishingly rare,
-  // so keep the first and let the rest re-compact on a later round.
-  const compaction = decoded.find((d) => d.compaction)?.compaction;
 
   return encodeContentEncryptedPayload({
     structureUpdate: mergedStructure,

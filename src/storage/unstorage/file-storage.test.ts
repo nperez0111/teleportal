@@ -20,7 +20,7 @@ describe("UnstorageFileStorage", () => {
     const uploadId = "test-upload-id";
     // For a small file (6 bytes), it should be a single chunk
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-    const contentId = buildMerkleTree(chunks).nodes.at(-1)!.hash!;
+    const contentId = (await buildMerkleTree(chunks)).nodes.at(-1)!.hash!;
     const fileId = toBase64(contentId);
 
     await temp.beginUpload(uploadId, {
@@ -52,7 +52,7 @@ describe("UnstorageFileStorage", () => {
     const chunks = [new Uint8Array(CHUNK_SIZE), new Uint8Array(CHUNK_SIZE)];
     chunks[0].fill(1);
     chunks[1].fill(2);
-    const _fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const _fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await temp.beginUpload(uploadId, {
       filename: "test.txt",
@@ -108,7 +108,7 @@ describe("UnstorageFileStorage", () => {
     const uploadId = "test-upload-id";
     // Create a file that requires 2 chunks (CHUNK_SIZE + 1 byte)
     const chunks = [new Uint8Array(CHUNK_SIZE).fill(1), new Uint8Array([2])];
-    const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await temp.beginUpload(uploadId, {
       filename: "test.txt",
@@ -169,7 +169,7 @@ describe("UnstorageFileStorage", () => {
 
     const uploadId = "test-upload-id";
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-    const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await temp.beginUpload(uploadId, {
       filename: "test.txt",
@@ -199,7 +199,7 @@ describe("UnstorageFileStorage", () => {
 
     const uploadId = "test-upload-id";
     const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-    const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+    const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
     await temp.beginUpload(uploadId, {
       filename: "test.txt",
@@ -243,7 +243,7 @@ describe("UnstorageFileStorage", () => {
 
       const documentId = "test-doc";
       const chunks = [new Uint8Array([1, 2, 3, 4, 5, 6])];
-      const fileId = toBase64(buildMerkleTree(chunks).nodes.at(-1)!.hash!);
+      const fileId = toBase64((await buildMerkleTree(chunks)).nodes.at(-1)!.hash!);
 
       const uploadId = "test-upload-id";
       await temp.beginUpload(uploadId, {

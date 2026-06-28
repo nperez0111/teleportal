@@ -198,7 +198,7 @@ export class FileHandler {
     const chunks = file.chunks;
     const merkleTree = file.serializedMerkleTree
       ? deserializeMerkleTree(file.serializedMerkleTree, chunks.length)
-      : buildMerkleTree(chunks);
+      : await buildMerkleTree(chunks);
     let bytesSent = 0;
 
     for (let i = 0; i < chunks.length; i++) {
