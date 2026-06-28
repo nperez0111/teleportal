@@ -1,11 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crossws from "crossws/adapters/bun";
 import * as Y from "yjs";
-import {
-  deriveWrappingKey,
-  importWrappingKey,
-  registryKey,
-} from "teleportal/encryption-key";
+import { deriveWrappingKey, importWrappingKey, registryKey } from "teleportal/encryption-key";
 import { InMemoryPubSub, type ServerContext } from "teleportal";
 import { MemoryDocumentStorage } from "teleportal/storage";
 import { InMemoryKeyRegistryStorage } from "../../storage/in-memory/key-registry-storage";
@@ -192,11 +188,7 @@ describe("key-registry distribution: two encrypted clients via WebSocket", () =>
     const bobWrappingKey: string = grantRes.wrappingKey;
 
     // Alice connects with her registry-resolved key.
-    const { provider: pA } = await createProviderWithRegistryKey(
-      docId,
-      "alice",
-      aliceWrappingKey,
-    );
+    const { provider: pA } = await createProviderWithRegistryKey(docId, "alice", aliceWrappingKey);
     await waitForSync(pA);
 
     // Alice writes encrypted content.
@@ -204,11 +196,7 @@ describe("key-registry distribution: two encrypted clients via WebSocket", () =>
     await new Promise((r) => setTimeout(r, 1));
 
     // Bob connects with his own registry-resolved key.
-    const { provider: pB } = await createProviderWithRegistryKey(
-      docId,
-      "bob",
-      bobWrappingKey,
-    );
+    const { provider: pB } = await createProviderWithRegistryKey(docId, "bob", bobWrappingKey);
     await waitForSync(pB);
 
     // Bob receives Alice's encrypted content.

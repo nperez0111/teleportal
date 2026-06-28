@@ -65,7 +65,6 @@ async function digestAsync(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
 }
 
-
 /**
  * Build a merkle tree from file chunks.
  * Uses hardware-accelerated SHA-256 (Web Crypto) for hashing and creates a

@@ -1032,9 +1032,7 @@ export async function decryptContentPayload(
   encryptedSidecars: EncryptedBinary[],
   outputVersion: 1 | 2 = 2,
 ): Promise<Uint8Array> {
-  const decryptedBytes = await Promise.all(
-    encryptedSidecars.map((sc) => decryptUpdate(key, sc)),
-  );
+  const decryptedBytes = await Promise.all(encryptedSidecars.map((sc) => decryptUpdate(key, sc)));
   const sidecars = decryptedBytes.map(decodeSidecar);
   return restoreContent(structureUpdate, mergeSidecars(sidecars), outputVersion);
 }
@@ -1066,9 +1064,7 @@ export async function compactSidecars(
 ): Promise<IndexedSidecar | null> {
   if (sidecars.length <= 1) return null;
 
-  const decryptedBytes = await Promise.all(
-    sidecars.map((sc) => decryptUpdate(key, sc)),
-  );
+  const decryptedBytes = await Promise.all(sidecars.map((sc) => decryptUpdate(key, sc)));
 
   const deduped = new Map<string, ContentEntry>();
   const dictionary: MetadataDictionary = new Map();

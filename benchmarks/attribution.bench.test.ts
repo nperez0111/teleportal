@@ -117,9 +117,7 @@ describe("Attribution Benchmarks", () => {
     for (const charCount of [1_000, 5_000, 20_000, 50_000]) {
       it(`single char insert on ${charCount / 1000}K char doc`, async () => {
         const doc = createLargeDoc(charCount);
-        const diff = generateDiff(doc, (text) =>
-          text.insert(Math.floor(charCount / 2), "z"),
-        );
+        const diff = generateDiff(doc, (text) => text.insert(Math.floor(charCount / 2), "z"));
         const update = { version: 2, data: diff } as VersionedUpdate;
         console.log(
           `    doc: ${charCount / 1000}K chars, diff size: ${formatBytes(diff.byteLength)}`,
@@ -215,9 +213,7 @@ describe("Attribution Benchmarks", () => {
       await bench(
         "full pipeline (1 char, no custom)",
         () => {
-          const payload = decodeContentEncryptedPayload(
-            wrapped.data as EncryptedUpdatePayload,
-          );
+          const payload = decodeContentEncryptedPayload(wrapped.data as EncryptedUpdatePayload);
           const attrUpdate = {
             version: 2,
             data: payload.structureUpdate,
@@ -234,9 +230,7 @@ describe("Attribution Benchmarks", () => {
             createContentAttribute("deleteAt", now),
           ];
 
-          encodeContentMap(
-            createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs),
-          );
+          encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
         },
         { iterations: 500 },
       );
@@ -250,9 +244,7 @@ describe("Attribution Benchmarks", () => {
       await bench(
         "full pipeline (1 char, custom attrs)",
         () => {
-          const payload = decodeContentEncryptedPayload(
-            wrapped.data as EncryptedUpdatePayload,
-          );
+          const payload = decodeContentEncryptedPayload(wrapped.data as EncryptedUpdatePayload);
           const attrUpdate = {
             version: 2,
             data: payload.structureUpdate,
@@ -271,9 +263,7 @@ describe("Attribution Benchmarks", () => {
             ...recordToAttrs({ source: "editor", version: 1 }),
           ];
 
-          encodeContentMap(
-            createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs),
-          );
+          encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
         },
         { iterations: 500 },
       );
@@ -290,9 +280,7 @@ describe("Attribution Benchmarks", () => {
       await bench(
         "full pipeline (paragraph, no custom)",
         () => {
-          const payload = decodeContentEncryptedPayload(
-            wrapped.data as EncryptedUpdatePayload,
-          );
+          const payload = decodeContentEncryptedPayload(wrapped.data as EncryptedUpdatePayload);
           const attrUpdate = {
             version: 2,
             data: payload.structureUpdate,
@@ -309,9 +297,7 @@ describe("Attribution Benchmarks", () => {
             createContentAttribute("deleteAt", now),
           ];
 
-          encodeContentMap(
-            createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs),
-          );
+          encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
         },
         { iterations: 200 },
       );
@@ -325,9 +311,7 @@ describe("Attribution Benchmarks", () => {
       await bench(
         "full pipeline (paragraph, custom attrs)",
         () => {
-          const payload = decodeContentEncryptedPayload(
-            wrapped.data as EncryptedUpdatePayload,
-          );
+          const payload = decodeContentEncryptedPayload(wrapped.data as EncryptedUpdatePayload);
           const attrUpdate = {
             version: 2,
             data: payload.structureUpdate,
@@ -346,9 +330,7 @@ describe("Attribution Benchmarks", () => {
             ...recordToAttrs({ source: "editor", version: 1 }),
           ];
 
-          encodeContentMap(
-            createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs),
-          );
+          encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
         },
         { iterations: 200 },
       );
@@ -382,9 +364,7 @@ describe("Attribution Benchmarks", () => {
         "burst: 50 single-char edits full pipeline",
         () => {
           for (const wrapped of wrappedUpdates) {
-            const payload = decodeContentEncryptedPayload(
-              wrapped.data as EncryptedUpdatePayload,
-            );
+            const payload = decodeContentEncryptedPayload(wrapped.data as EncryptedUpdatePayload);
             const attrUpdate = {
               version: 2,
               data: payload.structureUpdate,
@@ -401,9 +381,7 @@ describe("Attribution Benchmarks", () => {
               createContentAttribute("deleteAt", now),
             ];
 
-            encodeContentMap(
-              createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs),
-            );
+            encodeContentMap(createContentMapFromContentIds(contentIds, insertAttrs, deleteAttrs));
           }
         },
         { iterations: 100 },
@@ -453,9 +431,7 @@ describe("Attribution Benchmarks", () => {
       }
 
       const encoded = encodeContentMap(contentMap);
-      console.log(
-        `    encoded contentMap size: ${formatBytes(encoded.byteLength)} (50 edits)`,
-      );
+      console.log(`    encoded contentMap size: ${formatBytes(encoded.byteLength)} (50 edits)`);
 
       await bench(
         "decodeContentMap (50 edits)",

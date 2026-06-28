@@ -157,22 +157,22 @@ const imported = await importWrappingKey(keyString);
 
 ### Functions
 
-| Function                              | Description                                                          |
-| ------------------------------------- | -------------------------------------------------------------------- |
-| `createEncryptionKey()`               | Generates a new 256-bit AES-GCM `CryptoKey`                          |
-| `importEncryptionKey(keyString)`      | Imports a key from a JWK string                                      |
-| `exportEncryptionKey(key)`            | Exports a key to a JWK string                                        |
-| `keyToUrlFragment(keyString)`         | Serializes an exported key into a URL fragment value (`token=<key>`) |
-| `keyFromUrlFragment(hash)`            | Parses a key string out of a URL fragment (`string \| null`)         |
-| `encryptUpdate(key, data)`            | Encrypts a Y.js update                                               |
-| `decryptUpdate(key, encryptedBinary)` | Decrypts an encrypted update                                         |
-| `passwordKey(passphrase)`             | Returns a `KeyResolver` that derives per-document keys via PBKDF2    |
-| `registryKey({ wrappingKey })`        | Returns a `KeyResolver` that fetches + unwraps from the key registry |
-| `deriveWrappingKey(secret, userId)`   | HKDF-SHA256 → AES-KW wrapping key, domain-separated per user        |
-| `wrapDocumentKey(wrappingKey, key)`   | AES-KW wrap → `Uint8Array` blob for storage                         |
-| `unwrapDocumentKey(wrappingKey, blob)`| AES-KW unwrap → usable `CryptoKey`                                  |
-| `exportWrappingKey(key)`              | Export wrapping key to JWK string                                    |
-| `importWrappingKey(keyString)`        | Import wrapping key from JWK string                                  |
+| Function                               | Description                                                          |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| `createEncryptionKey()`                | Generates a new 256-bit AES-GCM `CryptoKey`                          |
+| `importEncryptionKey(keyString)`       | Imports a key from a JWK string                                      |
+| `exportEncryptionKey(key)`             | Exports a key to a JWK string                                        |
+| `keyToUrlFragment(keyString)`          | Serializes an exported key into a URL fragment value (`token=<key>`) |
+| `keyFromUrlFragment(hash)`             | Parses a key string out of a URL fragment (`string \| null`)         |
+| `encryptUpdate(key, data)`             | Encrypts a Y.js update                                               |
+| `decryptUpdate(key, encryptedBinary)`  | Decrypts an encrypted update                                         |
+| `passwordKey(passphrase)`              | Returns a `KeyResolver` that derives per-document keys via PBKDF2    |
+| `registryKey({ wrappingKey })`         | Returns a `KeyResolver` that fetches + unwraps from the key registry |
+| `deriveWrappingKey(secret, userId)`    | HKDF-SHA256 → AES-KW wrapping key, domain-separated per user         |
+| `wrapDocumentKey(wrappingKey, key)`    | AES-KW wrap → `Uint8Array` blob for storage                          |
+| `unwrapDocumentKey(wrappingKey, blob)` | AES-KW unwrap → usable `CryptoKey`                                   |
+| `exportWrappingKey(key)`               | Export wrapping key to JWK string                                    |
+| `importWrappingKey(keyString)`         | Import wrapping key from JWK string                                  |
 
 ## Security
 

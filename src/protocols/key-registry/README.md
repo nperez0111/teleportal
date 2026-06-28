@@ -51,11 +51,11 @@ App Server                    Teleportal Server              Client
 
 All three tiers use the same `encryptionKey` option on `Provider.create`. Pick the one that matches your needs:
 
-| Tier | Mechanism | Per-User Revocation | Server Involvement | When to Use |
-|------|-----------|--------------------|--------------------|-------------|
-| **Direct key** | `encryptionKey: key` or URL fragment | No | None | Quick sharing, demos |
-| **Password** | `encryptionKey: passwordKey("...")` | No | None | Shared workspaces, simple apps |
-| **Registry** | `encryptionKey: registryKey({ wrappingKey })` | Yes | Full | Multi-user apps with access control |
+| Tier           | Mechanism                                     | Per-User Revocation | Server Involvement | When to Use                         |
+| -------------- | --------------------------------------------- | ------------------- | ------------------ | ----------------------------------- |
+| **Direct key** | `encryptionKey: key` or URL fragment          | No                  | None               | Quick sharing, demos                |
+| **Password**   | `encryptionKey: passwordKey("...")`           | No                  | None               | Shared workspaces, simple apps      |
+| **Registry**   | `encryptionKey: registryKey({ wrappingKey })` | Yes                 | Full               | Multi-user apps with access control |
 
 ## Server Setup
 
@@ -159,9 +159,7 @@ app.post("/api/documents/:id/share", async (req) => {
   }).then((r) => r.json());
 
   const permissions =
-    role === "read" ? ["read"] :
-    role === "comment" ? ["read", "comment"] :
-    ["read", "write"];
+    role === "read" ? ["read"] : role === "comment" ? ["read", "comment"] : ["read", "write"];
 
   const token = await tokenManager.createToken(targetUserId, "default", [
     { pattern: documentId, permissions },
@@ -203,14 +201,14 @@ await fetch(`${TELEPORTAL_URL}/keys/${documentId}/rotate`, {
 
 ## HTTP Endpoints
 
-| Method | Path | Body | Response | Purpose |
-|--------|------|------|----------|---------|
-| `POST` | `/keys/:docId/mint` | `{ userId, room? }` | `{ generation, wrappingKey }` | Generate document key, wrap for first user |
-| `POST` | `/keys/:docId/grant` | `{ userId, room? }` | `{ wrappingKey }` | Wrap existing key for a new user |
-| `POST` | `/keys/:docId/grant` | `{ userIds, room? }` | `{ wrappingKeys }` | Batch grant for multiple users |
-| `DELETE` | `/keys/:docId/revoke` | `{ userIds, room? }` | `{ generation }` | Remove users' wrapped keys |
-| `POST` | `/keys/:docId/rotate` | `{ excludeUserIds?, room? }` | `{ generation }` | New key, re-wrap for remaining users |
-| `GET` | `/keys/:docId/meta` | — | `{ generation, userIds }` | Current generation + who has access |
+| Method   | Path                  | Body                         | Response                      | Purpose                                    |
+| -------- | --------------------- | ---------------------------- | ----------------------------- | ------------------------------------------ |
+| `POST`   | `/keys/:docId/mint`   | `{ userId, room? }`          | `{ generation, wrappingKey }` | Generate document key, wrap for first user |
+| `POST`   | `/keys/:docId/grant`  | `{ userId, room? }`          | `{ wrappingKey }`             | Wrap existing key for a new user           |
+| `POST`   | `/keys/:docId/grant`  | `{ userIds, room? }`         | `{ wrappingKeys }`            | Batch grant for multiple users             |
+| `DELETE` | `/keys/:docId/revoke` | `{ userIds, room? }`         | `{ generation }`              | Remove users' wrapped keys                 |
+| `POST`   | `/keys/:docId/rotate` | `{ excludeUserIds?, room? }` | `{ generation }`              | New key, re-wrap for remaining users       |
+| `GET`    | `/keys/:docId/meta`   | —                            | `{ generation, userIds }`     | Current generation + who has access        |
 
 The optional `room` field constructs a composite document ID (`room/docId`) to match the server's namespaced sessions.
 
@@ -218,13 +216,13 @@ The optional `room` field constructs a composite document ID (`room/docId`) to m
 
 These are used internally by `registryKey()` and the `createKeyRegistryRpc` client extension. You don't normally call them directly.
 
-| Wire Name | Request | Response | Purpose |
-|-----------|---------|----------|---------|
-| `keysGet` | `{}` | `{ wrappedKey, generation }` | Fetch calling user's wrapped key |
-| `keysSet` | `{ entries: [{userId, wrappedKey}] }` | `{ generation }` | Upsert wrapped keys |
-| `keysRevoke` | `{ userIds }` | `{ generation }` | Remove wrapped keys |
-| `keysMeta` | `{}` | `{ generation, userIds }` | Generation + access list |
-| `keysRotate` | `{ entries, expectedGeneration }` | `{ generation }` | Atomic replace + bump generation |
+| Wire Name    | Request                               | Response                     | Purpose                          |
+| ------------ | ------------------------------------- | ---------------------------- | -------------------------------- |
+| `keysGet`    | `{}`                                  | `{ wrappedKey, generation }` | Fetch calling user's wrapped key |
+| `keysSet`    | `{ entries: [{userId, wrappedKey}] }` | `{ generation }`             | Upsert wrapped keys              |
+| `keysRevoke` | `{ userIds }`                         | `{ generation }`             | Remove wrapped keys              |
+| `keysMeta`   | `{}`                                  | `{ generation, userIds }`    | Generation + access list         |
+| `keysRotate` | `{ entries, expectedGeneration }`     | `{ generation }`             | Atomic replace + bump generation |
 
 ## Key Rotation
 
@@ -244,13 +242,13 @@ Old-generation keys are retained in storage so historical encrypted sidecars rem
 
 These are in `teleportal/encryption-key` and used internally by the HTTP handlers. Available if you need lower-level control:
 
-| Function | Description |
-|----------|-------------|
-| `deriveWrappingKey(masterSecret, userId)` | HKDF-SHA256 → AES-KW key, domain-separated per user |
-| `wrapDocumentKey(wrappingKey, documentKey)` | AES-KW wrap → `Uint8Array` blob |
-| `unwrapDocumentKey(wrappingKey, wrappedKey)` | AES-KW unwrap → `CryptoKey` |
-| `exportWrappingKey(key)` | Export to JWK string (for JWT claims) |
-| `importWrappingKey(keyString)` | Import from JWK string |
+| Function                                     | Description                                         |
+| -------------------------------------------- | --------------------------------------------------- |
+| `deriveWrappingKey(masterSecret, userId)`    | HKDF-SHA256 → AES-KW key, domain-separated per user |
+| `wrapDocumentKey(wrappingKey, documentKey)`  | AES-KW wrap → `Uint8Array` blob                     |
+| `unwrapDocumentKey(wrappingKey, wrappedKey)` | AES-KW unwrap → `CryptoKey`                         |
+| `exportWrappingKey(key)`                     | Export to JWK string (for JWT claims)               |
+| `importWrappingKey(keyString)`               | Import from JWK string                              |
 
 ## File Structure
 

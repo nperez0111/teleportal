@@ -84,10 +84,7 @@ export class EncryptionClient
     return this.#cachedTokenizer;
   }
 
-  async #encryptContent(
-    update: Uint8Array,
-    version: 1 | 2,
-  ): Promise<ContentEncryptedUpdate> {
+  async #encryptContent(update: Uint8Array, version: 1 | 2): Promise<ContentEncryptedUpdate> {
     const tokenizer = await this.#getTokenizer();
     const { update: structureUpdate, sidecar } = stripContent(update, version, tokenizer);
     const sidecarBytes = encodeSidecar(sidecar);

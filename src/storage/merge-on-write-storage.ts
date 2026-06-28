@@ -90,7 +90,11 @@ export class MergeOnWriteStorage extends AbstractDocumentStorage {
   async getBaseState(key: string): Promise<DocumentState | null> {
     return this.#inner.getBaseState(key);
   }
-  async replaceBaseState(key: string, update: Uint8Array, sidecars: IndexedSidecar[]): Promise<void> {
+  async replaceBaseState(
+    key: string,
+    update: Uint8Array,
+    sidecars: IndexedSidecar[],
+  ): Promise<void> {
     return this.#inner.replaceBaseState(key, update, sidecars);
   }
   async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
