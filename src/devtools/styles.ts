@@ -245,6 +245,17 @@ export const devtoolsStyles = `
   outline: none;
   border-color: var(--dt-border-focus);
 }
+.devtools-transport-select {
+  padding: 2px 20px 2px 6px;
+  font-size: 11px;
+  margin-left: 4px;
+  min-width: 0;
+  width: auto;
+}
+.devtools-transport-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .devtools-checkbox {
   width: 12px;

@@ -17,17 +17,20 @@ export class FiltersPanel {
   private timestampElement: HTMLElement | null = null;
   private onFiltersChange: (filters: Partial<FilterState>) => void;
   private onClearFilters: () => void;
+  private onTransportSwitch: ((name: string) => void) | null;
 
   constructor(
     settingsManager: SettingsManager,
     onFiltersChange: (filters: Partial<FilterState>) => void,
     onClearFilters: () => void,
+    onTransportSwitch?: (name: string) => void,
   ) {
     this.settingsManager = settingsManager;
     this.filters = settingsManager.getSettings().filters;
     this.searchText = this.filters.searchText;
     this.onFiltersChange = onFiltersChange;
     this.onClearFilters = onClearFilters;
+    this.onTransportSwitch = onTransportSwitch ?? null;
 
     this.element = document.createElement("div");
     this.element.className = "devtools-bg-gray-50 devtools-border-b devtools-border-gray-200";
@@ -178,11 +181,35 @@ export class FiltersPanel {
     statusText.className = "devtools-text-gray-700 devtools-font-medium";
     statusText.textContent = this.getConnectionStatusText();
     connectionStatus.append(statusText);
-    if (this.connectionState?.transport) {
-      const transportText = document.createElement("span");
-      transportText.className = "devtools-text-gray-500 devtools-ml-1";
-      transportText.textContent = `(${this.connectionState.transport})`;
-      connectionStatus.append(transportText);
+    if (this.connectionState?.transport || this.connectionState?.availableTransports?.length) {
+      const availableTransports = this.connectionState.availableTransports ?? [];
+
+      if (availableTransports.length > 1 && this.onTransportSwitch) {
+        const transportSelect = document.createElement("select");
+        transportSelect.className = "devtools-select devtools-transport-select";
+
+        for (const name of availableTransports) {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          option.selected = name === this.connectionState.transport;
+          transportSelect.append(option);
+        }
+
+        transportSelect.disabled = this.connectionState.type !== "connected";
+
+        transportSelect.addEventListener("change", (e) => {
+          const selected = (e.target as HTMLSelectElement).value;
+          this.onTransportSwitch!(selected);
+        });
+
+        connectionStatus.append(transportSelect);
+      } else if (this.connectionState.transport) {
+        const transportText = document.createElement("span");
+        transportText.className = "devtools-text-gray-500 devtools-ml-1";
+        transportText.textContent = `(${this.connectionState.transport})`;
+        connectionStatus.append(transportText);
+      }
     }
     if (this.connectionState?.error) {
       const errorText = document.createElement("span");

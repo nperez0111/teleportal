@@ -3035,4 +3035,207 @@ describe("Connection", () => {
       await conn.destroy();
     });
   });
+
+  // =========================================================================
+  // 19. switchTransport
+  // =========================================================================
+
+  describe("switchTransport", () => {
+    it("availableTransports returns names of all configured transports", async () => {
+      const ws = createControllableTransport("websocket");
+      const http = createControllableTransport("http");
+
+      const conn = new Connection({
+        transports: [ws, http],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      expect(conn.availableTransports).toEqual(["websocket", "http"]);
+
+      await conn.destroy();
+    });
+
+    it("switches from websocket to http", async () => {
+      const timer = new FakeTimer();
+      const ws = createControllableTransport("websocket");
+      const http = createControllableTransport("http");
+
+      const conn = new Connection({
+        transports: [ws, http],
+        connect: false,
+        batchIntervalMs: 0,
+        timer,
+        initialReconnectDelay: 50,
+      });
+
+      await conn.connect();
+      expect(conn.activeTransport).toBe("websocket");
+
+      await conn.switchTransport("http");
+      await timer.advance(100);
+      await flushMicrotasks(10);
+
+      expect(conn.state.type).toBe("connected");
+      expect(conn.activeTransport).toBe("http");
+
+      await conn.destroy();
+    });
+
+    it("switches from http to websocket", async () => {
+      const timer = new FakeTimer();
+      const ws = createControllableTransport("websocket", { failCount: 1 });
+      const http = createControllableTransport("http");
+
+      const conn = new Connection({
+        transports: [ws, http],
+        connect: false,
+        batchIntervalMs: 0,
+        timer,
+        initialReconnectDelay: 50,
+        upgradeProbeInterval: 0,
+      });
+
+      await conn.connect();
+      expect(conn.activeTransport).toBe("http");
+
+      await conn.switchTransport("websocket");
+      await timer.advance(100);
+      await flushMicrotasks(10);
+
+      expect(conn.state.type).toBe("connected");
+      expect(conn.activeTransport).toBe("websocket");
+
+      await conn.destroy();
+    });
+
+    it("is a no-op when already connected on target transport", async () => {
+      const ws = createControllableTransport("websocket");
+      const http = createControllableTransport("http");
+
+      const conn = new Connection({
+        transports: [ws, http],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      await conn.connect();
+      expect(conn.activeTransport).toBe("websocket");
+
+      const states: string[] = [];
+      conn.on("update", (s) => states.push(s.type));
+
+      await conn.switchTransport("websocket");
+
+      expect(states).toHaveLength(0);
+      expect(conn.activeTransport).toBe("websocket");
+
+      await conn.destroy();
+    });
+
+    it("throws for unknown transport name", async () => {
+      const ws = createControllableTransport("websocket");
+
+      const conn = new Connection({
+        transports: [ws],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      await conn.connect();
+
+      expect(() => conn.switchTransport("invalid")).toThrow('Unknown transport: "invalid"');
+
+      await conn.destroy();
+    });
+
+    it("throws on destroyed connection", async () => {
+      const ws = createControllableTransport("websocket");
+
+      const conn = new Connection({
+        transports: [ws],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+
+      await conn.destroy();
+
+      expect(() => conn.switchTransport("websocket")).toThrow("Connection is destroyed");
+    });
+
+    it("suppresses upgrade probe after manual switch", async () => {
+      const timer = new FakeTimer();
+      let probeCalled = false;
+      const ws = createControllableTransport("websocket", {
+        probe: async () => {
+          probeCalled = true;
+          return true;
+        },
+      });
+      const http = createControllableTransport("http");
+
+      const conn = new Connection({
+        transports: [ws, http],
+        connect: false,
+        batchIntervalMs: 0,
+        timer,
+        initialReconnectDelay: 50,
+        upgradeProbeInterval: 1000,
+      });
+
+      await conn.connect();
+      expect(conn.activeTransport).toBe("websocket");
+
+      await conn.switchTransport("http");
+      await timer.advance(100);
+      await flushMicrotasks(10);
+
+      expect(conn.activeTransport).toBe("http");
+
+      // Advance past probe interval — probe should NOT fire
+      await timer.advance(5000);
+      await flushMicrotasks(10);
+
+      expect(probeCalled).toBe(false);
+      expect(conn.activeTransport).toBe("http");
+
+      await conn.destroy();
+    });
+
+    it("connect() clears manual override and restores auto-upgrade", async () => {
+      const timer = new FakeTimer();
+      const ws = createControllableTransport("websocket", {
+        probe: async () => true,
+      });
+      const http = createControllableTransport("http");
+
+      const conn = new Connection({
+        transports: [ws, http],
+        connect: false,
+        batchIntervalMs: 0,
+        timer,
+        initialReconnectDelay: 50,
+        upgradeProbeInterval: 1000,
+      });
+
+      await conn.connect();
+      expect(conn.activeTransport).toBe("websocket");
+
+      // Manually switch to http
+      await conn.switchTransport("http");
+      await timer.advance(100);
+      await flushMicrotasks(10);
+      expect(conn.activeTransport).toBe("http");
+
+      // Disconnect, then reconnect — should clear the manual override
+      await conn.disconnect();
+      await conn.connect();
+      await flushMicrotasks(10);
+
+      // connect() starts from index -1 so it tries from index 0 (websocket)
+      expect(conn.activeTransport).toBe("websocket");
+
+      await conn.destroy();
+    });
+  });
 });

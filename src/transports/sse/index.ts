@@ -122,7 +122,9 @@ export function getSSESource<Context extends ClientContext>({
   source.addEventListener("message", handler);
   source.addEventListener("ping", handler);
   source.addEventListener("error", (e) => {
-    channel.error(e);
+    if (source.readyState === source.CLOSED) {
+      channel.error(e);
+    }
   });
 
   const closeCheck = setInterval(() => {
