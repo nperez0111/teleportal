@@ -1,3 +1,4 @@
+import { Bench } from "tinybench";
 import * as Y from "yjs";
 import { Server } from "../src/server/server";
 import { Connection } from "../src/providers/connection";
@@ -127,8 +128,7 @@ export function createLargeDoc(charCount: number): Y.Doc {
   return doc;
 }
 
-export function formatOps(ops: number, durationMs: number): string {
-  const opsPerSec = (ops / durationMs) * 1000;
+export function formatOps(opsPerSec: number): string {
   if (opsPerSec >= 1_000_000) return `${(opsPerSec / 1_000_000).toFixed(1)}M ops/s`;
   if (opsPerSec >= 1_000) return `${(opsPerSec / 1_000).toFixed(1)}K ops/s`;
   return `${opsPerSec.toFixed(0)} ops/s`;
@@ -146,99 +146,124 @@ export function formatDuration(ms: number): string {
   return `${(ms * 1000).toFixed(0)}μs`;
 }
 
-type BenchResult = {
+export type BenchResult = {
   name: string;
-  iterations: number;
-  totalMs: number;
+  totalTime: number;
   avgMs: number;
   minMs: number;
   maxMs: number;
   p50Ms: number;
-  p95Ms: number;
+  p75Ms: number;
   p99Ms: number;
   opsPerSec: number;
+  samples: number;
+  rme: number;
 };
 
+/**
+ * Run a single benchmark using tinybench.
+ */
 export async function bench(
   name: string,
   fn: () => unknown,
-  opts?: { iterations?: number; warmup?: number },
+  opts?: {
+    time?: number;
+    iterations?: number;
+    warmupTime?: number;
+    beforeEach?: () => unknown;
+    afterEach?: () => unknown;
+  },
 ): Promise<BenchResult> {
-  const iterations = opts?.iterations ?? 100;
-  const warmup = opts?.warmup ?? Math.min(10, Math.floor(iterations / 10));
+  const b = new Bench({
+    time: opts?.time ?? 500,
+    iterations: opts?.iterations ?? 64,
+    warmup: true,
+    warmupTime: opts?.warmupTime ?? 100,
+    warmupIterations: 8,
+    throws: true,
+  });
 
-  for (let i = 0; i < warmup; i++) {
-    await fn();
-  }
+  b.add(name, fn, {
+    beforeEach: opts?.beforeEach,
+    afterEach: opts?.afterEach,
+  });
 
-  const times: number[] = [];
-  for (let i = 0; i < iterations; i++) {
-    const start = performance.now();
-    await fn();
-    times.push(performance.now() - start);
-  }
+  await b.run();
 
-  times.sort((a, b) => a - b);
-  const totalMs = times.reduce((s, t) => s + t, 0);
+  const task = b.getTask(name)!;
+  const r = task.result!;
+  const lat = r.latency;
+  const tp = r.throughput;
 
   const result: BenchResult = {
     name,
-    iterations,
-    totalMs,
-    avgMs: totalMs / iterations,
-    minMs: times[0],
-    maxMs: times[times.length - 1],
-    p50Ms: times[Math.floor(iterations * 0.5)],
-    p95Ms: times[Math.floor(iterations * 0.95)],
-    p99Ms: times[Math.floor(iterations * 0.99)],
-    opsPerSec: (iterations / totalMs) * 1000,
+    totalTime: r.totalTime,
+    avgMs: lat.mean,
+    minMs: lat.min,
+    maxMs: lat.max,
+    p50Ms: lat.p50,
+    p75Ms: lat.p75,
+    p99Ms: lat.p99,
+    opsPerSec: tp.mean,
+    samples: lat.samplesCount,
+    rme: lat.rme,
   };
 
   console.log(
-    `  ${name}: avg=${formatDuration(result.avgMs)} p50=${formatDuration(result.p50Ms)} p95=${formatDuration(result.p95Ms)} p99=${formatDuration(result.p99Ms)} (${formatOps(iterations, totalMs)})`,
+    `  ${name}: avg=${formatDuration(result.avgMs)} p50=${formatDuration(result.p50Ms)} p75=${formatDuration(result.p75Ms)} p99=${formatDuration(result.p99Ms)} ±${result.rme.toFixed(1)}% (${formatOps(result.opsPerSec)}, ${result.samples} samples)`,
   );
 
   return result;
 }
 
+/**
+ * Run a batch benchmark — the function runs batchSize operations per iteration.
+ * Throughput is reported as ops/s (batchSize × iterations / time).
+ */
 export async function benchBatch(
   name: string,
   fn: () => unknown,
-  opts: { batchSize: number; iterations?: number; warmup?: number },
+  opts: {
+    batchSize: number;
+    time?: number;
+    iterations?: number;
+    warmupTime?: number;
+  },
 ): Promise<BenchResult> {
-  const iterations = opts.iterations ?? 10;
-  const warmup = opts.warmup ?? 2;
+  const b = new Bench({
+    time: opts.time ?? 500,
+    iterations: opts.iterations ?? 16,
+    warmup: true,
+    warmupTime: opts.warmupTime ?? 100,
+    warmupIterations: 4,
+    throws: true,
+  });
 
-  for (let i = 0; i < warmup; i++) {
-    await fn();
-  }
+  b.add(name, fn);
 
-  const times: number[] = [];
-  for (let i = 0; i < iterations; i++) {
-    const start = performance.now();
-    await fn();
-    times.push(performance.now() - start);
-  }
+  await b.run();
 
-  times.sort((a, b) => a - b);
-  const totalMs = times.reduce((s, t) => s + t, 0);
-  const totalOps = iterations * opts.batchSize;
+  const task = b.getTask(name)!;
+  const r = task.result!;
+  const lat = r.latency;
+  const tp = r.throughput;
 
   const result: BenchResult = {
     name,
-    iterations,
-    totalMs,
-    avgMs: totalMs / iterations,
-    minMs: times[0],
-    maxMs: times[times.length - 1],
-    p50Ms: times[Math.floor(iterations * 0.5)],
-    p95Ms: times[Math.floor(iterations * 0.95)],
-    p99Ms: times[Math.floor(iterations * 0.99)],
-    opsPerSec: (totalOps / totalMs) * 1000,
+    totalTime: r.totalTime,
+    avgMs: lat.mean,
+    minMs: lat.min,
+    maxMs: lat.max,
+    p50Ms: lat.p50,
+    p75Ms: lat.p75,
+    p99Ms: lat.p99,
+    opsPerSec: tp.mean * opts.batchSize,
+    samples: lat.samplesCount,
+    rme: lat.rme,
   };
 
   console.log(
-    `  ${name}: avg=${formatDuration(result.avgMs)} p50=${formatDuration(result.p50Ms)} p95=${formatDuration(result.p95Ms)} (${formatOps(totalOps, totalMs)}, ${opts.batchSize} ops/iter)`,
+    `  ${name}: avg=${formatDuration(result.avgMs)} p50=${formatDuration(result.p50Ms)} p75=${formatDuration(result.p75Ms)} ±${result.rme.toFixed(1)}% (${formatOps(result.opsPerSec)}, ${opts.batchSize} ops/iter, ${result.samples} samples)`,
   );
 
   return result;

@@ -70,12 +70,18 @@
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
     "test": "bun run test:types && bun test --dots",
     "test:types": "vp check --no-fmt",
-    "bench": "bun test ./benchmarks/ --timeout 60000",
-    "bench:storage": "bun test ./benchmarks/storage.bench.test.ts --timeout 60000",
-    "bench:server": "bun test ./benchmarks/server.bench.test.ts --timeout 60000",
-    "bench:sync": "bun test ./benchmarks/sync.bench.test.ts --timeout 60000",
-    "bench:protocol": "bun test ./benchmarks/protocol.bench.test.ts --timeout 60000",
-    "bench:file": "bun test ./benchmarks/file.bench.test.ts --timeout 60000"
+    "bench": "bun test ./benchmarks/ --timeout 120000",
+    "bench:storage": "bun test ./benchmarks/storage.bench.test.ts --timeout 120000",
+    "bench:server": "bun test ./benchmarks/server.bench.test.ts --timeout 120000",
+    "bench:sync": "bun test ./benchmarks/sync.bench.test.ts --timeout 120000",
+    "bench:protocol": "bun test ./benchmarks/protocol.bench.test.ts --timeout 120000",
+    "bench:file": "bun test ./benchmarks/file.bench.test.ts --timeout 120000",
+    "bench:client": "bun test ./benchmarks/client.bench.test.ts --timeout 120000",
+    "bench:attribution": "bun test ./benchmarks/attribution.bench.test.ts --timeout 120000",
+    "bench:rate-limiter": "bun test ./benchmarks/rate-limiter.bench.test.ts --timeout 120000",
+    "bench:pubsub": "bun test ./benchmarks/pubsub-batching.bench.test.ts --timeout 120000",
+    "bench:integration": "bun test ./benchmarks/server-integration.bench.test.ts --timeout 120000",
+    "bench:tiered": "bun test ./benchmarks/tiered-storage.bench.test.ts --timeout 120000"
   },
   "dependencies": {
     "@logtape/logtape": "2.2.1",
@@ -96,6 +102,7 @@
     "ioredis": "5.11.1",
     "msw": "2.14.6",
     "srvx": "0.11.17",
+    "tinybench": "6.0.2",
     "unstorage": "1.17.5",
     "vite-plus": "0.2.1"
   },

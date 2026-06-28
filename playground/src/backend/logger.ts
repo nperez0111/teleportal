@@ -7,7 +7,7 @@ const pinoLogger = pino({
   level: "info",
 });
 
-const isProduction = Bun.env.NODE_ENV === "production";
+const isProduction = Bun.env.NODE_ENV !== "production";
 
 const sinks: Record<string, Sink> = {
   console: getConsoleSink({
