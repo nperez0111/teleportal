@@ -6,6 +6,7 @@ import type { SettingsManager } from "./settings-manager";
 
 export class EventManager {
   private messages: DevtoolsMessage[] = [];
+  private messageIndex = new Map<string, number>();
   private connection: any = null;
   private connectionState: ConnectionStateInfo | null = {
     type: "disconnected",
@@ -36,11 +37,52 @@ export class EventManager {
 
   private unsubscribers: Array<() => void> = [];
   private listeners = new Set<() => void>();
+  private pendingNotify = false;
   private settingsManager: SettingsManager;
+  private generation = 0;
 
   constructor(settingsManager: SettingsManager) {
     this.settingsManager = settingsManager;
     this.setupEventListeners();
+  }
+
+  private rebuildIndex() {
+    this.messageIndex.clear();
+    for (let i = 0; i < this.messages.length; i++) {
+      const id = this.messages[i].message.id || this.messages[i].id;
+      this.messageIndex.set(id, i);
+    }
+  }
+
+  private addMessageToStats(msg: DevtoolsMessage) {
+    const type = msg.message.type === "doc" ? msg.message.payload.type : msg.message.type;
+    this.statistics.messagesByType[type] = (this.statistics.messagesByType[type] || 0) + 1;
+    if (msg.direction === "sent") this.statistics.sentCount++;
+    else this.statistics.receivedCount++;
+    this.statistics.totalMessages = this.messages.length;
+  }
+
+  private removeMessageFromStats(msg: DevtoolsMessage) {
+    const type = msg.message.type === "doc" ? msg.message.payload.type : msg.message.type;
+    if (this.statistics.messagesByType[type]) {
+      this.statistics.messagesByType[type]--;
+      if (this.statistics.messagesByType[type] <= 0) {
+        delete this.statistics.messagesByType[type];
+      }
+    }
+    if (msg.direction === "sent") this.statistics.sentCount--;
+    else this.statistics.receivedCount--;
+    this.statistics.totalMessages = this.messages.length;
+  }
+
+  private refreshStatsMeta() {
+    const allDocs = this.tracker.getAllDocuments();
+    this.statistics.documentCount = allDocs.length;
+    this.statistics.connectionState = this.connectionState;
+
+    const now = Date.now();
+    this.messageRateTimestamps = this.messageRateTimestamps.filter((ts) => now - ts < 10000);
+    this.statistics.messageRate = this.messageRateTimestamps.length / 10;
   }
 
   private setupEventListeners() {
@@ -72,8 +114,6 @@ export class EventManager {
               timestamp: Date.now(),
             };
             this.connectionState = newState;
-            this.updateStatistics();
-            this.emitChange();
           }
         }
 
@@ -91,11 +131,8 @@ export class EventManager {
             });
 
             // Update the corresponding message to mark it as ACKed
-            const msgIndex = this.messages.findIndex((msg) => {
-              const msgId = msg.message.id || msg.id;
-              return msgId === ackedMessageId;
-            });
-            if (msgIndex !== -1) {
+            const msgIndex = this.messageIndex.get(ackedMessageId);
+            if (msgIndex !== undefined) {
               this.messages[msgIndex] = {
                 ...this.messages[msgIndex],
                 ackedBy: {
@@ -104,7 +141,8 @@ export class EventManager {
                   timestamp: Date.now(),
                 },
               };
-              this.updateStatistics();
+              this.generation++;
+              this.refreshStatsMeta();
               this.emitChange();
             }
           }
@@ -119,12 +157,8 @@ export class EventManager {
 
         const messageId = message.id;
 
-        // Check for duplicates by message ID before adding
-        const existing = this.messages.find((msg) => {
-          const msgId = msg.message.id || msg.id;
-          return msgId === messageId;
-        });
-        if (existing) {
+        // O(1) duplicate check
+        if (this.messageIndex.has(messageId)) {
           this.messageRateTimestamps.push(Date.now());
           return;
         }
@@ -140,14 +174,22 @@ export class EventManager {
         };
 
         this.messages.push(devtoolsMessage);
+        this.messageIndex.set(messageId, this.messages.length - 1);
+
         // Enforce message limit
         const limit = this.settingsManager.getSettings().messageLimit;
         if (this.messages.length > limit) {
-          this.messages = this.messages.slice(-limit);
+          const removed = this.messages.splice(0, this.messages.length - limit);
+          for (const msg of removed) {
+            this.removeMessageFromStats(msg);
+          }
+          this.rebuildIndex();
         }
 
+        this.addMessageToStats(devtoolsMessage);
         this.messageRateTimestamps.push(Date.now());
-        this.updateStatistics();
+        this.generation++;
+        this.refreshStatsMeta();
         this.emitChange();
       },
       { withEventTarget: true },
@@ -178,8 +220,6 @@ export class EventManager {
               timestamp: Date.now(),
             };
             this.connectionState = newState;
-            this.updateStatistics();
-            this.emitChange();
           }
         }
 
@@ -197,11 +237,8 @@ export class EventManager {
             });
 
             // Update the corresponding message to mark it as ACKed
-            const msgIndex = this.messages.findIndex((msg) => {
-              const msgId = msg.message.id || msg.id;
-              return msgId === ackedMessageId;
-            });
-            if (msgIndex !== -1) {
+            const msgIndex = this.messageIndex.get(ackedMessageId);
+            if (msgIndex !== undefined) {
               this.messages[msgIndex] = {
                 ...this.messages[msgIndex],
                 ackedBy: {
@@ -210,7 +247,8 @@ export class EventManager {
                   timestamp: Date.now(),
                 },
               };
-              this.updateStatistics();
+              this.generation++;
+              this.refreshStatsMeta();
               this.emitChange();
             }
           }
@@ -225,12 +263,8 @@ export class EventManager {
 
         const messageId = message.id;
 
-        // Check for duplicates by message ID before adding
-        const existing = this.messages.find((msg) => {
-          const msgId = msg.message.id || msg.id;
-          return msgId === messageId;
-        });
-        if (existing) {
+        // O(1) duplicate check
+        if (this.messageIndex.has(messageId)) {
           this.messageRateTimestamps.push(Date.now());
           return;
         }
@@ -246,13 +280,20 @@ export class EventManager {
         };
 
         this.messages.push(devtoolsMessage);
+        this.messageIndex.set(messageId, this.messages.length - 1);
         const limit = this.settingsManager.getSettings().messageLimit;
         if (this.messages.length > limit) {
-          this.messages = this.messages.slice(-limit);
+          const removed = this.messages.splice(0, this.messages.length - limit);
+          for (const msg of removed) {
+            this.removeMessageFromStats(msg);
+          }
+          this.rebuildIndex();
         }
 
+        this.addMessageToStats(devtoolsMessage);
         this.messageRateTimestamps.push(Date.now());
-        this.updateStatistics();
+        this.generation++;
+        this.refreshStatsMeta();
         this.emitChange();
       },
       { withEventTarget: true },
@@ -266,7 +307,7 @@ export class EventManager {
         (event: any) => {
           const { document, provider } = event.payload;
           this.tracker.addDocument(document, provider, document);
-          this.updateStatistics();
+          this.refreshStatsMeta();
           this.emitChange();
         },
         { withEventTarget: true },
@@ -283,7 +324,7 @@ export class EventManager {
         (event: any) => {
           const { document } = event.payload;
           this.tracker.removeDocument(document);
-          this.updateStatistics();
+          this.refreshStatsMeta();
           this.emitChange();
         },
         { withEventTarget: true },
@@ -308,7 +349,7 @@ export class EventManager {
           timestamp: Date.now(),
         };
         this.connectionState = newState;
-        this.updateStatistics();
+        this.refreshStatsMeta();
         this.emitChange();
       },
       { withEventTarget: true },
@@ -325,7 +366,7 @@ export class EventManager {
           timestamp: Date.now(),
         };
         this.connectionState = newState;
-        this.updateStatistics();
+        this.refreshStatsMeta();
         this.emitChange();
       },
       { withEventTarget: true },
@@ -344,7 +385,7 @@ export class EventManager {
           timestamp: Date.now(),
         };
         this.connectionState = newState;
-        this.updateStatistics();
+        this.refreshStatsMeta();
         this.emitChange();
       },
       { withEventTarget: true },
@@ -355,42 +396,17 @@ export class EventManager {
     this.settingsManager.subscribe(() => {
       const limit = this.settingsManager.getSettings().messageLimit;
       if (this.messages.length > limit) {
-        this.messages = this.messages.slice(-limit);
-        this.updateStatistics();
+        const removed = this.messages.splice(0, this.messages.length - limit);
+        for (const msg of removed) {
+          this.removeMessageFromStats(msg);
+        }
+        this.rebuildIndex();
+        this.statistics.totalMessages = this.messages.length;
+        this.generation++;
+        this.refreshStatsMeta();
         this.emitChange();
       }
     });
-  }
-
-  private updateStatistics() {
-    const allDocs = this.tracker.getAllDocuments();
-
-    const messagesByType: Record<string, number> = {};
-    let sentCount = 0;
-    let receivedCount = 0;
-
-    this.messages.forEach((msg) => {
-      const type = msg.message.type === "doc" ? msg.message.payload.type : msg.message.type;
-      messagesByType[type] = (messagesByType[type] || 0) + 1;
-
-      if (msg.direction === "sent") sentCount++;
-      else receivedCount++;
-    });
-
-    // Calculate message rate (messages per second over last 10 seconds)
-    const now = Date.now();
-    this.messageRateTimestamps = this.messageRateTimestamps.filter((ts) => now - ts < 10000);
-    const rate = this.messageRateTimestamps.length / 10;
-
-    this.statistics = {
-      totalMessages: this.messages.length,
-      messagesByType,
-      sentCount,
-      receivedCount,
-      connectionState: this.connectionState,
-      documentCount: allDocs.length,
-      messageRate: rate,
-    };
   }
 
   subscribe(listener: () => void): () => void {
@@ -401,11 +417,20 @@ export class EventManager {
   }
 
   private emitChange() {
-    this.listeners.forEach((l) => l());
+    if (this.pendingNotify) return;
+    this.pendingNotify = true;
+    queueMicrotask(() => {
+      this.pendingNotify = false;
+      this.listeners.forEach((l) => l());
+    });
   }
 
   getMessages(): DevtoolsMessage[] {
     return this.messages;
+  }
+
+  getGeneration(): number {
+    return this.generation;
   }
 
   getConnectionState(): ConnectionStateInfo | null {
@@ -424,9 +449,19 @@ export class EventManager {
 
   clearMessages() {
     this.messages = [];
+    this.messageIndex.clear();
     this.ackMessages.clear();
     this.messageRateTimestamps = [];
-    this.updateStatistics();
+    this.statistics = {
+      totalMessages: 0,
+      messagesByType: {},
+      sentCount: 0,
+      receivedCount: 0,
+      connectionState: this.connectionState,
+      documentCount: this.statistics.documentCount,
+      messageRate: 0,
+    };
+    this.generation++;
     this.emitChange();
   }
 

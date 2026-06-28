@@ -51,12 +51,13 @@ export function createTeleportalDevtools(
 
   const updateUI = () => {
     const messages = eventManager.getMessages();
+    const generation = eventManager.getGeneration();
     const connectionState = eventManager.getConnectionState();
     const statistics = eventManager.getStatistics();
     const filters = filterManager.getFilters();
-    const filteredMessages = filterManager.getFilteredMessages(messages);
-    const availableDocuments = filterManager.getAvailableDocuments(messages);
-    const availableMessageTypes = filterManager.getAvailableMessageTypes(messages);
+    const filteredMessages = filterManager.getFilteredMessages(messages, generation);
+    const availableDocuments = filterManager.getAvailableDocuments(messages, generation);
+    const availableMessageTypes = filterManager.getAvailableMessageTypes(messages, generation);
 
     layout.update(
       messages,
@@ -69,9 +70,18 @@ export function createTeleportalDevtools(
     );
   };
 
-  const unsubscribeEventManager = eventManager.subscribe(updateUI);
-  const unsubscribeFilterManager = filterManager.subscribe(updateUI);
-  const unsubscribeSettingsManager = settingsManager.subscribe(updateUI);
+  let rafId: number | null = null;
+  const scheduleUpdate = () => {
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      updateUI();
+    });
+  };
+
+  const unsubscribeEventManager = eventManager.subscribe(scheduleUpdate);
+  const unsubscribeFilterManager = filterManager.subscribe(scheduleUpdate);
+  const unsubscribeSettingsManager = settingsManager.subscribe(scheduleUpdate);
 
   updateUI();
 
