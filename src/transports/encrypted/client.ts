@@ -15,16 +15,19 @@ import {
 } from "teleportal/protocol";
 import type { EncryptedUpdatePayload, SidecarCompaction } from "teleportal/protocol/encryption";
 import {
+  type ContentEncryptedUpdate,
+  type IndexedSidecar,
+  createKeyedTokenizer,
+  compactSidecars,
   decodeContentEncryptedPayload,
-  encodeContentEncryptedPayload,
-  encryptUpdateContent,
   decodeSidecar,
+  encodeContentEncryptedPayload,
+  encodeSidecar,
+  hashSidecar,
   mergeSidecars,
   restoreContent,
-  compactSidecars,
-  hashSidecar,
+  stripContent,
 } from "teleportal/protocol/encryption";
-import type { IndexedSidecar } from "teleportal/protocol/encryption";
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness.js";
 import * as Y from "yjs";
 import { getSyncTransactionOrigin, YDocSinkHandler, YDocSourceHandler } from "../ydoc";
@@ -48,6 +51,7 @@ export class EncryptionClient
   #decryptUpdate: (key: CryptoKey, encryptedUpdate: EncryptedBinary) => Promise<DecryptedBinary>;
   #encryptUpdate: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
   #receivedSidecars: EncryptedBinary[] = [];
+  #cachedTokenizer: ((str: string) => string) | null = null;
 
   constructor({
     document,
@@ -71,6 +75,24 @@ export class EncryptionClient
     this.key = key;
     this.#decryptUpdate = decryptUpdate ?? defaultDecryptUpdate;
     this.#encryptUpdate = encryptUpdate ?? defaultEncryptUpdate;
+  }
+
+  async #getTokenizer(): Promise<(str: string) => string> {
+    if (this.#cachedTokenizer) return this.#cachedTokenizer;
+    const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", this.key));
+    this.#cachedTokenizer = createKeyedTokenizer(rawKey);
+    return this.#cachedTokenizer;
+  }
+
+  async #encryptContent(
+    update: Uint8Array,
+    version: 1 | 2,
+  ): Promise<ContentEncryptedUpdate> {
+    const tokenizer = await this.#getTokenizer();
+    const { update: structureUpdate, sidecar } = stripContent(update, version, tokenizer);
+    const sidecarBytes = encodeSidecar(sidecar);
+    const encryptedSidecar = await this.#encryptUpdate(this.key, sidecarBytes);
+    return { structureUpdate, encryptedSidecar };
   }
 
   /**
@@ -102,11 +124,10 @@ export class EncryptionClient
   ): Promise<void> {
     if (structureUpdate.length === 0) return;
 
-    const sidecars = [];
-    for (const encrypted of encryptedSidecars) {
-      const sidecarBytes = await this.decryptUpdate(encrypted);
-      sidecars.push(decodeSidecar(sidecarBytes));
-    }
+    const decryptedBytes = await Promise.all(
+      encryptedSidecars.map((encrypted) => this.decryptUpdate(encrypted)),
+    );
+    const sidecars = decryptedBytes.map(decodeSidecar);
 
     const fullUpdate = restoreContent(structureUpdate, mergeSidecars(sidecars));
     Y.applyUpdateV2(this.ydoc, fullUpdate, getSyncTransactionOrigin(this.ydoc));
@@ -135,9 +156,10 @@ export class EncryptionClient
    */
   public async handleSyncStep1(syncStep1: Uint8Array): Promise<DocMessage<ClientContext>> {
     const diff = Y.encodeStateAsUpdateV2(this.ydoc, syncStep1);
-    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(this.key, diff, 2);
-
-    const compaction = await this.#takePendingCompaction();
+    const [{ structureUpdate, encryptedSidecar }, compaction] = await Promise.all([
+      this.#encryptContent(diff, 2),
+      this.#takePendingCompaction(),
+    ]);
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
@@ -231,13 +253,10 @@ export class EncryptionClient
    * sidecar for future compaction so single-client edits are compacted too.
    */
   public async onUpdate(update: VersionedUpdate): Promise<Message> {
-    const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(
-      this.key,
-      update.data,
-      update.version,
-    );
-
-    const compaction = await this.#takePendingCompaction();
+    const [{ structureUpdate, encryptedSidecar }, compaction] = await Promise.all([
+      this.#encryptContent(update.data, update.version),
+      this.#takePendingCompaction(),
+    ]);
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
