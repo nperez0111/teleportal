@@ -148,6 +148,7 @@ export class Connection extends Observable<{
   // Heartbeat & timeout
   #timeoutCheckTimer: ReturnType<typeof setTimeout> | null = null;
   #lastMessageReceived = 0;
+  #messageReceivedCount = 0;
   #heartbeatIntervalMs: number;
   #messageReconnectTimeoutMs: number;
 
@@ -258,7 +259,9 @@ export class Connection extends Observable<{
         if (entry) {
           if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(messageId);
-          this.call("messages-in-flight", this.#inFlightMessages.size > 0);
+          if (this.#inFlightMessages.size === 0) {
+            this.call("messages-in-flight", false);
+          }
           if (this.#batchIntervalMs > 0) {
             this.#batchIntervalMs = Math.max(MIN_BATCH_INTERVAL_MS, this.#batchIntervalMs - 10);
           }
@@ -547,6 +550,11 @@ export class Connection extends Observable<{
     }
 
     this.#state = state;
+
+    if (state.type === "connected" && this.#messageReconnectTimeoutMs > 0) {
+      this.#scheduleTimeoutCheck();
+    }
+
     this.call("update", state);
 
     if (
@@ -734,7 +742,9 @@ export class Connection extends Observable<{
             ? this.#timerManager.setTimeout(() => {
                 if (this.#inFlightMessages.has(message.id)) {
                   this.#inFlightMessages.delete(message.id);
-                  this.call("messages-in-flight", this.#inFlightMessages.size > 0);
+                  if (this.#inFlightMessages.size === 0) {
+                    this.call("messages-in-flight", false);
+                  }
                   this.#batchIntervalMs = Math.min(
                     this.#maxBatchIntervalMs,
                     Math.max(50, this.#batchIntervalMs * 2),
@@ -756,7 +766,9 @@ export class Connection extends Observable<{
           const entry = this.#inFlightMessages.get(message.id);
           if (entry?.timer) this.#timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(message.id);
-          this.call("messages-in-flight", this.#inFlightMessages.size > 0);
+          if (this.#inFlightMessages.size === 0) {
+            this.call("messages-in-flight", false);
+          }
         }
         if (message.type === "ack") return;
         await new Promise<void>((resolve) => {
@@ -868,35 +880,24 @@ export class Connection extends Observable<{
   }
 
   #setupConnectionTimeoutCheck() {
-    if (this.#messageReconnectTimeoutMs > 0) {
-      this.#scheduleTimeoutCheck();
-    }
+    // no-op: #scheduleTimeoutCheck is called from #setState on connected transition
   }
 
   #scheduleTimeoutCheck() {
-    if (this.#timeoutCheckTimer) {
-      this.#timerManager.clearTimeout(this.#timeoutCheckTimer);
-      this.#timeoutCheckTimer = null;
-    }
+    if (this.#timeoutCheckTimer) return;
     if (this.#state.type !== "connected") return;
 
-    const timeSinceLastMessage = Date.now() - this.#lastMessageReceived;
-    const timeUntilTimeout = this.#messageReconnectTimeoutMs - timeSinceLastMessage;
-
-    if (timeUntilTimeout <= 0) {
-      this.#handleConnectionTimeout();
-      return;
-    }
-
+    const countAtSchedule = this.#messageReceivedCount;
     this.#timeoutCheckTimer = this.#timerManager.setTimeout(() => {
       this.#timeoutCheckTimer = null;
-      if (
-        this.#state.type === "connected" &&
-        this.#messageReconnectTimeoutMs < Date.now() - this.#lastMessageReceived
-      ) {
+      if (this.#state.type !== "connected") return;
+
+      if (this.#messageReceivedCount !== countAtSchedule) {
+        this.#scheduleTimeoutCheck();
+      } else {
         this.#handleConnectionTimeout();
       }
-    }, timeUntilTimeout);
+    }, this.#messageReconnectTimeoutMs);
   }
 
   async #handleConnectionTimeout() {
@@ -906,9 +907,7 @@ export class Connection extends Observable<{
 
   #updateLastMessageReceived(): void {
     this.#lastMessageReceived = Date.now();
-    if (this.#messageReconnectTimeoutMs > 0) {
-      this.#scheduleTimeoutCheck();
-    }
+    this.#messageReceivedCount++;
   }
 
   // --- Token refresh ---
