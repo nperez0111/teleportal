@@ -340,6 +340,9 @@ export class Connection extends Observable<{
   }
 
   async send(message: Message): Promise<void> {
+    if (this.destroyed) {
+      throw new Error("Connection is destroyed, create a new instance");
+    }
     await this.#sendOrBuffer(message);
   }
 
@@ -714,9 +717,7 @@ export class Connection extends Observable<{
   }
 
   async #sendOrBuffer(message: Message): Promise<void> {
-    if (this.destroyed) {
-      throw new Error("Connection is destroyed, create a new instance");
-    }
+    if (this.destroyed) return;
     if (this.#connectionIntent === "manual") return;
 
     // Batch doc updates
