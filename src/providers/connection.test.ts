@@ -3238,4 +3238,290 @@ describe("Connection", () => {
       await conn.destroy();
     });
   });
+
+  // =========================================================================
+  // messages-in-flight transition-only emission
+  // =========================================================================
+
+  describe("messages-in-flight transition-only emission", () => {
+    it("emits true once for multiple rapid sends, false once when all ACKed", async () => {
+      const transport = createControllableTransport("multi-send");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        inFlightMessageTimeout: 0,
+      });
+      await conn.connect();
+
+      const events: boolean[] = [];
+      conn.on("messages-in-flight", (v) => events.push(v));
+
+      const msg1 = makeDocUpdate("multi-1");
+      const msg2 = makeDocUpdate("multi-2");
+      const msg3 = makeDocUpdate("multi-3");
+      await conn.send(msg1);
+      await conn.send(msg2);
+      await conn.send(msg3);
+
+      // Only one `true` — the first send triggers the 0→>0 transition
+      expect(events).toEqual([true]);
+      expect(conn.inFlightMessageCount).toBe(3);
+
+      // ACK all three
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: msg1.id }, undefined));
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: msg2.id }, undefined));
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: msg3.id }, undefined));
+      await flushMicrotasks();
+
+      // Only one `false` at the end — the last ACK triggers the >0→0 transition
+      expect(events).toEqual([true, false]);
+      expect(conn.inFlightMessageCount).toBe(0);
+
+      await conn.destroy();
+    });
+
+    it("does not emit intermediate values as individual ACKs arrive", async () => {
+      const transport = createControllableTransport("no-intermediate");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        inFlightMessageTimeout: 0,
+      });
+      await conn.connect();
+
+      const events: boolean[] = [];
+      conn.on("messages-in-flight", (v) => events.push(v));
+
+      const msg1 = makeDocUpdate("d1");
+      const msg2 = makeDocUpdate("d2");
+      const msg3 = makeDocUpdate("d3");
+      await conn.send(msg1);
+      await conn.send(msg2);
+      await conn.send(msg3);
+      expect(conn.inFlightMessageCount).toBe(3);
+      expect(events).toEqual([true]);
+
+      // Simulate ACK for first two — still have one in-flight, no emission
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: msg1.id }, undefined));
+      await flushMicrotasks();
+      expect(conn.inFlightMessageCount).toBe(2);
+      expect(events).toEqual([true]);
+
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: msg2.id }, undefined));
+      await flushMicrotasks();
+      expect(conn.inFlightMessageCount).toBe(1);
+      expect(events).toEqual([true]);
+
+      // Last ACK — transitions to 0, now emits false
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: msg3.id }, undefined));
+      await flushMicrotasks();
+      expect(conn.inFlightMessageCount).toBe(0);
+      expect(events).toEqual([true, false]);
+
+      await conn.destroy();
+    });
+
+    it("emits false when in-flight message times out and was the last one", async () => {
+      const timer = new FakeTimer();
+      const conn = new Connection({
+        transports: [createControllableTransport("timeout-emit")],
+        connect: false,
+        batchIntervalMs: 0,
+        inFlightMessageTimeout: 500,
+        messageReconnectTimeout: 0,
+        timer,
+      });
+
+      await timer.advance(0);
+      await conn.connect();
+      await flushMicrotasks();
+
+      const events: boolean[] = [];
+      conn.on("messages-in-flight", (v) => events.push(v));
+
+      await conn.send(makeDocUpdate("t1"));
+      // Stagger the second send so its timeout fires separately
+      await timer.advance(100);
+      await flushMicrotasks();
+      await conn.send(makeDocUpdate("t2"));
+      expect(events).toEqual([true]);
+      expect(conn.inFlightMessageCount).toBe(2);
+
+      // Time out first message (sent at t=0, timeout at t=500) — still have one in-flight
+      await timer.advance(400);
+      await flushMicrotasks();
+      expect(conn.inFlightMessageCount).toBe(1);
+      expect(events).toEqual([true]);
+
+      // Second message times out (sent at t=100, timeout at t=600) — now 0
+      await timer.advance(200);
+      await flushMicrotasks();
+      expect(conn.inFlightMessageCount).toBe(0);
+      expect(events).toEqual([true, false]);
+
+      await conn.destroy();
+    });
+  });
+
+  // =========================================================================
+  // Connection timeout check (scheduleTimeoutCheck)
+  // =========================================================================
+
+  describe("Connection timeout check", () => {
+    it("disconnects when no messages received within timeout", async () => {
+      const timer = new FakeTimer();
+      const transport = createControllableTransport("timeout-disc");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        messageReconnectTimeout: 1000,
+        maxReconnectAttempts: 0,
+        timer,
+      });
+
+      await timer.advance(0);
+      await conn.connect();
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      // Advance past the timeout
+      await timer.advance(1100);
+      await flushMicrotasks();
+
+      expect(conn.state.type).not.toBe("connected");
+      await conn.destroy();
+    });
+
+    it("stays connected when messages arrive before timeout", async () => {
+      const timer = new FakeTimer();
+      const transport = createControllableTransport("timeout-alive");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        messageReconnectTimeout: 1000,
+        maxReconnectAttempts: 0,
+        timer,
+      });
+
+      await timer.advance(0);
+      await conn.connect();
+      await flushMicrotasks();
+
+      // t=800: receive a message to reset the clock
+      await timer.advance(800);
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      transport.ctx!.onMessage(
+        new AckMessage({ type: "ack", messageId: "keepalive" }, undefined),
+      );
+      await flushMicrotasks();
+
+      // t=1000: original timer fires, sees message arrived, re-schedules for t=2000
+      await timer.advance(200);
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      // t=1900: still within the re-scheduled window
+      await timer.advance(900);
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      // t=2100: past the re-scheduled timeout (fires at t=2000)
+      await timer.advance(200);
+      await flushMicrotasks();
+      expect(conn.state.type).not.toBe("connected");
+
+      await conn.destroy();
+    });
+
+    it("does not thrash timers on rapid message receipt", async () => {
+      const timer = new FakeTimer();
+      const transport = createControllableTransport("no-thrash");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        messageReconnectTimeout: 5000,
+        maxReconnectAttempts: 0,
+        timer,
+      });
+
+      await timer.advance(0);
+      await conn.connect();
+      await flushMicrotasks();
+
+      const timerCountAfterConnect = timer["timeouts"].size;
+
+      // Simulate 50 rapid messages — should NOT create 50 timers
+      for (let i = 0; i < 50; i++) {
+        transport.ctx!.onMessage(
+          new AckMessage({ type: "ack", messageId: `msg-${i}` }, undefined),
+        );
+      }
+      await flushMicrotasks();
+
+      // Timer count should not have grown — messages just update the timestamp
+      expect(timer["timeouts"].size).toBeLessThanOrEqual(timerCountAfterConnect);
+
+      // Connection should still be alive
+      expect(conn.state.type).toBe("connected");
+
+      await conn.destroy();
+    });
+
+    it("re-schedules check when message arrives before timeout fires", async () => {
+      const timer = new FakeTimer();
+      const transport = createControllableTransport("reschedule");
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        messageReconnectTimeout: 1000,
+        maxReconnectAttempts: 0,
+        timer,
+      });
+
+      await timer.advance(0);
+      await conn.connect();
+      await flushMicrotasks();
+
+      // t=999: message arrives just before the timeout fires
+      await timer.advance(999);
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      transport.ctx!.onMessage(
+        new AckMessage({ type: "ack", messageId: "late-msg" }, undefined),
+      );
+      await flushMicrotasks();
+
+      // t=1000: original timer fires, sees message arrived, re-schedules for t=2000
+      await timer.advance(1);
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      // t=1900: still within re-scheduled window
+      await timer.advance(900);
+      await flushMicrotasks();
+      expect(conn.state.type).toBe("connected");
+
+      // t=2100: past the re-scheduled timeout (fires at t=2000)
+      await timer.advance(200);
+      await flushMicrotasks();
+      expect(conn.state.type).not.toBe("connected");
+
+      await conn.destroy();
+    });
+  });
 });
