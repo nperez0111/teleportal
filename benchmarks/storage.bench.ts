@@ -171,7 +171,7 @@ describe("Storage Benchmarks", () => {
       );
 
       await new Promise((r) => setTimeout(r, 5));
-    }, 300_000);
+    });
   });
 
   describe("Y.js encoding overhead", () => {
@@ -188,7 +188,7 @@ describe("Storage Benchmarks", () => {
         const encoded = Y.encodeStateAsUpdateV2(doc);
         console.log(`    encoded size: ${formatBytes(encoded.byteLength)}`);
       }
-    }, 30_000);
+    });
 
     it("mergeUpdatesV2", async () => {
       const doc = new Y.Doc();
