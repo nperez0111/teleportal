@@ -190,10 +190,10 @@ describe("FileHandler", () => {
       };
 
       if (i < encryptedChunks.length - 1) {
-        await fileHandler.handleFilePart(part, `msg-${i}`, async (m) => sent.push(m), context);
+        await fileHandler.handleFilePart(part, `msg-${i}`, async (m) => { sent.push(m); }, context);
       } else {
         await expect(
-          fileHandler.handleFilePart(part, `msg-${i}`, async (m) => sent.push(m), context),
+          fileHandler.handleFilePart(part, `msg-${i}`, async (m) => { sent.push(m); }, context),
         ).rejects.toThrow("Size mismatch");
       }
     }
@@ -247,7 +247,7 @@ describe("FileHandler", () => {
         encrypted: true,
       };
 
-      await fileHandler.handleFilePart(part, `msg-${i}`, async (m) => sent.push(m), context);
+      await fileHandler.handleFilePart(part, `msg-${i}`, async (m) => { sent.push(m); }, context);
     }
 
     expect(sent.length).toBe(2);

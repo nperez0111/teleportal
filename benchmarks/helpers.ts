@@ -1,4 +1,4 @@
-import { Bench } from "tinybench";
+import { Bench, type FnHook, type TaskResultWithStatistics } from "tinybench";
 import * as Y from "yjs";
 import { Server } from "../src/server/server";
 import { Connection } from "../src/providers/connection";
@@ -170,8 +170,8 @@ export async function bench(
     time?: number;
     iterations?: number;
     warmupTime?: number;
-    beforeEach?: () => unknown;
-    afterEach?: () => unknown;
+    beforeEach?: FnHook;
+    afterEach?: FnHook;
   },
 ): Promise<BenchResult> {
   const b = new Bench({
@@ -191,7 +191,7 @@ export async function bench(
   await b.run();
 
   const task = b.getTask(name)!;
-  const r = task.result!;
+  const r = task.result! as TaskResultWithStatistics;
   const lat = r.latency;
   const tp = r.throughput;
 
@@ -244,7 +244,7 @@ export async function benchBatch(
   await b.run();
 
   const task = b.getTask(name)!;
-  const r = task.result!;
+  const r = task.result! as TaskResultWithStatistics;
   const lat = r.latency;
   const tp = r.throughput;
 
