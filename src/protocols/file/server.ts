@@ -85,55 +85,49 @@ export class FileHandler {
     }
 
     try {
-      await this.#temporaryUploadStorage.storeChunk(
+      const { storedChunks } = await this.#temporaryUploadStorage.storeChunk(
         payload.fileId,
         payload.chunkIndex,
         payload.chunkData,
         payload.merkleProof,
       );
 
-      // Only check for completion on the last chunk to avoid per-chunk
-      // getUploadProgress calls. Out-of-order delivery is handled by the
-      // retransmission loop on the client side.
-      if (payload.chunkIndex === payload.totalChunks - 1) {
-        const updatedUpload = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
-        if (updatedUpload && updatedUpload.chunks.size >= payload.totalChunks) {
-          const startTime = Date.now();
-          try {
-            const result = await this.#temporaryUploadStorage.completeUpload(payload.fileId);
+      if (storedChunks >= payload.totalChunks) {
+        const startTime = Date.now();
+        try {
+          const result = await this.#temporaryUploadStorage.completeUpload(payload.fileId);
 
-            await this.#fileStorage.storeFileFromUpload(result);
+          await this.#fileStorage.storeFileFromUpload(result);
 
-            await context.session.storage.transaction(context.documentId, async () => {
-              const metadata = await context.session.storage.getDocumentMetadata(
-                context.documentId,
-              );
-              await context.session.storage.writeDocumentMetadata(context.documentId, {
-                ...metadata,
-                files: [...new Set([...(metadata.files ?? []), result.fileId])],
-                updatedAt: Date.now(),
-              });
+          await context.session.storage.transaction(context.documentId, async () => {
+            const metadata = await context.session.storage.getDocumentMetadata(
+              context.documentId,
+            );
+            await context.session.storage.writeDocumentMetadata(context.documentId, {
+              ...metadata,
+              files: [...new Set([...(metadata.files ?? []), result.fileId])],
+              updatedAt: Date.now(),
             });
-            emitWideEvent("info", {
-              event_type: "file_upload_completed",
-              timestamp: new Date().toISOString(),
-              file_id: payload.fileId,
-              total_chunks: payload.totalChunks,
-              document_id: context.documentId,
-              durable_file_id: result.fileId,
-              duration_ms: Date.now() - startTime,
-            });
-          } catch (error) {
-            emitWideEvent("error", {
-              event_type: "file_upload_complete_failed",
-              timestamp: new Date().toISOString(),
-              file_id: payload.fileId,
-              document_id: context.documentId,
-              error,
-              duration_ms: Date.now() - startTime,
-            });
-            throw error;
-          }
+          });
+          emitWideEvent("info", {
+            event_type: "file_upload_completed",
+            timestamp: new Date().toISOString(),
+            file_id: payload.fileId,
+            total_chunks: payload.totalChunks,
+            document_id: context.documentId,
+            durable_file_id: result.fileId,
+            duration_ms: Date.now() - startTime,
+          });
+        } catch (error) {
+          emitWideEvent("error", {
+            event_type: "file_upload_complete_failed",
+            timestamp: new Date().toISOString(),
+            file_id: payload.fileId,
+            document_id: context.documentId,
+            error,
+            duration_ms: Date.now() - startTime,
+          });
+          throw error;
         }
       }
     } catch (error) {

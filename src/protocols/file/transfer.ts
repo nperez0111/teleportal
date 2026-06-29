@@ -451,10 +451,8 @@ class FileClientHandler implements ClientRpcHandler {
         uploadState.context,
         chunk.encrypted,
       );
-
-      uploadState.sentChunks.set(message.id, chunk.chunkIndex);
-
       this.#sendStreamMessage(message);
+      uploadState.sentChunks.set(message.id, chunk.chunkIndex);
     }
 
     // Optimistic cache write — before ACKs arrive

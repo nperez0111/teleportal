@@ -1,7 +1,6 @@
 import { describe, it } from "bun:test";
 import {
   buildMerkleTree,
-  chunkFile,
   processFile,
   CHUNK_SIZE,
   ENCRYPTED_CHUNK_SIZE,
@@ -151,29 +150,15 @@ describe("Encrypted Upload Benchmarks", () => {
     });
   });
 
-  // ── chunkFile vs processFile ────────────────────────────────────────
+  // ── processFile with File.stream() ─────────────────────────────────
 
-  describe("chunkFile vs processFile (File.stream())", () => {
-    it("generator vs array - encrypted", async () => {
+  describe("processFile (File.stream())", () => {
+    it("encrypted - various sizes", async () => {
       const key = await createEncryptionKey();
 
       for (const sizeMB of [0.1, 1, 5, 30]) {
         const file = makeFile(sizeMB * 1024 * 1024);
         const iters = sizeMB >= 30 ? 3 : sizeMB >= 5 ? 3 : 10;
-
-        await bench(
-          `chunkFile encrypted (${sizeMB}MB)`,
-          async () => {
-            for await (const _part of chunkFile(
-              file.stream(),
-              file.size,
-              (chunk) => encryptUpdate(key, chunk),
-            )) {
-              // consume
-            }
-          },
-          { iterations: iters },
-        );
 
         await bench(
           `processFile encrypted (${sizeMB}MB)`,
@@ -189,20 +174,10 @@ describe("Encrypted Upload Benchmarks", () => {
       }
     });
 
-    it("generator vs array - unencrypted", async () => {
+    it("unencrypted - various sizes", async () => {
       for (const sizeMB of [1, 30]) {
         const file = makeFile(sizeMB * 1024 * 1024);
         const iters = sizeMB >= 30 ? 3 : 10;
-
-        await bench(
-          `chunkFile unencrypted (${sizeMB}MB)`,
-          async () => {
-            for await (const _part of chunkFile(file.stream(), file.size)) {
-              // consume
-            }
-          },
-          { iterations: iters },
-        );
 
         await bench(
           `processFile unencrypted (${sizeMB}MB)`,
@@ -230,33 +205,7 @@ describe("Encrypted Upload Benchmarks", () => {
         console.log(`    ${sizeMB}MB → ${chunkCount} encrypted chunks (${formatBytes(storedSize)} on disk)`);
 
         await bench(
-          `chunkFile upload (${sizeMB}MB)`,
-          async () => {
-            const temp = new InMemoryTemporaryUploadStorage();
-            const fileStorage = new InMemoryFileStorage({ temporaryUploadStorage: temp });
-
-            const uploadId = `upload-${Math.random()}`;
-            await temp.beginUpload(uploadId, makeMetadata(storedSize, true));
-
-            let fileId = "";
-            for await (const part of chunkFile(
-              file.stream(),
-              file.size,
-              (chunk) => encryptUpdate(key, chunk),
-            )) {
-              if (part.rootHash.length > 0) {
-                fileId = toBase64(part.rootHash);
-              }
-              await temp.storeChunk(uploadId, part.chunkIndex, part.chunkData, part.merkleProof);
-            }
-            const result = await temp.completeUpload(uploadId, fileId);
-            await fileStorage.storeFileFromUpload(result);
-          },
-          { iterations: iters },
-        );
-
-        await bench(
-          `processFile upload (${sizeMB}MB)`,
+          `full encrypted upload (${sizeMB}MB)`,
           async () => {
             const temp = new InMemoryTemporaryUploadStorage();
             const fileStorage = new InMemoryFileStorage({ temporaryUploadStorage: temp });
@@ -291,16 +240,12 @@ describe("Encrypted Upload Benchmarks", () => {
           const temp = new InMemoryTemporaryUploadStorage();
           const fileStorage = new InMemoryFileStorage({ temporaryUploadStorage: temp });
 
-          const chunks: Uint8Array[] = [];
-          for await (const part of chunkFile(file.stream(), file.size)) {
-            chunks.push(part.chunkData);
-          }
-          const tree = await buildMerkleTree(chunks);
-          const fileId = toBase64(tree.nodes.at(-1)!.hash!);
+          const parts = await processFile(file.stream(), file.size);
+          const fileId = toBase64(parts.at(-1)!.rootHash);
 
           await temp.beginUpload("upload", makeMetadata(file.size, false));
-          for (let i = 0; i < chunks.length; i++) {
-            await temp.storeChunk("upload", i, chunks[i], []);
+          for (const part of parts) {
+            await temp.storeChunk("upload", part.chunkIndex, part.chunkData, part.merkleProof);
           }
           const result = await temp.completeUpload("upload", fileId);
           await fileStorage.storeFileFromUpload(result);
@@ -318,15 +263,13 @@ describe("Encrypted Upload Benchmarks", () => {
           const uploadId = `upload-${Math.random()}`;
           await temp.beginUpload(uploadId, makeMetadata(storedSize, true));
 
-          let fileId = "";
-          for await (const part of chunkFile(
+          const parts = await processFile(
             file.stream(),
             file.size,
             (chunk) => encryptUpdate(key, chunk),
-          )) {
-            if (part.rootHash.length > 0) {
-              fileId = toBase64(part.rootHash);
-            }
+          );
+          const fileId = toBase64(parts.at(-1)!.rootHash);
+          for (const part of parts) {
             await temp.storeChunk(uploadId, part.chunkIndex, part.chunkData, part.merkleProof);
           }
           const result = await temp.completeUpload(uploadId, fileId);
@@ -490,15 +433,13 @@ describe("Encrypted Upload Benchmarks", () => {
             const uploadId = `upload-${Math.random()}`;
             await temp.beginUpload(uploadId, makeMetadata(storedSize, true));
 
-            let fileId = "";
-            for await (const part of chunkFile(
+            const parts = await processFile(
               file.stream(),
               file.size,
               (chunk) => encryptUpdate(key, chunk),
-            )) {
-              if (part.rootHash.length > 0) {
-                fileId = toBase64(part.rootHash);
-              }
+            );
+            const fileId = toBase64(parts.at(-1)!.rootHash);
+            for (const part of parts) {
               await temp.storeChunk(uploadId, part.chunkIndex, part.chunkData, part.merkleProof);
             }
             const result = await temp.completeUpload(uploadId, fileId);

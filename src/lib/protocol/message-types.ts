@@ -1,6 +1,7 @@
 import { toBase64 } from "lib0/buffer";
-import { digest } from "lib0/hash/sha256";
 import { encodeMessage } from "./encode";
+
+import { digest } from "lib0/hash/sha256";
 import type {
   AwarenessRequestMessage,
   AwarenessUpdateMessage,

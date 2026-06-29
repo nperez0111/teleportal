@@ -134,7 +134,6 @@ export class RpcClient {
 
   /**
    * Send an RPC stream message (for file chunks, etc.).
-   * Uses synchronous send to avoid per-message async overhead.
    */
   sendStream(message: RpcMessage<any>): void {
     this.#connection.sendStream(message);

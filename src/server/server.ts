@@ -748,7 +748,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
               { type: "ack", messageId: message.id },
               message.context,
             );
-            client.send(ackMessage);
+            await client.send(ackMessage);
             return;
           }
 

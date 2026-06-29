@@ -338,20 +338,26 @@ export class Connection extends Observable<{
     return this.#fanOutWriter.getReader();
   }
 
+  /**
+   * Fire-and-forget send for RPC stream messages (file chunks).
+   * Skips in-flight tracking and event dispatch for throughput.
+   * Buffers if not connected so chunks are never silently dropped.
+   */
+  sendStream(message: Message): void {
+    if (this.destroyed) return;
+    if (this.#state.type === "connected" && this.#activeTransport) {
+      this.#activeTransport.send(message);
+    } else {
+      this.#bufferMessage(message);
+    }
+  }
+
   async send(message: Message): Promise<void> {
     if (this.destroyed) return;
     await this.#sendOrBuffer(message);
   }
 
-  /**
-   * Synchronous send for RPC stream messages (file chunks).
-   * Bypasses in-flight tracking, event dispatch, and async overhead.
-   * Only safe when the connection is already connected.
-   */
-  sendStream(message: Message): void {
-    if (this.destroyed || !this.#activeTransport) return;
-    this.#activeTransport.send(message);
-  }
+
 
   async connect(): Promise<void> {
     if (this.destroyed) {
@@ -743,17 +749,7 @@ export class Connection extends Observable<{
     }
 
     if (this.#state.type === "connected" && this.#activeTransport) {
-      // RPC stream messages (file chunks) have their own ACK tracking in the
-      // file protocol layer — skip per-message in-flight timers and events.
-      const isRpcStream =
-        message.type === "rpc" && (message as any).requestType === "stream";
-      const trackInFlight =
-        !isRpcStream &&
-        message.type !== "ack" &&
-        message.type !== "awareness" &&
-        message.type !== "presence";
-
-      if (trackInFlight) {
+      if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
         const wasEmpty = this.#inFlightMessages.size === 0;
         const timer =
           this.#inFlightMessageTimeoutMs > 0
@@ -778,11 +774,9 @@ export class Connection extends Observable<{
 
       try {
         await this.#activeTransport.send(message);
-        if (!isRpcStream) {
-          this.call("sent-message", message);
-        }
+        this.call("sent-message", message);
       } catch (err) {
-        if (trackInFlight) {
+        if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
           const entry = this.#inFlightMessages.get(message.id);
           if (entry?.timer) this.#timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(message.id);

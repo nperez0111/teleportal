@@ -83,7 +83,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     chunkIndex: number,
     chunkData: Uint8Array,
     _proof: Uint8Array[],
-  ): Promise<void> {
+  ): Promise<{ storedChunks: number }> {
     const sessionKey = this.#getUploadSessionKey(uploadId);
     const sessionData = await this.#storage.getItem<{
       metadata: FileMetadata;
@@ -103,13 +103,16 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
     const prevBytes = existing ? existing.length : 0;
     const prevCount = existing ? 0 : 1;
+    const newChunkCount = (sessionData.chunkCount ?? 0) + prevCount;
 
     await this.#storage.setItem(sessionKey, {
       ...sessionData,
       lastActivity: Date.now(),
       bytesUploaded: sessionData.bytesUploaded - prevBytes + chunkData.length,
-      chunkCount: (sessionData.chunkCount ?? 0) + prevCount,
+      chunkCount: newChunkCount,
     });
+
+    return { storedChunks: newChunkCount };
   }
 
   async getUploadProgress(uploadId: string): Promise<UploadProgress | null> {

@@ -93,7 +93,7 @@ export interface TemporaryUploadStorage {
     chunkIndex: number,
     chunkData: Uint8Array,
     proof: Uint8Array[],
-  ): Promise<void>;
+  ): Promise<{ storedChunks: number }>;
 
   /**
    * Get upload progress for a file.

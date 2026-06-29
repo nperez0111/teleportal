@@ -55,7 +55,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     chunkIndex: number,
     chunkData: Uint8Array,
     _proof: Uint8Array[],
-  ): Promise<void> {
+  ): Promise<{ storedChunks: number }> {
     const session = this.#sessions.get(uploadId);
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
@@ -68,6 +68,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     session.chunks.set(chunkIndex, chunkData);
     session.bytesUploaded += chunkData.length;
     session.lastActivity = Date.now();
+    return { storedChunks: session.chunks.size };
   }
 
   async getUploadProgress(uploadId: string): Promise<UploadProgress | null> {
