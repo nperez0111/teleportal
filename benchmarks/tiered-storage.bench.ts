@@ -366,7 +366,7 @@ describe("Tiered Storage Benchmarks", () => {
       console.log(`    Tiered overhead: ${(overhead * 1000).toFixed(0)}μs per handleUpdate`);
 
       await tieredStore[Symbol.asyncDispose]();
-    }, 30_000);
+    });
 
     it("getDocument: Memory direct vs Tiered (warm) overhead", async () => {
       MemoryDocumentStorage.docs.clear();

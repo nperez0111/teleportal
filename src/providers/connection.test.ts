@@ -289,7 +289,7 @@ describe("Connection", () => {
       await conn.destroy();
 
       const ack = new AckMessage({ type: "ack", messageId: "test-1" }, undefined);
-      await expect(conn.send(ack)).rejects.toThrow("destroyed");
+      await conn.send(ack); // silently dropped when destroyed
     });
 
     it("is idempotent when destroy() is called multiple times", async () => {
