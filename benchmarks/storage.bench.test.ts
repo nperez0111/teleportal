@@ -167,7 +167,7 @@ describe("Storage Benchmarks", () => {
           const update = makeIncrementalUpdate(doc, "x", i++ % 100);
           await virtual.handleUpdate("virtual-doc", update);
         },
-        { iterations: 200, warmup: 5 },
+        { iterations: 200 },
       );
 
       await new Promise((r) => setTimeout(r, 5));

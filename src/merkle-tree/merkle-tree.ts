@@ -62,7 +62,7 @@ function hashPair(left: Uint8Array, right: Uint8Array): Uint8Array {
  * Hardware-accelerated SHA-256 digest via Web Crypto API.
  */
 async function digestAsync(data: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
 }
 
 /**
