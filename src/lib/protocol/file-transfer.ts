@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
-import { CHUNK_SIZE, chunkFile, ENCRYPTED_CHUNK_SIZE } from "teleportal/merkle-tree";
+import { CHUNK_SIZE, processFile, ENCRYPTED_CHUNK_SIZE } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "./message-types";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
@@ -232,7 +232,7 @@ export namespace FileTransferProtocol {
       context?: Context,
       originalRequestId?: string,
     ) {
-      const parts = chunkFile(
+      const parts = await processFile(
         uploadState.file.stream(),
         uploadState.file.size,
         uploadState.encryptionKey
@@ -240,7 +240,7 @@ export namespace FileTransferProtocol {
           : undefined,
       );
 
-      for await (const chunk of parts) {
+      for (const chunk of parts) {
         if (chunk.rootHash.length > 0 && !uploadState.fileId) {
           uploadState.fileId = toBase64(chunk.rootHash);
         }

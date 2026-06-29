@@ -105,23 +105,13 @@ export async function encryptUpdate(
   data: DecryptedBinary,
 ): Promise<EncryptedBinary> {
   try {
-    // Generate a random IV (Initialization Vector) for each encryption
-    const iv = crypto.getRandomValues(new Uint8Array(12)); // 12 bytes for AES-GCM
+    const iv = crypto.getRandomValues(new Uint8Array(12));
 
-    // Encrypt the update
-    const encryptedData = await crypto.subtle.encrypt(
-      {
-        name: "AES-GCM",
-        iv: iv,
-      },
-      key,
-      new Uint8Array(data),
-    );
+    const encryptedData = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
 
-    // Combine IV and encrypted data (which includes the authentication tag)
-    const result = new Uint8Array(iv.length + encryptedData.byteLength);
+    const result = new Uint8Array(12 + encryptedData.byteLength);
     result.set(iv, 0);
-    result.set(new Uint8Array(encryptedData), iv.length);
+    result.set(new Uint8Array(encryptedData), 12);
 
     return result as EncryptedBinary;
   } catch (error) {

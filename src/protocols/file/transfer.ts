@@ -2,7 +2,7 @@ import { toBase64, fromBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
 import {
   CHUNK_SIZE,
-  chunkFile,
+  processFile,
   ENCRYPTED_CHUNK_SIZE,
   verifyMerkleProof,
 } from "teleportal/merkle-tree";
@@ -407,7 +407,7 @@ class FileClientHandler implements ClientRpcHandler {
     const cache = this.#cache && !uploadState.skipCache ? this.#cache : undefined;
     const cachedChunks: { index: number; data: Uint8Array }[] = [];
 
-    const parts = chunkFile(
+    const parts = await processFile(
       uploadState.file.stream(),
       uploadState.file.size,
       uploadState.encryptionKey
@@ -415,7 +415,7 @@ class FileClientHandler implements ClientRpcHandler {
         : undefined,
     );
 
-    for await (const chunk of parts) {
+    for (const chunk of parts) {
       if (chunk.rootHash.length > 0 && !uploadState.fileId) {
         uploadState.fileId = toBase64(chunk.rootHash);
       }

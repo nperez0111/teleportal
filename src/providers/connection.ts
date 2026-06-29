@@ -147,7 +147,6 @@ export class Connection extends Observable<{
 
   // Heartbeat & timeout
   #timeoutCheckTimer: ReturnType<typeof setTimeout> | null = null;
-  #lastMessageReceived = 0;
   #messageReceivedCount = 0;
   #heartbeatIntervalMs: number;
   #messageReconnectTimeoutMs: number;
@@ -905,7 +904,6 @@ export class Connection extends Observable<{
   }
 
   #updateLastMessageReceived(): void {
-    this.#lastMessageReceived = Date.now();
     this.#messageReceivedCount++;
   }
 

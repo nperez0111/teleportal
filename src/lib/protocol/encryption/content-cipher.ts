@@ -62,26 +62,8 @@ const TOKEN_LABEL = "teleportal:metadata-token:v1:";
 /** Truncate the PRF output to 128 bits — ample to avoid metadata-key collisions. */
 const TOKEN_BYTES = 16;
 
-/** Synchronous HMAC-SHA256 built on lib0's sync SHA-256 digest. */
-function hmacSha256(keyBytes: Uint8Array, message: Uint8Array): Uint8Array {
-  let key = keyBytes;
-  if (key.length > HMAC_BLOCK_SIZE) key = sha256(key);
-  const block = new Uint8Array(HMAC_BLOCK_SIZE);
-  block.set(key);
-
-  const ipad = new Uint8Array(HMAC_BLOCK_SIZE + message.length);
-  const opad = new Uint8Array(HMAC_BLOCK_SIZE + 32);
-  for (let i = 0; i < HMAC_BLOCK_SIZE; i++) {
-    ipad[i] = block[i] ^ 0x36;
-    opad[i] = block[i] ^ 0x5c;
-  }
-  ipad.set(message, HMAC_BLOCK_SIZE);
-  opad.set(sha256(ipad), HMAC_BLOCK_SIZE);
-  return sha256(opad);
-}
-
 const HEX: string[] = /* @__PURE__ */ (() => {
-  const t = new Array<string>(256);
+  const t = Array.from<string>({ length: 256 });
   for (let i = 0; i < 256; i++) t[i] = i.toString(16).padStart(2, "0");
   return t;
 })();
