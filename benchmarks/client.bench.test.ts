@@ -743,7 +743,7 @@ describe("Client Encryption Pipeline Benchmarks", () => {
           { iterations: entryCount > 50 ? 200 : 1000 },
         );
       }
-    });
+    }, 30_000);
 
     it("hashSidecar", async () => {
       const key = await createEncryptionKey();

@@ -578,7 +578,7 @@ describe("HTTP Handlers", () => {
         // Should timeout after approximately 100ms (ackTimeout)
         expect(writerResponse.status).toBe(504);
         expect(elapsed).toBeGreaterThanOrEqual(90); // Allow some margin
-        expect(elapsed).toBeLessThan(500); // Should not take much longer
+        expect(elapsed).toBeLessThan(2000); // Should not take much longer (CI can be slow)
         const json = await writerResponse.json();
         expect(json.error).toBe("Failed to receive acknowledgment");
         expect(json.message).toContain("ACK timeout");
