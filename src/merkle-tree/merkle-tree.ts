@@ -1,12 +1,12 @@
 import { digest } from "lib0/hash/sha256";
 
 /**
- * Size of each chunk in bytes (64KB)
+ * Size of each chunk in bytes (1MB)
  */
-export const CHUNK_SIZE = 64 * 1024;
+export const CHUNK_SIZE = 1024 * 1024;
 
 /**
- * Size of each encrypted chunk in bytes (64KB - 28 bytes for the authentication tag)
+ * Size of each encrypted chunk in bytes (CHUNK_SIZE - 28 bytes for the AES-GCM nonce + auth tag)
  */
 export const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE - 28;
 

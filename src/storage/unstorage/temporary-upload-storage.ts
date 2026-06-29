@@ -73,6 +73,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
         lastModified: metadata.lastModified || Date.now(),
       },
       bytesUploaded: 0,
+      chunkCount: 0,
       lastActivity: Date.now(),
     });
   }
@@ -87,6 +88,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     const sessionData = await this.#storage.getItem<{
       metadata: FileMetadata;
       bytesUploaded: number;
+      chunkCount: number;
       lastActivity: number;
     }>(sessionKey);
 
@@ -94,17 +96,19 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
-    await this.#storage.setItemRaw(this.#getChunkKey(uploadId, chunkIndex), chunkData);
+    const chunkKey = this.#getChunkKey(uploadId, chunkIndex);
+    const existing = await this.#storage.getItemRaw<Uint8Array>(chunkKey);
 
-    // Recompute bytesUploaded from all stored chunks for correctness.
-    const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
-    const chunks = await Promise.all(chunkKeys.map((k) => this.#storage.getItemRaw<Uint8Array>(k)));
-    const bytesUploaded = chunks.filter(Boolean).reduce((sum, c) => sum + c!.length, 0);
+    await this.#storage.setItemRaw(chunkKey, chunkData);
+
+    const prevBytes = existing ? existing.length : 0;
+    const prevCount = existing ? 0 : 1;
 
     await this.#storage.setItem(sessionKey, {
       ...sessionData,
       lastActivity: Date.now(),
-      bytesUploaded,
+      bytesUploaded: sessionData.bytesUploaded - prevBytes + chunkData.length,
+      chunkCount: (sessionData.chunkCount ?? 0) + prevCount,
     });
   }
 

@@ -77,7 +77,7 @@ export function createFileRpc(options?: FileRpcOptions): RpcExtension<FileRpc> {
       document = ctx.document;
 
       handler.setRpcClient(ctx.rpcClient, async (msg: RpcMessage<any>) => {
-        await ctx.rpcClient.sendStream(msg);
+        ctx.rpcClient.sendStream(msg);
       });
 
       return {

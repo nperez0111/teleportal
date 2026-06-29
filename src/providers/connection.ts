@@ -343,6 +343,16 @@ export class Connection extends Observable<{
     await this.#sendOrBuffer(message);
   }
 
+  /**
+   * Synchronous send for RPC stream messages (file chunks).
+   * Bypasses in-flight tracking, event dispatch, and async overhead.
+   * Only safe when the connection is already connected.
+   */
+  sendStream(message: Message): void {
+    if (this.destroyed || !this.#activeTransport) return;
+    this.#activeTransport.send(message);
+  }
+
   async connect(): Promise<void> {
     if (this.destroyed) {
       throw new Error("Connection is destroyed, create a new instance");
@@ -733,7 +743,17 @@ export class Connection extends Observable<{
     }
 
     if (this.#state.type === "connected" && this.#activeTransport) {
-      if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
+      // RPC stream messages (file chunks) have their own ACK tracking in the
+      // file protocol layer — skip per-message in-flight timers and events.
+      const isRpcStream =
+        message.type === "rpc" && (message as any).requestType === "stream";
+      const trackInFlight =
+        !isRpcStream &&
+        message.type !== "ack" &&
+        message.type !== "awareness" &&
+        message.type !== "presence";
+
+      if (trackInFlight) {
         const wasEmpty = this.#inFlightMessages.size === 0;
         const timer =
           this.#inFlightMessageTimeoutMs > 0
@@ -758,9 +778,11 @@ export class Connection extends Observable<{
 
       try {
         await this.#activeTransport.send(message);
-        this.call("sent-message", message);
+        if (!isRpcStream) {
+          this.call("sent-message", message);
+        }
       } catch (err) {
-        if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
+        if (trackInFlight) {
           const entry = this.#inFlightMessages.get(message.id);
           if (entry?.timer) this.#timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(message.id);

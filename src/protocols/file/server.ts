@@ -80,30 +80,8 @@ export class FileHandler {
     sendResponse: (message: Message<ServerContext>) => Promise<void>,
     context: RpcServerContext,
   ): Promise<void> {
-    const startTime = Date.now();
-    const wideEvent: Record<string, unknown> = {
-      event_type: "file_part",
-      timestamp: new Date().toISOString(),
-      file_id: payload.fileId,
-      chunk_index: payload.chunkIndex,
-      total_chunks: payload.totalChunks,
-      bytes_uploaded: payload.bytesUploaded,
-      document_id: context.documentId,
-    };
-
     if (!this.#temporaryUploadStorage) {
       throw new Error("File uploads are not enabled: missing fileStorage.temporaryUploadStorage");
-    }
-
-    const upload = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
-    if (!upload) {
-      const error = new Error(`Upload session ${payload.fileId} not found`);
-      emitWideEvent("error", {
-        ...wideEvent,
-        outcome: "error",
-        error,
-      });
-      throw error;
     }
 
     try {
@@ -114,58 +92,57 @@ export class FileHandler {
         payload.merkleProof,
       );
 
-      const { AckMessage } = await import("teleportal/protocol");
-      await sendResponse(
-        new AckMessage({
-          type: "ack",
-          messageId,
-        }),
-      );
+      // Only check for completion on the last chunk to avoid per-chunk
+      // getUploadProgress calls. Out-of-order delivery is handled by the
+      // retransmission loop on the client side.
+      if (payload.chunkIndex === payload.totalChunks - 1) {
+        const updatedUpload = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
+        if (updatedUpload && updatedUpload.chunks.size >= payload.totalChunks) {
+          const startTime = Date.now();
+          try {
+            const result = await this.#temporaryUploadStorage.completeUpload(payload.fileId);
 
-      const updatedUpload = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
-      if (!updatedUpload) {
-        throw new Error(`Upload session ${payload.fileId} not found after storing chunk`);
-      }
+            await this.#fileStorage.storeFileFromUpload(result);
 
-      if (updatedUpload.chunks.size >= payload.totalChunks) {
-        try {
-          const result = await this.#temporaryUploadStorage.completeUpload(payload.fileId);
-
-          await this.#fileStorage.storeFileFromUpload(result);
-
-          await context.session.storage.transaction(context.documentId, async () => {
-            const metadata = await context.session.storage.getDocumentMetadata(context.documentId);
-            await context.session.storage.writeDocumentMetadata(context.documentId, {
-              ...metadata,
-              files: [...new Set([...(metadata.files ?? []), result.fileId])],
-              updatedAt: Date.now(),
+            await context.session.storage.transaction(context.documentId, async () => {
+              const metadata = await context.session.storage.getDocumentMetadata(
+                context.documentId,
+              );
+              await context.session.storage.writeDocumentMetadata(context.documentId, {
+                ...metadata,
+                files: [...new Set([...(metadata.files ?? []), result.fileId])],
+                updatedAt: Date.now(),
+              });
             });
-          });
-          wideEvent.event_type = "file_upload_completed";
-          wideEvent.outcome = "success";
-          wideEvent.durable_file_id = result.fileId;
-        } catch (error) {
-          wideEvent.event_type = "file_upload_complete_failed";
-          wideEvent.outcome = "error";
-          wideEvent.error = error;
-          emitWideEvent("error", {
-            ...wideEvent,
-            duration_ms: Date.now() - startTime,
-          });
-          throw error;
+            emitWideEvent("info", {
+              event_type: "file_upload_completed",
+              timestamp: new Date().toISOString(),
+              file_id: payload.fileId,
+              total_chunks: payload.totalChunks,
+              document_id: context.documentId,
+              durable_file_id: result.fileId,
+              duration_ms: Date.now() - startTime,
+            });
+          } catch (error) {
+            emitWideEvent("error", {
+              event_type: "file_upload_complete_failed",
+              timestamp: new Date().toISOString(),
+              file_id: payload.fileId,
+              document_id: context.documentId,
+              error,
+              duration_ms: Date.now() - startTime,
+            });
+            throw error;
+          }
         }
-      } else {
-        wideEvent.outcome = "success";
       }
-
-      wideEvent.duration_ms = Date.now() - startTime;
-      emitWideEvent("info", wideEvent);
     } catch (error) {
-      wideEvent.outcome = "error";
-      wideEvent.error = error;
       emitWideEvent("error", {
-        ...wideEvent,
-        duration_ms: Date.now() - startTime,
+        event_type: "file_part_error",
+        file_id: payload.fileId,
+        chunk_index: payload.chunkIndex,
+        document_id: context.documentId,
+        error,
       });
       throw error;
     }

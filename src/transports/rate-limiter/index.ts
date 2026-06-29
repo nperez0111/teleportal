@@ -430,7 +430,8 @@ export class RateLimitedTransport<
    * Check if a message size is within limits
    */
   private checkMessageSize(message: Message<Context>): boolean {
-    const size = new TextEncoder().encode(JSON.stringify(message)).length;
+    const encoded = message.encoded;
+    const size = encoded ? encoded.byteLength : 0;
     if (size > this.maxMessageSize) {
       this.onMessageSizeExceeded?.({ size, maxSize: this.maxMessageSize, message });
       return false;
@@ -447,7 +448,10 @@ export class RateLimitedTransport<
     write: (msg: Message<Context>) => void | Promise<void>,
   ): AsyncIterable<Message<Context>[]> {
     return mapMessages(async (msg: Message<Context>) => {
-      if (!this.checkMessageSize(msg)) {
+      // Skip expensive size check for RPC stream messages — encoding
+      // the already-decoded 64KB+ payload just to measure its length
+      // is wasteful. Stream messages are bounded by the chunk size.
+      if (!isFileTransferMessage(msg) && !this.checkMessageSize(msg)) {
         throw new Error("Message size limit exceeded");
       }
       const exceeded = await this.checkRateLimit(msg);
@@ -500,7 +504,7 @@ export function isFileTransferMessage(message: Message<any>): boolean {
  * Default rate limit rules with separate budgets for sync messages and file transfers.
  *
  * - Sync: 300 msgs/s per user, 1500 msgs/10s per document
- * - File transfers: 50 chunks/s per user (≈ 3.2 MB/s at 64KB chunks)
+ * - File transfers: 5000 chunks/s per user (≈ 320 MB/s at 64KB chunks)
  *
  * File initiation requests (non-stream RPC) count toward the sync budget.
  */
@@ -522,7 +526,7 @@ export function defaultRateLimitRules<Context extends ServerContext>(): RateLimi
     },
     {
       id: "file-transfer-per-user",
-      maxMessages: 200,
+      maxMessages: 5000,
       windowMs: 1000,
       trackBy: "user",
       shouldSkipRule: (msg) => !isFileTransferMessage(msg),

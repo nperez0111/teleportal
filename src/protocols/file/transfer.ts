@@ -414,6 +414,8 @@ class FileClientHandler implements ClientRpcHandler {
         ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
     );
+    uploadState.context = context ?? { documentId: uploadState.document };
+    uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
 
     for (const chunk of parts) {
       if (chunk.rootHash.length > 0 && !uploadState.fileId) {
@@ -424,7 +426,6 @@ class FileClientHandler implements ClientRpcHandler {
         cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
       }
 
-      // Skip chunks the server already has (resumable upload)
       if (skipChunks.has(chunk.chunkIndex)) {
         continue;
       }
@@ -440,8 +441,6 @@ class FileClientHandler implements ClientRpcHandler {
       };
 
       uploadState.unackedChunks.set(chunk.chunkIndex, filePart);
-      uploadState.context = context ?? { documentId: uploadState.document };
-      uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
 
       const message = new RpcMessage<any>(
         uploadState.document,
@@ -455,7 +454,7 @@ class FileClientHandler implements ClientRpcHandler {
 
       uploadState.sentChunks.set(message.id, chunk.chunkIndex);
 
-      await this.#sendStreamMessage(message);
+      this.#sendStreamMessage(message);
     }
 
     // Optimistic cache write — before ACKs arrive

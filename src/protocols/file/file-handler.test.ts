@@ -101,9 +101,7 @@ describe("FileHandler", () => {
       context,
     );
 
-    expect(sent.length).toBe(1);
-    expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
-    sent.length = 0;
+    expect(sent.length).toBe(0);
 
     const p1 = await temp.getUploadProgress(fileId);
     expect(p1).not.toBeNull();
@@ -128,8 +126,7 @@ describe("FileHandler", () => {
       },
       context,
     );
-    expect(sent.length).toBe(1);
-    expect((sent[0] as AckMessage<ServerContext>).payload.type).toBe("ack");
+    expect(sent.length).toBe(0);
 
     const file = await fileStorage.getFile(fileId);
     expect(file).not.toBeNull();
@@ -271,7 +268,7 @@ describe("FileHandler", () => {
       );
     }
 
-    expect(sent.length).toBe(2);
+    expect(sent.length).toBe(0);
     const file = await fileStorage.getFile(fileId);
     expect(file).not.toBeNull();
     expect(file!.chunks.length).toBe(2);
