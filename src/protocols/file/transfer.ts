@@ -1,6 +1,6 @@
 import { toBase64, fromBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
-import { CHUNK_SIZE, processFile, verifyMerkleProof } from "teleportal/merkle-tree";
+import { CHUNK_SIZE, processFileStreaming, verifyMerkleProof } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "teleportal/protocol";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
@@ -398,58 +398,64 @@ class FileClientHandler implements ClientRpcHandler {
       throw new Error("File handler not initialized");
     }
 
+    const sendStreamMessage = this.#sendStreamMessage;
     const skipChunks = new Set(existingChunks);
     const cache = this.#cache && !uploadState.skipCache ? this.#cache : undefined;
     const cachedChunks: { index: number; data: Uint8Array }[] = [];
 
-    const parts = await processFile(
+    // Set up routing context before streaming — the onPart callback fires
+    // during processing and builds messages from these.
+    uploadState.context = context ?? { documentId: uploadState.document };
+    uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
+
+    // Pipelined: each chunk is sent the instant its encryption resolves, while
+    // later chunks are still encrypting. Per-chunk merkle proofs are omitted —
+    // the server ignores them on upload and rebuilds the tree from the stored
+    // chunks (the chunks are the content, so its tree always matches). The root
+    // is returned at the end for the resolved fileId.
+    const { rootHash } = await processFileStreaming(
       uploadState.file.stream(),
       uploadState.file.size,
       uploadState.encryptionKey
         ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
+      (chunk) => {
+        if (cache) {
+          cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
+        }
+
+        if (skipChunks.has(chunk.chunkIndex)) {
+          return;
+        }
+
+        const filePart: FilePartStream = {
+          fileId: uploadState.uploadId,
+          chunkIndex: chunk.chunkIndex,
+          chunkData: chunk.chunkData,
+          merkleProof: [],
+          totalChunks: chunk.totalChunks,
+          bytesUploaded: chunk.bytesProcessed,
+          encrypted: chunk.encrypted,
+        };
+
+        uploadState.unackedChunks.set(chunk.chunkIndex, filePart);
+
+        const message = new RpcMessage<any>(
+          uploadState.document,
+          { type: "success", payload: filePart },
+          "fileUpload",
+          "stream",
+          uploadState.originalRequestId!,
+          uploadState.context,
+          chunk.encrypted,
+        );
+        sendStreamMessage(message);
+        uploadState.sentChunks.set(message.id, chunk.chunkIndex);
+      },
       uploadState.chunkSize,
     );
-    uploadState.context = context ?? { documentId: uploadState.document };
-    uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
 
-    for (const chunk of parts) {
-      if (chunk.rootHash.length > 0 && !uploadState.fileId) {
-        uploadState.fileId = toBase64(chunk.rootHash);
-      }
-
-      if (cache) {
-        cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
-      }
-
-      if (skipChunks.has(chunk.chunkIndex)) {
-        continue;
-      }
-
-      const filePart: FilePartStream = {
-        fileId: uploadState.uploadId,
-        chunkIndex: chunk.chunkIndex,
-        chunkData: chunk.chunkData,
-        merkleProof: chunk.merkleProof,
-        totalChunks: chunk.totalChunks,
-        bytesUploaded: chunk.bytesProcessed,
-        encrypted: chunk.encrypted,
-      };
-
-      uploadState.unackedChunks.set(chunk.chunkIndex, filePart);
-
-      const message = new RpcMessage<any>(
-        uploadState.document,
-        { type: "success", payload: filePart },
-        "fileUpload",
-        "stream",
-        uploadState.originalRequestId,
-        uploadState.context,
-        chunk.encrypted,
-      );
-      this.#sendStreamMessage(message);
-      uploadState.sentChunks.set(message.id, chunk.chunkIndex);
-    }
+    uploadState.fileId = toBase64(rootHash);
 
     // Optimistic cache write — before ACKs arrive
     if (cache && uploadState.fileId) {

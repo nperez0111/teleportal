@@ -421,3 +421,99 @@ export async function processFile(
 
   return parts;
 }
+
+/**
+ * A chunk emitted by {@link processFileStreaming}, ready to be sent.
+ */
+export interface StreamedFilePart {
+  /** The (encrypted) chunk data to send. */
+  chunkData: Uint8Array;
+  /** Zero-based index of this chunk. */
+  chunkIndex: number;
+  /** Total number of chunks in the file. */
+  totalChunks: number;
+  /** Cumulative bytes emitted so far (including this chunk). */
+  bytesProcessed: number;
+  /** Whether the chunk is encrypted. */
+  encrypted: boolean;
+}
+
+/**
+ * Pipelined upload processing. Encrypts every chunk concurrently and invokes
+ * `onPart` for each one the moment its ciphertext is ready — so the caller can
+ * start sending while later chunks are still encrypting — then folds the merkle
+ * root once all leaves are hashed and returns it.
+ *
+ * Unlike {@link processFile} this does NOT produce per-chunk merkle proofs. On
+ * upload the server ignores the proof and rebuilds the tree from the stored
+ * chunks (the chunks ARE the content, so the server's tree always matches),
+ * so generating proofs here would be wasted work and would force the whole tree
+ * to be built before anything could be sent. The root is still returned for the
+ * content id / resolved fileId. Download proofs are unaffected — those are
+ * generated server-side from its rebuilt tree.
+ *
+ * The returned root is byte-identical to {@link processFile}'s for the same
+ * chunks (both fold via {@link buildMerkleTree}).
+ */
+export async function processFileStreaming(
+  source: ReadableStream<Uint8Array>,
+  fileSize: number,
+  encryptChunk: ((chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array) | undefined,
+  onPart: (part: StreamedFilePart) => void,
+  targetChunkSize?: number,
+): Promise<{ totalChunks: number; rootHash: Uint8Array }> {
+  const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  const chunkSize = encryptChunk ? wireChunkSize - AES_GCM_OVERHEAD : wireChunkSize;
+  const encrypted = !!encryptChunk;
+
+  // Read entire stream into a single buffer (same as processFile).
+  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
+  let writePos = 0;
+  for await (const incoming of source) {
+    if (writePos + incoming.length > buf.length) {
+      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
+      newBuf.set(buf.subarray(0, writePos), 0);
+      buf = newBuf;
+    }
+    buf.set(incoming, writePos);
+    writePos += incoming.length;
+  }
+
+  const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
+  const encoded: Uint8Array[] = Array.from({ length: totalChunks });
+  let bytesProcessed = 0;
+
+  // Encrypt every chunk concurrently. Each chunk is emitted for sending the
+  // moment its own encryption resolves, so emissions interleave with the
+  // encryption of later chunks instead of waiting for the whole batch.
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const idx = i;
+    const start = idx * chunkSize;
+    const end = Math.min(start + chunkSize, writePos);
+    // Zero-copy view when encrypting (encryption produces a fresh buffer);
+    // copy when not, so the emitted chunk doesn't alias the read buffer.
+    const raw =
+      start < writePos
+        ? encryptChunk
+          ? buf.subarray(start, end)
+          : buf.slice(start, end)
+        : new Uint8Array(0);
+    tasks.push(
+      (async () => {
+        const enc = encryptChunk ? await encryptChunk(raw) : raw;
+        encoded[idx] = enc;
+        bytesProcessed += enc.length;
+        onPart({ chunkData: enc, chunkIndex: idx, totalChunks, bytesProcessed, encrypted });
+      })(),
+    );
+  }
+  await Promise.all(tasks);
+
+  // Fold the merkle root from the already-encrypted chunks. Leaf hashing
+  // dominates and is parallelized inside buildMerkleTree; building the node
+  // array (vs. computing only the root) is negligible and keeps a single,
+  // shared fold so the root can never diverge from processFile's.
+  const tree = await buildMerkleTree(encoded);
+  return { totalChunks, rootHash: tree.nodes.at(-1)!.hash! };
+}

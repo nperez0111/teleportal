@@ -140,14 +140,21 @@ try {
 Client                                Server
   │  ──── fileUpload request ────────►  │  Check permission, initiate session
   │  ◄──── fileUpload response ───────  │  { allowed: true, chunkSize }
-  │  ──── stream (chunk 0) ──────────►  │  Store chunk, verify Merkle proof
+  │  ──── stream (chunk 0) ──────────►  │  Store chunk
   │  ◄──── ACK ──────────────────────  │
   │  ──── stream (chunk 1) ──────────►  │
   │  ◄──── ACK ──────────────────────  │
   │  ...                                │
-  │  ──── stream (last chunk) ───────►  │  Complete upload, move to durable storage
+  │  ──── stream (last chunk) ───────►  │  Rebuild tree, complete upload, move to durable storage
   │  ◄──── ACK ──────────────────────  │
 ```
+
+The client sends chunks as soon as each is encrypted (pipelined with the wire),
+and the **upload stream omits per-chunk Merkle proofs** (`merkleProof: []`): the
+server ignores them on upload and recomputes the Merkle tree from the stored
+chunks at completion, deriving the authoritative `contentId` from that tree.
+Download is the integrity boundary — there the server generates proofs from its
+rebuilt tree and the client verifies each chunk against the root.
 
 The server returns its configured `chunkSize` in the upload response. The client uses this to split the file into chunks. If not provided, defaults to 1MB.
 
@@ -173,7 +180,7 @@ Initiate a file upload and stream chunks to the server.
 
 **Response:** `FileUploadResponse` — `{ fileId, allowed, reason?, statusCode?, chunkSize? }`
 
-**Stream:** `FilePartStream` — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }`
+**Stream:** `FilePartStream` — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }` (`merkleProof` is populated for downloads and empty for uploads)
 
 ### fileDownload
 
