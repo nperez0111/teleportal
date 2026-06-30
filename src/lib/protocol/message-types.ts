@@ -88,8 +88,8 @@ export abstract class CustomMessage<
     let h2 = 0x1000193;
     for (let i = 0; i < data.length; i++) {
       const b = data[i];
-      h1 = ((h1 ^ b) * 0x01000193) | 0;
-      h2 = ((h2 ^ b) * 0x100001b3) | 0;
+      h1 = Math.imul(h1 ^ b, 0x01000193);
+      h2 = Math.imul(h2 ^ b, 0x100001b3);
     }
     this.#id = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
     return this.#id;

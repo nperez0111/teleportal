@@ -221,7 +221,7 @@ describe("can encode and decode", () => {
           data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
         } as VersionedUpdate,
       }).id,
-    ).toMatchInlineSnapshot(`"fdc270d406af2018"`);
+    ).toMatchInlineSnapshot(`"fbfcdc5a5765270c"`);
   });
 
   it("ack message gets it's id", () => {
