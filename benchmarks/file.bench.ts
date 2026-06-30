@@ -56,7 +56,7 @@ async function uploadFile(
   for (let i = 0; i < chunks.length; i++) {
     await temp.storeChunk(uploadId, i, chunks[i], []);
   }
-  const result = await temp.completeUpload(uploadId, fileId);
+  const result = await temp.completeUpload(uploadId, chunks.length, fileId);
   await fileStorage.storeFileFromUpload(result);
   return fileId;
 }
@@ -224,7 +224,7 @@ describe("File Upload & Download Benchmarks", () => {
             for (let i = 0; i < chunks.length; i++) {
               await temp.storeChunk(uploadId, i, chunks[i], []);
             }
-            await temp.completeUpload(uploadId, fileId);
+            await temp.completeUpload(uploadId, count, fileId);
           },
           { iterations: count > 50 ? 10 : 50 },
         );
@@ -324,7 +324,7 @@ describe("File Upload & Download Benchmarks", () => {
           for (let i = 0; i < count; i++) {
             await temp.storeChunk("getchunk", i, chunks[i], []);
           }
-          const result = await temp.completeUpload("getchunk", fileId);
+          const result = await temp.completeUpload("getchunk", count, fileId);
           for (let i = 0; i < count; i++) {
             await result.getChunk(i);
           }

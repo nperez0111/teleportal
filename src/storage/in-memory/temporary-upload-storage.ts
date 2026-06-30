@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import type { MerkleTree } from "teleportal/merkle-tree";
-import { buildMerkleTree, serializeMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import { buildMerkleTree, serializeMerkleTree } from "teleportal/merkle-tree";
 import type {
   File,
   FileMetadata,
@@ -91,31 +91,25 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     };
   }
 
-  async completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult> {
+  async completeUpload(
+    uploadId: string,
+    totalChunks: number,
+    fileId?: File["id"],
+  ): Promise<FileUploadResult> {
     const session = this.#sessions.get(uploadId);
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
-    const expectedChunks =
-      session.metadata.size === 0 ? 1 : Math.ceil(session.metadata.size / CHUNK_SIZE);
-
-    for (let i = 0; i < expectedChunks; i++) {
+    for (let i = 0; i < totalChunks; i++) {
       if (!session.chunks.has(i)) {
         throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
       }
     }
 
     const chunksInOrder: Uint8Array[] = [];
-    for (let i = 0; i < expectedChunks; i++) {
+    for (let i = 0; i < totalChunks; i++) {
       chunksInOrder.push(session.chunks.get(i)!);
-    }
-
-    const totalSize = chunksInOrder.reduce((sum, c) => sum + c.length, 0);
-    if (totalSize !== session.metadata.size) {
-      throw new Error(
-        `Size mismatch for upload ${uploadId}. Expected ${session.metadata.size}, got ${totalSize}`,
-      );
     }
 
     const merkleTree = await buildMerkleTree(chunksInOrder);
@@ -146,6 +140,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
       progress,
       fileId: finalFileId,
       contentId: rootHash,
+      totalChunks,
       serializedMerkleTree: serializeMerkleTree(merkleTree),
       getChunk: async (chunkIndex: number) => {
         // Check if chunk was already fetched (one-time use)

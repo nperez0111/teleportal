@@ -50,6 +50,7 @@ export type FileUploadResponse = {
   reason?: string;
   statusCode?: number;
   existingChunks?: number[];
+  chunkSize?: number;
 };
 
 export type FileDownloadRequest = {
@@ -66,6 +67,7 @@ export type FileDownloadResponse = {
   allowed: boolean;
   reason?: string;
   statusCode?: number;
+  totalChunks?: number;
 };
 
 // ---------------------------------------------------------------------------

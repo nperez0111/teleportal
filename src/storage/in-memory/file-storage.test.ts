@@ -33,7 +33,7 @@ describe("InMemoryFileStorage", () => {
       await temp.storeChunk(uploadId, i, chunk, []);
     }
 
-    const result = await temp.completeUpload(uploadId, fileId);
+    const result = await temp.completeUpload(uploadId, chunks.length, fileId);
     await storage.storeFileFromUpload(result);
 
     const file = await storage.getFile(result.fileId);
@@ -74,7 +74,7 @@ describe("InMemoryFileStorage", () => {
     expect(progress!.bytesUploaded).toBe(CHUNK_SIZE);
 
     await temp.storeChunk(uploadId, 1, chunks[1], []);
-    await temp.completeUpload(uploadId);
+    await temp.completeUpload(uploadId, chunks.length);
   });
 
   it("should cleanup expired uploads", async () => {
@@ -131,7 +131,7 @@ describe("InMemoryFileStorage", () => {
       await temp.storeChunk(uploadId, i, chunk, []);
     }
 
-    const result = await temp.completeUpload(uploadId, fileId);
+    const result = await temp.completeUpload(uploadId, chunks.length, fileId);
 
     // Verify upload session still exists before fetching chunks
     let progress = await temp.getUploadProgress(uploadId);
@@ -177,7 +177,7 @@ describe("InMemoryFileStorage", () => {
     });
 
     await temp.storeChunk(uploadId, 0, chunks[0], []);
-    const result = await temp.completeUpload(uploadId, fileId);
+    const result = await temp.completeUpload(uploadId, chunks.length, fileId);
 
     // First fetch should succeed
     const chunk = await result.getChunk(0);
@@ -221,7 +221,7 @@ describe("InMemoryFileStorage", () => {
       await temp.storeChunk(uploadId, i, chunk, []);
     }
 
-    const result = await temp.completeUpload(uploadId, fileId);
+    const result = await temp.completeUpload(uploadId, chunks.length, fileId);
 
     // Move file from temporary storage to durable storage incrementally
     await durableStorage.storeFileFromUpload(result);
@@ -262,7 +262,7 @@ describe("InMemoryFileStorage", () => {
       });
 
       await temp.storeChunk(uploadId, 0, chunks[0], []);
-      const result = await temp.completeUpload(uploadId, fileId);
+      const result = await temp.completeUpload(uploadId, chunks.length, fileId);
       await fileStorage.storeFileFromUpload(result);
 
       // Verify file exists

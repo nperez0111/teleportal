@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import type { MerkleTree } from "teleportal/merkle-tree";
-import { buildMerkleTree, serializeMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import { buildMerkleTree, serializeMerkleTree } from "teleportal/merkle-tree";
 import type { Storage } from "unstorage";
 import type {
   File,
@@ -145,35 +145,29 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     };
   }
 
-  async completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult> {
+  async completeUpload(
+    uploadId: string,
+    totalChunks: number,
+    fileId?: File["id"],
+  ): Promise<FileUploadResult> {
     const progress = await this.getUploadProgress(uploadId);
     if (!progress) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
-    const expectedChunks =
-      progress.metadata.size === 0 ? 1 : Math.ceil(progress.metadata.size / CHUNK_SIZE);
-
-    for (let i = 0; i < expectedChunks; i++) {
+    for (let i = 0; i < totalChunks; i++) {
       if (!progress.chunks.get(i)) {
         throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
       }
     }
 
     const chunksInOrder: Uint8Array[] = [];
-    for (let i = 0; i < expectedChunks; i++) {
+    for (let i = 0; i < totalChunks; i++) {
       const stored = await this.#storage.getItemRaw<Uint8Array>(this.#getChunkKey(uploadId, i));
       if (!stored) {
         throw new Error(`Chunk ${i} not found for upload ${uploadId}`);
       }
       chunksInOrder.push(stored);
-    }
-
-    const totalSize = chunksInOrder.reduce((sum, c) => sum + c.length, 0);
-    if (totalSize !== progress.metadata.size) {
-      throw new Error(
-        `Size mismatch for upload ${uploadId}. Expected ${progress.metadata.size}, got ${totalSize}`,
-      );
     }
 
     const merkleTree = await buildMerkleTree(chunksInOrder);
@@ -202,6 +196,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       progress,
       fileId: finalFileId,
       contentId: rootHash,
+      totalChunks,
       serializedMerkleTree: serializeMerkleTree(merkleTree),
       getChunk: async (chunkIndex: number) => {
         // Check if chunk was already fetched (one-time use)

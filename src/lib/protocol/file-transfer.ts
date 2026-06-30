@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
-import { CHUNK_SIZE, processFile, ENCRYPTED_CHUNK_SIZE } from "teleportal/merkle-tree";
+import { CHUNK_SIZE, processFile } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "./message-types";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
@@ -26,6 +26,8 @@ export namespace FileTransferProtocol {
     fileId: string;
     timeoutId: ReturnType<typeof setTimeout> | null;
     encryptionKey?: CryptoKey;
+    /** Authoritative chunk count, learned from the stream's FilePartStream. */
+    totalChunks?: number;
   }
 
   export abstract class Client<Context extends Record<string, unknown> = any> {
@@ -54,17 +56,11 @@ export namespace FileTransferProtocol {
         });
       });
 
-      let encryptionOverhead = 0;
-      if (encryptionKey) {
-        const numberOfChunks = file.size === 0 ? 1 : Math.ceil(file.size / ENCRYPTED_CHUNK_SIZE);
-        encryptionOverhead = numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
-      }
-
       const requestPayload: Record<string, unknown> = {
         method: "fileUpload",
         fileId,
         filename: file.name,
-        size: file.size + encryptionOverhead,
+        size: file.size,
         mimeType: file.type || "application/octet-stream",
         lastModified: file.lastModified,
         encrypted: !!encryptionKey,
@@ -281,6 +277,8 @@ export namespace FileTransferProtocol {
 
       if (handler.chunks.has(payload.chunkIndex)) return;
 
+      handler.totalChunks = payload.totalChunks;
+
       const decryptPromise = handler.encryptionKey
         ? decryptUpdate(handler.encryptionKey, payload.chunkData)
         : null;
@@ -303,9 +301,11 @@ export namespace FileTransferProtocol {
       if (!handler.fileMetadata) {
         return;
       }
-      const chunkSize = handler.encryptionKey ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
+      // Prefer the chunk count carried by the stream; fall back to a size-based
+      // estimate (valid only for unencrypted files) until the first part lands.
       const expectedChunks =
-        handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / chunkSize);
+        handler.totalChunks ??
+        (handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / CHUNK_SIZE));
       if (handler.chunks.size >= expectedChunks) {
         try {
           const parts: Uint8Array[] = [];

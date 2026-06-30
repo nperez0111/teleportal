@@ -107,7 +107,11 @@ export async function encryptUpdate(
   try {
     const iv = crypto.getRandomValues(new Uint8Array(12));
 
-    const encryptedData = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
+    const encryptedData = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      data as BufferSource,
+    );
 
     const result = new Uint8Array(12 + encryptedData.byteLength);
     result.set(iv, 0);

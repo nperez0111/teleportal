@@ -357,8 +357,6 @@ export class Connection extends Observable<{
     await this.#sendOrBuffer(message);
   }
 
-
-
   async connect(): Promise<void> {
     if (this.destroyed) {
       throw new Error("Connection is destroyed, create a new instance");

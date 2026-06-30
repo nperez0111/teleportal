@@ -85,7 +85,9 @@ async function run() {
   console.log(`  throughput: ${formatBytes(throughput)}/s`);
 
   // Output machine-readable result
-  console.log(`\n__RESULT__ ${JSON.stringify({ sizeMB, encrypted, elapsedMs: elapsed, throughputMBps: throughput / (1024 * 1024) })}`);
+  console.log(
+    `\n__RESULT__ ${JSON.stringify({ sizeMB, encrypted, elapsedMs: elapsed, throughputMBps: throughput / (1024 * 1024) })}`,
+  );
 
   provider.destroy();
   process.exit(0);

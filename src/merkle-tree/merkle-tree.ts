@@ -6,9 +6,14 @@ import { digest } from "lib0/hash/sha256";
 export const CHUNK_SIZE = 1024 * 1024;
 
 /**
- * Size of each encrypted chunk in bytes (CHUNK_SIZE - 28 bytes for the AES-GCM nonce + auth tag)
+ * AES-GCM overhead per encrypted chunk: 12-byte nonce + 16-byte auth tag.
  */
-export const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE - 28;
+export const AES_GCM_OVERHEAD = 28;
+
+/**
+ * Size of each encrypted chunk in bytes (CHUNK_SIZE - AES_GCM_OVERHEAD)
+ */
+export const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE - AES_GCM_OVERHEAD;
 
 /**
  * A node in the merkle tree
@@ -355,8 +360,10 @@ export async function processFile(
   source: ReadableStream<Uint8Array>,
   fileSize: number,
   encryptChunk?: (chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array,
+  targetChunkSize?: number,
 ): Promise<FilePart[]> {
-  const chunkSize = encryptChunk ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
+  const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  const chunkSize = encryptChunk ? wireChunkSize - AES_GCM_OVERHEAD : wireChunkSize;
   const encrypted = !!encryptChunk;
 
   // Read entire stream into a single buffer
@@ -381,7 +388,9 @@ export async function processFile(
     // a fresh buffer anyway so the copy from slice is wasted.
     rawChunks.push(
       start < writePos
-        ? (encryptChunk ? buf.subarray(start, end) : buf.slice(start, end))
+        ? encryptChunk
+          ? buf.subarray(start, end)
+          : buf.slice(start, end)
         : new Uint8Array(0),
     );
   }

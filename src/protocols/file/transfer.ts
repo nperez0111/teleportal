@@ -1,11 +1,6 @@
 import { toBase64, fromBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
-import {
-  CHUNK_SIZE,
-  processFile,
-  ENCRYPTED_CHUNK_SIZE,
-  verifyMerkleProof,
-} from "teleportal/merkle-tree";
+import { CHUNK_SIZE, processFile, verifyMerkleProof } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "teleportal/protocol";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
@@ -37,12 +32,14 @@ interface UploadState {
   skipCache?: boolean;
   /** Whether a background retransmit loop is already running. */
   retransmitting: boolean;
+  /** Wire chunk size negotiated by the server. */
+  chunkSize?: number;
 }
 
 interface DownloadState {
   resolve: (file: File) => void;
   reject: (error: Error) => void;
-  fileMetadata: { filename: string; size: number; mimeType: string } | null;
+  fileMetadata: { filename: string; size: number; mimeType: string; totalChunks?: number } | null;
   chunks: Map<number, Uint8Array>;
   fileId: string;
   timeoutId: ReturnType<typeof setTimeout> | null;
@@ -136,16 +133,10 @@ class FileClientHandler implements ClientRpcHandler {
       });
     });
 
-    let encryptionOverhead = 0;
-    if (key) {
-      const numberOfChunks = file.size === 0 ? 1 : Math.ceil(file.size / ENCRYPTED_CHUNK_SIZE);
-      encryptionOverhead = numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
-    }
-
     const requestPayload: Record<string, unknown> = {
       fileId,
       filename: file.name,
-      size: file.size + encryptionOverhead,
+      size: file.size,
       mimeType: file.type || "application/octet-stream",
       lastModified: file.lastModified,
       encrypted: !!key,
@@ -287,6 +278,8 @@ class FileClientHandler implements ClientRpcHandler {
         size?: number;
         mimeType?: string;
         existingChunks?: number[];
+        chunkSize?: number;
+        totalChunks?: number;
       };
       details?: string;
     };
@@ -300,6 +293,7 @@ class FileClientHandler implements ClientRpcHandler {
             filename: payload.payload.filename!,
             size: payload.payload.size!,
             mimeType: payload.payload.mimeType!,
+            totalChunks: payload.payload.totalChunks,
           };
           // Check if download is complete (file parts may have arrived before this response)
           this.#checkDownloadCompletion(downloadHandler);
@@ -310,6 +304,7 @@ class FileClientHandler implements ClientRpcHandler {
       // Check if this is an upload response (just has fileId)
       const uploadHandler = this.#activeUploads.get(payload.payload.fileId);
       if (uploadHandler) {
+        uploadHandler.chunkSize = payload.payload.chunkSize;
         // Start processing the file upload
         // We don't await this - it runs in the background and the upload promise
         // resolves when all ACKs are received. Errors are caught and the upload is rejected.
@@ -413,6 +408,7 @@ class FileClientHandler implements ClientRpcHandler {
       uploadState.encryptionKey
         ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
+      uploadState.chunkSize,
     );
     uploadState.context = context ?? { documentId: uploadState.document };
     uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
@@ -603,9 +599,9 @@ class FileClientHandler implements ClientRpcHandler {
     if (!handler.fileMetadata) {
       return;
     }
-    const chunkSize = handler.encryptionKey ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
     const expectedChunks =
-      handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / chunkSize);
+      handler.fileMetadata.totalChunks ??
+      (handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / CHUNK_SIZE));
     if (handler.chunks.size >= expectedChunks) {
       try {
         const parts: Uint8Array[] = [];

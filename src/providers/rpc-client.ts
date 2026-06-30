@@ -4,6 +4,7 @@ import { RpcMessage } from "teleportal/protocol";
 interface RpcClientConnection {
   on(event: "received-message", callback: (message: any) => void): () => void;
   send(message: any): Promise<void>;
+  sendStream(message: any): void;
   readonly connected: Promise<void>;
 }
 

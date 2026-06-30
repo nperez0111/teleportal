@@ -4,7 +4,9 @@ import type { ServerContext } from "teleportal";
 import type { FileStorage, TemporaryUploadStorage } from "teleportal/storage";
 import { emitWideEvent } from "teleportal/server";
 import {
+  AES_GCM_OVERHEAD,
   buildMerkleTree,
+  CHUNK_SIZE,
   deserializeMerkleTree,
   generateMerkleProof,
 } from "teleportal/merkle-tree";
@@ -53,6 +55,19 @@ export interface FilePermissionOptions {
   }>;
 }
 
+/**
+ * Options for configuring file upload/download RPC handlers.
+ * Extends {@link FilePermissionOptions} with protocol-level settings.
+ */
+export interface FileHandlerOptions extends FilePermissionOptions {
+  /**
+   * Wire chunk size in bytes. The server communicates this to the client
+   * during upload initialization so both sides agree on chunk boundaries.
+   * Defaults to 1MB (`CHUNK_SIZE`).
+   */
+  chunkSize?: number;
+}
+
 // ============================================================================
 // FileHandler - Core file handling logic
 // ============================================================================
@@ -64,10 +79,16 @@ export interface FilePermissionOptions {
 export class FileHandler {
   #fileStorage: FileStorage;
   #temporaryUploadStorage: TemporaryUploadStorage | undefined;
+  #chunkSize: number;
 
-  constructor(fileStorage: FileStorage) {
+  constructor(fileStorage: FileStorage, chunkSize?: number) {
     this.#fileStorage = fileStorage;
     this.#temporaryUploadStorage = fileStorage.temporaryUploadStorage;
+    this.#chunkSize = chunkSize ?? CHUNK_SIZE;
+  }
+
+  get chunkSize(): number {
+    return this.#chunkSize;
   }
 
   /**
@@ -85,6 +106,30 @@ export class FileHandler {
     }
 
     try {
+      // Reject chunks larger than the negotiated wire chunk size, and bound the
+      // chunk index/count to what MAX_FILE_SIZE allows. Without this the upload
+      // size is driven entirely by the client-supplied chunkData/totalChunks,
+      // so a client could declare a tiny size (passing the MAX_FILE_SIZE gate in
+      // initiateUpload) and then store an arbitrarily large file.
+      const plaintextChunkSize = payload.encrypted
+        ? this.#chunkSize - AES_GCM_OVERHEAD
+        : this.#chunkSize;
+      const maxChunks = Math.ceil(MAX_FILE_SIZE / plaintextChunkSize);
+      if (payload.chunkData.length > this.#chunkSize) {
+        throw new Error(
+          `Chunk ${payload.chunkIndex} for upload ${payload.fileId} exceeds the negotiated chunk size of ${this.#chunkSize} bytes`,
+        );
+      }
+      if (
+        payload.chunkIndex < 0 ||
+        payload.chunkIndex >= maxChunks ||
+        payload.totalChunks > maxChunks
+      ) {
+        throw new Error(
+          `Chunk index ${payload.chunkIndex} (of ${payload.totalChunks}) is out of range for upload ${payload.fileId}`,
+        );
+      }
+
       const { storedChunks } = await this.#temporaryUploadStorage.storeChunk(
         payload.fileId,
         payload.chunkIndex,
@@ -95,14 +140,15 @@ export class FileHandler {
       if (storedChunks >= payload.totalChunks) {
         const startTime = Date.now();
         try {
-          const result = await this.#temporaryUploadStorage.completeUpload(payload.fileId);
+          const result = await this.#temporaryUploadStorage.completeUpload(
+            payload.fileId,
+            payload.totalChunks,
+          );
 
           await this.#fileStorage.storeFileFromUpload(result);
 
           await context.session.storage.transaction(context.documentId, async () => {
-            const metadata = await context.session.storage.getDocumentMetadata(
-              context.documentId,
-            );
+            const metadata = await context.session.storage.getDocumentMetadata(context.documentId);
             await context.session.storage.writeDocumentMetadata(context.documentId, {
               ...metadata,
               files: [...new Set([...(metadata.files ?? []), result.fileId])],
@@ -190,8 +236,25 @@ export class FileHandler {
   }
 
   /**
+   * Compute the total number of chunks and wire size for a file.
+   * `rawSize` is the plaintext file size; for encrypted files the wire size
+   * includes {@link AES_GCM_OVERHEAD} bytes per chunk.
+   */
+  computeChunkInfo(rawSize: number, encrypted: boolean): { totalChunks: number; wireSize: number } {
+    const encryptedChunkSize = this.#chunkSize - AES_GCM_OVERHEAD;
+    const plaintextChunkSize = encrypted ? encryptedChunkSize : this.#chunkSize;
+    const totalChunks = rawSize === 0 ? 1 : Math.ceil(rawSize / plaintextChunkSize);
+    const wireSize = encrypted ? rawSize + totalChunks * AES_GCM_OVERHEAD : rawSize;
+    return { totalChunks, wireSize };
+  }
+
+  /**
    * Initiate an upload session.
    * Returns the list of chunk indexes already stored (for resumable uploads).
+   *
+   * @param fileId - Client-generated UUID
+   * @param metadata - File metadata. `size` is the raw (plaintext) file size.
+   * @param document - Document ID
    */
   async initiateUpload(
     fileId: string,
@@ -211,9 +274,11 @@ export class FileHandler {
       throw new Error(`File size ${metadata.size} exceeds maximum ${MAX_FILE_SIZE} bytes`);
     }
 
+    const { wireSize } = this.computeChunkInfo(metadata.size, metadata.encrypted);
+
     await this.#temporaryUploadStorage.beginUpload(fileId, {
       filename: metadata.filename,
-      size: metadata.size,
+      size: wireSize,
       mimeType: metadata.mimeType,
       encrypted: metadata.encrypted,
       lastModified: Date.now(),
@@ -253,6 +318,7 @@ export class FileHandler {
     mimeType: string;
     lastModified: number;
     encrypted: boolean;
+    totalChunks: number;
   } | null> {
     const file = await this.#fileStorage.getFile(fileId);
     if (!file) {
@@ -264,6 +330,7 @@ export class FileHandler {
       mimeType: file.metadata.mimeType,
       lastModified: file.metadata.lastModified,
       encrypted: file.metadata.encrypted,
+      totalChunks: file.chunks.length,
     };
   }
 }
@@ -274,7 +341,7 @@ export class FileHandler {
 
 interface FileDeps {
   fileHandler: FileHandler;
-  permissionOptions?: FilePermissionOptions;
+  permissionOptions?: FileHandlerOptions;
 }
 
 /**
@@ -303,9 +370,9 @@ interface FileDeps {
  */
 export function getFileRpcHandlers(
   fileStorage: FileStorage,
-  options?: FilePermissionOptions,
+  options?: FileHandlerOptions,
 ): RpcHandlerRegistry {
-  const fileHandler = new FileHandler(fileStorage);
+  const fileHandler = new FileHandler(fileStorage, options?.chunkSize);
   const deps: FileDeps = { fileHandler, permissionOptions: options };
 
   return createHandlers(
@@ -342,6 +409,7 @@ export function getFileRpcHandlers(
             fileId: payload.fileId,
             allowed: true,
             existingChunks: existingChunks.length > 0 ? existingChunks : undefined,
+            chunkSize: fileHandler.chunkSize,
           });
         },
         streamHandler: async (payload, context, messageId, sendMessage) => {
@@ -389,6 +457,15 @@ export function getFileRpcHandlers(
             fileMetadata = metadata;
           }
 
+          // A permission callback may supply metadata without totalChunks; fall
+          // back to the stored file so the client always learns the authoritative
+          // chunk count and never has to guess it from size and a chunk-size
+          // constant (which is wrong for encrypted or custom-chunk-size files).
+          let totalChunks = fileMetadata.totalChunks;
+          if (totalChunks === undefined) {
+            totalChunks = (await fileHandler.getFileMetadata(payload.fileId))?.totalChunks;
+          }
+
           const stream = fileHandler.streamFileParts(payload.fileId);
 
           return ok(
@@ -400,6 +477,7 @@ export function getFileRpcHandlers(
               mimeType: fileMetadata.mimeType,
               lastModified: fileMetadata.lastModified,
               encrypted: fileMetadata.encrypted,
+              totalChunks,
             },
             { stream },
           );

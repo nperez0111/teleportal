@@ -732,10 +732,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
           // Fast path for RPC stream messages (file chunks): skip wideEvent
           // construction, pubsub, metrics observation, and event dispatch.
-          if (
-            message.type === "rpc" &&
-            (message as RpcMessage<Context>).requestType === "stream"
-          ) {
+          if (message.type === "rpc" && (message as RpcMessage<Context>).requestType === "stream") {
             const session = await this.getOrOpenSession(message.document, {
               encrypted: message.encrypted,
               client,

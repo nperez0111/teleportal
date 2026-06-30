@@ -101,9 +101,7 @@ async function uploadFile(
   const encrypted = !!encryptionKey;
   const fileId = crypto.randomUUID();
 
-  const storedSize = encrypted ? encryptedStoredSize(file.size) : file.size;
-
-  // 1. Send upload request
+  // 1. Send upload request (size is raw/plaintext file size)
   const uploadRequest = new RpcMessage(
     document,
     {
@@ -111,7 +109,7 @@ async function uploadFile(
       payload: {
         fileId,
         filename: file.name,
-        size: storedSize,
+        size: file.size,
         mimeType: file.type,
         lastModified: file.lastModified,
         encrypted,
@@ -179,10 +177,8 @@ describe("File Upload E2E Benchmarks", () => {
         console.log(`\n    ${sizeMB}MB → ${chunkCount} encrypted chunks`);
 
         // Pre-process the file once (this is client-side work)
-        const parts = await processFile(
-          file.stream(),
-          file.size,
-          (chunk) => encryptUpdate(key, chunk),
+        const parts = await processFile(file.stream(), file.size, (chunk) =>
+          encryptUpdate(key, chunk),
         );
         const storedSize = encryptedStoredSize(file.size);
 
@@ -202,7 +198,12 @@ describe("File Upload E2E Benchmarks", () => {
             });
 
             for (const part of parts) {
-              await tempStorage.storeChunk("upload", part.chunkIndex, part.chunkData, part.merkleProof);
+              await tempStorage.storeChunk(
+                "upload",
+                part.chunkIndex,
+                part.chunkData,
+                part.merkleProof,
+              );
             }
           },
           { iterations: iters },
@@ -222,10 +223,8 @@ describe("File Upload E2E Benchmarks", () => {
 
         console.log(`\n    ${sizeMB}MB → ${chunkCount} encrypted chunks (unstorage)`);
 
-        const parts = await processFile(
-          file.stream(),
-          file.size,
-          (chunk) => encryptUpdate(key, chunk),
+        const parts = await processFile(file.stream(), file.size, (chunk) =>
+          encryptUpdate(key, chunk),
         );
         const storedSize = encryptedStoredSize(file.size);
 
@@ -247,7 +246,12 @@ describe("File Upload E2E Benchmarks", () => {
             });
 
             for (const part of parts) {
-              await tempStorage.storeChunk("upload", part.chunkIndex, part.chunkData, part.merkleProof);
+              await tempStorage.storeChunk(
+                "upload",
+                part.chunkIndex,
+                part.chunkData,
+                part.merkleProof,
+              );
             }
           },
           { iterations: iters },
@@ -312,11 +316,7 @@ describe("File Upload E2E Benchmarks", () => {
       await bench(
         "client: processFile (100MB encrypted)",
         async () => {
-          await processFile(
-            file.stream(),
-            file.size,
-            (chunk) => encryptUpdate(key, chunk),
-          );
+          await processFile(file.stream(), file.size, (chunk) => encryptUpdate(key, chunk));
         },
         { iterations: 3 },
       );
@@ -326,10 +326,8 @@ describe("File Upload E2E Benchmarks", () => {
       const key = await createEncryptionKey();
       const file = makeFile(100 * 1024 * 1024);
 
-      const parts = await processFile(
-        file.stream(),
-        file.size,
-        (chunk) => encryptUpdate(key, chunk),
+      const parts = await processFile(file.stream(), file.size, (chunk) =>
+        encryptUpdate(key, chunk),
       );
       const storedSize = encryptedStoredSize(file.size);
       const chunkCount = parts.length;
@@ -349,7 +347,12 @@ describe("File Upload E2E Benchmarks", () => {
             documentId: "bench-doc",
           });
           for (const part of parts) {
-            await tempStorage.storeChunk("upload", part.chunkIndex, part.chunkData, part.merkleProof);
+            await tempStorage.storeChunk(
+              "upload",
+              part.chunkIndex,
+              part.chunkData,
+              part.merkleProof,
+            );
           }
         },
         { iterations: 3 },
@@ -371,7 +374,12 @@ describe("File Upload E2E Benchmarks", () => {
             documentId: "bench-doc",
           });
           for (const part of parts) {
-            await tempStorage.storeChunk("upload", part.chunkIndex, part.chunkData, part.merkleProof);
+            await tempStorage.storeChunk(
+              "upload",
+              part.chunkIndex,
+              part.chunkData,
+              part.merkleProof,
+            );
           }
         },
         { iterations: 3 },

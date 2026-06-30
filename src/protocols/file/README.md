@@ -41,12 +41,26 @@ const server = new Server({
 });
 ```
 
+### Chunk Size
+
+The server controls the wire chunk size and communicates it to the client during upload initialization. Defaults to 1MB if not configured.
+
+```typescript
+const server = new Server({
+  storage: async () => documentStorage,
+  rpcHandlers: {
+    ...getFileRpcHandlers(fileStorage, { chunkSize: 256 * 1024 }), // 256KB chunks
+  },
+});
+```
+
 ### Permission Checking
 
 ```typescript
-import { getFileRpcHandlers, type FilePermissionOptions } from "teleportal/protocols/file";
+import { getFileRpcHandlers, type FileHandlerOptions } from "teleportal/protocols/file";
 
-const permissions: FilePermissionOptions = {
+const options: FileHandlerOptions = {
+  chunkSize: 512 * 1024, // 512KB chunks
   async checkUploadPermission(fileId, metadata, context) {
     const allowed = await checkAccess(context.userId, context.documentId, "write");
     return allowed ? { allowed: true } : { allowed: false, reason: "No write access" };
@@ -60,7 +74,7 @@ const permissions: FilePermissionOptions = {
 const server = new Server({
   storage: async () => documentStorage,
   rpcHandlers: {
-    ...getFileRpcHandlers(fileStorage, permissions),
+    ...getFileRpcHandlers(fileStorage, options),
   },
 });
 ```
@@ -125,7 +139,7 @@ try {
 ```
 Client                                Server
   │  ──── fileUpload request ────────►  │  Check permission, initiate session
-  │  ◄──── fileUpload response ───────  │  { allowed: true }
+  │  ◄──── fileUpload response ───────  │  { allowed: true, chunkSize }
   │  ──── stream (chunk 0) ──────────►  │  Store chunk, verify Merkle proof
   │  ◄──── ACK ──────────────────────  │
   │  ──── stream (chunk 1) ──────────►  │
@@ -134,6 +148,8 @@ Client                                Server
   │  ──── stream (last chunk) ───────►  │  Complete upload, move to durable storage
   │  ◄──── ACK ──────────────────────  │
 ```
+
+The server returns its configured `chunkSize` in the upload response. The client uses this to split the file into chunks. If not provided, defaults to 1MB.
 
 ### Download
 
@@ -155,7 +171,7 @@ Initiate a file upload and stream chunks to the server.
 
 **Request:** `FileUploadRequest` — `{ fileId, filename, size, mimeType, lastModified, encrypted }`
 
-**Response:** `FileUploadResponse` — `{ fileId, allowed, reason?, statusCode? }`
+**Response:** `FileUploadResponse` — `{ fileId, allowed, reason?, statusCode?, chunkSize? }`
 
 **Stream:** `FilePartStream` — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }`
 
@@ -165,12 +181,12 @@ Request a file download, receiving metadata and streamed chunks.
 
 **Request:** `FileDownloadRequest` — `{ fileId }`
 
-**Response:** `FileDownloadResponse` — `{ fileId, filename, size, mimeType, lastModified, encrypted, allowed, reason?, statusCode? }`
+**Response:** `FileDownloadResponse` — `{ fileId, filename, size, mimeType, lastModified, encrypted, allowed, reason?, statusCode?, totalChunks? }`
 
 ## Constants
 
 - **MAX_FILE_SIZE**: 1GB
-- **Chunk size**: 64KB (plaintext), adjusted for encryption overhead
+- **Default chunk size**: 1MB, configurable via `getFileRpcHandlers(storage, { chunkSize })`. For encrypted files, plaintext chunks are `chunkSize - 28` bytes (AES-GCM overhead).
 - **Cleanup interval**: 5 minutes (expired uploads)
 
 ## See Also

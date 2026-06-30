@@ -65,19 +65,16 @@ if (!ready) {
 
 console.log("[runner] server ready, starting client...\n");
 
-const clientProc = Bun.spawn(
-  ["bun", "run", "--bun", import.meta.dir + "/client.ts"],
-  {
-    env: {
-      ...process.env,
-      BENCH_PORT: String(port),
-      BENCH_SIZE_MB: String(sizeMB),
-      BENCH_ENCRYPTED: String(encrypted),
-    },
-    stdout: "pipe",
-    stderr: "inherit",
+const clientProc = Bun.spawn(["bun", "run", "--bun", import.meta.dir + "/client.ts"], {
+  env: {
+    ...process.env,
+    BENCH_PORT: String(port),
+    BENCH_SIZE_MB: String(sizeMB),
+    BENCH_ENCRYPTED: String(encrypted),
   },
-);
+  stdout: "pipe",
+  stderr: "inherit",
+});
 
 const output = await new Response(clientProc.stdout).text();
 console.log(output);
