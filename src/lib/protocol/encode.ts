@@ -1,4 +1,3 @@
-import { fromBase64 } from "lib0/buffer";
 import * as encoding from "lib0/encoding";
 import { type BinaryMessage, type Message } from "./message-types";
 import type {
@@ -108,7 +107,7 @@ export function encodeMessage(
         // message type (doc/awareness)
         encoding.writeUint8(encoder, 2);
         // message id
-        encoding.writeVarUint8Array(encoder, fromBase64(message.payload.messageId));
+        encoding.writeVarString(encoder, message.payload.messageId);
         break;
       }
       case "presence": {

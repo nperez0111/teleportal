@@ -1,7 +1,4 @@
-import { toBase64 } from "lib0/buffer";
 import { encodeMessage } from "./encode";
-
-import { digest } from "lib0/hash/sha256";
 import type {
   AwarenessRequestMessage,
   AwarenessUpdateMessage,
@@ -85,7 +82,17 @@ export abstract class CustomMessage<
   }
 
   public get id(): string {
-    return this.#id ?? (this.#id = toBase64(digest(this.encoded)));
+    if (this.#id) return this.#id;
+    const data = this.encoded;
+    let h1 = 0x811c9dc5;
+    let h2 = 0x1000193;
+    for (let i = 0; i < data.length; i++) {
+      const b = data[i];
+      h1 = ((h1 ^ b) * 0x01000193) | 0;
+      h2 = ((h2 ^ b) * 0x100001b3) | 0;
+    }
+    this.#id = (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0");
+    return this.#id;
   }
 
   public resetEncoded() {
