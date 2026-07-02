@@ -390,7 +390,7 @@ describe("WorkerConnection", () => {
   });
 
   it("sent-message events carry reconstructable Message objects", async () => {
-    const [clientTransport, serverTransport] = createMemoryTransportPair();
+    const [clientTransport] = createMemoryTransportPair();
     const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
     const channel = new MessageChannel();
     manager.addPort(channel.port1);

@@ -63,16 +63,6 @@ export interface TransportDescriptor {
   options?: Record<string, unknown>;
 }
 
-export interface WebSocketTransportDescriptor extends TransportDescriptor {
-  type: "websocket";
-  options?: { timeout?: number; protocols?: string[] };
-}
-
-export interface HttpTransportDescriptor extends TransportDescriptor {
-  type: "http";
-  options?: { timeout?: number };
-}
-
 // ---------------------------------------------------------------------------
 // Serializable connection options — no closures
 // ---------------------------------------------------------------------------

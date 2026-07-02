@@ -11,9 +11,8 @@ import { defaultRateLimitRules } from "../src/transports/rate-limiter";
 import { createStorage } from "unstorage";
 import { processFile, ENCRYPTED_CHUNK_SIZE, CHUNK_SIZE } from "../src/merkle-tree/merkle-tree";
 import { createEncryptionKey, encryptUpdate } from "../src/encryption-key";
-import { RpcMessage, AckMessage } from "../src/lib/protocol";
-import { toBase64 } from "lib0/buffer";
-import { bench, formatBytes, formatDuration } from "./helpers";
+import { RpcMessage } from "../src/lib/protocol";
+import { bench } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Transport that captures outbound messages for the benchmark
@@ -186,7 +185,7 @@ describe("File Upload E2E Benchmarks", () => {
           `server: store ${chunkCount} chunks (${sizeMB}MB encrypted)`,
           async () => {
             const tempStorage = new InMemoryTemporaryUploadStorage();
-            const fileStorage = new InMemoryFileStorage({ temporaryUploadStorage: tempStorage });
+            new InMemoryFileStorage({ temporaryUploadStorage: tempStorage });
 
             await tempStorage.beginUpload("upload", {
               filename: "bench.bin",

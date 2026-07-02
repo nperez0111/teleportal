@@ -4,7 +4,6 @@
  * Usage:
  *   bun run benchmarks/file-upload-real/run.ts [--size 100] [--encrypted] [--unstorage] [--rate-limit]
  */
-import { $ } from "bun";
 
 const args = process.argv.slice(2);
 

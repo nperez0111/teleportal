@@ -2,17 +2,10 @@ import type { RpcMessage } from "teleportal/protocol";
 import type { ClientContext, Message } from "teleportal";
 import type { Provider } from "./provider";
 
-/**
- * Context for client RPC handlers.
- */
 export interface ClientRpcContext extends ClientContext, Record<string, unknown> {
   documentId: string;
 }
 
-/**
- * A client-side RPC handler for a specific RPC method.
- * Handles both outgoing requests and incoming responses/streams.
- */
 export interface ClientRpcHandler<Context extends ClientRpcContext = ClientRpcContext> {
   /**
    * Send an outgoing RPC request.
@@ -52,9 +45,7 @@ export interface ClientRpcHandler<Context extends ClientRpcContext = ClientRpcCo
   init?(provider: Provider<any>): (() => void) | void;
 }
 
-/**
- * Registry of client RPC handlers, keyed by method name.
- */
 export type ClientRpcHandlerRegistry = {
   [method: string]: ClientRpcHandler<any>;
 };
+
