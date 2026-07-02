@@ -219,6 +219,74 @@ describe("WorkerConnection", () => {
     readerB.unsubscribe();
   });
 
+  it("shares one connection across tabs with different per-tab tokens (key is the token-free URL)", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+
+    const channelA = new MessageChannel();
+    const channelB = new MessageChannel();
+    manager.addPort(channelA.port1);
+    manager.addPort(channelB.port1);
+
+    const connA = new WorkerConnection(channelA.port2);
+    const connB = new WorkerConnection(channelB.port2);
+
+    cleanup.push(() => {
+      connA.destroy();
+      connB.destroy();
+      channelA.port1.close();
+      channelB.port1.close();
+    });
+
+    // Two tabs on the same origin, each with its own auth token (as a real
+    // per-tab identity would issue). The token is passed separately, NOT baked
+    // into the URL, so the manager's sharing key stays stable across tabs.
+    connA.init({ url: "wss://example.com/", token: "token-tab-a", connect: true }, "tab-A");
+    connB.init({ url: "wss://example.com/", token: "token-tab-b", connect: true }, "tab-B");
+
+    await tick();
+    await tick();
+    await tick();
+
+    // Both tabs resolve to the same token-free key -> one shared DirectConnection.
+    expect(manager.connectionCount).toBe(1);
+    expect(connA.state.type).toBe("connected");
+    expect(connB.state.type).toBe("connected");
+  });
+
+  it("does NOT share when the token is baked into the URL (the #1 regression)", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+
+    const channelA = new MessageChannel();
+    const channelB = new MessageChannel();
+    manager.addPort(channelA.port1);
+    manager.addPort(channelB.port1);
+
+    const connA = new WorkerConnection(channelA.port2);
+    const connB = new WorkerConnection(channelB.port2);
+
+    cleanup.push(() => {
+      connA.destroy();
+      connB.destroy();
+      channelA.port1.close();
+      channelB.port1.close();
+    });
+
+    // Embedding a per-tab token in the URL (the original bug) makes each tab's
+    // key unique, so the SharedWorker spins up a separate connection per tab and
+    // cross-tab sharing never happens. This documents why the token must stay out
+    // of the URL used as the sharing key.
+    connA.init({ url: "wss://example.com/?token=token-tab-a", connect: true }, "tab-A");
+    connB.init({ url: "wss://example.com/?token=token-tab-b", connect: true }, "tab-B");
+
+    await tick();
+    await tick();
+    await tick();
+
+    expect(manager.connectionCount).toBe(2);
+  });
+
   it("tab disconnect preserves Connection for remaining tabs", async () => {
     const [clientTransport] = createMemoryTransportPair();
     const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
