@@ -1,3 +1,4 @@
+export * from "./types";
 export * from "./provider";
 export * from "./connection";
 export * from "./rpc-extension";

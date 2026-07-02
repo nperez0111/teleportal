@@ -3,7 +3,7 @@
  * Connects to the benchmark server and uploads files through the full
  * Provider → Connection → WebSocket → Server pipeline.
  */
-import { Provider, Connection, websocketTransport } from "../../src/providers";
+import { Provider, DirectConnection as Connection, websocketTransport } from "../../src/providers";
 import { createFileRpc } from "../../src/protocols/file";
 import { createEncryptionKey } from "../../src/encryption-key";
 

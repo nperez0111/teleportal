@@ -9,7 +9,7 @@ import { getKeyRegistryRpcHandlers } from "./server";
 import { getKeyRegistryHandlers } from "./http";
 import { Server } from "../../server/server";
 import { getWebsocketHandlers } from "../../websocket-server";
-import { Connection } from "../../providers/connection";
+import { DirectConnection as Connection } from "../../providers/connection";
 import { websocketTransport } from "../../providers/transports/websocket";
 import { Provider } from "../../providers/provider";
 

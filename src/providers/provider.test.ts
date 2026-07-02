@@ -5,7 +5,7 @@ import { DocMessage, PresenceMessage, RpcMessage } from "teleportal";
 import { createEncryptionKey } from "teleportal/encryption-key";
 import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
 import { MemoryDocumentStorage } from "../storage/in-memory/document-storage";
-import { Connection } from "./connection";
+import { DirectConnection as Connection } from "./connection";
 import { Provider } from "./provider";
 import { createMemoryTransportPair } from "./transports/memory";
 import type { RpcExtension, RpcExtensionContext } from "./rpc-extension";

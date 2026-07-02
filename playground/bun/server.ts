@@ -33,6 +33,9 @@ import homepage from "../src/index.html";
 import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 // import { RedisPubSub } from "teleportal/transports/redis";
 
+// SharedWorker script — pre-built to disk via `bun run build:worker`.
+const workerOutDir = import.meta.dir + "/../.worker-dist";
+
 const db = createDatabase(
   bunSqlite({
     name: "yjs.db",
@@ -160,6 +163,12 @@ const instance = Bun.serve({
     // Just serve the index.html file for the root path
     if (pathname === "/") {
       return new Response(Bun.file(distDir + "/index.html"));
+    }
+
+    if (pathname === "/worker.js") {
+      return new Response(Bun.file(workerOutDir + "/worker.js"), {
+        headers: { "Content-Type": "application/javascript" },
+      });
     }
 
     // Token API — frontend requests a token from the backend

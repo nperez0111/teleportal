@@ -27,7 +27,8 @@ export type DocumentState = {
 
 export type ConnectionStateInfo = {
   type: "connected" | "connecting" | "disconnected" | "errored";
-  transport: "websocket" | "http" | null;
+  hosting?: "direct" | "worker";
+  transport: string | null;
   availableTransports: string[];
   error?: string;
   timestamp: number;

@@ -12,6 +12,7 @@
     "access": "restricted"
   },
   "scripts": {
+    "build:worker": "bun build src/worker.ts --outdir .worker-dist --target browser --format esm",
     "build": "bun run build.ts --target browser"
   },
   "dependencies": {

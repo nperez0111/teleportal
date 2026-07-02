@@ -1,6 +1,6 @@
 import { describe, it } from "bun:test";
 import * as Y from "yjs";
-import { Connection } from "../src/providers/connection";
+import { DirectConnection as Connection } from "../src/providers/connection";
 import { Provider } from "../src/providers/provider";
 import { createMemoryTransportPair } from "../src/providers/transports/memory";
 import { encodeContentEncryptedPayload } from "../src/lib/protocol/encryption/encoding";

@@ -17,12 +17,13 @@ import type {
   TransportConnectContext,
 } from "./transports/types";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
+import type {
+  Connection,
+  ConnectionEvents,
+  ConnectionState,
+} from "./types";
 
-export type ConnectionState =
-  | { type: "connected"; transport: string }
-  | { type: "disconnected" }
-  | { type: "connecting"; transport: string }
-  | { type: "errored"; error: Error };
+export type { Connection, ConnectionEvents, ConnectionState } from "./types";
 
 export type ConnectionOptions = {
   url?: string;
@@ -80,16 +81,13 @@ const DEFAULT_UPGRADE_PROBE_INTERVAL = 30_000;
 const DEFAULT_MAX_UPGRADE_PROBE_INTERVAL = 300_000;
 const MIN_BATCH_INTERVAL_MS = 10;
 
-export class Connection extends Observable<{
-  update: (state: ConnectionState) => void;
-  connected: () => void;
-  disconnected: () => void;
-  ping: () => void;
-  "messages-in-flight": (hasInFlight: boolean) => void;
-  "sent-message": (message: Message) => void;
-  "received-message": (message: Message) => void;
-}> {
+export class DirectConnection
+  extends Observable<ConnectionEvents>
+  implements Connection
+{
   static location: { hostname: string } | undefined = globalThis.location;
+
+  readonly hosting = "direct" as const;
 
   #timerManager: TimerManager;
   #transports: ConnectionTransport[];
@@ -224,14 +222,14 @@ export class Connection extends Observable<{
       // (dev) as always online and fall back to navigator.onLine elsewhere.
       if (isOnline !== undefined) {
         this.#isOnline = isOnline;
-      } else if (Connection.location?.hostname === "localhost") {
+      } else if (DirectConnection.location?.hostname === "localhost") {
         this.#isOnline = true;
       } else {
         this.#isOnline = navigator.onLine ?? true;
       }
     }
 
-    if (Connection.location?.hostname !== "localhost") {
+    if (DirectConnection.location?.hostname !== "localhost") {
       this.#setupOnlineOfflineListeners();
     }
 

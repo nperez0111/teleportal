@@ -25,6 +25,7 @@
       "teleportal/protocols/attribution": ["./src/protocols/attribution/index.ts"],
       "teleportal/protocols/key-registry": ["./src/protocols/key-registry/index.ts"],
       "teleportal/providers": ["./src/providers/index.ts"],
+      "teleportal/providers/worker": ["./src/providers/worker/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
