@@ -54,8 +54,10 @@ export interface CreateConnectionOptions {
  *
  * When `workerUrl` is provided and the browser supports `SharedWorker`,
  * returns a {@link WorkerConnection} that proxies all operations to a shared
- * worker — every tab calling this with the same worker URL shares one
- * transport. Online/offline events are forwarded automatically, and a
+ * worker. Tabs share one underlying transport when their connections resolve to
+ * the same pooling key inside the worker — by default keyed on URL + token, so
+ * different authors stay isolated (see `ConnectionWorkerManager`'s
+ * `getConnectionKey`). Online/offline events are forwarded automatically, and a
  * heartbeat monitors worker liveness.
  *
  * Otherwise creates a {@link DirectConnection} using the provided

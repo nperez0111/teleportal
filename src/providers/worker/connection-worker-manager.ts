@@ -12,14 +12,36 @@ import type {
 
 const DEFAULT_GRACE_PERIOD_MS = 5_000;
 
+/**
+ * Default pooling key: URL *and* token. Two tabs share an underlying connection
+ * only when both match, so connections authenticated with different tokens are
+ * never reused. This keeps multi-author scenarios (where identity/attribution is
+ * derived from the token) correctly isolated without the manager having to
+ * understand the token format. The token is treated as an opaque string.
+ */
+const defaultConnectionKey = (options: SerializedConnectionOptions): string =>
+  `${options.url ?? "default"}::${options.token ?? ""}`;
+
 export interface ConnectionWorkerManagerOptions {
   gracePeriodMs?: number;
+  /**
+   * Decides which incoming connections share an underlying transport: two tabs
+   * whose options produce the same key reuse one connection, different keys get
+   * separate connections.
+   *
+   * Defaults to keying on URL + token (see {@link defaultConnectionKey}), which
+   * isolates different authors. Override to widen sharing — e.g. return a stable
+   * per-user id so the same author shares one connection across token refreshes —
+   * without the manager needing to parse the token itself.
+   */
+  getConnectionKey?: (options: SerializedConnectionOptions) => string;
 }
 
 export class ConnectionWorkerManager {
   #connections = new Map<string, ManagedConnection>();
   #transportFactory: (desc: SerializedConnectionOptions) => ConnectionTransport[];
   #gracePeriodMs: number;
+  #getConnectionKey: (options: SerializedConnectionOptions) => string;
 
   constructor(
     transportFactory: (desc: SerializedConnectionOptions) => ConnectionTransport[],
@@ -27,6 +49,7 @@ export class ConnectionWorkerManager {
   ) {
     this.#transportFactory = transportFactory;
     this.#gracePeriodMs = options?.gracePeriodMs ?? DEFAULT_GRACE_PERIOD_MS;
+    this.#getConnectionKey = options?.getConnectionKey ?? defaultConnectionKey;
   }
 
   addPort(port: MessagePort): void {
@@ -149,7 +172,7 @@ export class ConnectionWorkerManager {
     tabId: string,
     portState: PortState,
   ): void {
-    const key = options.url ?? "default";
+    const key = this.#getConnectionKey(options);
     portState.tabId = tabId;
 
     let managed = this.#connections.get(key);
