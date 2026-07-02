@@ -24,7 +24,8 @@ import {
 } from "teleportal/transports";
 import type { AbstractDocumentStorage } from "teleportal/storage";
 import { IdbDocumentStorage } from "../storage/idb/document-storage";
-import { Connection, type ConnectionState } from "./connection";
+import { DirectConnection } from "./connection";
+import type { Connection, ConnectionState } from "./types";
 import { RpcClient } from "./rpc-client";
 import { websocketTransport } from "./transports/websocket";
 import { httpTransport } from "./transports/http";
@@ -778,7 +779,7 @@ export class Provider<
   ): Promise<Provider<T, R>> {
     const connection =
       options.connection ??
-      new Connection({
+      new DirectConnection({
         url: options.url!,
         transports: options.transports ?? [websocketTransport({ timeout: 5000 }), httpTransport()],
         token: "token" in options ? options.token : undefined,

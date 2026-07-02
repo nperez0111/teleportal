@@ -41,6 +41,7 @@
     "./protocols/key-registry": "./dist/protocols/key-registry/index.mjs",
     "./protocol/encryption": "./dist/lib/protocol/encryption/index.mjs",
     "./providers": "./dist/providers/index.mjs",
+    "./providers/worker": "./dist/providers/worker/index.mjs",
     "./transports/redis": "./dist/transports/redis/index.mjs",
     "./transports/nats": "./dist/transports/nats/index.mjs",
     "./transports/rate-limiter": "./dist/transports/rate-limiter/index.mjs",

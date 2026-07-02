@@ -1,4 +1,3 @@
-import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { File, FileStorage, FileUploadResult, TemporaryUploadStorage } from "../types";
 
 /**
@@ -44,14 +43,8 @@ export class InMemoryFileStorage implements FileStorage {
   }
 
   async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {
-    const expectedChunks =
-      uploadResult.progress.metadata.size === 0
-        ? 1
-        : Math.ceil(uploadResult.progress.metadata.size / CHUNK_SIZE);
-
-    // Fetch all chunks incrementally and store them
     const chunks: Uint8Array[] = [];
-    for (let i = 0; i < expectedChunks; i++) {
+    for (let i = 0; i < uploadResult.totalChunks; i++) {
       const chunk = await uploadResult.getChunk(i);
       chunks.push(chunk);
     }

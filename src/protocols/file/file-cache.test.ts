@@ -447,7 +447,7 @@ describe("FileClientHandler cache integration", () => {
 
     // Token-bucket rate limiter: ACK the first `bucketSize` chunks per burst,
     // nack the rest with retryAfter. Refill the bucket each retransmission round.
-    const BUCKET_SIZE = 200;
+    const BUCKET_SIZE = Math.max(1, Math.floor(EXPECTED_CHUNKS / 3));
     let tokensRemaining = BUCKET_SIZE;
     const ackedChunks = new Set<number>();
     let nackedCount = 0;

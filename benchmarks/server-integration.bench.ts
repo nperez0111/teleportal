@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "bun:test";
+import { describe, it, beforeEach } from "bun:test";
 import * as Y from "yjs";
 import { Server } from "../src/server/server";
 import { MemoryDocumentStorage } from "../src/storage/in-memory/document-storage";

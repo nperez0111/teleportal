@@ -6,7 +6,7 @@ import {
   verifyMerkleProof,
   serializeMerkleTree,
   deserializeMerkleTree,
-  chunkFile,
+  processFile,
   CHUNK_SIZE,
 } from "../src/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "../src/storage/in-memory/file-storage";
@@ -56,7 +56,7 @@ async function uploadFile(
   for (let i = 0; i < chunks.length; i++) {
     await temp.storeChunk(uploadId, i, chunks[i], []);
   }
-  const result = await temp.completeUpload(uploadId, fileId);
+  const result = await temp.completeUpload(uploadId, chunks.length, fileId);
   await fileStorage.storeFileFromUpload(result);
   return fileId;
 }
@@ -132,48 +132,18 @@ describe("File Upload & Download Benchmarks", () => {
       );
     });
 
-    it("chunkFile (async generator) vs plain function", async () => {
+    it("processFile - various sizes", async () => {
       for (const sizeMB of [0.1, 1, 10]) {
         const fileSize = Math.floor(sizeMB * 1024 * 1024);
         const data = new Uint8Array(fileSize);
         crypto.getRandomValues(data);
         const iters = sizeMB >= 10 ? 5 : 20;
+        const file = new File([data], "bench.bin", { type: "application/octet-stream" });
 
         await bench(
-          `chunkFile (${sizeMB}MB)`,
+          `processFile (${sizeMB}MB)`,
           async () => {
-            const stream = new ReadableStream<Uint8Array>({
-              start(controller) {
-                let offset = 0;
-                while (offset < fileSize) {
-                  const end = Math.min(offset + CHUNK_SIZE, fileSize);
-                  controller.enqueue(data.subarray(offset, end));
-                  offset = end;
-                }
-                controller.close();
-              },
-            });
-            for await (const _part of chunkFile(stream, fileSize)) {
-              // consume
-            }
-          },
-          { iterations: iters },
-        );
-
-        await bench(
-          `plain chunk+tree+proofs (${sizeMB}MB)`,
-          async () => {
-            const chunks: Uint8Array[] = [];
-            let offset = 0;
-            while (offset < fileSize) {
-              const end = Math.min(offset + CHUNK_SIZE, fileSize);
-              chunks.push(data.subarray(offset, end));
-              offset = end;
-            }
-            const tree = await buildMerkleTree(chunks);
-            for (let i = 0; i < chunks.length; i++) {
-              generateMerkleProof(tree, i);
-            }
+            await processFile(file.stream(), file.size);
           },
           { iterations: iters },
         );
@@ -254,7 +224,7 @@ describe("File Upload & Download Benchmarks", () => {
             for (let i = 0; i < chunks.length; i++) {
               await temp.storeChunk(uploadId, i, chunks[i], []);
             }
-            await temp.completeUpload(uploadId, fileId);
+            await temp.completeUpload(uploadId, count, fileId);
           },
           { iterations: count > 50 ? 10 : 50 },
         );
@@ -354,7 +324,7 @@ describe("File Upload & Download Benchmarks", () => {
           for (let i = 0; i < count; i++) {
             await temp.storeChunk("getchunk", i, chunks[i], []);
           }
-          const result = await temp.completeUpload("getchunk", fileId);
+          const result = await temp.completeUpload("getchunk", count, fileId);
           for (let i = 0; i < count; i++) {
             await result.getChunk(i);
           }

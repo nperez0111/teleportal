@@ -24,6 +24,7 @@ export class FiltersPanel {
   private clearButton: HTMLElement | null = null;
   private statusDot!: HTMLElement;
   private statusText!: HTMLElement;
+  private modeContainer!: HTMLElement;
   private transportContainer!: HTMLElement;
   private errorContainer!: HTMLElement;
   private timestampSpan!: HTMLElement;
@@ -109,6 +110,9 @@ export class FiltersPanel {
     this.statusText.className = "devtools-text-gray-700 devtools-font-medium";
     this.statusText.textContent = "Disconnected";
     connectionStatus.append(this.statusText);
+
+    this.modeContainer = document.createElement("span");
+    connectionStatus.append(this.modeContainer);
 
     this.transportContainer = document.createElement("span");
     connectionStatus.append(this.transportContainer);
@@ -268,6 +272,19 @@ export class FiltersPanel {
     // Status dot
     this.statusDot.className = `devtools-w-2 devtools-h-2 devtools-rounded-full ${this.getConnectionStatusColor()}`;
     this.statusText.textContent = this.getConnectionStatusText();
+
+    // Hosting badge
+    this.modeContainer.innerHTML = "";
+    if (this.connectionState?.hosting) {
+      const badge = document.createElement("span");
+      badge.className = "devtools-text-gray-500 devtools-ml-1";
+      badge.textContent = this.connectionState.hosting === "worker" ? "[worker]" : "[direct]";
+      badge.title =
+        this.connectionState.hosting === "worker"
+          ? "Connection runs in a SharedWorker (shared across tabs)"
+          : "Connection runs in the main thread";
+      this.modeContainer.append(badge);
+    }
 
     // Transport
     this.transportContainer.innerHTML = "";

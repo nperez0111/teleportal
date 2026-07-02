@@ -1,11 +1,28 @@
 import { describe, expect, it } from "bun:test";
+import { toBase64 } from "lib0/buffer";
 import {
   buildMerkleTree,
   deserializeMerkleTree,
   generateMerkleProof,
+  processFile,
+  processFileStreaming,
   serializeMerkleTree,
   verifyMerkleProof,
+  type StreamedFilePart,
 } from "./merkle-tree";
+import { createEncryptionKey, decryptUpdate, encryptUpdate } from "../encryption-key";
+
+function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new Blob([bytes as BlobPart]).stream();
+}
+
+function randomBytes(n: number): Uint8Array {
+  const b = new Uint8Array(n);
+  for (let off = 0; off < n; off += 65536) {
+    crypto.getRandomValues(b.subarray(off, Math.min(off + 65536, n)));
+  }
+  return b;
+}
 
 describe("Merkle Tree", () => {
   it("should build a merkle tree from chunks", async () => {
@@ -142,5 +159,104 @@ describe("Merkle Tree", () => {
       const isValid = verifyMerkleProof(chunk, proof, root!.hash!, i);
       expect(isValid).toBe(true);
     }
+  });
+});
+
+describe("processFileStreaming", () => {
+  it("returns the same root as processFile (unencrypted)", async () => {
+    const bytes = randomBytes(16 * 3 + 7); // 4 chunks at targetChunkSize 16
+    const target = 16;
+
+    const parts = await processFile(streamOf(bytes), bytes.length, undefined, target);
+    const expectedRoot = toBase64(parts.at(-1)!.rootHash);
+
+    const emitted: StreamedFilePart[] = [];
+    const { totalChunks, rootHash } = await processFileStreaming(
+      streamOf(bytes),
+      bytes.length,
+      undefined,
+      (p) => emitted.push(p),
+      target,
+    );
+
+    expect(toBase64(rootHash)).toBe(expectedRoot);
+    expect(totalChunks).toBe(parts.length);
+    expect(emitted.length).toBe(totalChunks);
+  });
+
+  it("emits every chunk exactly once with contiguous indices and original bytes", async () => {
+    const bytes = randomBytes(16 * 5 + 3);
+    const target = 16;
+
+    const emitted: StreamedFilePart[] = [];
+    const { totalChunks } = await processFileStreaming(
+      streamOf(bytes),
+      bytes.length,
+      undefined,
+      (p) => emitted.push(p),
+      target,
+    );
+
+    expect(emitted.length).toBe(totalChunks);
+    // Reassemble in chunkIndex order and compare to the source.
+    emitted.sort((a, b) => a.chunkIndex - b.chunkIndex);
+    expect(emitted.map((p) => p.chunkIndex)).toEqual(
+      Array.from({ length: totalChunks }, (_, i) => i),
+    );
+    const reassembled = new Uint8Array(bytes.length);
+    let off = 0;
+    for (const p of emitted) {
+      reassembled.set(p.chunkData, off);
+      off += p.chunkData.length;
+    }
+    expect(toBase64(reassembled)).toBe(toBase64(bytes));
+  });
+
+  it("handles an empty file (one empty chunk, defined root)", async () => {
+    const emitted: StreamedFilePart[] = [];
+    const { totalChunks, rootHash } = await processFileStreaming(
+      streamOf(new Uint8Array(0)),
+      0,
+      undefined,
+      (p) => emitted.push(p),
+    );
+    expect(totalChunks).toBe(1);
+    expect(emitted.length).toBe(1);
+    expect(emitted[0].chunkData.length).toBe(0);
+    expect(rootHash.length).toBe(32);
+  });
+
+  it("encrypted: root matches a tree over the emitted ciphertext and round-trips", async () => {
+    const key = await createEncryptionKey();
+    const bytes = randomBytes(40 * 3 + 11); // multiple encrypted chunks
+    const target = 64; // plaintext chunk = 64 - 28 = 36 bytes
+
+    const emitted: StreamedFilePart[] = [];
+    const { rootHash } = await processFileStreaming(
+      streamOf(bytes),
+      bytes.length,
+      (c) => encryptUpdate(key, c),
+      (p) => emitted.push(p),
+      target,
+    );
+
+    expect(emitted.length).toBeGreaterThan(1);
+    emitted.sort((a, b) => a.chunkIndex - b.chunkIndex);
+    for (const p of emitted) expect(p.encrypted).toBe(true);
+
+    // The returned root must equal a tree built over the emitted ciphertext.
+    const tree = await buildMerkleTree(emitted.map((p) => p.chunkData));
+    expect(toBase64(rootHash)).toBe(toBase64(tree.nodes.at(-1)!.hash!));
+
+    // Decrypting the emitted chunks in order reproduces the original file.
+    const decrypted: Uint8Array[] = [];
+    for (const p of emitted) decrypted.push(await decryptUpdate(key, p.chunkData));
+    const reassembled = new Uint8Array(bytes.length);
+    let off = 0;
+    for (const d of decrypted) {
+      reassembled.set(d, off);
+      off += d.length;
+    }
+    expect(toBase64(reassembled)).toBe(toBase64(bytes));
   });
 });

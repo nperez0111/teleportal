@@ -1,4 +1,3 @@
-import { toBase64 } from "lib0/buffer";
 import * as decoding from "lib0/decoding";
 import {
   AckMessage,
@@ -241,7 +240,7 @@ export function decodeDocStep<
 function decodeAckMessageWithDecoder(decoder: decoding.Decoder): DecodedAckMessage {
   return {
     type: "ack",
-    messageId: toBase64(decoding.readVarUint8Array(decoder)),
+    messageId: decoding.readVarString(decoder),
   };
 }
 

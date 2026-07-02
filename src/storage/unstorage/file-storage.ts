@@ -1,4 +1,3 @@
-import { CHUNK_SIZE } from "teleportal/merkle-tree";
 import type { Storage } from "unstorage";
 import type {
   File,
@@ -113,23 +112,20 @@ export class UnstorageFileStorage implements FileStorage {
   }
 
   async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {
-    const expectedChunks =
-      uploadResult.progress.metadata.size === 0
-        ? 1
-        : Math.ceil(uploadResult.progress.metadata.size / CHUNK_SIZE);
-
     const fileKey = this.#getFileKey(uploadResult.fileId);
 
     // Store file metadata + serialized merkle tree
     await this.#storage.setItem(fileKey, {
       metadata: uploadResult.progress.metadata,
       contentId: Array.from(uploadResult.contentId),
-      chunkKeys: Array.from({ length: expectedChunks }, (_, i) => this.#getChunkKey(fileKey, i)),
+      chunkKeys: Array.from({ length: uploadResult.totalChunks }, (_, i) =>
+        this.#getChunkKey(fileKey, i),
+      ),
       serializedMerkleTree: Array.from(uploadResult.serializedMerkleTree),
     });
 
     // Fetch and store chunks incrementally
-    for (let i = 0; i < expectedChunks; i++) {
+    for (let i = 0; i < uploadResult.totalChunks; i++) {
       const chunk = await uploadResult.getChunk(i);
       await this.#storage.setItemRaw(this.#getChunkKey(fileKey, i), chunk);
     }

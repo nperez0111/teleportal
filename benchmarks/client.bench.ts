@@ -26,7 +26,7 @@ import {
 } from "../src/lib/protocol/encryption/content-cipher";
 import { EncryptionClient } from "../src/transports/encrypted";
 import { createEncryptionKey, type EncryptedBinary } from "../src/encryption-key";
-import { Connection } from "../src/providers/connection";
+import { DirectConnection as Connection } from "../src/providers/connection";
 import { Provider } from "../src/providers/provider";
 import { createMemoryTransportPair } from "../src/providers/transports/memory";
 import { bench, createLargeDoc, formatBytes, flush } from "./helpers";

@@ -1,7 +1,7 @@
 import { Bench, type FnHook, type TaskResultWithStatistics } from "tinybench";
 import * as Y from "yjs";
 import { Server } from "../src/server/server";
-import { Connection } from "../src/providers/connection";
+import { DirectConnection as Connection } from "../src/providers/connection";
 import { Provider } from "../src/providers/provider";
 import { MemoryDocumentStorage } from "../src/storage/in-memory/document-storage";
 import { createMemoryTransportPair } from "../src/providers/transports/memory";

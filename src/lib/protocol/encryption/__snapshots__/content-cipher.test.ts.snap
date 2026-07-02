@@ -2,7 +2,7 @@
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: text with formatting 1`] = `
 {
-  "3luctzisjnp1s": {
+  "15b3frk": {
     "items": [
       {
         "key": "\x00",
@@ -29,20 +29,8 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: map with keys 1`] = `
 {
-  "28c2mof4es5ly": {
+  "fysleu": {
     "mapKeys": {
-      "2xhjoqpbvsuet": {
-        "type": "Any",
-        "values": [
-          null,
-        ],
-      },
-      "2xlrhvq": {
-        "type": "Any",
-        "values": [
-          null,
-        ],
-      },
       "3772uq": {
         "type": "Any",
         "values": [
@@ -55,6 +43,18 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
           null,
         ],
       },
+      "ri95v9": {
+        "type": "Any",
+        "values": [
+          null,
+        ],
+      },
+      "yknfwm": {
+        "type": "Any",
+        "values": [
+          null,
+        ],
+      },
     },
   },
 }
@@ -62,9 +62,9 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: nested map 1`] = `
 {
-  "22kdjvxds0m": {
+  "59z40m": {
     "mapKeys": {
-      "2ot2l448": {
+      "4k2fbs": {
         "childType": "YMap",
         "type": "Type",
       },
@@ -75,7 +75,7 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: array 1`] = `
 {
-  "1y6tcfnvnf3b5": {
+  "1hmepa9": {
     "items": [
       {
         "type": "Any",
@@ -94,7 +94,7 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: array with nested shared type 1`] = `
 {
-  "22kdjkxa2z1": {
+  "1tazgy5": {
     "items": [
       {
         "childType": "YText",
@@ -115,7 +115,7 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: xml with elements and attributes 1`] = `
 {
-  "31cuccbwxwi5h": {
+  "10iouzp": {
     "items": [
       {
         "childType": "YXmlElement",
@@ -143,13 +143,13 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
             },
           ],
           "mapKeys": {
-            "19tkjfg2jh1nf": {
+            "485azf": {
               "type": "Any",
               "values": [
                 null,
               ],
             },
-            "2osqnzrv": {
+            "j3fj4r": {
               "type": "Any",
               "values": [
                 null,
@@ -166,7 +166,7 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: embed 1`] = `
 {
-  "2osyic9a": {
+  "4fzngu": {
     "items": [
       {
         "str": "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
@@ -182,69 +182,7 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
 
 exports[`content-cipher metadata strings are not leaked in structure update server sees only opaque structure: comprehensive document 1`] = `
 {
-  "1y6tcfnvnf3b5": {
-    "items": [
-      {
-        "type": "Any",
-        "values": [
-          null,
-          null,
-          null,
-          null,
-          null,
-        ],
-      },
-    ],
-  },
-  "22kdjkxa2z1": {
-    "items": [
-      {
-        "childType": "YText",
-        "children": {
-          "items": [
-            {
-              "str": "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-              "type": "String",
-            },
-          ],
-        },
-        "type": "Type",
-      },
-    ],
-  },
-  "28c2mof4es5ly": {
-    "mapKeys": {
-      "29c42tonvv": {
-        "childType": "YMap",
-        "type": "Type",
-      },
-      "2xhjoqpbvsuet": {
-        "type": "Any",
-        "values": [
-          null,
-        ],
-      },
-      "2xlrhvq": {
-        "type": "Any",
-        "values": [
-          null,
-        ],
-      },
-      "3772uq": {
-        "type": "Any",
-        "values": [
-          null,
-        ],
-      },
-      "377iah": {
-        "type": "Any",
-        "values": [
-          null,
-        ],
-      },
-    },
-  },
-  "31cuccbwxwi5h": {
+  "10iouzp": {
     "items": [
       {
         "childType": "YXmlElement",
@@ -272,13 +210,13 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
             },
           ],
           "mapKeys": {
-            "19tkjfg2jh1nf": {
+            "485azf": {
               "type": "Any",
               "values": [
                 null,
               ],
             },
-            "2osqnzrv": {
+            "j3fj4r": {
               "type": "Any",
               "values": [
                 null,
@@ -290,7 +228,7 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
       },
     ],
   },
-  "3luctzisjnp1s": {
+  "15b3frk": {
     "items": [
       {
         "key": "\x00",
@@ -314,6 +252,68 @@ exports[`content-cipher metadata strings are not leaked in structure update serv
         "type": "Embed",
       },
     ],
+  },
+  "1hmepa9": {
+    "items": [
+      {
+        "type": "Any",
+        "values": [
+          null,
+          null,
+          null,
+          null,
+          null,
+        ],
+      },
+    ],
+  },
+  "1tazgy5": {
+    "items": [
+      {
+        "childType": "YText",
+        "children": {
+          "items": [
+            {
+              "str": "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+              "type": "String",
+            },
+          ],
+        },
+        "type": "Type",
+      },
+    ],
+  },
+  "fysleu": {
+    "mapKeys": {
+      "3772uq": {
+        "type": "Any",
+        "values": [
+          null,
+        ],
+      },
+      "377iah": {
+        "type": "Any",
+        "values": [
+          null,
+        ],
+      },
+      "8n590r": {
+        "childType": "YMap",
+        "type": "Type",
+      },
+      "ri95v9": {
+        "type": "Any",
+        "values": [
+          null,
+        ],
+      },
+      "yknfwm": {
+        "type": "Any",
+        "values": [
+          null,
+        ],
+      },
+    },
   },
 }
 `;

@@ -1,6 +1,6 @@
 import { toBase64 } from "lib0/buffer";
 import type { MerkleTree } from "teleportal/merkle-tree";
-import { buildMerkleTree, serializeMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
+import { buildMerkleTree, serializeMerkleTree } from "teleportal/merkle-tree";
 import type {
   File,
   FileMetadata,
@@ -14,6 +14,7 @@ type UploadSession = {
   chunks: Map<number, Uint8Array>;
   bytesUploaded: number;
   lastActivity: number;
+  completing?: boolean;
 };
 
 /**
@@ -55,18 +56,20 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     chunkIndex: number,
     chunkData: Uint8Array,
     _proof: Uint8Array[],
-  ): Promise<void> {
+  ): Promise<{ storedChunks: number }> {
     const session = this.#sessions.get(uploadId);
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
+    const existing = session.chunks.get(chunkIndex);
+    if (existing) {
+      session.bytesUploaded -= existing.length;
+    }
     session.chunks.set(chunkIndex, chunkData);
+    session.bytesUploaded += chunkData.length;
     session.lastActivity = Date.now();
-    session.bytesUploaded = [...session.chunks.values()].reduce(
-      (sum, chunk) => sum + chunk.length,
-      0,
-    );
+    return { storedChunks: session.chunks.size };
   }
 
   async getUploadProgress(uploadId: string): Promise<UploadProgress | null> {
@@ -89,87 +92,83 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     };
   }
 
-  async completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult> {
+  async completeUpload(
+    uploadId: string,
+    totalChunks: number,
+    fileId?: File["id"],
+  ): Promise<FileUploadResult> {
     const session = this.#sessions.get(uploadId);
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
+    if (session.completing) {
+      throw new Error(`Upload ${uploadId} is already being completed`);
+    }
+    session.completing = true;
 
-    const expectedChunks =
-      session.metadata.size === 0 ? 1 : Math.ceil(session.metadata.size / CHUNK_SIZE);
-
-    for (let i = 0; i < expectedChunks; i++) {
-      if (!session.chunks.has(i)) {
-        throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        if (!session.chunks.has(i)) {
+          throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
+        }
       }
+
+      const chunksInOrder: Uint8Array[] = [];
+      for (let i = 0; i < totalChunks; i++) {
+        chunksInOrder.push(session.chunks.get(i)!);
+      }
+
+      const merkleTree = await buildMerkleTree(chunksInOrder);
+      const root = merkleTree.nodes.at(-1);
+      if (!root?.hash) {
+        throw new Error(`Failed to compute root hash for upload ${uploadId}`);
+      }
+      const rootHash = root.hash;
+
+      const computedFileId = toBase64(rootHash);
+      if (fileId !== undefined && computedFileId !== fileId) {
+        throw new Error(
+          `Merkle root mismatch for upload ${uploadId}. Expected ${fileId}, got ${computedFileId}`,
+        );
+      }
+
+      const finalFileId = fileId ?? computedFileId;
+      const progress = (await this.getUploadProgress(uploadId))!;
+
+      const fetchedChunks = new Set<number>();
+
+      return {
+        progress,
+        fileId: finalFileId,
+        contentId: rootHash,
+        totalChunks,
+        serializedMerkleTree: serializeMerkleTree(merkleTree),
+        getChunk: async (chunkIndex: number) => {
+          if (fetchedChunks.has(chunkIndex)) {
+            throw new Error(
+              `Chunk ${chunkIndex} has already been fetched for upload ${uploadId}. Chunks can only be fetched once.`,
+            );
+          }
+
+          const chunk = session.chunks.get(chunkIndex);
+          if (!chunk) {
+            throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
+          }
+
+          fetchedChunks.add(chunkIndex);
+          session.chunks.delete(chunkIndex);
+
+          if (session.chunks.size === 0) {
+            this.#sessions.delete(uploadId);
+          }
+
+          return chunk;
+        },
+      };
+    } catch (err) {
+      session.completing = false;
+      throw err;
     }
-
-    const chunksInOrder: Uint8Array[] = [];
-    for (let i = 0; i < expectedChunks; i++) {
-      chunksInOrder.push(session.chunks.get(i)!);
-    }
-
-    const totalSize = chunksInOrder.reduce((sum, c) => sum + c.length, 0);
-    if (totalSize !== session.metadata.size) {
-      throw new Error(
-        `Size mismatch for upload ${uploadId}. Expected ${session.metadata.size}, got ${totalSize}`,
-      );
-    }
-
-    const merkleTree = await buildMerkleTree(chunksInOrder);
-    const root = merkleTree.nodes.at(-1);
-    if (!root?.hash) {
-      throw new Error(`Failed to compute root hash for upload ${uploadId}`);
-    }
-    const rootHash = root.hash;
-
-    const computedFileId = toBase64(rootHash);
-    // If fileId is provided, validate it matches the computed one
-    if (fileId !== undefined && computedFileId !== fileId) {
-      throw new Error(
-        `Merkle root mismatch for upload ${uploadId}. Expected ${fileId}, got ${computedFileId}`,
-      );
-    }
-
-    const finalFileId = fileId ?? computedFileId;
-    const progress = (await this.getUploadProgress(uploadId))!;
-
-    // Track which chunks have been fetched via getChunk
-    const fetchedChunks = new Set<number>();
-
-    // Release chunksInOrder array to allow GC (we've computed the merkle tree)
-    // Chunks remain in session.chunks and will be retrieved via getChunk
-
-    return {
-      progress,
-      fileId: finalFileId,
-      contentId: rootHash,
-      serializedMerkleTree: serializeMerkleTree(merkleTree),
-      getChunk: async (chunkIndex: number) => {
-        // Check if chunk was already fetched (one-time use)
-        if (fetchedChunks.has(chunkIndex)) {
-          throw new Error(
-            `Chunk ${chunkIndex} has already been fetched for upload ${uploadId}. Chunks can only be fetched once.`,
-          );
-        }
-
-        const chunk = session.chunks.get(chunkIndex);
-        if (!chunk) {
-          throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
-        }
-
-        // Mark as fetched and remove from session
-        fetchedChunks.add(chunkIndex);
-        session.chunks.delete(chunkIndex);
-
-        // If all chunks have been fetched, clean up the session
-        if (session.chunks.size === 0) {
-          this.#sessions.delete(uploadId);
-        }
-
-        return chunk;
-      },
-    };
   }
 
   async cleanupExpiredUploads(): Promise<void> {

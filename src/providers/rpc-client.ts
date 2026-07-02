@@ -4,6 +4,7 @@ import { RpcMessage } from "teleportal/protocol";
 interface RpcClientConnection {
   on(event: "received-message", callback: (message: any) => void): () => void;
   send(message: any): Promise<void>;
+  sendStream(message: any): void;
   readonly connected: Promise<void>;
 }
 
@@ -134,11 +135,9 @@ export class RpcClient {
 
   /**
    * Send an RPC stream message (for file chunks, etc.).
-   * @param message - The RPC stream message to send
    */
-  async sendStream(message: RpcMessage<any>): Promise<void> {
-    await this.#connection.connected;
-    await this.#connection.send(message);
+  sendStream(message: RpcMessage<any>): void {
+    this.#connection.sendStream(message);
   }
 
   destroy() {

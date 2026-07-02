@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import * as Y from "yjs";
-import { Connection } from "./connection";
+import { DirectConnection as Connection } from "./connection";
 import { createMemoryTransportPair, type MemoryTransportHandle } from "./transports/memory";
 import { AckMessage, AwarenessMessage, DocMessage } from "teleportal";
 import type { VersionedUpdate } from "teleportal/protocol";
@@ -3420,9 +3420,7 @@ describe("Connection", () => {
       await flushMicrotasks();
       expect(conn.state.type).toBe("connected");
 
-      transport.ctx!.onMessage(
-        new AckMessage({ type: "ack", messageId: "keepalive" }, undefined),
-      );
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: "keepalive" }, undefined));
       await flushMicrotasks();
 
       // t=1000: original timer fires, sees message arrived, re-schedules for t=2000
@@ -3464,9 +3462,7 @@ describe("Connection", () => {
 
       // Simulate 50 rapid messages — should NOT create 50 timers
       for (let i = 0; i < 50; i++) {
-        transport.ctx!.onMessage(
-          new AckMessage({ type: "ack", messageId: `msg-${i}` }, undefined),
-        );
+        transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: `msg-${i}` }, undefined));
       }
       await flushMicrotasks();
 
@@ -3501,9 +3497,7 @@ describe("Connection", () => {
       await flushMicrotasks();
       expect(conn.state.type).toBe("connected");
 
-      transport.ctx!.onMessage(
-        new AckMessage({ type: "ack", messageId: "late-msg" }, undefined),
-      );
+      transport.ctx!.onMessage(new AckMessage({ type: "ack", messageId: "late-msg" }, undefined));
       await flushMicrotasks();
 
       // t=1000: original timer fires, sees message arrived, re-schedules for t=2000

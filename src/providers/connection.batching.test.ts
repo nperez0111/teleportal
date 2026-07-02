@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import * as Y from "yjs";
-import { Connection } from "./connection";
+import { DirectConnection as Connection } from "./connection";
 import { createMemoryTransportPair, type MemoryTransportHandle } from "./transports/memory";
 import { DocMessage } from "teleportal";
 import type { VersionedUpdate } from "teleportal/protocol";

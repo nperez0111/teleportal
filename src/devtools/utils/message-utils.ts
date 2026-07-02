@@ -379,10 +379,6 @@ export async function formatMessagePayload(
   }
 }
 
-export function isDocumentMessage(message: MessageType): boolean {
-  return message.type === "doc";
-}
-
 export function formatTimestamp(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString();
 }

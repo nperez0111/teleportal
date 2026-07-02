@@ -52,6 +52,10 @@ export interface FileUploadResult {
    */
   contentId: Uint8Array;
   /**
+   * Total number of chunks in this upload.
+   */
+  totalChunks: number;
+  /**
    * Retrieve a chunk for the upload by chunk index.
    * Chunks can only be fetched once and are deleted after fetching.
    */
@@ -93,7 +97,7 @@ export interface TemporaryUploadStorage {
     chunkIndex: number,
     chunkData: Uint8Array,
     proof: Uint8Array[],
-  ): Promise<void>;
+  ): Promise<{ storedChunks: number }>;
 
   /**
    * Get upload progress for a file.
@@ -108,10 +112,15 @@ export interface TemporaryUploadStorage {
    * @note at this point, the upload is complete and can be stored in the file storage.
    *
    * @param uploadId - Client-generated UUID for this upload
+   * @param totalChunks - Expected number of chunks for this upload
    * @param fileId - Optional merkle root hash (contentId). If not provided, it will be computed from the chunks.
    * @returns The final upload progress and a function to retrieve a chunk for the upload by chunk index. This allows rebuilding the whole file from the chunks to move it into a cold-storage.
    */
-  completeUpload(uploadId: string, fileId?: File["id"]): Promise<FileUploadResult>;
+  completeUpload(
+    uploadId: string,
+    totalChunks: number,
+    fileId?: File["id"],
+  ): Promise<FileUploadResult>;
 
   /**
    * Clean up expired upload sessions.

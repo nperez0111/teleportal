@@ -1,0 +1,48 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/lib/index.ts",
+        "src/storage/index.ts",
+        "src/http/index.ts",
+        "src/lib/protocol/index.ts",
+        "src/lib/protocol/encryption/index.ts",
+        "src/lib/attribution/index.ts",
+        "src/lib/rpc/index.ts",
+        "src/protocols/milestone/index.ts",
+        "src/protocols/file/index.ts",
+        "src/protocols/attribution/index.ts",
+        "src/protocols/key-registry/index.ts",
+        "src/providers/index.ts",
+        "src/providers/worker/index.ts",
+        "src/providers/worker/connection-worker.ts",
+        "src/transports/index.ts",
+        "src/transports/redis/index.ts",
+        "src/transports/nats/index.ts",
+        "src/transports/rate-limiter/index.ts",
+        "src/websocket-server/index.ts",
+        "src/server/index.ts",
+        "src/monitoring/index.ts",
+        "src/encryption-key/index.ts",
+        "src/token/index.ts",
+        "src/merkle-tree/index.ts",
+        "src/devtools/index.ts",
+        "src/agent/index.ts"
+      ],
+      "project": ["src/**/*.ts"]
+    },
+    "playground": {
+      "entry": ["src/frontend.tsx", "src/worker.ts", "src/devtools/index.tsx", "bun/*.ts"],
+      "project": ["src/**/*.{ts,tsx}", "bun/**/*.ts"]
+    },
+    "examples/*": {
+      "entry": ["src/frontend.tsx", "backend/server.ts"],
+      "project": ["src/**/*.{ts,tsx}", "backend/**/*.ts"]
+    },
+    "docs": {
+      "entry": ["src/**/*.{astro,tsx,ts}"],
+      "project": ["src/**/*.{astro,tsx,ts}"]
+    }
+  }
+}

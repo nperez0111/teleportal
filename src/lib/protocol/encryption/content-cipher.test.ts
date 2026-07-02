@@ -1085,6 +1085,331 @@ describe("content-cipher", () => {
       doc.getMap("docs").set("child", subdoc);
       expectByteExact("subdoc", getV1Update(doc));
     });
+
+    // ── Y.js operation coverage (from yjs test suite) ───────────────────
+
+    it("byte-exact: text applyDelta (insert + retain + delete)", () => {
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "Hello World");
+      doc.getText("t").applyDelta([{ retain: 5 }, { delete: 1 }, { insert: ", " }]);
+      expectByteExact("applyDelta", getV1Update(doc));
+    });
+
+    it("byte-exact: text applyDelta with formatting", () => {
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "Hello World");
+      doc
+        .getText("t")
+        .applyDelta([
+          { retain: 5, attributes: { bold: true } },
+          { retain: 1 },
+          { insert: "Beautiful ", attributes: { italic: true } },
+        ]);
+      expectByteExact("applyDelta with format", getV1Update(doc));
+    });
+
+    it("byte-exact: array push and unshift", () => {
+      const doc = new Y.Doc();
+      const arr = doc.getArray("a");
+      arr.push([1, 2, 3]);
+      arr.unshift([-1, 0]);
+      arr.push([4, 5]);
+      expectByteExact("array push/unshift", getV1Update(doc));
+    });
+
+    it("byte-exact: map clear (bulk deletion)", () => {
+      const doc = new Y.Doc();
+      const map = doc.getMap("m");
+      map.set("a", 1);
+      map.set("b", 2);
+      map.set("c", 3);
+      const keys = Array.from(map.keys());
+      for (const key of keys) {
+        map.delete(key);
+      }
+      expectByteExact("map clear", getV1Update(doc));
+    });
+
+    it("byte-exact: nested YMap with overwritten value", () => {
+      const doc = new Y.Doc();
+      const outer = doc.getMap("m");
+      const inner1 = new Y.Map();
+      outer.set("nested", inner1);
+      inner1.set("key", "first");
+      // Overwrite the nested type with a new one
+      const inner2 = new Y.Map();
+      outer.set("nested", inner2);
+      inner2.set("key", "second");
+      expectByteExact("nested map overwrite", getV1Update(doc));
+    });
+
+    it("byte-exact: nested YText in YArray with content", () => {
+      const doc = new Y.Doc();
+      const arr = doc.getArray("a");
+      const text = new Y.Text();
+      arr.push([text]);
+      text.insert(0, "Hello");
+      text.format(0, 5, { bold: true });
+      text.insertEmbed(5, { type: "divider" });
+      expectByteExact("nested YText with format+embed", getV1Update(doc));
+    });
+
+    it("byte-exact: xml text with formatting", () => {
+      const doc = new Y.Doc();
+      const frag = doc.getXmlFragment("xml");
+      const el = new Y.XmlElement("p");
+      frag.insert(0, [el]);
+      const xt = new Y.XmlText("Hello World");
+      el.insert(0, [xt]);
+      xt.format(0, 5, { bold: true });
+      expectByteExact("xml text formatting", getV1Update(doc));
+    });
+
+    it("byte-exact: xml element removeAttribute", () => {
+      const doc = new Y.Doc();
+      const frag = doc.getXmlFragment("xml");
+      const el = new Y.XmlElement("div");
+      frag.insert(0, [el]);
+      el.setAttribute("class", "old");
+      el.setAttribute("id", "keep");
+      el.removeAttribute("class");
+      expectByteExact("xml removeAttribute", getV1Update(doc));
+    });
+
+    it("byte-exact: deeply nested array of maps of texts", () => {
+      const doc = new Y.Doc();
+      const arr = doc.getArray("sections");
+      for (let i = 0; i < 3; i++) {
+        const map = new Y.Map();
+        arr.push([map]);
+        const text = new Y.Text(`Section ${i}`);
+        map.set("content", text);
+        map.set("order", i);
+      }
+      expectByteExact("array of maps of texts", getV1Update(doc));
+    });
+
+    it("byte-exact: transactions grouping multiple operations", () => {
+      const doc = new Y.Doc();
+      doc.transact(() => {
+        doc.getText("t").insert(0, "Hello World");
+        doc.getText("t").format(0, 5, { bold: true });
+        doc.getMap("m").set("a", 1);
+        doc.getArray("a").push(["x"]);
+      });
+      expectByteExact("transaction grouping", getV1Update(doc));
+    });
+
+    it("byte-exact: gc=false document preserves deleted content", () => {
+      const doc = new Y.Doc({ gc: false });
+      doc.getText("t").insert(0, "Hello World");
+      doc.getText("t").delete(0, 5);
+      expectByteExact("gc=false deleted content", getV1Update(doc));
+    });
+
+    it("byte-exact: multiple subdocuments", () => {
+      const doc = new Y.Doc();
+      const docs = doc.getMap("docs");
+      docs.set("doc1", new Y.Doc({ guid: "guid-1" }));
+      docs.set("doc2", new Y.Doc({ guid: "guid-2" }));
+      docs.set("doc3", new Y.Doc({ guid: "guid-3" }));
+      expectByteExact("multiple subdocs", getV1Update(doc));
+    });
+
+    it("byte-exact: map with all primitive types", () => {
+      const doc = new Y.Doc();
+      const map = doc.getMap("types");
+      map.set("string", "hello");
+      map.set("number", 42);
+      map.set("float", 3.14159);
+      map.set("negative", -100);
+      map.set("zero", 0);
+      map.set("true", true);
+      map.set("false", false);
+      map.set("null", null);
+      map.set("undefined", undefined);
+      map.set("bigArray", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      map.set("nestedObj", { a: { b: { c: "deep" } } });
+      map.set("emptyArray", []);
+      map.set("emptyObj", {});
+      expectByteExact("all primitive types", getV1Update(doc));
+    });
+
+    it("byte-exact: text insert with attributes", () => {
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "plain ");
+      doc.getText("t").insert(6, "bold", { bold: true });
+      doc.getText("t").insert(10, " italic", { italic: true });
+      expectByteExact("insert with attributes", getV1Update(doc));
+    });
+  });
+
+  describe("V1-raw fast path (tokenize: false)", () => {
+    function expectV1RawByteExact(label: string, original: Uint8Array) {
+      const { update: stripped, sidecar } = stripContent(original, 1, false);
+      const restored = restoreContent(stripped, sidecar, 1, 1);
+      expect(Buffer.from(restored).equals(Buffer.from(original))).toBe(true);
+    }
+
+    it("byte-exact: simple text insert", () => {
+      const doc = makeDoc((d) => d.getText("t").insert(0, "Hello World"));
+      expectV1RawByteExact("simple text", getV1Update(doc));
+    });
+
+    it("byte-exact: text with formatting", () => {
+      const doc = makeDoc((d) => {
+        d.getText("t").insert(0, "Hello World");
+        d.getText("t").format(0, 5, { bold: true });
+      });
+      expectV1RawByteExact("formatted text", getV1Update(doc));
+    });
+
+    it("byte-exact: map with mixed values", () => {
+      const doc = makeDoc((d) => {
+        const m = d.getMap("m");
+        m.set("str", "hello");
+        m.set("num", 42);
+        m.set("bool", true);
+        m.set("null", null);
+      });
+      expectV1RawByteExact("map mixed", getV1Update(doc));
+    });
+
+    it("byte-exact: array values", () => {
+      const doc = makeDoc((d) => {
+        d.getArray("a").insert(0, ["item1", "item2", 42, true, null]);
+      });
+      expectV1RawByteExact("array", getV1Update(doc));
+    });
+
+    it("byte-exact: embed", () => {
+      const doc = makeDoc((d) => {
+        d.getText("t").insertEmbed(0, { image: "https://example.com/img.png" });
+      });
+      expectV1RawByteExact("embed", getV1Update(doc));
+    });
+
+    it("byte-exact: nested types", () => {
+      const doc = makeDoc((d) => {
+        const arr = d.getArray("a");
+        const nestedMap = new Y.Map();
+        arr.insert(0, [nestedMap]);
+        nestedMap.set("key", "value");
+      });
+      expectV1RawByteExact("nested", getV1Update(doc));
+    });
+
+    it("byte-exact: deletions", () => {
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "Hello World");
+      doc.getText("t").delete(0, 5);
+      expectV1RawByteExact("deletions", getV1Update(doc));
+    });
+
+    it("byte-exact: complex document with all types", () => {
+      const doc = new Y.Doc();
+      doc.getText("text").insert(0, "Hello World");
+      doc.getText("text").format(0, 5, { bold: true });
+      doc.getText("text").insertEmbed(11, { type: "hr" });
+      doc.getMap("meta").set("version", 1);
+      doc.getMap("meta").set("title", "Test");
+      doc.getArray("tags").insert(0, ["a", "b"]);
+      const nestedMap = new Y.Map();
+      doc.getArray("nested").insert(0, [nestedMap]);
+      nestedMap.set("key", "val");
+      doc.getText("text").delete(5, 1);
+      expectV1RawByteExact("all content types", getV1Update(doc));
+    });
+
+    it("byte-exact: multi-byte unicode", () => {
+      const doc = makeDoc((d) => d.getText("t").insert(0, "Hello 🌍 World 日本語"));
+      expectV1RawByteExact("unicode", getV1Update(doc));
+    });
+
+    it("byte-exact: many small items (char-by-char)", () => {
+      const doc = new Y.Doc();
+      const text = doc.getText("t");
+      for (let i = 0; i < 100; i++) {
+        text.insert(i, String.fromCharCode(65 + (i % 26)));
+      }
+      expectV1RawByteExact("char-by-char", getV1Update(doc));
+    });
+
+    it("byte-exact: merged two-client update", () => {
+      const doc1 = new Y.Doc();
+      const doc2 = new Y.Doc();
+      doc1.getText("t").insert(0, "Hello");
+      Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
+      doc1.getText("t").insert(5, " from A");
+      doc2.getText("t").insert(5, " from B");
+      Y.applyUpdate(doc1, Y.encodeStateAsUpdate(doc2));
+      Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
+      expectV1RawByteExact("merged clients", Y.encodeStateAsUpdate(doc1));
+    });
+
+    it("byte-exact: xml with attributes", () => {
+      const doc = new Y.Doc();
+      const frag = doc.getXmlFragment("xml");
+      const el = new Y.XmlElement("div");
+      frag.insert(0, [el]);
+      el.setAttribute("class", "container");
+      el.insert(0, [new Y.XmlText("hello")]);
+      expectV1RawByteExact("xml", getV1Update(doc));
+    });
+
+    it("byte-exact: subdocument", () => {
+      const doc = new Y.Doc();
+      doc.getMap("docs").set("child", new Y.Doc({ guid: "subdoc-1" }));
+      expectV1RawByteExact("subdoc", getV1Update(doc));
+    });
+
+    it("V1-raw sidecar has same entries as V2 sidecar", () => {
+      const doc = makeDoc((d) => {
+        d.getText("t").insert(0, "Hello World");
+        d.getText("t").format(0, 5, { bold: true });
+        d.getMap("m").set("key", "value");
+        d.getArray("a").insert(0, [1, 2, 3]);
+      });
+      const update = getV1Update(doc);
+      const v2Result = stripContent(update, 1);
+      const v1Result = stripContent(update, 1, false);
+
+      expect(v1Result.sidecar.entries.length).toBe(v2Result.sidecar.entries.length);
+      for (let i = 0; i < v1Result.sidecar.entries.length; i++) {
+        const v1e = v1Result.sidecar.entries[i];
+        const v2e = v2Result.sidecar.entries[i];
+        expect(v1e.clientId).toBe(v2e.clientId);
+        expect(v1e.clock).toBe(v2e.clock);
+        expect(v1e.contentRef).toBe(v2e.contentRef);
+        expect(v1e.itemLength).toBe(v2e.itemLength);
+        expect(Buffer.from(v1e.data)).toEqual(Buffer.from(v2e.data));
+      }
+    });
+
+    it("V1-raw structure update is valid Y.js V1 update", () => {
+      const doc = makeDoc((d) => d.getText("t").insert(0, "Secret text"));
+      const { update: stripped } = stripContent(getV1Update(doc), 1, false);
+      const doc2 = new Y.Doc();
+      expect(() => Y.applyUpdate(doc2, stripped)).not.toThrow();
+    });
+
+    it("empty dictionary when tokenize is false", () => {
+      const doc = makeDoc((d) => {
+        d.getMap("m").set("key", "value");
+      });
+      const { sidecar } = stripContent(getV1Update(doc), 1, false);
+      expect(sidecar.dictionary.size).toBe(0);
+    });
+
+    it("metadata strings are NOT tokenized", () => {
+      const doc = makeDoc((d) => {
+        d.getMap("m").set("password", "hunter2");
+      });
+      const { update: stripped } = stripContent(getV1Update(doc), 1, false);
+      const strippedStr = Buffer.from(stripped).toString("utf-8");
+      expect(strippedStr).toContain("password");
+      expect(strippedStr).not.toContain("hunter2");
+    });
   });
 
   describe("sidecar index", () => {

@@ -1,14 +1,19 @@
 import { digest } from "lib0/hash/sha256";
 
 /**
- * Size of each chunk in bytes (64KB)
+ * Size of each chunk in bytes (1MB)
  */
-export const CHUNK_SIZE = 64 * 1024;
+export const CHUNK_SIZE = 1024 * 1024;
 
 /**
- * Size of each encrypted chunk in bytes (64KB - 28 bytes for the authentication tag)
+ * AES-GCM overhead per encrypted chunk: 12-byte nonce + 16-byte auth tag.
  */
-export const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE - 28;
+export const AES_GCM_OVERHEAD = 28;
+
+/**
+ * Size of each encrypted chunk in bytes (CHUNK_SIZE - AES_GCM_OVERHEAD)
+ */
+export const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE - AES_GCM_OVERHEAD;
 
 /**
  * A node in the merkle tree
@@ -52,9 +57,9 @@ export interface MerkleTree {
  * would outweigh the crypto speedup.
  */
 function hashPair(left: Uint8Array, right: Uint8Array): Uint8Array {
-  const combined = new Uint8Array(left.length + right.length);
+  const combined = new Uint8Array(64);
   combined.set(left, 0);
-  combined.set(right, left.length);
+  combined.set(right, 32);
   return digest(combined);
 }
 
@@ -129,42 +134,6 @@ export async function buildMerkleTree(chunks: Uint8Array[]): Promise<MerkleTree>
     nodes,
     leafCount,
   };
-}
-
-function buildMerkleStructure(leafCount: number): MerkleNode[] {
-  if (leafCount === 0) {
-    return [];
-  }
-
-  const nodes: MerkleNode[] = Array.from({ length: leafCount }, () => ({}) as MerkleNode);
-  let currentLevelStart = 0;
-  let currentLevelEnd = nodes.length;
-
-  while (currentLevelEnd - currentLevelStart > 1) {
-    const nextLevelStart = currentLevelEnd;
-
-    for (let i = currentLevelStart; i < currentLevelEnd; i += 2) {
-      const leftNode = nodes[i];
-      const rightIndex = i + 1 < currentLevelEnd ? i + 1 : i;
-      const rightNode = nodes[rightIndex];
-      const parentIndex = nodes.length;
-
-      const parentNode: MerkleNode = {
-        left: i,
-        right: rightIndex,
-      };
-
-      nodes.push(parentNode);
-
-      leftNode.parent = parentIndex;
-      rightNode.parent = parentIndex;
-    }
-
-    currentLevelStart = nextLevelStart;
-    currentLevelEnd = nodes.length;
-  }
-
-  return nodes;
 }
 
 /**
@@ -383,207 +352,183 @@ export interface FilePart {
 }
 
 /**
- * Stable incremental merkle tree builder that knows the complete tree structure ahead of time.
- * Allows generating stable proofs as soon as sibling hashes are available.
+ * Process a file into {@link FilePart} objects with merkle proofs, returning
+ * all parts as an array. Encrypts and hashes all chunks in parallel using
+ * `Promise.all` and builds the merkle tree in one pass.
  */
-class StableIncrementalMerkleTree {
-  private nodes: MerkleNode[];
-  private chunksAdded = 0;
-  private readonly leafCount: number;
-
-  constructor(totalChunks: number) {
-    this.leafCount = Math.max(1, totalChunks);
-    this.nodes = buildMerkleStructure(this.leafCount);
-  }
-
-  async addChunk(chunk: Uint8Array): Promise<number> {
-    if (this.chunksAdded >= this.leafCount) {
-      throw new Error("Cannot add more chunks than totalChunks");
-    }
-
-    const chunkIndex = this.chunksAdded;
-    const node = this.nodes[chunkIndex];
-    node.hash = await digestAsync(chunk);
-    this.chunksAdded++;
-
-    this.propagateParents(chunkIndex);
-    return chunkIndex;
-  }
-
-  private propagateParents(childIndex: number) {
-    let currentIndex = childIndex;
-    while (true) {
-      const parentIndex = this.nodes[currentIndex].parent;
-      if (parentIndex === undefined) {
-        break;
-      }
-
-      const parent = this.nodes[parentIndex];
-      const leftNode = this.nodes[parent.left!];
-      const rightNode = this.nodes[parent.right!];
-
-      if (!leftNode.hash || !rightNode.hash) {
-        break;
-      }
-
-      if (!parent.hash) {
-        parent.hash = hashPair(leftNode.hash, rightNode.hash);
-      }
-
-      currentIndex = parentIndex;
-    }
-  }
-
-  canGenerateProof(chunkIndex: number): boolean {
-    const node = this.nodes[chunkIndex];
-    if (!node.hash) {
-      return false;
-    }
-
-    let currentIndex = chunkIndex;
-    while (true) {
-      const parentIndex = this.nodes[currentIndex].parent;
-      if (parentIndex === undefined) {
-        break;
-      }
-
-      const parent = this.nodes[parentIndex];
-      const siblingIndex = parent.left === currentIndex ? parent.right : parent.left;
-      if (siblingIndex === undefined) {
-        return false;
-      }
-
-      const siblingHash = this.nodes[siblingIndex].hash;
-      if (!siblingHash) {
-        return false;
-      }
-
-      currentIndex = parentIndex;
-    }
-
-    return true;
-  }
-
-  generateProof(chunkIndex: number): Uint8Array[] {
-    if (!this.canGenerateProof(chunkIndex)) {
-      throw new Error("Proof is not ready yet");
-    }
-
-    const proof: Uint8Array[] = [];
-    let currentIndex = chunkIndex;
-    while (true) {
-      const parentIndex = this.nodes[currentIndex].parent;
-      if (parentIndex === undefined) {
-        break;
-      }
-
-      const parent = this.nodes[parentIndex];
-      const siblingIndex = parent.left === currentIndex ? parent.right : parent.left;
-
-      if (siblingIndex === undefined) {
-        break;
-      }
-
-      const sibling = this.nodes[siblingIndex];
-      if (!sibling.hash) {
-        break;
-      }
-
-      proof.push(sibling.hash);
-      currentIndex = parentIndex;
-    }
-
-    return proof;
-  }
-
-  getRootHash(): Uint8Array | null {
-    if (this.nodes.length === 0) {
-      return null;
-    }
-
-    const root = this.nodes.at(-1);
-    return root?.hash ?? null;
-  }
-
-  getTotalChunks(): number {
-    return this.leafCount;
-  }
-}
-
-/**
- * Chunk a file stream into {@link FilePart} objects with merkle proofs.
- *
- * Reads from a {@link ReadableStream}, splits into CHUNK_SIZE pieces, builds
- * a merkle tree incrementally, and yields each part once its proof is stable.
- * The root hash is only set on the last part.
- *
- * @param source - ReadableStream of raw file bytes (e.g. from `File.stream()`)
- * @param fileSize - Total file size in bytes
- * @param encryptChunk - Optional per-chunk encryption function
- */
-export async function* chunkFile(
+export async function processFile(
   source: ReadableStream<Uint8Array>,
   fileSize: number,
   encryptChunk?: (chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array,
-): AsyncGenerator<FilePart> {
-  const chunkSize = encryptChunk ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
-  const totalChunks = fileSize === 0 ? 1 : Math.ceil(fileSize / chunkSize);
-  const tree = new StableIncrementalMerkleTree(totalChunks);
-  let buffer = new Uint8Array(0);
-  let bytesProcessed = 0;
-  const pendingChunks = new Map<number, Uint8Array>();
-
-  function* flushReady(): Generator<FilePart> {
-    const readyIndexes: number[] = [];
-    for (const [index] of pendingChunks) {
-      if (tree.canGenerateProof(index)) {
-        readyIndexes.push(index);
-      }
-    }
-    for (const index of readyIndexes) {
-      const data = pendingChunks.get(index)!;
-      pendingChunks.delete(index);
-      const proof = tree.generateProof(index);
-      const rootHash =
-        index === totalChunks - 1 ? (tree.getRootHash() ?? new Uint8Array(0)) : new Uint8Array(0);
-      bytesProcessed += data.length;
-      yield {
-        chunkData: data,
-        chunkIndex: index,
-        merkleProof: proof,
-        totalChunks,
-        bytesProcessed,
-        rootHash,
-        encrypted: !!encryptChunk,
-      };
-    }
+  targetChunkSize?: number,
+): Promise<FilePart[]> {
+  const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  if (!Number.isFinite(wireChunkSize) || wireChunkSize <= 0) {
+    throw new Error(`targetChunkSize must be a positive finite number, got ${wireChunkSize}`);
   }
-
-  async function processChunk(raw: Uint8Array) {
-    const encoded = encryptChunk ? await encryptChunk(raw) : raw;
-    const chunkIndex = await tree.addChunk(encoded);
-    pendingChunks.set(chunkIndex, encoded);
+  if (encryptChunk && wireChunkSize <= AES_GCM_OVERHEAD) {
+    throw new Error(
+      `targetChunkSize (${wireChunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
+    );
   }
+  const chunkSize = encryptChunk ? wireChunkSize - AES_GCM_OVERHEAD : wireChunkSize;
+  const encrypted = !!encryptChunk;
 
+  // Read entire stream into a single buffer
+  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
+  let writePos = 0;
   for await (const incoming of source) {
-    const newBuffer = new Uint8Array(buffer.length + incoming.length);
-    newBuffer.set(buffer, 0);
-    newBuffer.set(incoming, buffer.length);
-    buffer = newBuffer;
-
-    while (buffer.length >= chunkSize) {
-      await processChunk(buffer.slice(0, chunkSize));
-      buffer = buffer.slice(chunkSize);
-      yield* flushReady();
+    if (writePos + incoming.length > buf.length) {
+      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
+      newBuf.set(buf.subarray(0, writePos), 0);
+      buf = newBuf;
     }
+    buf.set(incoming, writePos);
+    writePos += incoming.length;
   }
 
-  if (buffer.length > 0) {
-    await processChunk(buffer);
-  } else if (totalChunks === 1 && pendingChunks.size === 0) {
-    await processChunk(new Uint8Array(0));
+  const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
+  const rawChunks: Uint8Array[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, writePos);
+    // Use subarray (zero-copy view) when encrypting — encryption produces
+    // a fresh buffer anyway so the copy from slice is wasted.
+    rawChunks.push(
+      start < writePos
+        ? encryptChunk
+          ? buf.subarray(start, end)
+          : buf.slice(start, end)
+        : new Uint8Array(0),
+    );
   }
 
-  yield* flushReady();
-  yield* flushReady();
+  const encoded = encryptChunk
+    ? await Promise.all(rawChunks.map((c) => encryptChunk(c)))
+    : rawChunks;
+
+  // Build merkle tree in one pass (parallel leaf hashing internally)
+  const tree = await buildMerkleTree(encoded);
+  const rootHash = tree.nodes.at(-1)!.hash!;
+
+  // Generate all proofs and assemble parts
+  const parts: FilePart[] = [];
+  let bytesProcessed = 0;
+  for (let i = 0; i < totalChunks; i++) {
+    bytesProcessed += encoded[i].length;
+    parts.push({
+      chunkData: encoded[i],
+      chunkIndex: i,
+      merkleProof: generateMerkleProof(tree, i),
+      totalChunks,
+      bytesProcessed,
+      rootHash: i === totalChunks - 1 ? rootHash : new Uint8Array(0),
+      encrypted,
+    });
+  }
+
+  return parts;
+}
+
+/**
+ * A chunk emitted by {@link processFileStreaming}, ready to be sent.
+ */
+export interface StreamedFilePart {
+  /** The (encrypted) chunk data to send. */
+  chunkData: Uint8Array;
+  /** Zero-based index of this chunk. */
+  chunkIndex: number;
+  /** Total number of chunks in the file. */
+  totalChunks: number;
+  /** Cumulative bytes emitted so far (including this chunk). */
+  bytesProcessed: number;
+  /** Whether the chunk is encrypted. */
+  encrypted: boolean;
+}
+
+/**
+ * Pipelined upload processing. Encrypts every chunk concurrently and invokes
+ * `onPart` for each one the moment its ciphertext is ready — so the caller can
+ * start sending while later chunks are still encrypting — then folds the merkle
+ * root once all leaves are hashed and returns it.
+ *
+ * Unlike {@link processFile} this does NOT produce per-chunk merkle proofs. On
+ * upload the server ignores the proof and rebuilds the tree from the stored
+ * chunks (the chunks ARE the content, so the server's tree always matches),
+ * so generating proofs here would be wasted work and would force the whole tree
+ * to be built before anything could be sent. The root is still returned for the
+ * content id / resolved fileId. Download proofs are unaffected — those are
+ * generated server-side from its rebuilt tree.
+ *
+ * The returned root is byte-identical to {@link processFile}'s for the same
+ * chunks (both fold via {@link buildMerkleTree}).
+ */
+export async function processFileStreaming(
+  source: ReadableStream<Uint8Array>,
+  fileSize: number,
+  encryptChunk: ((chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array) | undefined,
+  onPart: (part: StreamedFilePart) => void,
+  targetChunkSize?: number,
+): Promise<{ totalChunks: number; rootHash: Uint8Array }> {
+  const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  if (!Number.isFinite(wireChunkSize) || wireChunkSize <= 0) {
+    throw new Error(`targetChunkSize must be a positive finite number, got ${wireChunkSize}`);
+  }
+  if (encryptChunk && wireChunkSize <= AES_GCM_OVERHEAD) {
+    throw new Error(
+      `targetChunkSize (${wireChunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
+    );
+  }
+  const chunkSize = encryptChunk ? wireChunkSize - AES_GCM_OVERHEAD : wireChunkSize;
+  const encrypted = !!encryptChunk;
+
+  // Read entire stream into a single buffer (same as processFile).
+  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
+  let writePos = 0;
+  for await (const incoming of source) {
+    if (writePos + incoming.length > buf.length) {
+      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
+      newBuf.set(buf.subarray(0, writePos), 0);
+      buf = newBuf;
+    }
+    buf.set(incoming, writePos);
+    writePos += incoming.length;
+  }
+
+  const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
+  const encoded: Uint8Array[] = Array.from({ length: totalChunks });
+
+  // Encrypt every chunk concurrently. Each chunk is emitted for sending the
+  // moment its own encryption resolves, so emissions interleave with the
+  // encryption of later chunks instead of waiting for the whole batch.
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const idx = i;
+    const start = idx * chunkSize;
+    const end = Math.min(start + chunkSize, writePos);
+    // Zero-copy view when encrypting (encryption produces a fresh buffer);
+    // copy when not, so the emitted chunk doesn't alias the read buffer.
+    const raw =
+      start < writePos
+        ? encryptChunk
+          ? buf.subarray(start, end)
+          : buf.slice(start, end)
+        : new Uint8Array(0);
+    tasks.push(
+      (async () => {
+        const enc = encryptChunk ? await encryptChunk(raw) : raw;
+        encoded[idx] = enc;
+        const bytesProcessed = end;
+        onPart({ chunkData: enc, chunkIndex: idx, totalChunks, bytesProcessed, encrypted });
+      })(),
+    );
+  }
+  await Promise.all(tasks);
+
+  // Fold the merkle root from the already-encrypted chunks. Leaf hashing
+  // dominates and is parallelized inside buildMerkleTree; building the node
+  // array (vs. computing only the root) is negligible and keeps a single,
+  // shared fold so the root can never diverge from processFile's.
+  const tree = await buildMerkleTree(encoded);
+  return { totalChunks, rootHash: tree.nodes.at(-1)!.hash! };
 }

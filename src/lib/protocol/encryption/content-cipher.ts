@@ -62,26 +62,8 @@ const TOKEN_LABEL = "teleportal:metadata-token:v1:";
 /** Truncate the PRF output to 128 bits — ample to avoid metadata-key collisions. */
 const TOKEN_BYTES = 16;
 
-/** Synchronous HMAC-SHA256 built on lib0's sync SHA-256 digest. */
-function hmacSha256(keyBytes: Uint8Array, message: Uint8Array): Uint8Array {
-  let key = keyBytes;
-  if (key.length > HMAC_BLOCK_SIZE) key = sha256(key);
-  const block = new Uint8Array(HMAC_BLOCK_SIZE);
-  block.set(key);
-
-  const ipad = new Uint8Array(HMAC_BLOCK_SIZE + message.length);
-  const opad = new Uint8Array(HMAC_BLOCK_SIZE + 32);
-  for (let i = 0; i < HMAC_BLOCK_SIZE; i++) {
-    ipad[i] = block[i] ^ 0x36;
-    opad[i] = block[i] ^ 0x5c;
-  }
-  ipad.set(message, HMAC_BLOCK_SIZE);
-  opad.set(sha256(ipad), HMAC_BLOCK_SIZE);
-  return sha256(opad);
-}
-
 const HEX: string[] = /* @__PURE__ */ (() => {
-  const t = new Array<string>(256);
+  const t = Array.from<string>({ length: 256 });
   for (let i = 0; i < 256; i++) t[i] = i.toString(16).padStart(2, "0");
   return t;
 })();
@@ -152,11 +134,11 @@ export function createKeyedTokenizer(keyBytes: Uint8Array): (str: string) => str
  * production path (`encryptUpdateContent`) always supplies a keyed tokenizer.
  */
 function unkeyedToken(str: string): string {
-  let hash = 5381n;
+  let hash = 5381;
   for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5n) + hash + BigInt(str.charCodeAt(i))) & 0xffffffffffffffffn;
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
   }
-  return hash.toString(36);
+  return (hash >>> 0).toString(36);
 }
 
 // ── Sidecar types ───────────────────────────────────────────────────────────
@@ -392,14 +374,15 @@ export function mergeSidecars(sidecars: Sidecar[]): Sidecar {
 
 // ── Sidecar lookup ──────────────────────────────────────────────────────────
 
-function sidecarKey(clientId: number, clock: number): string {
-  return `${clientId}:${clock}`;
-}
-
-function buildSidecarMap(entries: ContentEntry[]): Map<string, ContentEntry> {
-  const map = new Map<string, ContentEntry>();
+function buildSidecarMap(entries: ContentEntry[]): Map<number, Map<number, ContentEntry>> {
+  const map = new Map<number, Map<number, ContentEntry>>();
   for (const entry of entries) {
-    map.set(sidecarKey(entry.clientId, entry.clock), entry);
+    let clientMap = map.get(entry.clientId);
+    if (!clientMap) {
+      clientMap = new Map();
+      map.set(entry.clientId, clientMap);
+    }
+    clientMap.set(entry.clock, entry);
   }
   return map;
 }
@@ -724,6 +707,22 @@ function copyItemMetadata(
   }
 }
 
+/** Advance the decoder past item metadata without writing (read-only skip). */
+function skipItemMetadata(decoder: UpdateDecoder, info: number): void {
+  const hasOrigin = (info & BIT8) !== 0;
+  const hasRightOrigin = (info & BIT7) !== 0;
+  const hasParentSub = (info & BIT6) !== 0;
+
+  if (hasOrigin) decoder.readLeftID();
+  if (hasRightOrigin) decoder.readRightID();
+  if (!hasOrigin && !hasRightOrigin) {
+    const isYKey = decoder.readParentInfo();
+    if (isYKey) decoder.readString();
+    else decoder.readLeftID();
+    if (hasParentSub) decoder.readString();
+  }
+}
+
 // ── Delete set copier (abstract DS decoder/encoder) ───────────────────────
 
 function copyDeleteSet(decoder: UpdateDecoder, encoder: UpdateEncoder): void {
@@ -758,18 +757,489 @@ function hasEncryptableContent(contentRef: number): boolean {
   );
 }
 
+// ── V1 raw-byte helpers (bypass Y.js decoder/encoder entirely) ─────────────
+//
+// These functions operate directly on lib0 Decoder byte streams, avoiding
+// Y.js's abstract decoder layer and — crucially — avoiding string/object
+// allocation when we only need to advance past data or compute a length.
+
+/** Advance past a varString without UTF-8 decoding or string allocation. */
+function skipVarString(dec: decoding.Decoder): void {
+  // Cannot use `dec.pos += readVarUint(dec)` — JS evaluates `dec.pos`
+  // before `readVarUint` mutates it, discarding the position advance.
+  const len = decoding.readVarUint(dec);
+  dec.pos += len;
+}
+
+/** Advance past a varUint without computing its value. */
+function skipVarUint(dec: decoding.Decoder): void {
+  while (dec.arr[dec.pos++] >= 0x80) {}
+}
+
+/** Advance past a lib0 `any` value without allocating JS objects. */
+function skipAny(dec: decoding.Decoder): void {
+  const type = dec.arr[dec.pos++];
+  switch (type) {
+    case 127: // undefined
+    case 126: // null
+    case 121: // false
+    case 120: // true
+      break;
+    case 125: // integer (varInt — same continuation encoding as varUint)
+      while (dec.arr[dec.pos++] >= 0x80) {}
+      break;
+    case 124: // float32
+      dec.pos += 4;
+      break;
+    case 123: // float64
+      dec.pos += 8;
+      break;
+    case 122: // BigInt64
+      dec.pos += 8;
+      break;
+    case 119: // string
+      skipVarString(dec);
+      break;
+    case 118: {
+      // object
+      let len = decoding.readVarUint(dec);
+      while (len-- > 0) {
+        skipVarString(dec);
+        skipAny(dec);
+      }
+      break;
+    }
+    case 117: {
+      // array
+      let len = decoding.readVarUint(dec);
+      while (len-- > 0) skipAny(dec);
+      break;
+    }
+    case 116: // Uint8Array
+      {
+        const n = decoding.readVarUint(dec);
+        dec.pos += n;
+      }
+      break;
+  }
+}
+
+/**
+ * Compute the UTF-16 `.length` of a varString without creating a JS string.
+ * For ASCII-only content (the common case), length === byteLength.
+ */
+function readVarStringLength(dec: decoding.Decoder): number {
+  const byteLen = decoding.readVarUint(dec);
+  const start = dec.pos;
+  const end = start + byteLen;
+  const arr = dec.arr;
+  dec.pos = end;
+
+  let i = start;
+  for (; i < end; i++) {
+    if (arr[i] >= 0x80) break;
+  }
+  if (i === end) return byteLen;
+
+  let utf16Len = i - start;
+  while (i < end) {
+    const b = arr[i];
+    if (b < 0x80) {
+      i++;
+      utf16Len++;
+    } else if (b < 0xe0) {
+      i += 2;
+      utf16Len++;
+    } else if (b < 0xf0) {
+      i += 3;
+      utf16Len++;
+    } else {
+      i += 4;
+      utf16Len += 2;
+    }
+  }
+  return utf16Len;
+}
+
+function skipItemMetadataV1Raw(dec: decoding.Decoder, info: number): void {
+  const hasOrigin = (info & BIT8) !== 0;
+  const hasRightOrigin = (info & BIT7) !== 0;
+  const hasParentSub = (info & BIT6) !== 0;
+  if (hasOrigin) {
+    skipVarUint(dec);
+    skipVarUint(dec);
+  }
+  if (hasRightOrigin) {
+    skipVarUint(dec);
+    skipVarUint(dec);
+  }
+  if (!hasOrigin && !hasRightOrigin) {
+    const isYKey = decoding.readVarUint(dec) === 1;
+    if (isYKey) skipVarString(dec);
+    else {
+      skipVarUint(dec);
+      skipVarUint(dec);
+    }
+    if (hasParentSub) skipVarString(dec);
+  }
+}
+
+function skipContentV1Raw(dec: decoding.Decoder, contentRef: number): number {
+  switch (contentRef) {
+    case CONTENT_DELETED:
+      return decoding.readVarUint(dec);
+    case CONTENT_JSON: {
+      const count = decoding.readVarUint(dec);
+      for (let i = 0; i < count; i++) skipVarString(dec);
+      return count;
+    }
+    case CONTENT_BINARY:
+      {
+        const n = decoding.readVarUint(dec);
+        dec.pos += n;
+      }
+      return 1;
+    case CONTENT_STRING:
+      return readVarStringLength(dec);
+    case CONTENT_EMBED:
+      skipVarString(dec);
+      return 1;
+    case CONTENT_FORMAT:
+      skipVarString(dec);
+      skipVarString(dec);
+      return 1;
+    case CONTENT_TYPE: {
+      const typeRef = decoding.readVarUint(dec);
+      if (typeRef === 3 || typeRef === 5) skipVarString(dec);
+      return 1;
+    }
+    case CONTENT_ANY: {
+      const count = decoding.readVarUint(dec);
+      for (let i = 0; i < count; i++) skipAny(dec);
+      return count;
+    }
+    case CONTENT_DOC:
+      skipVarString(dec);
+      skipAny(dec);
+      return 1;
+    default:
+      throw new Error(`Unknown content ref: ${contentRef}`);
+  }
+}
+
+// Pre-allocated "null" varString bytes: varUint(4) + "null" = [4, 110, 117, 108, 108]
+const NULL_VARSTRING = /* @__PURE__ */ (() => {
+  const e = encoding.createEncoder();
+  encoding.writeVarString(e, "null");
+  return encoding.toUint8Array(e);
+})();
+// Pre-allocated "\0" varString bytes: varUint(1) + 0x00 = [1, 0]
+const NUL_VARSTRING = new Uint8Array([1, 0]);
+// Pre-allocated null any byte: type 126
+const NULL_ANY = new Uint8Array([126]);
+
+function writePlaceholderContentV1Raw(
+  enc: encoding.Encoder,
+  contentRef: number,
+  itemLength: number,
+): void {
+  switch (contentRef) {
+    case CONTENT_JSON:
+      encoding.writeVarUint(enc, itemLength);
+      for (let i = 0; i < itemLength; i++) encoding.writeUint8Array(enc, NULL_VARSTRING);
+      break;
+    case CONTENT_BINARY:
+      encoding.writeVarUint(enc, 0);
+      break;
+    case CONTENT_STRING:
+      encoding.writeVarUint(enc, itemLength);
+      encoding.writeUint8Array(enc, new Uint8Array(itemLength));
+      break;
+    case CONTENT_EMBED:
+      encoding.writeUint8Array(enc, NULL_VARSTRING);
+      break;
+    case CONTENT_FORMAT:
+      encoding.writeUint8Array(enc, NUL_VARSTRING);
+      encoding.writeUint8Array(enc, NULL_VARSTRING);
+      break;
+    case CONTENT_ANY: {
+      encoding.writeVarUint(enc, itemLength);
+      for (let i = 0; i < itemLength; i++) encoding.writeUint8Array(enc, NULL_ANY);
+      break;
+    }
+    case CONTENT_DOC:
+      encoding.writeUint8Array(enc, NUL_VARSTRING);
+      encoding.writeUint8Array(enc, NULL_ANY);
+      break;
+    default:
+      throw new Error(`Unknown content ref: ${contentRef}`);
+  }
+}
+
+function writeSlicedContentV1Raw(
+  enc: encoding.Encoder,
+  contentRef: number,
+  data: Uint8Array,
+  offset: number,
+): void {
+  const dec = decoding.createDecoder(data);
+  switch (contentRef) {
+    case CONTENT_STRING:
+      encoding.writeVarString(enc, decoding.readVarString(dec).slice(offset));
+      break;
+    case CONTENT_JSON: {
+      const count = decoding.readVarUint(dec);
+      for (let i = 0; i < offset; i++) decoding.readVarString(dec);
+      const remaining = count - offset;
+      encoding.writeVarUint(enc, remaining);
+      for (let i = 0; i < remaining; i++) encoding.writeVarString(enc, decoding.readVarString(dec));
+      break;
+    }
+    case CONTENT_ANY: {
+      const count = decoding.readVarUint(dec);
+      for (let i = 0; i < offset; i++) decoding.readAny(dec);
+      const remaining = count - offset;
+      encoding.writeVarUint(enc, remaining);
+      for (let i = 0; i < remaining; i++) encoding.writeAny(enc, decoding.readAny(dec));
+      break;
+    }
+    default:
+      throw new Error(`restoreContent: cannot slice content ref ${contentRef} at offset ${offset}`);
+  }
+}
+
+/**
+ * V1→V1 fast path: strip content using raw lib0 byte operations.
+ * No Y.js decoder/encoder creation, no metadata tokenization,
+ * no V1→V2 format conversion. Metadata bytes are copied directly.
+ */
+function stripContentV1Raw(update: Uint8Array): StrippedUpdate {
+  const dec = decoding.createDecoder(update);
+  const enc = encoding.createEncoder();
+  const entries: ContentEntry[] = [];
+
+  const numClients = decoding.readVarUint(dec);
+  encoding.writeVarUint(enc, numClients);
+
+  for (let c = 0; c < numClients; c++) {
+    const numStructs = decoding.readVarUint(dec);
+    encoding.writeVarUint(enc, numStructs);
+
+    const clientId = decoding.readVarUint(dec);
+    encoding.writeVarUint(enc, clientId);
+
+    let clock = decoding.readVarUint(dec);
+    encoding.writeVarUint(enc, clock);
+
+    for (let s = 0; s < numStructs; s++) {
+      const info = decoding.readUint8(dec);
+      encoding.writeUint8(enc, info);
+
+      const contentRef = info & BITS5;
+
+      if (contentRef === 0 || contentRef === 10) {
+        const start = dec.pos;
+        clock += decoding.readVarUint(dec);
+        encoding.writeUint8Array(enc, update.subarray(start, dec.pos));
+        continue;
+      }
+
+      // Copy metadata bytes directly (no tokenization needed)
+      const metaStart = dec.pos;
+      skipItemMetadataV1Raw(dec, info);
+      encoding.writeUint8Array(enc, update.subarray(metaStart, dec.pos));
+
+      if (hasEncryptableContent(contentRef)) {
+        const contentStart = dec.pos;
+        const itemLength = skipContentV1Raw(dec, contentRef);
+        entries.push({
+          clientId,
+          clock,
+          contentRef,
+          data: update.subarray(contentStart, dec.pos),
+          itemLength,
+        });
+        writePlaceholderContentV1Raw(enc, contentRef, itemLength);
+        clock += itemLength;
+      } else if (contentRef === CONTENT_TYPE) {
+        const start = dec.pos;
+        const typeRef = decoding.readVarUint(dec);
+        if (typeRef === 3 || typeRef === 5) decoding.readVarString(dec);
+        encoding.writeUint8Array(enc, update.subarray(start, dec.pos));
+        clock += 1;
+      } else {
+        const start = dec.pos;
+        clock += decoding.readVarUint(dec);
+        encoding.writeUint8Array(enc, update.subarray(start, dec.pos));
+      }
+    }
+  }
+
+  if (dec.pos < update.length) {
+    encoding.writeUint8Array(enc, update.subarray(dec.pos));
+  }
+
+  return {
+    update: encoding.toUint8Array(enc),
+    sidecar: { entries, dictionary: new Map() },
+  };
+}
+
+/**
+ * V1 fast path for restoreContent: bypass Y.js decoder/encoder, work directly
+ * with lib0 byte operations. Structure update must be V1 format.
+ */
+function restoreContentV1Raw(structureUpdate: Uint8Array, sidecar: Sidecar): Uint8Array {
+  const dec = decoding.createDecoder(structureUpdate);
+  const enc = encoding.createEncoder();
+  const entryMap = buildSidecarMap(sidecar.entries);
+  let rangeIndex: Map<number, ContentEntry[]> | undefined;
+
+  const numClients = decoding.readVarUint(dec);
+  encoding.writeVarUint(enc, numClients);
+
+  for (let c = 0; c < numClients; c++) {
+    const numStructs = decoding.readVarUint(dec);
+    encoding.writeVarUint(enc, numStructs);
+
+    const clientId = decoding.readVarUint(dec);
+    encoding.writeVarUint(enc, clientId);
+
+    let clock = decoding.readVarUint(dec);
+    encoding.writeVarUint(enc, clock);
+
+    for (let s = 0; s < numStructs; s++) {
+      const info = decoding.readUint8(dec);
+      encoding.writeUint8(enc, info);
+
+      const contentRef = info & BITS5;
+
+      if (contentRef === 0 || contentRef === 10) {
+        const start = dec.pos;
+        clock += decoding.readVarUint(dec);
+        encoding.writeUint8Array(enc, structureUpdate.subarray(start, dec.pos));
+        continue;
+      }
+
+      const metaStart = dec.pos;
+      skipItemMetadataV1Raw(dec, info);
+      encoding.writeUint8Array(enc, structureUpdate.subarray(metaStart, dec.pos));
+
+      if (hasEncryptableContent(contentRef)) {
+        let entry = entryMap.get(clientId)?.get(clock);
+        let offset = 0;
+        if (!entry) {
+          rangeIndex ??= buildSidecarRangeIndex(sidecar.entries);
+          const containing = findContainingEntry(rangeIndex.get(clientId), clock);
+          if (containing) {
+            entry = containing;
+            offset = clock - containing.clock;
+          }
+        }
+        if (!entry) {
+          throw new Error(
+            `restoreContent: missing sidecar entry for encryptable content ` +
+              `(clientId=${clientId}, clock=${clock}, contentRef=${contentRef})`,
+          );
+        }
+        const itemLength = skipContentV1Raw(dec, contentRef);
+        if (offset === 0) {
+          encoding.writeUint8Array(enc, entry.data);
+        } else {
+          writeSlicedContentV1Raw(enc, contentRef, entry.data, offset);
+        }
+        clock += itemLength;
+      } else if (contentRef === CONTENT_TYPE) {
+        const start = dec.pos;
+        const typeRef = decoding.readVarUint(dec);
+        if (typeRef === 3 || typeRef === 5) decoding.readVarString(dec);
+        encoding.writeUint8Array(enc, structureUpdate.subarray(start, dec.pos));
+        clock += 1;
+      } else {
+        const start = dec.pos;
+        clock += decoding.readVarUint(dec);
+        encoding.writeUint8Array(enc, structureUpdate.subarray(start, dec.pos));
+      }
+    }
+  }
+
+  if (dec.pos < structureUpdate.length) {
+    encoding.writeUint8Array(enc, structureUpdate.subarray(dec.pos));
+  }
+
+  return encoding.toUint8Array(enc);
+}
+
+function collectAliveContentRangesV1(structureUpdate: Uint8Array): Map<number, AliveRange[]> {
+  const dec = decoding.createDecoder(structureUpdate);
+  const alive = new Map<number, AliveRange[]>();
+
+  const numClients = decoding.readVarUint(dec);
+  for (let c = 0; c < numClients; c++) {
+    const numStructs = decoding.readVarUint(dec);
+    const clientId = decoding.readVarUint(dec);
+    let clock = decoding.readVarUint(dec);
+
+    for (let s = 0; s < numStructs; s++) {
+      const info = decoding.readUint8(dec);
+      const contentRef = info & BITS5;
+
+      if (contentRef === 0 || contentRef === 10) {
+        clock += decoding.readVarUint(dec);
+        continue;
+      }
+
+      skipItemMetadataV1Raw(dec, info);
+
+      if (hasEncryptableContent(contentRef)) {
+        const itemLength = skipContentV1Raw(dec, contentRef);
+        let ranges = alive.get(clientId);
+        if (!ranges) {
+          ranges = [];
+          alive.set(clientId, ranges);
+        }
+        ranges.push({ clock, length: itemLength });
+        clock += itemLength;
+      } else if (contentRef === CONTENT_TYPE) {
+        const typeRef = decoding.readVarUint(dec);
+        if (typeRef === 3 || typeRef === 5) decoding.readVarString(dec);
+        clock += 1;
+      } else {
+        clock += decoding.readVarUint(dec);
+      }
+    }
+  }
+
+  return alive;
+}
+
 /**
  * Parse a Y.js update and separate CRDT metadata from content.
  *
- * Accepts V1 or V2 input (via `version` parameter, default V2). Always
- * outputs a V2 structure update with placeholder content and a sidecar
- * containing the original content entries.
+ * Accepts V1 or V2 input (via `version` parameter, default V2).
+ *
+ * With a tokenizer (default or custom): outputs a V2 structure update with
+ * tokenized metadata strings. Used for encryption where field names must be
+ * opaque to the server.
+ *
+ * With `tokenize: false`: outputs a V1 structure update using a zero-copy
+ * fast path — no Y.js decoder/encoder objects, no format conversion, raw
+ * byte operations only. Used for unencrypted updates where content-cipher
+ * is the universal format.
  */
 export function stripContent(
   update: Uint8Array,
   version: 1 | 2 = 2,
-  tokenize: (str: string) => string = unkeyedToken,
+  tokenize: ((str: string) => string) | false = unkeyedToken,
 ): StrippedUpdate {
+  if (tokenize === false) {
+    if (version !== 1) {
+      throw new Error("stripContent: tokenize=false is only supported with version=1");
+    }
+    return stripContentV1Raw(update);
+  }
+  const tokenizeFn = tokenize || unkeyedToken;
+
   const rawDecoder = decoding.createDecoder(update);
   const decoder: UpdateDecoder =
     version === 2 ? new Y.UpdateDecoderV2(rawDecoder) : new Y.UpdateDecoderV1(rawDecoder);
@@ -779,10 +1249,15 @@ export function stripContent(
   const dictionary: MetadataDictionary = new Map();
   const origToToken = new Map<string, string>();
 
+  // V1 fast path: raw bytes in the V1 decoder use the same lib0 encoding as
+  // our canonical sidecar format. Capture byte ranges directly from the
+  // decoder buffer to avoid allocating an intermediate encoder per entry.
+  const isV1 = version === 1;
+
   function replaceString(original: string): string {
     let token = origToToken.get(original);
     if (!token) {
-      token = tokenize(original);
+      token = tokenizeFn(original);
       origToToken.set(original, token);
       dictionary.set(token, original);
     }
@@ -830,7 +1305,20 @@ export function stripContent(
 
       // Content — either strip or copy verbatim
       if (hasEncryptableContent(contentRef)) {
-        const { data, itemLength } = readContentToSidecar(decoder, contentRef);
+        let data: Uint8Array;
+        let itemLength: number;
+
+        if (isV1) {
+          // V1 fast path: capture raw bytes from the decoder buffer.
+          // For V1, all content reads go through restDecoder, and the
+          // lib0 encoding format matches our canonical sidecar format.
+          const startPos = rawDecoder.pos;
+          itemLength = skipContent(decoder, contentRef);
+          data = update.subarray(startPos, rawDecoder.pos);
+        } else {
+          ({ data, itemLength } = readContentToSidecar(decoder, contentRef));
+        }
+
         entries.push({ clientId, clock, contentRef, data, itemLength });
         writePlaceholderContent(encoder, contentRef, itemLength);
         clock += itemLength;
@@ -862,16 +1350,27 @@ export function stripContent(
 /**
  * Restore original content into a structure update using sidecar entries.
  *
- * Takes a V2 structure update (with placeholder content) and the original
+ * Takes a structure update (with placeholder content) and the original
  * content entries, and produces the cleartext update.
  *
  * Output version defaults to V2. Pass `outputVersion: 1` for V1 output.
+ *
+ * When `structureVersion: 1`, uses a raw-byte fast path that bypasses
+ * Y.js decoder/encoder objects entirely. Use this with structure updates
+ * produced by `stripContent(..., false)`.
  */
 export function restoreContent(
   structureUpdate: Uint8Array,
   sidecar: Sidecar,
   outputVersion: 1 | 2 = 2,
+  structureVersion: 1 | 2 = 2,
 ): Uint8Array {
+  if (structureVersion === 1) {
+    if (outputVersion !== 1) {
+      throw new Error("restoreContent: structureVersion=1 requires outputVersion=1");
+    }
+    return restoreContentV1Raw(structureUpdate, sidecar);
+  }
   const entryMap = buildSidecarMap(sidecar.entries);
   let rangeIndex: Map<number, ContentEntry[]> | undefined;
   const rawDecoder = decoding.createDecoder(structureUpdate);
@@ -879,6 +1378,11 @@ export function restoreContent(
   const encoder: UpdateEncoder =
     outputVersion === 2 ? new Y.UpdateEncoderV2() : new Y.UpdateEncoderV1();
   const reverseTransform = (token: string) => sidecar.dictionary.get(token) ?? token;
+
+  // V1 fast path: sidecar data bytes match V1 encoding format exactly, so
+  // we can write them directly to the V1 encoder's restEncoder without
+  // decoding + re-encoding each content field.
+  const v1RestEncoder = outputVersion === 1 ? (encoder as any).restEncoder : null;
 
   // ── Struct section ──────────────────────────────────────────────────────
   const numClients = decoding.readVarUint(decoder.restDecoder);
@@ -920,13 +1424,9 @@ export function restoreContent(
       copyItemMetadata(decoder, encoder, info, reverseTransform);
 
       if (hasEncryptableContent(contentRef)) {
-        let entry = entryMap.get(sidecarKey(clientId, clock));
+        let entry = entryMap.get(clientId)?.get(clock);
         let offset = 0;
         if (!entry) {
-          // Y.diffUpdateV2 slices a multi-clock content item when the peer
-          // holds a prefix, so the struct's clock can fall inside an entry's
-          // range rather than on its start. Locate the containing entry and
-          // restore the matching tail.
           rangeIndex ??= buildSidecarRangeIndex(sidecar.entries);
           const containing = findContainingEntry(rangeIndex.get(clientId), clock);
           if (containing) {
@@ -934,22 +1434,20 @@ export function restoreContent(
             offset = clock - containing.clock;
           }
         }
-        // An encryptable item's placeholder content is NOT length-prefixed
-        // (e.g. a string, embed JSON, or binary buffer), so we cannot fall
-        // back to reading a length here. A missing entry means the sidecar
-        // set is incomplete for this structure update — fail loudly rather
-        // than silently desyncing the decoder and corrupting the rest of
-        // the update.
         if (!entry) {
           throw new Error(
             `restoreContent: missing sidecar entry for encryptable content ` +
               `(clientId=${clientId}, clock=${clock}, contentRef=${contentRef})`,
           );
         }
-        // Skip placeholder content in the structure update
         const itemLength = skipContent(decoder, contentRef);
-        // Write original content (sliced to match the placeholder) from sidecar
-        writeSlicedContentFromSidecar(encoder, contentRef, entry.data, offset);
+        if (v1RestEncoder && offset === 0) {
+          // V1 fast path: write sidecar bytes directly — the lib0 encoding
+          // format in the sidecar is identical to V1 content encoding.
+          encoding.writeUint8Array(v1RestEncoder, entry.data);
+        } else {
+          writeSlicedContentFromSidecar(encoder, contentRef, entry.data, offset);
+        }
         clock += itemLength;
       } else if (contentRef === CONTENT_TYPE) {
         const typeRef = decoder.readTypeRef();
@@ -1084,4 +1582,97 @@ export async function compactSidecars(
   const index = buildSidecarIndex(merged);
 
   return { encrypted, index, hash: hashSidecar(encrypted) };
+}
+
+// ── Sidecar garbage collection ─────────────────────────────────────────────
+
+type AliveRange = { clock: number; length: number };
+
+/**
+ * Scan a V2 structure update and collect the (clientId, clock, length) ranges
+ * for every item that carries encryptable content. GC structs, Skip structs,
+ * ContentDeleted, and ContentType are excluded — they have no sidecar entry.
+ */
+function collectAliveContentRanges(structureUpdate: Uint8Array): Map<number, AliveRange[]> {
+  const rawDecoder = decoding.createDecoder(structureUpdate);
+  const decoder = new Y.UpdateDecoderV2(rawDecoder);
+  const alive = new Map<number, AliveRange[]>();
+
+  const numClients = decoding.readVarUint(decoder.restDecoder);
+
+  for (let c = 0; c < numClients; c++) {
+    const numStructs = decoding.readVarUint(decoder.restDecoder);
+    const clientId = decoder.readClient();
+    let clock = decoding.readVarUint(decoder.restDecoder);
+
+    for (let s = 0; s < numStructs; s++) {
+      const info = decoder.readInfo();
+      const contentRef = info & BITS5;
+
+      if (contentRef === 0) {
+        clock += decoder.readLen();
+        continue;
+      }
+      if (contentRef === 10) {
+        clock += decoding.readVarUint(decoder.restDecoder);
+        continue;
+      }
+
+      skipItemMetadata(decoder, info);
+
+      if (hasEncryptableContent(contentRef)) {
+        const itemLength = skipContent(decoder, contentRef);
+        let ranges = alive.get(clientId);
+        if (!ranges) {
+          ranges = [];
+          alive.set(clientId, ranges);
+        }
+        ranges.push({ clock, length: itemLength });
+        clock += itemLength;
+      } else if (contentRef === CONTENT_TYPE) {
+        const typeRef = decoder.readTypeRef();
+        if (typeRef === 3 || typeRef === 5) decoder.readKey();
+        clock += 1;
+      } else {
+        clock += decoder.readLen();
+      }
+    }
+  }
+
+  return alive;
+}
+
+/**
+ * Remove sidecar entries whose entire clock range has been garbage-collected
+ * in the structure update. An entry is kept if ANY of its clock range
+ * `[clock, clock + itemLength)` overlaps with an alive encryptable item.
+ *
+ * The dictionary is preserved as-is — tokens may still be referenced by
+ * metadata strings in the structure update.
+ */
+export function gcSidecar(
+  structureUpdate: Uint8Array,
+  sidecar: Sidecar,
+  structureVersion: 1 | 2 = 2,
+): Sidecar {
+  const alive =
+    structureVersion === 1
+      ? collectAliveContentRangesV1(structureUpdate)
+      : collectAliveContentRanges(structureUpdate);
+
+  const entries = sidecar.entries.filter((entry) => {
+    const ranges = alive.get(entry.clientId);
+    if (!ranges) return false;
+
+    const entryEnd = entry.clock + entry.itemLength;
+    for (const range of ranges) {
+      const rangeEnd = range.clock + range.length;
+      if (range.clock < entryEnd && rangeEnd > entry.clock) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  return { entries, dictionary: sidecar.dictionary };
 }

@@ -730,6 +730,32 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
             return;
           }
 
+          // Fast path for RPC stream messages (file chunks): skip wideEvent
+          // construction, metrics observation, and event dispatch. The ACK is
+          // still published over pubsub like every other message so it reaches
+          // the client when its connection lives on a different server node.
+          if (message.type === "rpc" && (message as RpcMessage<Context>).requestType === "stream") {
+            const session = await this.getOrOpenSession(message.document, {
+              encrypted: message.encrypted,
+              client,
+              context: message.context,
+              ignoreEncryptionMismatch: true,
+            });
+            await session.apply(message, client);
+            this.#metrics.incrementMessage(message.type);
+            const ackMessage = new AckMessage(
+              { type: "ack", messageId: message.id },
+              message.context,
+            );
+            await client.send(ackMessage);
+            await this.pubSub.publish(
+              `ack/${client.id}` as const,
+              ackMessage.encoded,
+              `server-${client.id}`,
+            );
+            return;
+          }
+
           const startTime = Date.now();
           const wideEvent: WideEvent = {
             event_type: "message",

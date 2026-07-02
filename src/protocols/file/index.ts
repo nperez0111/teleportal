@@ -5,7 +5,7 @@ export type { FileRpc, FileRpcOptions, FileUploadOptions, FileDownloadOptions } 
 
 export { fileProtocol, fileUpload, fileDownload } from "./methods";
 
-export type { FilePermissionOptions } from "./server";
+export type { FilePermissionOptions, FileHandlerOptions } from "./server";
 export type { FileClientHandlerOptions } from "./transfer";
 
 export type {

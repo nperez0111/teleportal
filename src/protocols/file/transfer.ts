@@ -1,11 +1,6 @@
 import { toBase64, fromBase64 } from "lib0/buffer";
 import { uuidv4 } from "lib0/random";
-import {
-  CHUNK_SIZE,
-  chunkFile,
-  ENCRYPTED_CHUNK_SIZE,
-  verifyMerkleProof,
-} from "teleportal/merkle-tree";
+import { CHUNK_SIZE, processFileStreaming, verifyMerkleProof } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "teleportal/protocol";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
@@ -37,12 +32,14 @@ interface UploadState {
   skipCache?: boolean;
   /** Whether a background retransmit loop is already running. */
   retransmitting: boolean;
+  /** Wire chunk size negotiated by the server. */
+  chunkSize?: number;
 }
 
 interface DownloadState {
   resolve: (file: File) => void;
   reject: (error: Error) => void;
-  fileMetadata: { filename: string; size: number; mimeType: string } | null;
+  fileMetadata: { filename: string; size: number; mimeType: string; totalChunks?: number } | null;
   chunks: Map<number, Uint8Array>;
   fileId: string;
   timeoutId: ReturnType<typeof setTimeout> | null;
@@ -136,16 +133,10 @@ class FileClientHandler implements ClientRpcHandler {
       });
     });
 
-    let encryptionOverhead = 0;
-    if (key) {
-      const numberOfChunks = file.size === 0 ? 1 : Math.ceil(file.size / ENCRYPTED_CHUNK_SIZE);
-      encryptionOverhead = numberOfChunks * (CHUNK_SIZE - ENCRYPTED_CHUNK_SIZE);
-    }
-
     const requestPayload: Record<string, unknown> = {
       fileId,
       filename: file.name,
-      size: file.size + encryptionOverhead,
+      size: file.size,
       mimeType: file.type || "application/octet-stream",
       lastModified: file.lastModified,
       encrypted: !!key,
@@ -287,6 +278,8 @@ class FileClientHandler implements ClientRpcHandler {
         size?: number;
         mimeType?: string;
         existingChunks?: number[];
+        chunkSize?: number;
+        totalChunks?: number;
       };
       details?: string;
     };
@@ -300,6 +293,7 @@ class FileClientHandler implements ClientRpcHandler {
             filename: payload.payload.filename!,
             size: payload.payload.size!,
             mimeType: payload.payload.mimeType!,
+            totalChunks: payload.payload.totalChunks,
           };
           // Check if download is complete (file parts may have arrived before this response)
           this.#checkDownloadCompletion(downloadHandler);
@@ -310,6 +304,7 @@ class FileClientHandler implements ClientRpcHandler {
       // Check if this is an upload response (just has fileId)
       const uploadHandler = this.#activeUploads.get(payload.payload.fileId);
       if (uploadHandler) {
+        uploadHandler.chunkSize = payload.payload.chunkSize;
         // Start processing the file upload
         // We don't await this - it runs in the background and the upload promise
         // resolves when all ACKs are received. Errors are caught and the upload is rejected.
@@ -403,60 +398,66 @@ class FileClientHandler implements ClientRpcHandler {
       throw new Error("File handler not initialized");
     }
 
+    const sendStreamMessage = this.#sendStreamMessage;
     const skipChunks = new Set(existingChunks);
     const cache = this.#cache && !uploadState.skipCache ? this.#cache : undefined;
     const cachedChunks: { index: number; data: Uint8Array }[] = [];
 
-    const parts = chunkFile(
+    // Set up routing context before streaming — the onPart callback fires
+    // during processing and builds messages from these.
+    uploadState.context = context ?? { documentId: uploadState.document };
+    uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
+
+    // Pipelined: each chunk is sent the instant its encryption resolves, while
+    // later chunks are still encrypting. Per-chunk merkle proofs are omitted —
+    // the server ignores them on upload and rebuilds the tree from the stored
+    // chunks (the chunks are the content, so its tree always matches). The root
+    // is returned at the end for the resolved fileId.
+    const { rootHash } = await processFileStreaming(
       uploadState.file.stream(),
       uploadState.file.size,
       uploadState.encryptionKey
         ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
+      (chunk) => {
+        if (cache) {
+          cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
+        }
+
+        if (skipChunks.has(chunk.chunkIndex)) {
+          return;
+        }
+
+        const filePart: FilePartStream = {
+          fileId: uploadState.uploadId,
+          chunkIndex: chunk.chunkIndex,
+          chunkData: chunk.chunkData,
+          merkleProof: [],
+          totalChunks: chunk.totalChunks,
+          bytesUploaded: chunk.bytesProcessed,
+          encrypted: chunk.encrypted,
+        };
+
+        uploadState.unackedChunks.set(chunk.chunkIndex, filePart);
+
+        const message = new RpcMessage<any>(
+          uploadState.document,
+          { type: "success", payload: filePart },
+          "fileUpload",
+          "stream",
+          uploadState.originalRequestId!,
+          uploadState.context,
+          chunk.encrypted,
+        );
+        sendStreamMessage(message).catch(() => {
+          // Transport failures are recovered by the retransmit loop
+        });
+        uploadState.sentChunks.set(message.id, chunk.chunkIndex);
+      },
+      uploadState.chunkSize,
     );
 
-    for await (const chunk of parts) {
-      if (chunk.rootHash.length > 0 && !uploadState.fileId) {
-        uploadState.fileId = toBase64(chunk.rootHash);
-      }
-
-      if (cache) {
-        cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
-      }
-
-      // Skip chunks the server already has (resumable upload)
-      if (skipChunks.has(chunk.chunkIndex)) {
-        continue;
-      }
-
-      const filePart: FilePartStream = {
-        fileId: uploadState.uploadId,
-        chunkIndex: chunk.chunkIndex,
-        chunkData: chunk.chunkData,
-        merkleProof: chunk.merkleProof,
-        totalChunks: chunk.totalChunks,
-        bytesUploaded: chunk.bytesProcessed,
-        encrypted: chunk.encrypted,
-      };
-
-      uploadState.unackedChunks.set(chunk.chunkIndex, filePart);
-      uploadState.context = context ?? { documentId: uploadState.document };
-      uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
-
-      const message = new RpcMessage<any>(
-        uploadState.document,
-        { type: "success", payload: filePart },
-        "fileUpload",
-        "stream",
-        uploadState.originalRequestId,
-        uploadState.context,
-        chunk.encrypted,
-      );
-
-      uploadState.sentChunks.set(message.id, chunk.chunkIndex);
-
-      await this.#sendStreamMessage(message);
-    }
+    uploadState.fileId = toBase64(rootHash);
 
     // Optimistic cache write — before ACKs arrive
     if (cache && uploadState.fileId) {
@@ -606,9 +607,9 @@ class FileClientHandler implements ClientRpcHandler {
     if (!handler.fileMetadata) {
       return;
     }
-    const chunkSize = handler.encryptionKey ? ENCRYPTED_CHUNK_SIZE : CHUNK_SIZE;
     const expectedChunks =
-      handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / chunkSize);
+      handler.fileMetadata.totalChunks ??
+      (handler.fileMetadata.size === 0 ? 1 : Math.ceil(handler.fileMetadata.size / CHUNK_SIZE));
     if (handler.chunks.size >= expectedChunks) {
       try {
         const parts: Uint8Array[] = [];

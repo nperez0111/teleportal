@@ -100,6 +100,95 @@ describe("FileTransferProtocol.Client - file-part only", () => {
     expect(downloadedFile.size).toBe(5);
     expect(receivedFiles.length).toBe(1);
   });
+
+  it("uses the stream's totalChunks (not size) to detect completion", async () => {
+    const sentMessages: Message[] = [];
+
+    class TestClient extends FileTransferProtocol.Client<TestContext> {
+      sendMessage(message: Message<TestContext>): void {
+        sentMessages.push(message);
+      }
+      async onDownloadComplete(): Promise<void> {}
+      protected verifyChunk(chunk: FilePartStream, fileId: string): boolean {
+        return verifyMerkleProof(
+          chunk.chunkData,
+          chunk.merkleProof,
+          fromBase64(fileId),
+          chunk.chunkIndex,
+        );
+      }
+    }
+
+    const client = new TestClient();
+
+    // Two chunks whose combined size is far below CHUNK_SIZE, so deriving the
+    // chunk count from `size / CHUNK_SIZE` would wrongly conclude a single
+    // chunk and complete the download early with a truncated file.
+    const chunk0 = new Uint8Array([1, 2, 3, 4, 5]);
+    const chunk1 = new Uint8Array([6, 7, 8]);
+    const merkleTree = await buildMerkleTree([chunk0, chunk1]);
+    const contentId = toBase64(merkleTree.nodes.at(-1)!.hash!);
+
+    const downloadPromise = client.requestDownload(contentId, "test-doc");
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const downloadRequest = sentMessages.shift() as any;
+
+    await client.handleMessage(
+      new RpcMessage<TestContext>(
+        "test-doc",
+        {
+          type: "success",
+          payload: {
+            fileId: contentId,
+            filename: "test.txt",
+            size: chunk0.length + chunk1.length,
+            mimeType: "application/octet-stream",
+          },
+        },
+        "fileDownload",
+        "response",
+        downloadRequest.id,
+        {},
+        false,
+      ),
+    );
+
+    const makePart = (index: number, data: Uint8Array): FilePartStream => ({
+      fileId: contentId,
+      chunkIndex: index,
+      chunkData: data,
+      merkleProof: generateMerkleProof(merkleTree, index),
+      totalChunks: 2,
+      bytesUploaded: data.length,
+      encrypted: false,
+    });
+
+    await client.handleMessage(
+      new RpcMessage<TestContext>(
+        "test-doc",
+        { type: "success", payload: makePart(0, chunk0) },
+        "fileDownload",
+        "stream",
+        downloadRequest.id,
+        {},
+        false,
+      ),
+    );
+    await client.handleMessage(
+      new RpcMessage<TestContext>(
+        "test-doc",
+        { type: "success", payload: makePart(1, chunk1) },
+        "fileDownload",
+        "stream",
+        downloadRequest.id,
+        {},
+        false,
+      ),
+    );
+
+    const downloadedFile = await downloadPromise;
+    expect(downloadedFile.size).toBe(chunk0.length + chunk1.length);
+  });
 });
 
 describe("FileTransferProtocol.Server - file-part only", () => {

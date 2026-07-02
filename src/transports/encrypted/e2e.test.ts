@@ -17,7 +17,7 @@ import { Client } from "../../server/client";
 import type { Session } from "../../server/session";
 import { EncryptionClient } from "./client";
 import { getWebsocketHandlers } from "../../websocket-server";
-import { Connection } from "../../providers/connection";
+import { DirectConnection as Connection } from "../../providers/connection";
 import { websocketTransport } from "../../providers/transports/websocket";
 import { Provider } from "../../providers/provider";
 import { createAttributionRpc } from "../../protocols/attribution/client";

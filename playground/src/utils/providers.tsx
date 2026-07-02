@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import {
   Provider,
   DefaultTransportProperties,
-  Connection,
   websocketTransport,
   httpTransport,
 } from "teleportal/providers";
+import type { Connection } from "teleportal/providers";
 import { createMilestoneRpc } from "teleportal/protocols/milestone";
 import { createAttributionRpc } from "teleportal/protocols/attribution";
 import { createFileRpc } from "teleportal/protocols/file";
@@ -19,6 +19,7 @@ const fileCache = new IdbFileCache();
 import { ClientContext, Transport } from "teleportal";
 import { EncryptionClient } from "../../../src/transports/encrypted/client";
 import { getIdentity } from "./identity";
+import { createConnection } from "teleportal/providers/worker";
 
 /**
  * The RPC extensions registered by the playground provider.
@@ -49,11 +50,10 @@ async function fetchToken(userId: string): Promise<string> {
   return token;
 }
 
-// Singleton provider manager to ensure only one provider instance exists (workaround for strict mode)
 class ProviderManager {
   private static instance: ProviderManager | null = null;
   private provider: PlaygroundProvider | null = null;
-  private websocketConnection: Promise<Connection> | null = null;
+  private connectionPromise: Promise<Connection> | null = null;
   private subscribers = new Set<(provider: PlaygroundProvider | null) => void>();
 
   private constructor() {}
@@ -66,15 +66,22 @@ class ProviderManager {
   }
 
   private async getProviderConnection(): Promise<Connection> {
-    if (!this.websocketConnection) {
-      this.websocketConnection = fetchToken(getIdentity().name).then((token) => {
-        return new Connection({
-          url: `${window.location.protocol}//${window.location.host}/?token=${token}`,
-          transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
+    if (!this.connectionPromise) {
+      this.connectionPromise = fetchToken(getIdentity().name)
+        .then((token) =>
+          createConnection({
+            workerUrl: "/worker.js",
+            url: `${window.location.protocol}//${window.location.host}/`,
+            token: { token },
+            transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
+          }),
+        )
+        .catch((err) => {
+          this.connectionPromise = null;
+          throw err;
         });
-      });
     }
-    return this.websocketConnection;
+    return this.connectionPromise;
   }
 
   async getProvider(
@@ -124,8 +131,8 @@ class ProviderManager {
       }
     } else {
       if (useRegistry) {
-        // Async document switch — resolves the key from the registry
         this.provider.destroy({ destroyConnection: false });
+        this.provider = null!;
         const connection = await this.getProviderConnection();
         const resolver = registryKey({ wrappingKey: await importWrappingKey(wrappingKeyString!) });
         this.provider = (await Provider.create({
@@ -145,14 +152,12 @@ class ProviderManager {
       }
     }
 
-    // Notify all subscribers
     this.subscribers.forEach((callback) => callback(this.provider));
     return this.provider!;
   }
 
   subscribe(callback: (provider: PlaygroundProvider | null) => void): () => void {
     this.subscribers.add(callback);
-    // Immediately call with current provider if it exists
     if (this.provider) {
       callback(this.provider);
     }
@@ -186,10 +191,7 @@ export function useProvider(
       return;
     }
 
-    // Subscribe to provider updates
     const unsubscribe = providerManager.subscribe(setProvider);
-
-    // Get or create the provider
     providerManager.getProvider(documentId, key, wrappingKey).catch(console.error);
 
     return () => {
