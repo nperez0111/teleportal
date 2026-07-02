@@ -378,6 +378,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
       this.#missedHeartbeats++;
       if (this.#missedHeartbeats > maxMisses) {
         this.#stopHeartbeat();
+        this.#updateState({ type: "errored", error: new Error("Worker heartbeat timeout") });
         this.#onWorkerDeath?.();
         return;
       }

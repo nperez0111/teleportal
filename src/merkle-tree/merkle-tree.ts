@@ -363,6 +363,9 @@ export async function processFile(
   targetChunkSize?: number,
 ): Promise<FilePart[]> {
   const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  if (!Number.isFinite(wireChunkSize) || wireChunkSize <= 0) {
+    throw new Error(`targetChunkSize must be a positive finite number, got ${wireChunkSize}`);
+  }
   if (encryptChunk && wireChunkSize <= AES_GCM_OVERHEAD) {
     throw new Error(
       `targetChunkSize (${wireChunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
@@ -468,6 +471,9 @@ export async function processFileStreaming(
   targetChunkSize?: number,
 ): Promise<{ totalChunks: number; rootHash: Uint8Array }> {
   const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  if (!Number.isFinite(wireChunkSize) || wireChunkSize <= 0) {
+    throw new Error(`targetChunkSize must be a positive finite number, got ${wireChunkSize}`);
+  }
   if (encryptChunk && wireChunkSize <= AES_GCM_OVERHEAD) {
     throw new Error(
       `targetChunkSize (${wireChunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
@@ -491,7 +497,6 @@ export async function processFileStreaming(
 
   const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
   const encoded: Uint8Array[] = Array.from({ length: totalChunks });
-  let bytesProcessed = 0;
 
   // Encrypt every chunk concurrently. Each chunk is emitted for sending the
   // moment its own encryption resolves, so emissions interleave with the
@@ -513,7 +518,7 @@ export async function processFileStreaming(
       (async () => {
         const enc = encryptChunk ? await encryptChunk(raw) : raw;
         encoded[idx] = enc;
-        bytesProcessed += enc.length;
+        const bytesProcessed = end;
         onPart({ chunkData: enc, chunkIndex: idx, totalChunks, bytesProcessed, encrypted });
       })(),
     );

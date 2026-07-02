@@ -1232,7 +1232,10 @@ export function stripContent(
   version: 1 | 2 = 2,
   tokenize: ((str: string) => string) | false = unkeyedToken,
 ): StrippedUpdate {
-  if (tokenize === false && version === 1) {
+  if (tokenize === false) {
+    if (version !== 1) {
+      throw new Error("stripContent: tokenize=false is only supported with version=1");
+    }
     return stripContentV1Raw(update);
   }
   const tokenizeFn = tokenize || unkeyedToken;
@@ -1362,7 +1365,10 @@ export function restoreContent(
   outputVersion: 1 | 2 = 2,
   structureVersion: 1 | 2 = 2,
 ): Uint8Array {
-  if (structureVersion === 1 && outputVersion === 1) {
+  if (structureVersion === 1) {
+    if (outputVersion !== 1) {
+      throw new Error("restoreContent: structureVersion=1 requires outputVersion=1");
+    }
     return restoreContentV1Raw(structureUpdate, sidecar);
   }
   const entryMap = buildSidecarMap(sidecar.entries);

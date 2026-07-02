@@ -126,9 +126,12 @@ export class FileHandler {
         );
       }
       if (
+        !Number.isInteger(payload.chunkIndex) ||
+        !Number.isInteger(payload.totalChunks) ||
         payload.chunkIndex < 0 ||
         payload.chunkIndex >= maxChunks ||
-        payload.totalChunks > maxChunks
+        payload.totalChunks > maxChunks ||
+        payload.totalChunks < 1
       ) {
         throw new Error(
           `Chunk index ${payload.chunkIndex} (of ${payload.totalChunks}) is out of range for upload ${payload.fileId}`,
@@ -143,13 +146,9 @@ export class FileHandler {
       );
 
       // Derive expected total from the server-side upload session, not the client payload.
-      // metadata.size is the wire size (set in initiateUpload), so divide by
-      // the wire chunk size to get the expected total.
       const progress = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
       const expectedTotal = progress
-        ? progress.metadata.size === 0
-          ? 1
-          : Math.ceil(progress.metadata.size / this.#chunkSize)
+        ? this.computeChunkInfo(progress.metadata.size, progress.metadata.encrypted).totalChunks
         : payload.totalChunks;
 
       if (storedChunks >= expectedTotal) {
@@ -289,11 +288,9 @@ export class FileHandler {
       throw new Error(`File size ${metadata.size} exceeds maximum ${MAX_FILE_SIZE} bytes`);
     }
 
-    const { wireSize } = this.computeChunkInfo(metadata.size, metadata.encrypted);
-
     await this.#temporaryUploadStorage.beginUpload(fileId, {
       filename: metadata.filename,
-      size: wireSize,
+      size: metadata.size,
       mimeType: metadata.mimeType,
       encrypted: metadata.encrypted,
       lastModified: Date.now(),

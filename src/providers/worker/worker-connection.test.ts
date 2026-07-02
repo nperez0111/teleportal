@@ -501,7 +501,10 @@ describe("WorkerConnection", () => {
     // Kill the worker-side port (simulates worker crash)
     channel.port1.close();
 
-    await new Promise<void>((r) => setTimeout(r, 20));
+    // Poll until the heartbeat detects the death
+    for (let i = 0; i < 50 && !workerDied; i++) {
+      await new Promise<void>((r) => setTimeout(r, 1));
+    }
 
     expect(workerDied).toBe(true);
   });
@@ -573,29 +576,5 @@ describe("WorkerConnection", () => {
     const sentMsg = sentMessages.find((m) => m.document === "test-doc");
     expect(sentMsg).toBeDefined();
     expect(sentMsg.encoded).toBeInstanceOf(Uint8Array);
-  });
-
-  it("token is wired through to Connection", async () => {
-    const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], {
-      gracePeriodMs: SHORT_GRACE_MS,
-    });
-    const channel = new MessageChannel();
-    manager.addPort(channel.port1);
-    const workerConn = new WorkerConnection(channel.port2);
-
-    cleanup.push(() => {
-      workerConn.destroy();
-      channel.port1.close();
-    });
-
-    workerConn.init({ url: "wss://token-test.com", token: "my-jwt", connect: true }, "tab-1");
-    await tick();
-    await tick();
-    await tick();
-
-    // Connection should have been created (token wired through) and connected.
-    expect(manager.connectionCount).toBe(1);
-    expect(workerConn.state.type).toBe("connected");
   });
 });

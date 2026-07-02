@@ -132,6 +132,7 @@ class ProviderManager {
     } else {
       if (useRegistry) {
         this.provider.destroy({ destroyConnection: false });
+        this.provider = null!;
         const connection = await this.getProviderConnection();
         const resolver = registryKey({ wrappingKey: await importWrappingKey(wrappingKeyString!) });
         this.provider = (await Provider.create({
