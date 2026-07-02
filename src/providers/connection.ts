@@ -17,11 +17,7 @@ import type {
   TransportConnectContext,
 } from "./transports/types";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
-import type {
-  Connection,
-  ConnectionEvents,
-  ConnectionState,
-} from "./types";
+import type { Connection, ConnectionEvents, ConnectionState } from "./types";
 
 export type { Connection, ConnectionEvents, ConnectionState } from "./types";
 
@@ -81,10 +77,7 @@ const DEFAULT_UPGRADE_PROBE_INTERVAL = 30_000;
 const DEFAULT_MAX_UPGRADE_PROBE_INTERVAL = 300_000;
 const MIN_BATCH_INTERVAL_MS = 10;
 
-export class DirectConnection
-  extends Observable<ConnectionEvents>
-  implements Connection
-{
+export class DirectConnection extends Observable<ConnectionEvents> implements Connection {
   static location: { hostname: string } | undefined = globalThis.location;
 
   readonly hosting = "direct" as const;
@@ -344,7 +337,10 @@ export class DirectConnection
   sendStream(message: Message): void {
     if (this.destroyed) return;
     if (this.#state.type === "connected" && this.#activeTransport) {
-      this.#activeTransport.send(message);
+      this.#activeTransport.send(message).catch((err) => {
+        this.#handleConnectionError(err);
+        this.#bufferMessage(message);
+      });
     } else {
       this.#bufferMessage(message);
     }

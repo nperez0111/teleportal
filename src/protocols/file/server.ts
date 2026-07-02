@@ -85,6 +85,11 @@ export class FileHandler {
     this.#fileStorage = fileStorage;
     this.#temporaryUploadStorage = fileStorage.temporaryUploadStorage;
     this.#chunkSize = chunkSize ?? CHUNK_SIZE;
+    if (this.#chunkSize <= AES_GCM_OVERHEAD) {
+      throw new Error(
+        `chunkSize (${this.#chunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
+      );
+    }
   }
 
   get chunkSize(): number {
@@ -137,12 +142,22 @@ export class FileHandler {
         payload.merkleProof,
       );
 
-      if (storedChunks >= payload.totalChunks) {
+      // Derive expected total from the server-side upload session, not the client payload.
+      // metadata.size is the wire size (set in initiateUpload), so divide by
+      // the wire chunk size to get the expected total.
+      const progress = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
+      const expectedTotal = progress
+        ? progress.metadata.size === 0
+          ? 1
+          : Math.ceil(progress.metadata.size / this.#chunkSize)
+        : payload.totalChunks;
+
+      if (storedChunks >= expectedTotal) {
         const startTime = Date.now();
         try {
           const result = await this.#temporaryUploadStorage.completeUpload(
             payload.fileId,
-            payload.totalChunks,
+            expectedTotal,
           );
 
           await this.#fileStorage.storeFileFromUpload(result);

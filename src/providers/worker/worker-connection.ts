@@ -1,9 +1,4 @@
-import {
-  Observable,
-  type BinaryMessage,
-  type Message,
-  type RawReceivedMessage,
-} from "teleportal";
+import { Observable, type BinaryMessage, type Message, type RawReceivedMessage } from "teleportal";
 import { decodeMessage } from "teleportal/protocol";
 import { createFanOutWriter, type FanOutReader } from "teleportal/transports";
 import type { ConnectionState, ConnectionEvents } from "../types";
@@ -209,10 +204,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   }
 
   #transferEncoded(encoded: Uint8Array): { copy: Uint8Array; transfer: Transferable[] } {
-    const buf = encoded.buffer.slice(
-      encoded.byteOffset,
-      encoded.byteOffset + encoded.byteLength,
-    );
+    const buf = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
     const copy = new Uint8Array(buf);
     return { copy, transfer: [copy.buffer as ArrayBuffer] };
   }
@@ -301,6 +293,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
       op.reject(new Error("Connection destroyed"));
     }
     this.#pendingFileOps.clear();
+    this.#connectedReject?.(new Error("Connection destroyed"));
     super.destroy();
   }
 

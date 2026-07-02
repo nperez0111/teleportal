@@ -92,6 +92,7 @@ async function setupServer(opts?: { useUnstorage?: boolean; withRateLimit?: bool
 
 async function uploadFile(
   transport: BenchTransport<ServerContext>,
+  fileStorage: import("../src/storage").InMemoryFileStorage,
   file: File,
   encryptionKey?: CryptoKey,
 ) {
@@ -157,8 +158,15 @@ async function uploadFile(
     transport.enqueueMessage(streamMessage);
   }
 
-  // Wait for server to process all chunks
-  await new Promise((r) => setTimeout(r, 50));
+  // Poll until the file is stored rather than using a fixed sleep
+  const computedFileId = parts[0] ? fileId : undefined;
+  if (computedFileId) {
+    for (let i = 0; i < 500; i++) {
+      await new Promise((r) => setTimeout(r, 1));
+      const stored = await fileStorage.getFile(computedFileId).catch(() => null);
+      if (stored) break;
+    }
+  }
 
   return { fileId, parts };
 }
@@ -273,8 +281,8 @@ describe("File Upload E2E Benchmarks", () => {
         await bench(
           `e2e encrypted upload (${sizeMB}MB)`,
           async () => {
-            const { transport, server, pubSub } = await setupServer();
-            await uploadFile(transport, file, key);
+            const { transport, fileStorage, server, pubSub } = await setupServer();
+            await uploadFile(transport, fileStorage, file, key);
             await server[Symbol.asyncDispose]();
             await pubSub[Symbol.asyncDispose]();
           },
@@ -294,8 +302,10 @@ describe("File Upload E2E Benchmarks", () => {
       await bench(
         `e2e encrypted upload with rate limit (${sizeMB}MB)`,
         async () => {
-          const { transport, server, pubSub } = await setupServer({ withRateLimit: true });
-          await uploadFile(transport, file, key);
+          const { transport, fileStorage, server, pubSub } = await setupServer({
+            withRateLimit: true,
+          });
+          await uploadFile(transport, fileStorage, file, key);
           await server[Symbol.asyncDispose]();
           await pubSub[Symbol.asyncDispose]();
         },

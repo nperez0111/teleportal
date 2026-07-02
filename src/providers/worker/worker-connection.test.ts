@@ -27,11 +27,13 @@ function tick(ms = 1) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
-const SHORT_GRACE_MS = 50;
+const SHORT_GRACE_MS = 5;
 
 function setup() {
   const [clientTransport, serverTransport] = createMemoryTransportPair();
-  const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+  const manager = new ConnectionWorkerManager(() => [clientTransport], {
+    gracePeriodMs: SHORT_GRACE_MS,
+  });
   const channel = new MessageChannel();
   manager.addPort(channel.port1);
   const workerConn = new WorkerConnection(channel.port2);
@@ -116,7 +118,9 @@ describe("WorkerConnection", () => {
 
   it("receives messages from server and fans out to WorkerConnection", async () => {
     const [clientTransport, serverTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
     const channel = new MessageChannel();
     manager.addPort(channel.port1);
     const workerConn = new WorkerConnection(channel.port2);
@@ -157,7 +161,9 @@ describe("WorkerConnection", () => {
 
   it("supports multi-tab: two WorkerConnections share one real Connection", async () => {
     const [clientTransport, serverTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channelA = new MessageChannel();
     const channelB = new MessageChannel();
@@ -221,7 +227,9 @@ describe("WorkerConnection", () => {
 
   it("does NOT share across tabs with different tokens (multi-author isolation)", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channelA = new MessageChannel();
     const channelB = new MessageChannel();
@@ -256,7 +264,9 @@ describe("WorkerConnection", () => {
 
   it("shares across tabs with the same URL + token (same author)", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channelA = new MessageChannel();
     const channelB = new MessageChannel();
@@ -327,7 +337,9 @@ describe("WorkerConnection", () => {
 
   it("tab disconnect preserves Connection for remaining tabs", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channelA = new MessageChannel();
     const channelB = new MessageChannel();
@@ -362,7 +374,9 @@ describe("WorkerConnection", () => {
 
   it("grace period: Connection kept alive briefly after last tab disconnects", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channel = new MessageChannel();
     manager.addPort(channel.port1);
@@ -400,7 +414,9 @@ describe("WorkerConnection", () => {
 
   it("cleans up Connection after grace period when all tabs gone", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channel = new MessageChannel();
     manager.addPort(channel.port1);
@@ -416,7 +432,7 @@ describe("WorkerConnection", () => {
     await conn.destroy();
 
     // Wait for grace period to expire
-    await new Promise<void>((r) => setTimeout(r, SHORT_GRACE_MS + 20));
+    await new Promise<void>((r) => setTimeout(r, SHORT_GRACE_MS + 5));
 
     expect(manager.connectionCount).toBe(0);
   });
@@ -434,9 +450,38 @@ describe("WorkerConnection", () => {
     expect(workerConn.state.type).toBe("connected");
   });
 
+  it("token is propagated through to the underlying DirectConnection", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    let capturedOptions: Record<string, unknown> | undefined;
+    const manager = new ConnectionWorkerManager(
+      (options) => {
+        capturedOptions = options as Record<string, unknown>;
+        return [clientTransport];
+      },
+      { gracePeriodMs: SHORT_GRACE_MS },
+    );
+    const channel = new MessageChannel();
+    manager.addPort(channel.port1);
+    const workerConn = new WorkerConnection(channel.port2);
+
+    cleanup.push(() => {
+      workerConn.destroy();
+      channel.port1.close();
+    });
+
+    workerConn.init({ url: "wss://example.com/", token: "my-jwt", connect: true }, "tab-1");
+
+    await workerConn.connected;
+    expect(workerConn.state.type).toBe("connected");
+    expect(capturedOptions).toBeDefined();
+    expect(capturedOptions!.token).toBe("my-jwt");
+  });
+
   it("heartbeat detects worker death", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
     const channel = new MessageChannel();
     manager.addPort(channel.port1);
 
@@ -451,19 +496,21 @@ describe("WorkerConnection", () => {
 
     await initAndConnect(workerConn);
 
-    workerConn.startHeartbeat(10, 2);
+    workerConn.startHeartbeat(5, 2);
 
     // Kill the worker-side port (simulates worker crash)
     channel.port1.close();
 
-    await new Promise<void>((r) => setTimeout(r, 50));
+    await new Promise<void>((r) => setTimeout(r, 20));
 
     expect(workerDied).toBe(true);
   });
 
   it("online/offline reconciliation: any-tab-online policy", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
 
     const channelA = new MessageChannel();
     const channelB = new MessageChannel();
@@ -496,7 +543,9 @@ describe("WorkerConnection", () => {
 
   it("sent-message events carry reconstructable Message objects", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
     const channel = new MessageChannel();
     manager.addPort(channel.port1);
     const workerConn = new WorkerConnection(channel.port2);
@@ -528,7 +577,9 @@ describe("WorkerConnection", () => {
 
   it("token is wired through to Connection", async () => {
     const [clientTransport] = createMemoryTransportPair();
-    const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: SHORT_GRACE_MS });
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
     const channel = new MessageChannel();
     manager.addPort(channel.port1);
     const workerConn = new WorkerConnection(channel.port2);

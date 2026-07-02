@@ -33,12 +33,7 @@
       "project": ["src/**/*.ts"]
     },
     "playground": {
-      "entry": [
-        "src/frontend.tsx",
-        "src/worker.ts",
-        "src/devtools/index.tsx",
-        "bun/*.ts"
-      ],
+      "entry": ["src/frontend.tsx", "src/worker.ts", "src/devtools/index.tsx", "bun/*.ts"],
       "project": ["src/**/*.{ts,tsx}", "bun/**/*.ts"]
     },
     "examples/*": {

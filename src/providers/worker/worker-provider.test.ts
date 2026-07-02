@@ -23,10 +23,7 @@ function createWorkerProviderTestRig(options?: { batchIntervalMs?: number }) {
   const batchIntervalMs = options?.batchIntervalMs ?? 0;
 
   // Worker side: manager holds the real DirectConnection
-  const manager = new ConnectionWorkerManager(
-    () => [clientTransport],
-    { gracePeriodMs: 50 },
-  );
+  const manager = new ConnectionWorkerManager(() => [clientTransport], { gracePeriodMs: 50 });
   const channel = new MessageChannel();
   manager.addPort(channel.port1);
 

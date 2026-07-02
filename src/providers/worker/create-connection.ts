@@ -92,6 +92,11 @@ function createWorkerConn(options: CreateConnectionOptions): WorkerConnection {
     name: "teleportal",
   });
 
+  worker.onerror = (event) => {
+    options.onWorkerDeath?.();
+    console.error("[teleportal] SharedWorker script failed to load:", event);
+  };
+
   const conn = new WorkerConnection(worker.port, {
     onWorkerDeath: options.onWorkerDeath,
   });

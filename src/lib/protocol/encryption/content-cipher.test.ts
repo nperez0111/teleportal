@@ -1091,22 +1091,20 @@ describe("content-cipher", () => {
     it("byte-exact: text applyDelta (insert + retain + delete)", () => {
       const doc = new Y.Doc();
       doc.getText("t").insert(0, "Hello World");
-      doc.getText("t").applyDelta([
-        { retain: 5 },
-        { delete: 1 },
-        { insert: ", " },
-      ]);
+      doc.getText("t").applyDelta([{ retain: 5 }, { delete: 1 }, { insert: ", " }]);
       expectByteExact("applyDelta", getV1Update(doc));
     });
 
     it("byte-exact: text applyDelta with formatting", () => {
       const doc = new Y.Doc();
       doc.getText("t").insert(0, "Hello World");
-      doc.getText("t").applyDelta([
-        { retain: 5, attributes: { bold: true } },
-        { retain: 1 },
-        { insert: "Beautiful ", attributes: { italic: true } },
-      ]);
+      doc
+        .getText("t")
+        .applyDelta([
+          { retain: 5, attributes: { bold: true } },
+          { retain: 1 },
+          { insert: "Beautiful ", attributes: { italic: true } },
+        ]);
       expectByteExact("applyDelta with format", getV1Update(doc));
     });
 

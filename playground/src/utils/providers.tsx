@@ -67,14 +67,19 @@ class ProviderManager {
 
   private async getProviderConnection(): Promise<Connection> {
     if (!this.connectionPromise) {
-      this.connectionPromise = fetchToken(getIdentity().name).then((token) =>
-        createConnection({
-          workerUrl: "/worker.js",
-          url: `${window.location.protocol}//${window.location.host}/`,
-          token: { token },
-          transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
-        }),
-      );
+      this.connectionPromise = fetchToken(getIdentity().name)
+        .then((token) =>
+          createConnection({
+            workerUrl: "/worker.js",
+            url: `${window.location.protocol}//${window.location.host}/`,
+            token: { token },
+            transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
+          }),
+        )
+        .catch((err) => {
+          this.connectionPromise = null;
+          throw err;
+        });
     }
     return this.connectionPromise;
   }

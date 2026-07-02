@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build:worker": "bun build src/worker.ts --outdir .worker-dist --target browser --format esm",
-    "build": "bun run build.ts --target browser"
+    "build": "bun run build:worker && bun run build.ts --target browser"
   },
   "dependencies": {
     "@blocknote/core": "0.51.4",
@@ -31,7 +31,6 @@
     "pino": "10.3.1",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-
     "tailwindcss": "4.3.1",
     "y-prosemirror": "1.3.7"
   }

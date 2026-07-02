@@ -97,8 +97,7 @@ export class EventManager {
         // Check connection state from the connection object if available
         if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
-          const transport =
-            connState.type === "connected" ? (connState.transport ?? null) : null;
+          const transport = connState.type === "connected" ? (connState.transport ?? null) : null;
           if (
             (connState.type && connState.type !== this.connectionState?.type) ||
             transport !== this.connectionState?.transport
@@ -212,8 +211,7 @@ export class EventManager {
             const newState: ConnectionStateInfo = {
               type: connState.type,
               hosting: connection.hosting,
-              transport:
-                connState.type === "connected" ? (connState.transport ?? null) : null,
+              transport: connState.type === "connected" ? (connState.transport ?? null) : null,
               availableTransports: connection.availableTransports ?? [],
               error:
                 connState.type === "errored"
@@ -346,8 +344,7 @@ export class EventManager {
         const newState: ConnectionStateInfo = {
           type: "connected",
           hosting: connection?.hosting,
-          transport:
-            connState?.type === "connected" ? (connState.transport ?? null) : null,
+          transport: connState?.type === "connected" ? (connState.transport ?? null) : null,
           availableTransports: connection?.availableTransports ?? [],
           timestamp: Date.now(),
         };

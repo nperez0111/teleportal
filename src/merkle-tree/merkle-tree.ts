@@ -363,6 +363,11 @@ export async function processFile(
   targetChunkSize?: number,
 ): Promise<FilePart[]> {
   const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  if (encryptChunk && wireChunkSize <= AES_GCM_OVERHEAD) {
+    throw new Error(
+      `targetChunkSize (${wireChunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
+    );
+  }
   const chunkSize = encryptChunk ? wireChunkSize - AES_GCM_OVERHEAD : wireChunkSize;
   const encrypted = !!encryptChunk;
 
@@ -463,6 +468,11 @@ export async function processFileStreaming(
   targetChunkSize?: number,
 ): Promise<{ totalChunks: number; rootHash: Uint8Array }> {
   const wireChunkSize = targetChunkSize ?? CHUNK_SIZE;
+  if (encryptChunk && wireChunkSize <= AES_GCM_OVERHEAD) {
+    throw new Error(
+      `targetChunkSize (${wireChunkSize}) must be greater than AES_GCM_OVERHEAD (${AES_GCM_OVERHEAD})`,
+    );
+  }
   const chunkSize = encryptChunk ? wireChunkSize - AES_GCM_OVERHEAD : wireChunkSize;
   const encrypted = !!encryptChunk;
 

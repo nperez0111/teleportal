@@ -101,18 +101,20 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
     await this.#storage.setItemRaw(chunkKey, chunkData);
 
-    const prevBytes = existing ? existing.length : 0;
-    const prevCount = existing ? 0 : 1;
-    const newChunkCount = (sessionData.chunkCount ?? 0) + prevCount;
+    // Derive the count from actual persisted keys to avoid stale read-modify-write races
+    const chunkPrefix = this.#getChunkKeyPrefix(uploadId);
+    const chunkKeys = await this.#storage.getKeys(chunkPrefix);
+    const storedChunks = chunkKeys.length;
 
+    const prevBytes = existing ? existing.length : 0;
     await this.#storage.setItem(sessionKey, {
       ...sessionData,
       lastActivity: Date.now(),
       bytesUploaded: sessionData.bytesUploaded - prevBytes + chunkData.length,
-      chunkCount: newChunkCount,
+      chunkCount: storedChunks,
     });
 
-    return { storedChunks: newChunkCount };
+    return { storedChunks };
   }
 
   async getUploadProgress(uploadId: string): Promise<UploadProgress | null> {

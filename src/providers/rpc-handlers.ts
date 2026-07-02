@@ -48,4 +48,3 @@ export interface ClientRpcHandler<Context extends ClientRpcContext = ClientRpcCo
 export type ClientRpcHandlerRegistry = {
   [method: string]: ClientRpcHandler<any>;
 };
-

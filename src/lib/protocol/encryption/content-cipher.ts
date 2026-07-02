@@ -800,7 +800,8 @@ function skipAny(dec: decoding.Decoder): void {
     case 119: // string
       skipVarString(dec);
       break;
-    case 118: { // object
+    case 118: {
+      // object
       let len = decoding.readVarUint(dec);
       while (len-- > 0) {
         skipVarString(dec);
@@ -808,13 +809,17 @@ function skipAny(dec: decoding.Decoder): void {
       }
       break;
     }
-    case 117: { // array
+    case 117: {
+      // array
       let len = decoding.readVarUint(dec);
       while (len-- > 0) skipAny(dec);
       break;
     }
     case 116: // Uint8Array
-      { const n = decoding.readVarUint(dec); dec.pos += n; }
+      {
+        const n = decoding.readVarUint(dec);
+        dec.pos += n;
+      }
       break;
   }
 }
@@ -889,7 +894,10 @@ function skipContentV1Raw(dec: decoding.Decoder, contentRef: number): number {
       return count;
     }
     case CONTENT_BINARY:
-      { const n = decoding.readVarUint(dec); dec.pos += n; }
+      {
+        const n = decoding.readVarUint(dec);
+        dec.pos += n;
+      }
       return 1;
     case CONTENT_STRING:
       return readVarStringLength(dec);
@@ -984,8 +992,7 @@ function writeSlicedContentV1Raw(
       for (let i = 0; i < offset; i++) decoding.readVarString(dec);
       const remaining = count - offset;
       encoding.writeVarUint(enc, remaining);
-      for (let i = 0; i < remaining; i++)
-        encoding.writeVarString(enc, decoding.readVarString(dec));
+      for (let i = 0; i < remaining; i++) encoding.writeVarString(enc, decoding.readVarString(dec));
       break;
     }
     case CONTENT_ANY: {

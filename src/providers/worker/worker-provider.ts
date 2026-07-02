@@ -2,13 +2,10 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import type { ClientContext, Transport } from "teleportal";
 import type { Connection } from "../types";
-import {
-  Provider,
-  type DefaultTransportProperties,
-  type ProviderOptions,
-} from "../provider";
+import { Provider, type DefaultTransportProperties, type ProviderOptions } from "../provider";
 import type { RpcExtensionMap } from "../rpc-extension";
 import type { KeyResolver } from "teleportal/encryption-key";
+import type { AbstractDocumentStorage } from "teleportal/storage";
 import { createConnection, type CreateConnectionOptions } from "./create-connection";
 
 export type WorkerProviderOptions<
@@ -23,6 +20,7 @@ export type WorkerProviderOptions<
   awareness?: Awareness;
   enableOfflinePersistence?: boolean;
   indexedDBPrefix?: string;
+  offlineStorage?: AbstractDocumentStorage;
   encryptionKey?: CryptoKey | false | KeyResolver;
   rpc?: R;
   getTransport?: ProviderOptions<T, R>["getTransport"];
@@ -69,12 +67,13 @@ export class WorkerProvider<
     }
 
     const provider = new Provider<T, R>({
-      connection: connection as any,
+      connection,
       document: options.document,
       ydoc: options.ydoc,
       awareness: options.awareness,
       enableOfflinePersistence: options.enableOfflinePersistence,
       indexedDBPrefix: options.indexedDBPrefix,
+      offlineStorage: options.offlineStorage,
       encryptionKey: resolvedKey,
       rpc: options.rpc,
       getTransport: options.getTransport,

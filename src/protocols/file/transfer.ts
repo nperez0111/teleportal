@@ -449,7 +449,9 @@ class FileClientHandler implements ClientRpcHandler {
           uploadState.context,
           chunk.encrypted,
         );
-        sendStreamMessage(message);
+        sendStreamMessage(message).catch(() => {
+          // Transport failures are recovered by the retransmit loop
+        });
         uploadState.sentChunks.set(message.id, chunk.chunkIndex);
       },
       uploadState.chunkSize,

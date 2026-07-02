@@ -20,22 +20,34 @@ import { createTokenManager, type TokenPayload } from "../../src/token";
 import { defaultRateLimitRules } from "../../src/transports/rate-limiter";
 import { tokenAuthenticatedWebsocketHandler } from "../../src/websocket-server";
 
-// ---------- Storage (unstorage memory driver — same as playground temp storage) ----------
+// ---------- CLI flags ----------
 
-const memoryStorage = createStorage();
+const useUnstorage = process.argv.includes("--unstorage");
+const useRateLimit = process.argv.includes("--rate-limit");
 
-const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(memoryStorage, {
-  keyPrefix: "file",
-});
+// ---------- Storage ----------
 
-const fileStorage = new UnstorageFileStorage(memoryStorage, {
-  keyPrefix: "file",
-  temporaryUploadStorage,
-});
+import { InMemoryFileStorage, InMemoryTemporaryUploadStorage } from "../../src/storage/in-memory";
 
-// ---------- Rate limiting (same as playground) ----------
+const fileStorage = useUnstorage
+  ? (() => {
+      const memoryStorage = createStorage();
+      const temporaryUploadStorage = new UnstorageTemporaryUploadStorage(memoryStorage, {
+        keyPrefix: "file",
+      });
+      return new UnstorageFileStorage(memoryStorage, {
+        keyPrefix: "file",
+        temporaryUploadStorage,
+      });
+    })()
+  : (() => {
+      const temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
+      return new InMemoryFileStorage({ temporaryUploadStorage });
+    })();
 
-const rateLimitStorage = new UnstorageRateLimitStorage(memoryStorage);
+// ---------- Rate limiting ----------
+
+const rateLimitStorage = new UnstorageRateLimitStorage(createStorage());
 const rateLimitRules = defaultRateLimitRules<TokenPayload & { clientId: string }>();
 
 // ---------- Auth (same as playground) ----------
@@ -54,13 +66,15 @@ const server = new Server<TokenPayload & { clientId: string }>({
   storage: new MemoryDocumentStorage(false),
   rpcHandlers: { ...fileHandlers },
   checkPermission: async () => true,
-  rateLimitConfig: {
-    rules: rateLimitRules,
-    rateLimitStorage,
-    maxMessageSize: 10 * 1024 * 1024,
-    getUserId: (message) => message.context?.userId,
-    getDocumentId: (message) => message.document,
-  },
+  ...(useRateLimit && {
+    rateLimitConfig: {
+      rules: rateLimitRules,
+      rateLimitStorage,
+      maxMessageSize: 10 * 1024 * 1024,
+      getUserId: (message: any) => message.context?.userId,
+      getDocumentId: (message: any) => message.document,
+    },
+  }),
 });
 
 const ws = crossws({
@@ -95,4 +109,6 @@ Bun.serve({
   },
 });
 
-console.log(`[server] listening on port ${port} (unstorage + rate-limit)`);
+console.log(
+  `[server] listening on port ${port} (${useUnstorage ? "unstorage" : "in-memory"}${useRateLimit ? " + rate-limit" : ""})`,
+);

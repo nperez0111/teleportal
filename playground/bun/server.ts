@@ -166,9 +166,13 @@ const instance = Bun.serve({
     }
 
     if (pathname === "/worker.js") {
-      return new Response(Bun.file(workerOutDir + "/worker.js"), {
-        headers: { "Content-Type": "application/javascript" },
-      });
+      const workerFile = Bun.file(workerOutDir + "/worker.js");
+      if (await workerFile.exists()) {
+        return new Response(workerFile, {
+          headers: { "Content-Type": "application/javascript" },
+        });
+      }
+      return new Response("worker.js not found — run build:worker first", { status: 404 });
     }
 
     // Token API — frontend requests a token from the backend

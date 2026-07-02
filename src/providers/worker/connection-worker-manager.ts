@@ -3,12 +3,11 @@ import type { BinaryMessage, Message } from "teleportal";
 import type { ConnectionTransport } from "../transports/types";
 import { DirectConnection } from "../connection";
 import { RpcClient } from "../rpc-client";
-import { getFileClientHandlers, type FileClientHandlerInstance } from "../../protocols/file/transfer";
-import type {
-  DownstreamMessage,
-  SerializedConnectionOptions,
-  UpstreamMessage,
-} from "./protocol";
+import {
+  getFileClientHandlers,
+  type FileClientHandlerInstance,
+} from "../../protocols/file/transfer";
+import type { DownstreamMessage, SerializedConnectionOptions, UpstreamMessage } from "./protocol";
 
 const DEFAULT_GRACE_PERIOD_MS = 5_000;
 
@@ -142,36 +141,56 @@ export class ConnectionWorkerManager {
       case "file-upload": {
         const conn = portState.managedConnection;
         if (!conn) {
-          portState.post({ type: "file-upload-error", requestId: msg.requestId, error: "No connection" });
+          portState.post({
+            type: "file-upload-error",
+            requestId: msg.requestId,
+            error: "No connection",
+          });
           return;
         }
         conn
           .uploadFile(msg.file, msg.document, msg.fileId, msg.encryptionKey)
-          .then((fileId) => portState.post({ type: "file-upload-result", requestId: msg.requestId, fileId }))
-          .catch((e: Error) => portState.post({ type: "file-upload-error", requestId: msg.requestId, error: e.message }));
+          .then((fileId) =>
+            portState.post({ type: "file-upload-result", requestId: msg.requestId, fileId }),
+          )
+          .catch((e: Error) =>
+            portState.post({
+              type: "file-upload-error",
+              requestId: msg.requestId,
+              error: e.message,
+            }),
+          );
         break;
       }
 
       case "file-download": {
         const conn = portState.managedConnection;
         if (!conn) {
-          portState.post({ type: "file-download-error", requestId: msg.requestId, error: "No connection" });
+          portState.post({
+            type: "file-download-error",
+            requestId: msg.requestId,
+            error: "No connection",
+          });
           return;
         }
         conn
           .downloadFile(msg.fileId, msg.document, msg.encryptionKey, msg.timeout)
-          .then((file) => portState.post({ type: "file-download-result", requestId: msg.requestId, file }))
-          .catch((e: Error) => portState.post({ type: "file-download-error", requestId: msg.requestId, error: e.message }));
+          .then((file) =>
+            portState.post({ type: "file-download-result", requestId: msg.requestId, file }),
+          )
+          .catch((e: Error) =>
+            portState.post({
+              type: "file-download-error",
+              requestId: msg.requestId,
+              error: e.message,
+            }),
+          );
         break;
       }
     }
   }
 
-  #handleInit(
-    options: SerializedConnectionOptions,
-    tabId: string,
-    portState: PortState,
-  ): void {
+  #handleInit(options: SerializedConnectionOptions, tabId: string, portState: PortState): void {
     const key = this.#getConnectionKey(options);
     portState.tabId = tabId;
 
@@ -439,10 +458,7 @@ class ManagedConnection {
                 encoded.byteOffset + encoded.byteLength,
               );
               const copy = new Uint8Array(buf);
-              ports[i].post(
-                { type: "message", encoded: copy },
-                [copy.buffer as ArrayBuffer],
-              );
+              ports[i].post({ type: "message", encoded: copy }, [copy.buffer as ArrayBuffer]);
             } else {
               ports[i].post({ type: "message", encoded: new Uint8Array(encoded) });
             }
@@ -450,7 +466,9 @@ class ManagedConnection {
         }
       }
     };
-    void iterate();
+    iterate().catch((err) => {
+      console.error("[ConnectionWorkerManager] message fan-out failed:", err);
+    });
   }
 
   #broadcast(msg: DownstreamMessage): void {

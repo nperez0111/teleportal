@@ -14,6 +14,7 @@ type UploadSession = {
   chunks: Map<number, Uint8Array>;
   bytesUploaded: number;
   lastActivity: number;
+  completing?: boolean;
 };
 
 /**
@@ -100,6 +101,10 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
+    if (session.completing) {
+      throw new Error(`Upload ${uploadId} is already being completed`);
+    }
+    session.completing = true;
 
     for (let i = 0; i < totalChunks; i++) {
       if (!session.chunks.has(i)) {

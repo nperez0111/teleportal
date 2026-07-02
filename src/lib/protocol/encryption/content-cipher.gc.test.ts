@@ -1150,11 +1150,7 @@ describe("sidecar garbage collection", () => {
       const doc = new Y.Doc();
       doc.clientID = 1;
       doc.getText("t").insert(0, "Hello World");
-      doc.getText("t").applyDelta([
-        { retain: 5 },
-        { delete: 1 },
-        { insert: ", " },
-      ]);
+      doc.getText("t").applyDelta([{ retain: 5 }, { delete: 1 }, { insert: ", " }]);
       const { sidecar: preSidecar } = stripContent(v1(doc), 1);
 
       doc.getText("t").delete(0, 7); // Delete "Hello, "
