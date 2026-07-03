@@ -117,6 +117,8 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
 
   // ── Attribution ────────────────────────────────────────────────────────
 
+  static ATTRIBUTION_COMPACTION_THRESHOLD = 20;
+
   override async storeAttribution(key: string, attribution: EncodedContentMap): Promise<void> {
     let list = MemoryDocumentStorage.attributionMaps.get(key);
     if (!list) {
@@ -124,6 +126,12 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
       MemoryDocumentStorage.attributionMaps.set(key, list);
     }
     list.push(attribution);
+    if (list.length >= MemoryDocumentStorage.ATTRIBUTION_COMPACTION_THRESHOLD) {
+      const merged = mergeContentMaps(list.map((m) => decodeContentMap(m)));
+      const compacted = encodeContentMap(merged);
+      list.length = 0;
+      list.push(compacted);
+    }
   }
 
   async retrieveAttribution(documentId: string): Promise<EncodedContentMap | null> {
@@ -131,7 +139,10 @@ export class MemoryDocumentStorage extends AbstractDocumentStorage {
     if (!list || list.length === 0) return null;
     if (list.length === 1) return list[0];
     const merged = mergeContentMaps(list.map((m) => decodeContentMap(m)));
-    return encodeContentMap(merged) as EncodedContentMap;
+    const compacted = encodeContentMap(merged);
+    list.length = 0;
+    list.push(compacted);
+    return compacted;
   }
 
   // ── Delete ─────────────────────────────────────────────────────────────

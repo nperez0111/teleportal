@@ -878,3 +878,95 @@ describe("attribution insert/delete separation and custom attribute prefixing", 
     });
   });
 });
+
+describe("AttrRanges binary search", () => {
+  it("findIndex returns correct index for point lookup", () => {
+    const idMap = new IdMap();
+    idMap.add(1, 0, 10, [createContentAttribute("insert", "a")]);
+    idMap.add(1, 20, 10, [createContentAttribute("insert", "b")]);
+    idMap.add(1, 40, 10, [createContentAttribute("insert", "c")]);
+
+    const ranges = idMap.clients.get(1)!;
+    expect(ranges.findIndex(5)).toBe(0);
+    expect(ranges.findIndex(25)).toBe(1);
+    expect(ranges.findIndex(45)).toBe(2);
+    expect(ranges.findIndex(15)).toBe(-1);
+    expect(ranges.findIndex(35)).toBe(-1);
+    expect(ranges.findIndex(55)).toBe(-1);
+  });
+
+  it("IdMap.has uses binary search correctly", () => {
+    const idMap = new IdMap();
+    for (let i = 0; i < 100; i++) {
+      idMap.add(1, i * 20, 5, [createContentAttribute("insert", `u${i}`)]);
+    }
+    expect(idMap.has(1, 0)).toBe(true);
+    expect(idMap.has(1, 4)).toBe(true);
+    expect(idMap.has(1, 5)).toBe(false);
+    expect(idMap.has(1, 1980)).toBe(true);
+    expect(idMap.has(1, 1985)).toBe(false);
+    expect(idMap.has(2, 0)).toBe(false);
+  });
+
+  it("IdMap.slice uses binary search to skip ranges", () => {
+    const idMap = new IdMap();
+    idMap.add(1, 0, 5, [createContentAttribute("insert", "a")]);
+    idMap.add(1, 100, 5, [createContentAttribute("insert", "b")]);
+    idMap.add(1, 200, 5, [createContentAttribute("insert", "c")]);
+
+    const slices = idMap.slice(1, 100, 5);
+    expect(slices.length).toBe(1);
+    expect(slices[0].attrs).toBeDefined();
+    expect(slices[0].clock).toBe(100);
+    expect(slices[0].len).toBe(5);
+  });
+});
+
+describe("configurable grouping window", () => {
+  it("uses custom groupingWindowMs to merge activity", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1500),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+
+    const defaultGrouping = getActivity(merged);
+    expect(defaultGrouping.length).toBe(1);
+
+    const noGrouping = getActivity(merged, { groupingWindowMs: 0 });
+    expect(noGrouping.length).toBe(2);
+
+    const wideGrouping = getActivity(merged, { groupingWindowMs: 10000 });
+    expect(wideGrouping.length).toBe(1);
+  });
+
+  it("respects groupingWindowMs = 0 (no merging)", () => {
+    const ids1 = createContentIds();
+    ids1.inserts.add(1, 0, 5);
+    const map1 = createContentMapFromContentIds(ids1, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1000),
+    ]);
+
+    const ids2 = createContentIds();
+    ids2.inserts.add(2, 0, 3);
+    const map2 = createContentMapFromContentIds(ids2, [
+      createContentAttribute("insert", "user-1"),
+      createContentAttribute("insertAt", 1001),
+    ]);
+
+    const merged = mergeContentMaps([map1, map2]);
+    const activity = getActivity(merged, { groupingWindowMs: 0 });
+    expect(activity.length).toBe(2);
+  });
+});

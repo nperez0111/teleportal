@@ -18,7 +18,12 @@ import {
 } from "teleportal/attribution";
 import { createEncryptionKey, decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { getAttributionRpcHandlers } from "./index";
-import { collectRangeIds, resolveRangeAttribution } from "./resolve";
+import {
+  collectDeletedRangeIds,
+  collectRangeIds,
+  resolveDeletedRangeAttribution,
+  resolveRangeAttribution,
+} from "./resolve";
 
 /**
  * Two-milestone scenario: snapshot s1 captures "Hello " (user-1 only); s2
@@ -473,5 +478,105 @@ describe("milestone-scoped attribution", () => {
     expect(
       encodeContentIds(createContentIdsFromUpdate({ version: 2, data: decrypted as UpdateV2 })),
     ).toEqual(encodeContentIds(createContentIdsFromUpdate({ version: 2, data: s2 as UpdateV2 })));
+  });
+});
+
+describe("incremental ContentMap sync", () => {
+  it("attributionGetIncremental returns only new ranges", async () => {
+    const { map } = twoUserDoc();
+    const encoded = encodeContentMap(map);
+    const handler = getAttributionRpcHandlers().attributionGetIncremental;
+
+    const ids1 = createContentIds();
+    ids1.inserts.add(map.inserts.clients.keys().next().value!, 0, 6);
+    const knownIds = encodeContentIds(ids1);
+
+    const { response } = (await handler.handler(
+      { knownIds },
+      mockContext(async () => encoded),
+    )) as { response: { contentMap: EncodedContentMap | null } };
+
+    expect(response.contentMap).not.toBeNull();
+    const diffMap = decodeContentMap(response.contentMap!);
+
+    const firstClientRanges = diffMap.inserts.clients.get(
+      map.inserts.clients.keys().next().value!,
+    );
+    expect(firstClientRanges).toBeUndefined();
+
+    let hasOtherClient = false;
+    diffMap.inserts.forEach((client) => {
+      if (client !== map.inserts.clients.keys().next().value!) {
+        hasOtherClient = true;
+      }
+    });
+    expect(hasOtherClient).toBe(true);
+  });
+
+  it("returns null when storage has no attribution", async () => {
+    const handler = getAttributionRpcHandlers().attributionGetIncremental;
+    const knownIds = encodeContentIds(createContentIds());
+
+    const { response } = (await handler.handler(
+      { knownIds },
+      mockContext(async () => null),
+    )) as { response: { contentMap: EncodedContentMap | null } };
+
+    expect(response.contentMap).toBeNull();
+  });
+});
+
+describe("resolveDeletedRangeAttribution", () => {
+  it("resolves deleted content attribution", () => {
+    const doc = new Y.Doc();
+    let u1!: Uint8Array;
+    doc.on("updateV2", (u) => (u1 = u));
+    doc.getText("t").insert(0, "Hello World");
+
+    let u2!: Uint8Array;
+    doc.on("updateV2", (u) => (u2 = u));
+    doc.getText("t").delete(5, 6);
+
+    const map = mergeContentMaps([
+      decodeContentMap(attribute(u1, "user-1", 1000)),
+      decodeContentMap(attribute(u2, "user-2", 2000)),
+    ]);
+
+    const deletedIds = collectDeletedRangeIds(doc.getText("t"), 0, 5);
+    expect(deletedIds.length).toBeGreaterThan(0);
+
+    const segments = resolveDeletedRangeAttribution(doc.getText("t"), 0, 5, map);
+    expect(segments.length).toBeGreaterThan(0);
+    expect(segments[0].userId).toBe("user-2");
+    expect(segments[0].timestamp).toBe(2000);
+  });
+});
+
+describe("search marker optimization in collectRangeIds", () => {
+  it("returns correct ids regardless of starting position", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    const content = "A".repeat(200);
+    text.insert(0, content);
+
+    // Warm up search markers by accessing positions
+    text.toString();
+
+    const ids = collectRangeIds(text, 150, 20);
+    expect(ids.length).toBeGreaterThan(0);
+    const totalLen = ids.reduce((sum, id) => sum + id.len, 0);
+    expect(totalLen).toBe(20);
+    expect(ids[0].contentStart).toBe(150);
+  });
+
+  it("handles index 0 without markers", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    text.insert(0, "Hello");
+
+    const ids = collectRangeIds(text, 0, 5);
+    expect(ids.length).toBe(1);
+    expect(ids[0].len).toBe(5);
+    expect(ids[0].contentStart).toBe(0);
   });
 });

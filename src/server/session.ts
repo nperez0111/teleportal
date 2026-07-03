@@ -674,6 +674,21 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
           timestamp: Date.now(),
           contentMap: attribution,
         });
+
+        if (this.#storage.retrieveAttribution && this.#rpcHandlers.attributionGet) {
+          const pushMessage = new RpcMessage(
+            this.documentId,
+            {
+              type: "success",
+              payload: { contentMap: attribution },
+            } as RpcSuccess,
+            "attributionPush",
+            "response",
+            undefined,
+            {} as Context,
+          );
+          this.broadcast(pushMessage, clientId).catch(() => {});
+        }
       }
 
       this.call("document-write", {
