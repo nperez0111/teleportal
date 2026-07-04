@@ -1,4 +1,4 @@
-import { EventClient } from "@tanstack/devtools-event-client";
+import { DevtoolsEventClient } from "./devtools-events";
 import { Awareness, removeAwarenessStates } from "y-protocols/awareness";
 import * as Y from "yjs";
 
@@ -90,9 +90,8 @@ type TeleportalEventMap = {
   };
 };
 
-export const teleportalEventClient: EventClient<TeleportalEventMap> = new EventClient({
-  pluginId: "teleportal-provider",
-});
+export const teleportalEventClient: DevtoolsEventClient<TeleportalEventMap> =
+  new DevtoolsEventClient("teleportal-provider");
 
 export type ProviderOptions<
   T extends Transport<ClientContext, DefaultTransportProperties> = Transport<
@@ -316,11 +315,20 @@ export class Provider<
       "abort",
       connection.on("received-message", (message) => {
         this.call("received-message", message);
-        teleportalEventClient.emit("teleportal-provider:received-message", {
-          message,
-          provider: this,
-          connection,
-        });
+        // File-chunk stream messages stay off the devtools pipeline, mirroring
+        // the send side (Connection.sendStream): retaining megabyte chunk
+        // payloads per message would pin whole files in devtools memory.
+        // Transfers are observed via the file protocol's progress events.
+        if (
+          message.type !== "rpc" ||
+          (message as { requestType?: string }).requestType !== "stream"
+        ) {
+          teleportalEventClient.emit("teleportal-provider:received-message", {
+            message,
+            provider: this,
+            connection,
+          });
+        }
         if (message.type === "presence") {
           this.#handlePresenceMessage(message as PresenceMessage<any>);
         }

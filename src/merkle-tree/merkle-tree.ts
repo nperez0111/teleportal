@@ -86,9 +86,12 @@ function leafHash(chunk: Uint8Array): Uint8Array {
 
 /**
  * Hardware-accelerated SHA-256 leaf digest via Web Crypto API, prefixed with
- * {@link LEAF_PREFIX} for domain separation.
+ * {@link LEAF_PREFIX} for domain separation. Exported so storage adapters can
+ * precompute leaf hashes at chunk-write time (e.g. stored as object metadata)
+ * and later build the tree via {@link buildMerkleTreeFromLeafHashes} without
+ * re-reading chunk bytes. A plain unprefixed SHA-256 will NOT match.
  */
-async function leafHashAsync(chunk: Uint8Array): Promise<Uint8Array> {
+export async function computeLeafHash(chunk: Uint8Array): Promise<Uint8Array> {
   const prefixed = new Uint8Array(chunk.length + 1);
   prefixed[0] = LEAF_PREFIX;
   prefixed.set(chunk, 1);
@@ -109,11 +112,24 @@ export async function buildMerkleTree(chunks: Uint8Array[]): Promise<MerkleTree>
     throw new Error("Cannot build merkle tree from empty chunks array");
   }
 
-  const nodes: MerkleNode[] = [];
-  const leafCount = chunks.length;
-
   // Hash all leaves in parallel using hardware-accelerated SHA-256
-  const leafHashes = await Promise.all(chunks.map((chunk) => leafHashAsync(chunk)));
+  const leafHashes = await Promise.all(chunks.map((chunk) => computeLeafHash(chunk)));
+  return buildMerkleTreeFromLeafHashes(leafHashes);
+}
+
+/**
+ * Build a merkle tree from precomputed leaf hashes (see
+ * {@link computeLeafHash} — hashes must be domain-separated leaf digests).
+ * Identical tree shape and root as {@link buildMerkleTree} over the raw
+ * chunks.
+ */
+export function buildMerkleTreeFromLeafHashes(leafHashes: Uint8Array[]): MerkleTree {
+  if (leafHashes.length === 0) {
+    throw new Error("Cannot build merkle tree from empty leaf hash array");
+  }
+
+  const nodes: MerkleNode[] = [];
+  const leafCount = leafHashes.length;
 
   // Create leaf nodes
   for (const hash of leafHashes) {
@@ -218,9 +234,42 @@ export function verifyMerkleProof(
   if (!Number.isInteger(index) || index < 0 || index >= leafCount) {
     return false;
   }
+  return verifyProofFromLeafHash(leafHash(chunk), proof, root, index, leafCount);
+}
 
-  // Hash the chunk to get the (domain-separated) leaf hash.
-  let currentHash = leafHash(chunk);
+/**
+ * Like {@link verifyMerkleProof} but hashes the leaf with hardware-accelerated
+ * `crypto.subtle` instead of the synchronous pure-JS digest. In browsers the
+ * sync digest runs at ~20MB/s on the main thread (~50ms per 1MB chunk), so the
+ * download path uses this variant to keep per-chunk verification off the main
+ * thread; the proof walk itself only hashes 65-byte pairs and stays sync.
+ */
+export async function verifyMerkleProofAsync(
+  chunk: Uint8Array,
+  proof: Uint8Array[],
+  root: Uint8Array,
+  index: number,
+  leafCount: number,
+): Promise<boolean> {
+  if (!Number.isInteger(index) || index < 0 || index >= leafCount) {
+    return false;
+  }
+  return verifyProofFromLeafHash(await computeLeafHash(chunk), proof, root, index, leafCount);
+}
+
+/**
+ * Walk a proof up from a (domain-separated) leaf hash and compare against the
+ * root. Shared by {@link verifyMerkleProof} and {@link verifyMerkleProofAsync}
+ * so both verify identically.
+ */
+function verifyProofFromLeafHash(
+  leaf: Uint8Array,
+  proof: Uint8Array[],
+  root: Uint8Array,
+  index: number,
+  leafCount: number,
+): boolean {
+  let currentHash = leaf;
 
   // Walk up, mirroring buildMerkleTree's carry-up: a node that is the last of an
   // odd-sized level has no sibling — it is carried up, consuming no proof
@@ -386,6 +435,45 @@ export interface FilePart {
 }
 
 /**
+ * Read a whole {@link ReadableStream} into a single contiguous buffer.
+ *
+ * Uses the reader API (`getReader().read()`) rather than `for await ... of`
+ * because async iteration of a `ReadableStream` is not supported in Safari (and
+ * older Chrome) — only Firefox, Node, and Bun implement it. The reader API works
+ * everywhere.
+ *
+ * @param source - The byte stream to drain
+ * @param fileSize - Expected size (used to pre-size the buffer); may be 0/unknown
+ * @param fallbackSize - Initial buffer size when `fileSize` is not positive
+ */
+async function readStreamFully(
+  source: ReadableStream<Uint8Array>,
+  fileSize: number,
+  fallbackSize: number,
+): Promise<{ buf: Uint8Array; writePos: number }> {
+  let buf = new Uint8Array(fileSize > 0 ? fileSize : fallbackSize);
+  let writePos = 0;
+  const reader = source.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.length === 0) continue;
+      if (writePos + value.length > buf.length) {
+        const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + value.length));
+        newBuf.set(buf.subarray(0, writePos), 0);
+        buf = newBuf;
+      }
+      buf.set(value, writePos);
+      writePos += value.length;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { buf, writePos };
+}
+
+/**
  * Process a file into {@link FilePart} objects with merkle proofs, returning
  * all parts as an array. Encrypts and hashes all chunks in parallel using
  * `Promise.all` and builds the merkle tree in one pass.
@@ -409,17 +497,7 @@ export async function processFile(
   const encrypted = !!encryptChunk;
 
   // Read entire stream into a single buffer
-  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
-  let writePos = 0;
-  for await (const incoming of source) {
-    if (writePos + incoming.length > buf.length) {
-      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
-      newBuf.set(buf.subarray(0, writePos), 0);
-      buf = newBuf;
-    }
-    buf.set(incoming, writePos);
-    writePos += incoming.length;
-  }
+  const { buf, writePos } = await readStreamFully(source, fileSize, chunkSize);
 
   const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
   const rawChunks: Uint8Array[] = [];
@@ -517,17 +595,7 @@ export async function processFileStreaming(
   const encrypted = !!encryptChunk;
 
   // Read entire stream into a single buffer (same as processFile).
-  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
-  let writePos = 0;
-  for await (const incoming of source) {
-    if (writePos + incoming.length > buf.length) {
-      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
-      newBuf.set(buf.subarray(0, writePos), 0);
-      buf = newBuf;
-    }
-    buf.set(incoming, writePos);
-    writePos += incoming.length;
-  }
+  const { buf, writePos } = await readStreamFully(source, fileSize, chunkSize);
 
   const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
   const encoded: Uint8Array[] = Array.from({ length: totalChunks });

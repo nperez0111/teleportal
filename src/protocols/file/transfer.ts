@@ -1,5 +1,5 @@
 import { toBase64, fromBase64 } from "teleportal/utils";
-import { CHUNK_SIZE, processFileStreaming, verifyMerkleProof } from "teleportal/merkle-tree";
+import { CHUNK_SIZE, processFileStreaming, verifyMerkleProofAsync } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "teleportal/protocol";
 import {
   createDeterministicEncryptor,
@@ -692,8 +692,8 @@ class FileClientHandler implements ClientRpcHandler {
     });
   }
 
-  #verifyChunk(chunk: FilePartStream, fileId: string): boolean {
-    return verifyMerkleProof(
+  #verifyChunk(chunk: FilePartStream, fileId: string): Promise<boolean> {
+    return verifyMerkleProofAsync(
       chunk.chunkData,
       chunk.merkleProof,
       fromBase64(fileId),
@@ -710,13 +710,21 @@ class FileClientHandler implements ClientRpcHandler {
 
     if (handler.chunks.has(payload.chunkIndex)) return;
 
-    // Kick off async decrypt before sync verify — Web Crypto runs in native
-    // code so the decrypt progresses while we SHA-256 the chunk on the main thread.
-    const decryptPromise = handler.encryptionKey
-      ? decryptUpdate(handler.encryptionKey, payload.chunkData)
-      : null;
+    // Verify and decrypt concurrently — both run in native Web Crypto, so a
+    // 1MB chunk costs ~1ms of main-thread time instead of ~50ms of synchronous
+    // pure-JS SHA-256 that would serialize part processing and jank the UI.
+    const [isValid, decrypted] = await Promise.all([
+      this.#verifyChunk(payload, handler.fileId),
+      handler.encryptionKey
+        ? decryptUpdate(handler.encryptionKey, payload.chunkData)
+        : payload.chunkData,
+    ]);
 
-    const isValid = this.#verifyChunk(payload, handler.fileId);
+    // Re-check after the await: a concurrently-verifying part may have failed
+    // the download (handler removed) or already delivered this chunk index.
+    if (!this.#activeDownloads.has(payload.fileId)) return;
+    if (handler.chunks.has(payload.chunkIndex)) return;
+
     if (!isValid) {
       const reason = `Chunk ${payload.chunkIndex} failed merkle proof verification`;
       handler.reject(new Error(reason));
@@ -733,10 +741,7 @@ class FileClientHandler implements ClientRpcHandler {
       this.#cache.putChunk(payload.fileId, payload.chunkIndex, payload.chunkData).catch(() => {});
     }
 
-    handler.chunks.set(
-      payload.chunkIndex,
-      decryptPromise ? await decryptPromise : payload.chunkData,
-    );
+    handler.chunks.set(payload.chunkIndex, decrypted);
     if (handler.fileMetadata && handler.fileMetadata.totalChunks === undefined) {
       handler.fileMetadata.totalChunks = payload.totalChunks;
     }

@@ -316,112 +316,107 @@ export class EventManager {
         this.refreshStatsMeta();
         this.emitChange();
       },
-      { withEventTarget: true },
     );
     this.unsubscribers.push(unsubReceived);
 
     // Listen to sent messages
-    const unsubSent = teleportalEventClient.on(
-      "teleportal-provider:sent-message",
-      (event) => {
-        const { message, provider, connection } = event.payload;
+    const unsubSent = teleportalEventClient.on("teleportal-provider:sent-message", (event) => {
+      const { message, provider, connection } = event.payload;
 
-        this.attachConnection(connection);
+      this.attachConnection(connection);
 
-        // Check connection state from the connection object if available
-        if (connection && typeof connection.state === "object" && connection.state) {
-          const connState = connection.state;
-          if (connState.type) {
-            this.applyConnectionState({
-              type: connState.type,
-              hosting: connection.hosting,
-              transport: connState.type === "connected" ? (connState.transport ?? null) : null,
-              availableTransports: connection.availableTransports ?? [],
-              error:
-                connState.type === "errored"
-                  ? connState.error?.message || String(connState.error)
-                  : undefined,
-              timestamp: Date.now(),
-            });
+      // Check connection state from the connection object if available
+      if (connection && typeof connection.state === "object" && connection.state) {
+        const connState = connection.state;
+        if (connState.type) {
+          this.applyConnectionState({
+            type: connState.type,
+            hosting: connection.hosting,
+            transport: connState.type === "connected" ? (connState.transport ?? null) : null,
+            availableTransports: connection.availableTransports ?? [],
+            error:
+              connState.type === "errored"
+                ? connState.error?.message || String(connState.error)
+                : undefined,
+            timestamp: Date.now(),
+          });
+        }
+      }
+
+      // Handle ACK messages separately - don't add to list, but track them
+      if (message.type === "ack" && message.payload?.type === "ack") {
+        const ackedMessageId = message.payload.messageId;
+        if (ackedMessageId) {
+          const ackMessageId = message.id;
+
+          // Store ACK info
+          this.ackMessages.set(ackedMessageId, {
+            ackMessageId,
+            ackMessage: message,
+            timestamp: Date.now(),
+          });
+
+          // Update the corresponding message to mark it as ACKed
+          const msgIndex = this.messageIndex.get(ackedMessageId);
+          if (msgIndex !== undefined) {
+            this.messages[msgIndex] = {
+              ...this.messages[msgIndex],
+              ackedBy: {
+                ackMessageId,
+                ackMessage: message,
+                timestamp: Date.now(),
+              },
+            };
+            this.generation++;
+            this.refreshStatsMeta();
+            this.emitChange();
           }
         }
 
-        // Handle ACK messages separately - don't add to list, but track them
-        if (message.type === "ack" && message.payload?.type === "ack") {
-          const ackedMessageId = message.payload.messageId;
-          if (ackedMessageId) {
-            const ackMessageId = message.id;
-
-            // Store ACK info
-            this.ackMessages.set(ackedMessageId, {
-              ackMessageId,
-              ackMessage: message,
-              timestamp: Date.now(),
-            });
-
-            // Update the corresponding message to mark it as ACKed
-            const msgIndex = this.messageIndex.get(ackedMessageId);
-            if (msgIndex !== undefined) {
-              this.messages[msgIndex] = {
-                ...this.messages[msgIndex],
-                ackedBy: {
-                  ackMessageId,
-                  ackMessage: message,
-                  timestamp: Date.now(),
-                },
-              };
-              this.generation++;
-              this.refreshStatsMeta();
-              this.emitChange();
-            }
-          }
-
-          this.messageRateTimestamps.push(Date.now());
-          return;
-        }
-
-        const docId = message.document || "unknown";
-        this.tracker.addDocument(docId, provider, docId);
-
-        const messageId = message.id;
-
-        // O(1) duplicate check
-        if (this.messageIndex.has(messageId)) {
-          this.messageRateTimestamps.push(Date.now());
-          return;
-        }
-
-        this.tracker.recordMessage(docId, message, "sent");
-
-        const devtoolsMessage: DevtoolsMessage = {
-          id: messageId,
-          message,
-          direction: "sent",
-          timestamp: Date.now(),
-          document: docId,
-          provider,
-          connection,
-        };
-
-        this.messages.push(devtoolsMessage);
-        this.messageIndex.set(messageId, this.messages.length - 1);
-        const limit = this.settingsManager.getSettings().messageLimit;
-        if (this.messages.length > limit) {
-          const removed = this.messages.splice(0, this.messages.length - limit);
-          for (const msg of removed) {
-            this.removeMessageFromStats(msg);
-          }
-          this.rebuildIndex();
-        }
-
-        this.addMessageToStats(devtoolsMessage);
         this.messageRateTimestamps.push(Date.now());
-        this.generation++;
-        this.refreshStatsMeta();
-        this.emitChange();
-      },
-      { withEventTarget: true },
-    );
+        return;
+      }
+
+      const docId = message.document || "unknown";
+      this.tracker.addDocument(docId, provider, docId);
+
+      const messageId = message.id;
+
+      // O(1) duplicate check
+      if (this.messageIndex.has(messageId)) {
+        this.messageRateTimestamps.push(Date.now());
+        return;
+      }
+
+      this.tracker.recordMessage(docId, message, "sent");
+
+      const devtoolsMessage: DevtoolsMessage = {
+        id: messageId,
+        message,
+        direction: "sent",
+        timestamp: Date.now(),
+        document: docId,
+        provider,
+        connection,
+      };
+
+      this.messages.push(devtoolsMessage);
+      this.messageIndex.set(messageId, this.messages.length - 1);
+      const limit = this.settingsManager.getSettings().messageLimit;
+      if (this.messages.length > limit) {
+        const removed = this.messages.splice(0, this.messages.length - limit);
+        for (const msg of removed) {
+          this.removeMessageFromStats(msg);
+        }
+        this.rebuildIndex();
+      }
+
+      this.addMessageToStats(devtoolsMessage);
+      this.messageRateTimestamps.push(Date.now());
+      this.generation++;
+      this.refreshStatsMeta();
+      this.emitChange();
+    });
     this.unsubscribers.push(unsubSent);
 
     // Listen to subdoc load (may not be emitted to teleportalEventClient, but try anyway)
@@ -441,7 +436,6 @@ export class EventManager {
           this.generation++;
           this.emitChange();
         },
-        { withEventTarget: true },
       );
       this.unsubscribers.push(unsubLoadSubdoc);
     } catch {
@@ -459,7 +453,6 @@ export class EventManager {
           this.generation++;
           this.emitChange();
         },
-        { withEventTarget: true },
       );
       this.unsubscribers.push(unsubUnloadSubdoc);
     } catch {
@@ -467,24 +460,20 @@ export class EventManager {
     }
 
     // Listen to connection events
-    const unsubConnected = teleportalEventClient.on(
-      "teleportal-provider:connected",
-      (event) => {
-        const connection = event.payload.connection;
-        this.attachConnection(connection);
-        const connState = connection?.state;
-        this.applyConnectionState({
-          type: "connected",
-          hosting: connection?.hosting,
-          transport: connState?.type === "connected" ? (connState.transport ?? null) : null,
-          availableTransports: connection?.availableTransports ?? [],
-          timestamp: Date.now(),
-        });
-        this.refreshStatsMeta();
-        this.emitChange();
-      },
-      { withEventTarget: true },
-    );
+    const unsubConnected = teleportalEventClient.on("teleportal-provider:connected", (event) => {
+      const connection = event.payload.connection;
+      this.attachConnection(connection);
+      const connState = connection?.state;
+      this.applyConnectionState({
+        type: "connected",
+        hosting: connection?.hosting,
+        transport: connState?.type === "connected" ? (connState.transport ?? null) : null,
+        availableTransports: connection?.availableTransports ?? [],
+        timestamp: Date.now(),
+      });
+      this.refreshStatsMeta();
+      this.emitChange();
+    });
     this.unsubscribers.push(unsubConnected);
 
     const unsubDisconnected = teleportalEventClient.on(
@@ -505,28 +494,23 @@ export class EventManager {
         this.refreshStatsMeta();
         this.emitChange();
       },
-      { withEventTarget: true },
     );
     this.unsubscribers.push(unsubDisconnected);
 
-    const unsubUpdate = teleportalEventClient.on(
-      "teleportal-provider:update",
-      (event) => {
-        const { state, connection } = event.payload;
-        this.attachConnection(connection);
-        this.applyConnectionState({
-          type: state.type,
-          hosting: this.connection?.hosting,
-          transport: state.type === "connected" ? (state.transport ?? null) : null,
-          availableTransports: this.connection?.availableTransports ?? [],
-          error: state.type === "errored" ? state.error?.message || String(state.error) : undefined,
-          timestamp: Date.now(),
-        });
-        this.refreshStatsMeta();
-        this.emitChange();
-      },
-      { withEventTarget: true },
-    );
+    const unsubUpdate = teleportalEventClient.on("teleportal-provider:update", (event) => {
+      const { state, connection } = event.payload;
+      this.attachConnection(connection);
+      this.applyConnectionState({
+        type: state.type,
+        hosting: this.connection?.hosting,
+        transport: state.type === "connected" ? (state.transport ?? null) : null,
+        availableTransports: this.connection?.availableTransports ?? [],
+        error: state.type === "errored" ? state.error?.message || String(state.error) : undefined,
+        timestamp: Date.now(),
+      });
+      this.refreshStatsMeta();
+      this.emitChange();
+    });
     this.unsubscribers.push(unsubUpdate);
 
     // File-transfer progress (uploads have no visible chunk messages)

@@ -1,6 +1,8 @@
 export { getFileRpcHandlers, FileHandler } from "./server";
 export { getFileClientHandlers } from "./transfer";
 export { createFileRpc } from "./client";
+export { onFileTransferProgress } from "./progress";
+export type { FileTransferProgress } from "./progress";
 export type { FileRpc, FileRpcOptions, FileUploadOptions, FileDownloadOptions } from "./client";
 
 export { fileProtocol, fileUpload, fileDownload } from "./methods";

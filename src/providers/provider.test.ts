@@ -6,7 +6,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
 import { MemoryDocumentStorage } from "../storage/in-memory/document-storage";
 import { DirectConnection as Connection } from "./connection";
-import { Provider } from "./provider";
+import { Provider, teleportalEventClient } from "./provider";
 import { createMemoryTransportPair } from "./transports/memory";
 import type { RpcExtension, RpcExtensionContext } from "./rpc-extension";
 
@@ -312,6 +312,63 @@ describe("Provider", () => {
 
       expect(receivedMessages.length).toBeGreaterThanOrEqual(1);
 
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("keeps received file-chunk stream messages off the devtools event pipeline", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      const devtoolsMessages: any[] = [];
+      const providerMessages: any[] = [];
+      const unsubscribe = teleportalEventClient.on(
+        "teleportal-provider:received-message",
+        (event) => devtoolsMessages.push(event.payload.message),
+      );
+      provider.on("received-message", (msg) => providerMessages.push(msg));
+
+      const streamMsg = new RpcMessage(
+        "test-doc",
+        {
+          type: "success",
+          payload: {
+            fileId: "file-1",
+            chunkIndex: 0,
+            chunkData: new Uint8Array([1, 2, 3]),
+            merkleProof: [],
+            totalChunks: 1,
+            bytesUploaded: 3,
+            encrypted: false,
+          },
+        },
+        "fileDownload",
+        "stream",
+        "req-1",
+      );
+      const responseMsg = new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { fileId: "file-1" } },
+        "fileDownload",
+        "response",
+        "req-1",
+      );
+      await serverConn.send(streamMsg);
+      await serverConn.send(responseMsg);
+      await flush();
+
+      // The provider's own event still carries every message (extensions need
+      // the chunks); only the devtools observation pipeline skips them.
+      expect(providerMessages.some((m) => m.type === "rpc" && m.requestType === "stream")).toBe(
+        true,
+      );
+      expect(devtoolsMessages.some((m) => m.type === "rpc" && m.requestType === "stream")).toBe(
+        false,
+      );
+      expect(devtoolsMessages.some((m) => m.type === "rpc" && m.requestType === "response")).toBe(
+        true,
+      );
+
+      unsubscribe();
       provider.destroy();
       await serverConn.destroy();
     });

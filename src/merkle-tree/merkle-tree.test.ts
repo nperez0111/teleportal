@@ -2,18 +2,32 @@ import { describe, expect, it } from "bun:test";
 import { toBase64 } from "teleportal/utils";
 import {
   buildMerkleTree,
+  buildMerkleTreeFromLeafHashes,
+  computeLeafHash,
   deserializeMerkleTree,
   generateMerkleProof,
   processFile,
   processFileStreaming,
   serializeMerkleTree,
   verifyMerkleProof,
+  verifyMerkleProofAsync,
   type StreamedFilePart,
 } from "./merkle-tree";
 import { createEncryptionKey, decryptUpdate, encryptUpdate } from "../encryption-key";
 
 function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new Blob([bytes as BlobPart]).stream();
+}
+
+/**
+ * A ReadableStream with async iteration removed, mimicking Safari and older
+ * Chrome where `ReadableStream[Symbol.asyncIterator]` is undefined. Code that
+ * drains the stream must use the reader API, not `for await ... of`.
+ */
+function nonAsyncIterableStreamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  const stream = new Blob([bytes as BlobPart]).stream();
+  (stream as unknown as Record<symbol, unknown>)[Symbol.asyncIterator] = undefined;
+  return stream;
 }
 
 function randomBytes(n: number): Uint8Array {
@@ -25,6 +39,23 @@ function randomBytes(n: number): Uint8Array {
 }
 
 describe("Merkle Tree", () => {
+  it("builds an identical tree from precomputed leaf hashes", async () => {
+    // Odd counts exercise the carried-up trailing node path.
+    for (const count of [1, 2, 3, 5]) {
+      const chunks = Array.from({ length: count }, (_, i) => randomBytes(64 + i));
+      const fromChunks = await buildMerkleTree(chunks);
+      const leafHashes = await Promise.all(chunks.map((c) => computeLeafHash(c)));
+      const fromHashes = buildMerkleTreeFromLeafHashes(leafHashes);
+      expect(fromHashes.leafCount).toBe(fromChunks.leafCount);
+      expect(fromHashes.nodes.at(-1)?.hash).toEqual(fromChunks.nodes.at(-1)?.hash!);
+      expect(serializeMerkleTree(fromHashes)).toEqual(serializeMerkleTree(fromChunks));
+    }
+  });
+
+  it("rejects empty leaf hash arrays", () => {
+    expect(() => buildMerkleTreeFromLeafHashes([])).toThrow();
+  });
+
   it("should build a merkle tree from chunks", async () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),
@@ -215,7 +246,80 @@ describe("Merkle Tree", () => {
   });
 });
 
+describe("verifyMerkleProofAsync", () => {
+  it("agrees with verifyMerkleProof for every chunk count 1..64", async () => {
+    for (let n = 1; n <= 64; n++) {
+      const chunks = Array.from({ length: n }, (_, i) => new Uint8Array([i, i * 2, i * 3]));
+      const tree = await buildMerkleTree(chunks);
+      const root = tree.nodes.at(-1)!.hash!;
+
+      for (let i = 0; i < n; i++) {
+        const proof = generateMerkleProof(tree, i);
+        expect(await verifyMerkleProofAsync(chunks[i], proof, root, i, n)).toBe(true);
+        expect(verifyMerkleProof(chunks[i], proof, root, i, n)).toBe(true);
+      }
+    }
+  });
+
+  it("rejects a tampered chunk", async () => {
+    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+    const tree = await buildMerkleTree(chunks);
+    const root = tree.nodes.at(-1)!.hash!;
+    const proof = generateMerkleProof(tree, 0);
+
+    expect(await verifyMerkleProofAsync(new Uint8Array([9, 9, 9]), proof, root, 0, 2)).toBe(false);
+  });
+
+  it("rejects a proof with leftover elements", async () => {
+    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+    const tree = await buildMerkleTree(chunks);
+    const root = tree.nodes.at(-1)!.hash!;
+    const proof = [...generateMerkleProof(tree, 0), new Uint8Array(32)];
+
+    expect(await verifyMerkleProofAsync(chunks[0], proof, root, 0, 2)).toBe(false);
+  });
+
+  it("rejects an out-of-range or non-integer index", async () => {
+    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+    const tree = await buildMerkleTree(chunks);
+    const root = tree.nodes.at(-1)!.hash!;
+    const proof = generateMerkleProof(tree, 0);
+
+    expect(await verifyMerkleProofAsync(chunks[0], proof, root, -1, 2)).toBe(false);
+    expect(await verifyMerkleProofAsync(chunks[0], proof, root, 2, 2)).toBe(false);
+    expect(await verifyMerkleProofAsync(chunks[0], proof, root, 0.5, 2)).toBe(false);
+  });
+});
+
 describe("processFileStreaming", () => {
+  it("drains a non-async-iterable stream (Safari/older Chrome)", async () => {
+    const bytes = randomBytes(16 * 3 + 7);
+    const target = 16;
+
+    const expected = toBase64(
+      (await processFile(streamOf(bytes), bytes.length, undefined, target)).at(-1)!.rootHash,
+    );
+
+    // Both entry points must work when for-await-of is unavailable on the stream.
+    const emitted: StreamedFilePart[] = [];
+    const { rootHash } = await processFileStreaming(
+      nonAsyncIterableStreamOf(bytes),
+      bytes.length,
+      undefined,
+      (p) => emitted.push(p),
+      target,
+    );
+    expect(toBase64(rootHash)).toBe(expected);
+
+    const parts = await processFile(
+      nonAsyncIterableStreamOf(bytes),
+      bytes.length,
+      undefined,
+      target,
+    );
+    expect(toBase64(parts.at(-1)!.rootHash)).toBe(expected);
+  });
+
   it("returns the same root as processFile (unencrypted)", async () => {
     const bytes = randomBytes(16 * 3 + 7); // 4 chunks at targetChunkSize 16
     const target = 16;
