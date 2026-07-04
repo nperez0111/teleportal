@@ -25,6 +25,8 @@ export default defineConfig({
     entry: {
       "lib/index": "src/lib/index.ts",
       "storage/index": "src/storage/index.ts",
+      "storage/postgres/index": "src/storage/postgres/index.ts",
+      "storage/s3/index": "src/storage/s3/index.ts",
       "http/index": "src/http/index.ts",
       "lib/protocol/index": "src/lib/protocol/index.ts",
       "protocols/milestone/index": "src/protocols/milestone/index.ts",

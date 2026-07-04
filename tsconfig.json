@@ -12,6 +12,8 @@
     "paths": {
       "teleportal/encryption-key": ["./src/encryption-key/index.ts"],
       "teleportal/storage": ["./src/storage/index.ts"],
+      "teleportal/storage/postgres": ["./src/storage/postgres/index.ts"],
+      "teleportal/storage/s3": ["./src/storage/s3/index.ts"],
       "teleportal/transports/redis": ["./src/transports/redis/index.ts"],
       "teleportal/transports/nats": ["./src/transports/nats/index.ts"],
       "teleportal/transports/rate-limiter": ["./src/transports/rate-limiter/index.ts"],
