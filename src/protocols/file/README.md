@@ -9,7 +9,17 @@ This protocol provides RPC handlers for file transfers:
 - **fileUpload**: Initiate an upload, then stream encrypted/plaintext chunks to the server
 - **fileDownload**: Request a file, then receive chunks streamed back
 
-Files are transferred as 64KB chunks with Merkle proof integrity verification. Both upload and download support optional E2EE via the provider's encryption key.
+Files are transferred as chunks with Merkle proof integrity verification. Both upload and download support optional E2EE via the provider's encryption key.
+
+Uploads are **content-addressed, resumable, and deduplicated**:
+
+- The client encrypts the whole file and folds its Merkle root — the `contentId` — _before_ sending the upload request. That id is both the upload session id and the durable file id.
+- **Resume**: a re-upload of the same file (a retry, or even after a page reload) re-derives the same `contentId`, so the server finds the existing session and replies with `existingChunks`; the client streams only what's missing.
+- **Dedup**: if the content already exists durably, the server attaches it to the requesting document and replies `alreadyExists: true` — the client resolves without streaming a single chunk.
+
+Resume and dedup require a **stable** `contentId`, which in turn requires deterministic encryption. The client uses [`createDeterministicEncryptor`](../../encryption-key/README.md) (keyed HMAC-derived IVs) for file chunks. If the encryption key is non-extractable, it falls back to random IVs — uploads still work, but each attempt gets a fresh `contentId`, so cross-attempt resume and dedup won't hit.
+
+> **Trade-off — convergent encryption leaks equality.** Deterministic encryption makes identical plaintext chunks encrypt to identical ciphertext, so the server can tell when two uploads (under the same key) share content — that _is_ the dedup mechanism, and it is per-key scoped. It is chunk-granular: the server can also observe shared prefixes and repeated regions between files. Unencrypted uploads dedup globally, and `alreadyExists` is an existence oracle for anyone who can hash a candidate plaintext. Knowing a `contentId` is a capability to attach+download the file (as it already was for downloads); use `checkUploadPermission` / `checkDownloadPermission` for deployments that must gate this. Dedup identity is a function of (content, key, chunk size).
 
 ## File Structure
 
@@ -137,26 +147,39 @@ try {
 ### Upload
 
 ```
-Client                                Server
-  │  ──── fileUpload request ────────►  │  Check permission, initiate session
-  │  ◄──── fileUpload response ───────  │  { allowed: true, chunkSize }
-  │  ──── stream (chunk 0) ──────────►  │  Store chunk
-  │  ◄──── ACK ──────────────────────  │
-  │  ──── stream (chunk 1) ──────────►  │
-  │  ◄──── ACK ──────────────────────  │
-  │  ...                                │
-  │  ──── stream (last chunk) ───────►  │  Rebuild tree, complete upload, move to durable storage
-  │  ◄──── ACK ──────────────────────  │
+Client                                             Server
+  │  [encrypt whole file, fold Merkle root → contentId] │
+  │  ──── fileUpload {fileId: contentId, chunkSize} ──► │  permission check
+  │                                                     │  chunkSize mismatch? → { chunkSizeMismatch }
+  │                                                     │  getFile(contentId) hit → attach to doc,
+  │  ◄──── { allowed, chunkSize, alreadyExists?,        │    { alreadyExists: true }
+  │          existingChunks? } ───────────────────────  │  else begin/resume session
+  │  [alreadyExists → resolve, done]                    │
+  │  ──── stream (missing chunks only) ───────────────► │  store chunk
+  │  ◄──── ACK ───────────────────────────────────────  │
+  │  ...                                                │
+  │  (last chunk) ────────────────────────────────────► │  verify root == contentId,
+  │  ◄──── ACK ───────────────────────────────────────  │    move to durable storage, attach to doc
 ```
 
-The client sends chunks as soon as each is encrypted (pipelined with the wire),
-and the **upload stream omits per-chunk Merkle proofs** (`merkleProof: []`): the
-server ignores them on upload and recomputes the Merkle tree from the stored
-chunks at completion, deriving the authoritative `contentId` from that tree.
-Download is the integrity boundary — there the server generates proofs from its
-rebuilt tree and the client verifies each chunk against the root.
+Because the `contentId` is known before the request, dedup and resume cost no
+extra round-trips (they are answered in the upload response). The trade-off is
+that the client encrypts+hashes the whole file before the first chunk goes out;
+encryption is parallelized, so the added time-to-first-byte is roughly
+0.4–0.5 ms/MB (≈90 ms for 200 MB, ≈470 ms for 1 GB) — small next to transfer
+time, and saved entirely on a dedup/resume hit.
 
-The server returns its configured `chunkSize` in the upload response. The client uses this to split the file into chunks. If not provided, defaults to 1MB.
+The **upload stream omits per-chunk Merkle proofs** (`merkleProof: []`): the
+server ignores them on upload and recomputes the Merkle tree from the stored
+chunks at completion, verifying it equals the client-claimed `contentId` (a
+mismatch discards the session so a retry starts clean). Download is the
+integrity boundary — there the server generates proofs from its rebuilt tree and
+the client verifies each chunk against the root.
+
+If the client's `chunkSize` doesn't match the server's configured size, the
+server replies `{ chunkSizeMismatch: true, chunkSize }` and creates no session;
+the client re-chunks with the server's size (which changes the `contentId`) and
+resends once. The negotiated size is cached to avoid repeating this.
 
 ### Download
 
@@ -176,9 +199,9 @@ Client                                Server
 
 Initiate a file upload and stream chunks to the server.
 
-**Request:** `FileUploadRequest` — `{ fileId, filename, size, mimeType, lastModified, encrypted }`
+**Request:** `FileUploadRequest` — `{ fileId, filename, size, mimeType, lastModified, encrypted, chunkSize? }` (`fileId` is the content-addressed Merkle root; `chunkSize` is what the client chunked with)
 
-**Response:** `FileUploadResponse` — `{ fileId, allowed, reason?, statusCode?, chunkSize? }`
+**Response:** `FileUploadResponse` — `{ fileId, allowed, reason?, statusCode?, chunkSize?, existingChunks?, alreadyExists?, chunkSizeMismatch? }`
 
 **Stream:** `FilePartStream` — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }` (`merkleProof` is populated for downloads and empty for uploads)
 

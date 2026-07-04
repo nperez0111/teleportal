@@ -346,4 +346,185 @@ describe("FileHandler", () => {
     expect(parts[0].totalChunks).toBe(1);
     expect(parts[0].chunkData).toEqual(chunks[0]);
   });
+
+  // Helpers for the dedup/resume/race tests below.
+  async function uploadOneChunkFile(
+    fileHandler: FileHandler,
+    temp: InMemoryTemporaryUploadStorage,
+    context: RpcServerContext,
+    documentId: string,
+    chunk: Uint8Array,
+  ): Promise<string> {
+    const fileId = toBase64((await buildMerkleTree([chunk])).nodes.at(-1)!.hash!);
+    await temp.beginUpload(fileId, {
+      filename: "f.bin",
+      size: chunk.length,
+      mimeType: "application/octet-stream",
+      encrypted: false,
+      lastModified: Date.now(),
+      documentId,
+    });
+    await fileHandler.handleFilePart(
+      {
+        fileId,
+        chunkIndex: 0,
+        chunkData: chunk,
+        merkleProof: [],
+        totalChunks: 1,
+        bytesUploaded: chunk.length,
+        encrypted: false,
+      },
+      "m0",
+      async () => {},
+      context,
+    );
+    return fileId;
+  }
+
+  it("dedup: hasFile + finalizeExisting attaches an existing file to a new document", async () => {
+    const fileStorage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    fileStorage.temporaryUploadStorage = temp;
+    const fileHandler = new FileHandler(fileStorage);
+
+    const chunk = new Uint8Array([9, 9, 9]);
+    const docA = new MemoryDocumentStorage();
+    const fileId = await uploadOneChunkFile(
+      fileHandler,
+      temp,
+      createMockContext("doc-a", docA),
+      "doc-a",
+      chunk,
+    );
+
+    // A second document dedup-hits the same content.
+    expect(await fileHandler.hasFile(fileId)).toBe(true);
+    const docB = new MemoryDocumentStorage();
+    await fileHandler.finalizeExisting(fileId, createMockContext("doc-b", docB));
+
+    expect((await docA.getDocumentMetadata("doc-a")).files).toContain(fileId);
+    expect((await docB.getDocumentMetadata("doc-b")).files).toContain(fileId);
+  });
+
+  it("resume: a re-initiated upload reports already-stored chunks", async () => {
+    const fileStorage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    fileStorage.temporaryUploadStorage = temp;
+    const fileHandler = new FileHandler(fileStorage);
+    const documentId = "doc-1";
+    const context = createMockContext(documentId, new MemoryDocumentStorage());
+
+    const chunk0 = new Uint8Array(CHUNK_SIZE).fill(1);
+    const chunk1 = new Uint8Array(50).fill(2);
+    const fileId = toBase64((await buildMerkleTree([chunk0, chunk1])).nodes.at(-1)!.hash!);
+    const size = chunk0.length + chunk1.length;
+
+    // First attempt uploads only chunk 0, then "disconnects".
+    await fileHandler.initiateUpload(
+      fileId,
+      { filename: "f", size, mimeType: "x", encrypted: false },
+      documentId,
+    );
+    await fileHandler.handleFilePart(
+      {
+        fileId,
+        chunkIndex: 0,
+        chunkData: chunk0,
+        merkleProof: [],
+        totalChunks: 2,
+        bytesUploaded: chunk0.length,
+        encrypted: false,
+      },
+      "m0",
+      async () => {},
+      context,
+    );
+
+    // Resume: re-initiate returns chunk 0 as already present.
+    const { existingChunks } = await fileHandler.initiateUpload(
+      fileId,
+      { filename: "f", size, mimeType: "x", encrypted: false },
+      documentId,
+    );
+    expect(existingChunks).toEqual([0]);
+  });
+
+  it("root mismatch discards the poisoned session", async () => {
+    const fileStorage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    fileStorage.temporaryUploadStorage = temp;
+    const fileHandler = new FileHandler(fileStorage);
+    const documentId = "doc-1";
+    const context = createMockContext(documentId, new MemoryDocumentStorage());
+
+    const realChunk = new Uint8Array([1, 2, 3]);
+    const fileId = toBase64((await buildMerkleTree([realChunk])).nodes.at(-1)!.hash!);
+
+    // Claim `fileId` but upload DIFFERENT bytes → root won't match on finalize.
+    await temp.beginUpload(fileId, {
+      filename: "f",
+      size: 3,
+      mimeType: "x",
+      encrypted: false,
+      lastModified: Date.now(),
+      documentId,
+    });
+    await expect(
+      fileHandler.handleFilePart(
+        {
+          fileId,
+          chunkIndex: 0,
+          chunkData: new Uint8Array([4, 5, 6]),
+          merkleProof: [],
+          totalChunks: 1,
+          bytesUploaded: 3,
+          encrypted: false,
+        },
+        "m0",
+        async () => {},
+        context,
+      ),
+    ).rejects.toThrow(/Merkle root/);
+
+    // Session is discarded, and no durable file was stored.
+    expect(await temp.getUploadProgress(fileId)).toBeNull();
+    expect(await fileStorage.getFile(fileId)).toBeNull();
+  });
+
+  it("race: a chunk arriving after the file is already durable is accepted (ACKed)", async () => {
+    const fileStorage = new InMemoryFileStorage();
+    const temp = new InMemoryTemporaryUploadStorage();
+    fileStorage.temporaryUploadStorage = temp;
+    const fileHandler = new FileHandler(fileStorage);
+
+    const chunk = new Uint8Array([7, 7, 7]);
+    const fileId = await uploadOneChunkFile(
+      fileHandler,
+      temp,
+      createMockContext("doc-a", new MemoryDocumentStorage()),
+      "doc-a",
+      chunk,
+    );
+    // Session is gone after completion.
+    expect(await temp.getUploadProgress(fileId)).toBeNull();
+
+    // A late chunk from another client (different doc) must not throw; it should
+    // attach the file to that client's document instead.
+    const docB = new MemoryDocumentStorage();
+    await fileHandler.handleFilePart(
+      {
+        fileId,
+        chunkIndex: 0,
+        chunkData: chunk,
+        merkleProof: [],
+        totalChunks: 1,
+        bytesUploaded: chunk.length,
+        encrypted: false,
+      },
+      "m0",
+      async () => {},
+      createMockContext("doc-b", docB),
+    );
+    expect((await docB.getDocumentMetadata("doc-b")).files).toContain(fileId);
+  });
 });

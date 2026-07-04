@@ -80,6 +80,9 @@ export class FileHandler {
   #fileStorage: FileStorage;
   #temporaryUploadStorage: TemporaryUploadStorage | undefined;
   #chunkSize: number;
+  /** In-flight finalizations keyed by contentId, so one server instance stores
+   * a given file once even when several threshold chunks arrive concurrently. */
+  #finalizations = new Map<string, Promise<void>>();
 
   constructor(fileStorage: FileStorage, chunkSize?: number) {
     this.#fileStorage = fileStorage;
@@ -138,12 +141,25 @@ export class FileHandler {
         );
       }
 
-      const { storedChunks } = await this.#temporaryUploadStorage.storeChunk(
-        payload.fileId,
-        payload.chunkIndex,
-        payload.chunkData,
-        payload.merkleProof,
-      );
+      let storedChunks: number;
+      try {
+        ({ storedChunks } = await this.#temporaryUploadStorage.storeChunk(
+          payload.fileId,
+          payload.chunkIndex,
+          payload.chunkData,
+          payload.merkleProof,
+        ));
+      } catch (storeError) {
+        // The session may have already completed and been cleaned up — e.g. a
+        // second client uploading the same content whose in-flight chunks land
+        // after the file became durable. If the durable file exists, treat this
+        // chunk as accepted and make sure this document references it.
+        if (await this.#fileStorage.getFile(payload.fileId)) {
+          await this.#attachFileToDocument(context, payload.fileId);
+          return;
+        }
+        throw storeError;
+      }
 
       // Derive expected total from the server-side upload session, not the client payload.
       const progress = await this.#temporaryUploadStorage.getUploadProgress(payload.fileId);
@@ -152,43 +168,7 @@ export class FileHandler {
         : payload.totalChunks;
 
       if (storedChunks >= expectedTotal) {
-        const startTime = Date.now();
-        try {
-          const result = await this.#temporaryUploadStorage.completeUpload(
-            payload.fileId,
-            expectedTotal,
-          );
-
-          await this.#fileStorage.storeFileFromUpload(result);
-
-          await context.session.storage.transaction(context.documentId, async () => {
-            const metadata = await context.session.storage.getDocumentMetadata(context.documentId);
-            await context.session.storage.writeDocumentMetadata(context.documentId, {
-              ...metadata,
-              files: [...new Set([...(metadata.files ?? []), result.fileId])],
-              updatedAt: Date.now(),
-            });
-          });
-          emitWideEvent("info", {
-            event_type: "file_upload_completed",
-            timestamp: new Date().toISOString(),
-            file_id: payload.fileId,
-            total_chunks: payload.totalChunks,
-            document_id: context.documentId,
-            durable_file_id: result.fileId,
-            duration_ms: Date.now() - startTime,
-          });
-        } catch (error) {
-          emitWideEvent("error", {
-            event_type: "file_upload_complete_failed",
-            timestamp: new Date().toISOString(),
-            file_id: payload.fileId,
-            document_id: context.documentId,
-            error,
-            duration_ms: Date.now() - startTime,
-          });
-          throw error;
-        }
+        await this.finalizeUpload(payload.fileId, expectedTotal, context);
       }
     } catch (error) {
       emitWideEvent("error", {
@@ -200,6 +180,98 @@ export class FileHandler {
       });
       throw error;
     }
+  }
+
+  /**
+   * Finalize a fully-uploaded session: verify its merkle root against the
+   * claimed contentId, move it to durable storage, delete the temp session, and
+   * attach it to the requesting document. Idempotent and safe to call
+   * concurrently for the same contentId (a single store runs per server
+   * instance). On a root mismatch the poisoned session is discarded so a retry
+   * starts clean.
+   *
+   * @param fileId - The content-addressed id (also the upload session id)
+   * @param expectedTotal - The server-derived total chunk count
+   * @param context - The RPC context of the requesting document
+   */
+  async finalizeUpload(
+    fileId: string,
+    expectedTotal: number,
+    context: RpcServerContext,
+  ): Promise<void> {
+    let finalization = this.#finalizations.get(fileId);
+    if (!finalization) {
+      finalization = this.#finalizeUpload(fileId, expectedTotal).finally(() => {
+        this.#finalizations.delete(fileId);
+      });
+      this.#finalizations.set(fileId, finalization);
+    }
+    await finalization;
+
+    // Attach to the requesting document regardless of which caller did the store.
+    await this.#attachFileToDocument(context, fileId);
+  }
+
+  async #finalizeUpload(fileId: string, expectedTotal: number): Promise<void> {
+    if (!this.#temporaryUploadStorage) {
+      throw new Error("File uploads are not enabled: missing fileStorage.temporaryUploadStorage");
+    }
+
+    // Already durable (e.g. a concurrent uploader beat us to it) — nothing to do.
+    if (await this.#fileStorage.getFile(fileId)) {
+      return;
+    }
+
+    const startTime = Date.now();
+    try {
+      // Passing fileId makes completeUpload verify the rebuilt root equals the
+      // client-claimed contentId.
+      const result = await this.#temporaryUploadStorage.completeUpload(
+        fileId,
+        expectedTotal,
+        fileId,
+      );
+
+      if (!(await this.#fileStorage.getFile(fileId))) {
+        await this.#fileStorage.storeFileFromUpload(result);
+      }
+      await this.#temporaryUploadStorage.deleteUpload(fileId);
+
+      emitWideEvent("info", {
+        event_type: "file_upload_completed",
+        timestamp: new Date().toISOString(),
+        file_id: fileId,
+        total_chunks: expectedTotal,
+        durable_file_id: result.fileId,
+        duration_ms: Date.now() - startTime,
+      });
+    } catch (error) {
+      // A merkle-root mismatch (poisoned/corrupt session) is unrecoverable —
+      // discard the session so a fresh upload can start clean.
+      const isRootMismatch = error instanceof Error && error.message.includes("Merkle root");
+      if (isRootMismatch) {
+        await this.#temporaryUploadStorage.deleteUpload(fileId).catch(() => {});
+      }
+      emitWideEvent("error", {
+        event_type: "file_upload_complete_failed",
+        timestamp: new Date().toISOString(),
+        file_id: fileId,
+        error,
+        duration_ms: Date.now() - startTime,
+      });
+      throw error;
+    }
+  }
+
+  async #attachFileToDocument(context: RpcServerContext, fileId: string): Promise<void> {
+    await context.session.storage.transaction(context.documentId, async () => {
+      const metadata = await context.session.storage.getDocumentMetadata(context.documentId);
+      await context.session.storage.writeDocumentMetadata(context.documentId, {
+        ...metadata,
+        files: [...new Set([...(metadata.files ?? []), fileId])],
+        updatedAt: Date.now(),
+      });
+    });
   }
 
   /**
@@ -322,6 +394,20 @@ export class FileHandler {
   }
 
   /**
+   * Whether a file already exists durably (dedup check).
+   */
+  async hasFile(fileId: string): Promise<boolean> {
+    return (await this.#fileStorage.getFile(fileId)) !== null;
+  }
+
+  /**
+   * Attach an already-durable file to the requesting document (dedup hit).
+   */
+  async finalizeExisting(fileId: string, context: RpcServerContext): Promise<void> {
+    await this.#attachFileToDocument(context, fileId);
+  }
+
+  /**
    * Get file metadata for a file.
    */
   async getFileMetadata(fileId: string): Promise<{
@@ -406,6 +492,36 @@ export function getFileRpcHandlers(
             });
           }
 
+          // The client's fileId (a content-addressed merkle root) is only valid
+          // for the server's chunk size. If they disagree, ask the client to
+          // re-chunk (which changes its fileId) and resend — create no session.
+          if (payload.chunkSize !== undefined && payload.chunkSize !== fileHandler.chunkSize) {
+            return ok({
+              fileId: payload.fileId,
+              allowed: true,
+              chunkSize: fileHandler.chunkSize,
+              chunkSizeMismatch: true,
+            });
+          }
+
+          // Dedup: if the content already exists durably, attach it to this
+          // document and let the client resolve without streaming a single chunk.
+          if (await fileHandler.hasFile(payload.fileId)) {
+            await fileHandler.finalizeExisting(payload.fileId, context);
+            emitWideEvent("info", {
+              event_type: "file_upload_deduplicated",
+              timestamp: new Date().toISOString(),
+              file_id: payload.fileId,
+              document_id: context.documentId,
+            });
+            return ok({
+              fileId: payload.fileId,
+              allowed: true,
+              alreadyExists: true,
+              chunkSize: fileHandler.chunkSize,
+            });
+          }
+
           const { existingChunks } = await fileHandler.initiateUpload(
             payload.fileId,
             {
@@ -416,6 +532,26 @@ export function getFileRpcHandlers(
             },
             context.documentId,
           );
+
+          // A prior attempt may have uploaded every chunk but failed to finalize
+          // (e.g. a transient store error). The resuming client would otherwise
+          // be told "all chunks present", send nothing, and the file would never
+          // become durable. Finalize it now and report a dedup hit.
+          const { totalChunks } = fileHandler.computeChunkInfo(payload.size, payload.encrypted);
+          if (existingChunks.length >= totalChunks) {
+            try {
+              await fileHandler.finalizeUpload(payload.fileId, totalChunks, context);
+              return ok({
+                fileId: payload.fileId,
+                allowed: true,
+                alreadyExists: true,
+                chunkSize: fileHandler.chunkSize,
+              });
+            } catch {
+              // Finalization failed (e.g. root mismatch → session discarded).
+              // Fall through so the client re-uploads from scratch.
+            }
+          }
 
           return ok({
             fileId: payload.fileId,

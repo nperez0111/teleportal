@@ -31,6 +31,7 @@ describe("FileTransferProtocol.Client - file-part only", () => {
           chunk.merkleProof,
           fromBase64(fileId),
           chunk.chunkIndex,
+          chunk.totalChunks,
         );
       }
     }
@@ -115,6 +116,7 @@ describe("FileTransferProtocol.Client - file-part only", () => {
           chunk.merkleProof,
           fromBase64(fileId),
           chunk.chunkIndex,
+          chunk.totalChunks,
         );
       }
     }

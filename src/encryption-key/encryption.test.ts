@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   createEncryptionKey,
+  createDeterministicEncryptor,
   importEncryptionKey,
   exportEncryptionKey,
   encryptUpdate,
@@ -205,5 +206,78 @@ describe("URL fragment key helpers", () => {
 
   it("ignores other fragment params", () => {
     expect(keyFromUrlFragment("#a=1&token=abc&b=2")).toBe("abc");
+  });
+});
+
+describe("createDeterministicEncryptor", () => {
+  const sha256 = async (data: Uint8Array) =>
+    new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
+
+  it("produces identical ciphertext for the same key and chunk", async () => {
+    const key = await createEncryptionKey();
+    const encrypt = await createDeterministicEncryptor(key);
+    expect(encrypt).not.toBeNull();
+
+    const chunk = new Uint8Array([1, 2, 3, 4, 5]);
+    const a = await encrypt!(chunk);
+    const b = await encrypt!(chunk);
+    expect(a).toEqual(b);
+  });
+
+  it("round-trips through the unchanged decryptUpdate", async () => {
+    const key = await createEncryptionKey();
+    const encrypt = await createDeterministicEncryptor(key);
+
+    const chunk = new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+    const ciphertext = await encrypt!(chunk);
+    expect(await decryptUpdate(key, ciphertext)).toEqual(chunk);
+  });
+
+  it("differs across chunks and across keys", async () => {
+    const key1 = await createEncryptionKey();
+    const key2 = await createEncryptionKey();
+    const e1 = await createDeterministicEncryptor(key1);
+    const e2 = await createDeterministicEncryptor(key2);
+
+    const chunkA = new Uint8Array([1, 2, 3]);
+    const chunkB = new Uint8Array([4, 5, 6]);
+
+    expect(await e1!(chunkA)).not.toEqual(await e1!(chunkB));
+    // Same chunk under a different key must differ (per-key dedup scope).
+    expect(await e1!(chunkA)).not.toEqual(await e2!(chunkA));
+  });
+
+  it("uses a KEYED IV, not the raw SHA-256 of the chunk", async () => {
+    const key = await createEncryptionKey();
+    const encrypt = await createDeterministicEncryptor(key);
+
+    const chunk = new Uint8Array([1, 1, 1, 1]);
+    const ciphertext = await encrypt!(chunk);
+    const iv = ciphertext.subarray(0, 12);
+
+    // A naive implementation would set iv = SHA-256(chunk)[:12], which would let
+    // anyone holding the ciphertext confirm guessed plaintext. Assert it does not.
+    const naiveIv = (await sha256(chunk)).subarray(0, 12);
+    expect(iv).not.toEqual(naiveIv);
+  });
+
+  it("handles empty chunks deterministically", async () => {
+    const key = await createEncryptionKey();
+    const encrypt = await createDeterministicEncryptor(key);
+
+    const empty = new Uint8Array(0);
+    const a = await encrypt!(empty);
+    const b = await encrypt!(empty);
+    expect(a).toEqual(b);
+    expect(await decryptUpdate(key, a)).toEqual(empty);
+  });
+
+  it("returns null for a non-extractable key", async () => {
+    const nonExtractable = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+    expect(await createDeterministicEncryptor(nonExtractable)).toBeNull();
   });
 });

@@ -67,7 +67,7 @@ describe("Merkle Tree", () => {
     const root = tree.nodes.at(-1);
     expect(root).toBeDefined();
     expect(root?.hash).toBeDefined();
-    const isValid = verifyMerkleProof(chunks[0], proof, root!.hash!, 0);
+    const isValid = verifyMerkleProof(chunks[0], proof, root!.hash!, 0, 1);
     expect(isValid).toBe(true);
   });
 
@@ -98,7 +98,7 @@ describe("Merkle Tree", () => {
     expect(root?.hash).toBeDefined();
     const proof = generateMerkleProof(tree, 0);
 
-    const isValid = verifyMerkleProof(chunks[0], proof, root!.hash!, 0);
+    const isValid = verifyMerkleProof(chunks[0], proof, root!.hash!, 0, chunks.length);
     expect(isValid).toBe(true);
   });
 
@@ -113,7 +113,7 @@ describe("Merkle Tree", () => {
 
     // Modify the chunk
     const modifiedChunk = new Uint8Array([9, 9, 9]);
-    const isValid = verifyMerkleProof(modifiedChunk, proof, root!.hash!, 0);
+    const isValid = verifyMerkleProof(modifiedChunk, proof, root!.hash!, 0, chunks.length);
     expect(isValid).toBe(false);
   });
 
@@ -156,8 +156,61 @@ describe("Merkle Tree", () => {
     expect(root?.hash).toBeDefined();
     for (const [i, chunk] of chunks.entries()) {
       const proof = generateMerkleProof(tree, i);
-      const isValid = verifyMerkleProof(chunk, proof, root!.hash!, i);
+      const isValid = verifyMerkleProof(chunk, proof, root!.hash!, i, chunks.length);
       expect(isValid).toBe(true);
+    }
+  });
+
+  it("does not collide between [A,B,C] and [A,B,C,C] (duplication attack)", async () => {
+    const a = new Uint8Array([1]);
+    const b = new Uint8Array([2]);
+    const c = new Uint8Array([3]);
+
+    const root3 = (await buildMerkleTree([a, b, c])).nodes.at(-1)!.hash!;
+    const root4 = (await buildMerkleTree([a, b, c, c])).nodes.at(-1)!.hash!;
+
+    expect(toBase64(root3)).not.toBe(toBase64(root4));
+  });
+
+  it("domain-separates leaves from internal nodes", async () => {
+    const a = new Uint8Array([1]);
+    const b = new Uint8Array([2]);
+
+    // Leaf hashes for a and b.
+    const leafA = (await buildMerkleTree([a])).nodes[0].hash!;
+    const leafB = (await buildMerkleTree([b])).nodes[0].hash!;
+
+    // The internal root of [a, b].
+    const internalRoot = (await buildMerkleTree([a, b])).nodes.at(-1)!.hash!;
+
+    // A single 64-byte chunk equal to leafA‖leafB. Without domain separation its
+    // leaf hash would equal the internal parent of [a, b].
+    const forged = new Uint8Array(64);
+    forged.set(leafA, 0);
+    forged.set(leafB, 32);
+    const forgedRoot = (await buildMerkleTree([forged])).nodes.at(-1)!.hash!;
+
+    expect(toBase64(forgedRoot)).not.toBe(toBase64(internalRoot));
+  });
+
+  it("verifies proofs across a range of odd and even leaf counts", async () => {
+    for (const n of [1, 2, 3, 5, 7, 8, 9, 16, 17]) {
+      const chunks = Array.from({ length: n }, (_, i) => new Uint8Array([i, i * 2, i * 3]));
+      const tree = await buildMerkleTree(chunks);
+      const root = tree.nodes.at(-1)!.hash!;
+
+      for (let i = 0; i < n; i++) {
+        const proof = generateMerkleProof(tree, i);
+        expect(verifyMerkleProof(chunks[i], proof, root, i, n)).toBe(true);
+      }
+
+      // Round-trip through serialization preserves the structure and roots.
+      const restored = deserializeMerkleTree(serializeMerkleTree(tree), n);
+      expect(toBase64(restored.nodes.at(-1)!.hash!)).toBe(toBase64(root));
+      for (let i = 0; i < n; i++) {
+        const proof = generateMerkleProof(restored, i);
+        expect(verifyMerkleProof(chunks[i], proof, root, i, n)).toBe(true);
+      }
     }
   });
 });

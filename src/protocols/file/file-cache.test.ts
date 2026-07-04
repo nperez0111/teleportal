@@ -74,9 +74,9 @@ async function makeContentAddressedFile(data: Uint8Array) {
 
 /**
  * Simulate a full upload through the FileClientHandler:
- * 1. Call uploadFile()
- * 2. Feed the handleResponse (upload accepted)
- * 3. Capture the stream messages, ACK them all
+ * 1. Call uploadFile() — it computes chunks, then awaits the upload response.
+ * 2. The mocked sendRequest accepts the upload (echoing the content-addressed id).
+ * 3. Capture the streamed chunks and ACK them all.
  */
 async function simulateUpload(
   handler: any,
@@ -88,8 +88,9 @@ async function simulateUpload(
 
   handler.setRpcClient(
     {
-      sendRequest: async (_doc: string, _method: string, _payload: any, _opts: any) => {
-        // no-op — the response is fed via handleResponse
+      sendRequest: async (_doc: string, _method: string, payload: any) => {
+        // Accept the upload; echo back the client-computed content-addressed id.
+        return { fileId: payload.fileId, allowed: true, chunkSize: CHUNK_SIZE };
       },
       sendStream: async (msg: RpcMessage<any>) => {
         sentMessages.push(msg);
@@ -102,27 +103,8 @@ async function simulateUpload(
 
   const uploadPromise = handler.uploadFile(file, document, undefined, encryptionKey);
 
-  // Wait a tick for the request to be sent
-  await new Promise((r) => setTimeout(r, 0));
-
-  // Find the uploadId from the active uploads
-  const uploadId = [...handler.activeUploads.keys()][0];
-
-  // Simulate server accepting the upload
-  handler.handleResponse(
-    new RpcMessage<any>(
-      document,
-      { type: "success", payload: { fileId: uploadId } },
-      "fileUpload",
-      "response",
-      uploadId,
-    ),
-  );
-
-  // Wait for all chunks to be sent
-  await new Promise((r) => setTimeout(r, 0));
-  // May need more ticks for async generators
-  for (let i = 0; i < 10; i++) {
+  // Let prepare + request + stream run.
+  for (let i = 0; i < 12; i++) {
     await new Promise((r) => setTimeout(r, 0));
   }
 
@@ -438,6 +420,80 @@ describe("FileClientHandler cache integration", () => {
     expect(cache.chunks.size).toBe(0);
   });
 
+  it("dedup: alreadyExists resolves immediately with zero chunks streamed", async () => {
+    const handlers = getFileClientHandlers({ cache });
+    const handler = handlers.fileUpload as any;
+
+    let streamCount = 0;
+    handler.setRpcClient(
+      {
+        sendRequest: async (_doc: string, _method: string, payload: any) => {
+          // Server reports the content already exists.
+          return {
+            fileId: payload.fileId,
+            allowed: true,
+            alreadyExists: true,
+            chunkSize: CHUNK_SIZE,
+          };
+        },
+        sendStream: async () => {
+          streamCount++;
+        },
+      },
+      async () => {
+        streamCount++;
+      },
+    );
+
+    const data = makeFileData(CHUNK_SIZE + 100, 0x55);
+    const file = new File([data] as BlobPart[], "dup.bin", { type: "application/octet-stream" });
+
+    const fileId = await handler.uploadFile(file, "doc-1");
+    expect(fileId).toBeTruthy();
+    expect(streamCount).toBe(0);
+  });
+
+  it("resume: only chunks not in existingChunks are streamed", async () => {
+    const handlers = getFileClientHandlers({ cache });
+    const handler = handlers.fileUpload as any;
+
+    const streamed: number[] = [];
+    handler.setRpcClient(
+      {
+        sendRequest: async (_doc: string, _method: string, payload: any) => {
+          // Server already has chunk 0 from a prior attempt.
+          return {
+            fileId: payload.fileId,
+            allowed: true,
+            existingChunks: [0],
+            chunkSize: CHUNK_SIZE,
+          };
+        },
+        sendStream: async () => {},
+      },
+      async (msg: Message<any>) => {
+        streamed.push(((msg as RpcMessage<any>).payload.payload as any).chunkIndex);
+      },
+    );
+
+    // 3-chunk file; chunk 0 is resumed, so only 1 and 2 should stream.
+    const data = makeFileData(2 * CHUNK_SIZE + 100, 0x66);
+    const file = new File([data] as BlobPart[], "resume.bin", { type: "application/octet-stream" });
+
+    const uploadPromise = handler.uploadFile(file, "doc-1");
+    for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0));
+
+    for (const key of handler.activeUploads.keys()) {
+      const state = handler.activeUploads.get(key);
+      for (const [msgId] of state.sentChunks) {
+        handler.handleAck(new AckMessage({ type: "ack", messageId: msgId }));
+      }
+    }
+    await uploadPromise;
+
+    expect(streamed.sort((a, b) => a - b)).toEqual([1, 2]);
+  });
+
   it("30MB upload with rate-limit nacks retransmits and completes", async () => {
     const FILE_SIZE = 30 * 1024 * 1024; // 30 MB
     const EXPECTED_CHUNKS = Math.ceil(FILE_SIZE / CHUNK_SIZE); // 480
@@ -455,7 +511,9 @@ describe("FileClientHandler cache integration", () => {
 
     handler.setRpcClient(
       {
-        sendRequest: async () => {},
+        sendRequest: async (_doc: string, _method: string, payload: any) => {
+          return { fileId: payload.fileId, allowed: true, chunkSize: CHUNK_SIZE };
+        },
         sendStream: async () => {},
       },
       async (msg: Message<any>) => {
@@ -497,17 +555,6 @@ describe("FileClientHandler cache integration", () => {
     const uploadPromise = handler.uploadFile(file, "doc-1");
 
     await new Promise((r) => setTimeout(r, 0));
-
-    const uploadId = [...handler.activeUploads.keys()][0];
-    handler.handleResponse(
-      new RpcMessage<any>(
-        "doc-1",
-        { type: "success", payload: { fileId: uploadId } },
-        "fileUpload",
-        "response",
-        uploadId,
-      ),
-    );
 
     // Refill the bucket whenever the retransmit loop fires so it
     // eventually accepts all remaining chunks.
