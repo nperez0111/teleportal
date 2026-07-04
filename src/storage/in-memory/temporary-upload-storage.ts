@@ -1,4 +1,4 @@
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import type { MerkleTree } from "teleportal/merkle-tree";
 import { buildMerkleTree, serializeMerkleTree } from "teleportal/merkle-tree";
 import type {

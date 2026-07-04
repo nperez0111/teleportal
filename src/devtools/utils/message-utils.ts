@@ -1,5 +1,5 @@
 import { decoding } from "lib0";
-import { toBase64 } from "lib0/buffer.js";
+import { toBase64 } from "teleportal/utils";
 import {
   DocMessage,
   type SyncStep2UpdateV2,

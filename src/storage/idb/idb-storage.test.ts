@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import * as Y from "yjs";
-import { toHexString } from "lib0/buffer";
+import { toHexString } from "teleportal/utils";
 import {
   createEncryptionKey,
   decryptUpdate,

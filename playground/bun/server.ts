@@ -33,8 +33,27 @@ import homepage from "../src/index.html";
 import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 // import { RedisPubSub } from "teleportal/transports/redis";
 
-// SharedWorker script — pre-built to disk via `bun run build:worker`.
+// Build the SharedWorker script at startup so `bun dev` works without a
+// separate build:worker step. Uses the CLI bundler via subprocess to avoid
+// Bun.build() API issues with hardlinked .bun cache entries.
 const workerOutDir = import.meta.dir + "/../.worker-dist";
+const workerSrc = import.meta.dir + "/../src/worker.ts";
+// lib0 (via yjs) checks `typeof window !== "undefined"` to pick browser base64
+// codepaths. SharedWorkers have no `window`, so lib0 falls back to Node's
+// `Buffer` which doesn't exist. Shim `window` so the btoa/atob path is taken.
+const workerBanner =
+  'if(typeof globalThis.window==="undefined")globalThis.window=globalThis;' +
+  'if(typeof globalThis.document==="undefined")globalThis.document={};';
+await Bun.spawn(
+  [
+    "bun", "build", workerSrc,
+    "--outdir", workerOutDir,
+    "--target", "browser",
+    "--format", "esm",
+    `--banner=${workerBanner}`,
+  ],
+  { stdout: "inherit", stderr: "inherit" },
+).exited;
 
 const db = createDatabase(
   bunSqlite({
@@ -166,13 +185,9 @@ const instance = Bun.serve({
     }
 
     if (pathname === "/worker.js") {
-      const workerFile = Bun.file(workerOutDir + "/worker.js");
-      if (await workerFile.exists()) {
-        return new Response(workerFile, {
-          headers: { "Content-Type": "application/javascript" },
-        });
-      }
-      return new Response("worker.js not found — run build:worker first", { status: 404 });
+      return new Response(Bun.file(workerOutDir + "/worker.js"), {
+        headers: { "Content-Type": "application/javascript" },
+      });
     }
 
     // Token API — frontend requests a token from the backend

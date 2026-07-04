@@ -34,6 +34,7 @@
       "teleportal/agent": ["./src/agent/index.ts"],
       "teleportal/attribution": ["./src/lib/attribution/index.ts"],
       "teleportal/rpc": ["./src/lib/rpc/index.ts"],
+      "teleportal/utils": ["./src/utils/index.ts"],
       "teleportal": ["./src/lib/index.ts"]
     },
     "jsx": "react-jsx"

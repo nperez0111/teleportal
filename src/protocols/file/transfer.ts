@@ -1,10 +1,11 @@
-import { toBase64, fromBase64 } from "lib0/buffer";
+import { toBase64, fromBase64 } from "teleportal/utils";
 import { uuidv4 } from "lib0/random";
 import { CHUNK_SIZE, processFileStreaming, verifyMerkleProof } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "teleportal/protocol";
 import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
 import type { FilePartStream } from "./methods";
+import { emitFileTransferProgress } from "./progress";
 import type { ClientRpcHandler } from "../../providers/rpc-handlers";
 import type { Provider } from "../../providers/provider";
 import type { RpcClient } from "../../providers/rpc-client";
@@ -34,6 +35,10 @@ interface UploadState {
   retransmitting: boolean;
   /** Wire chunk size negotiated by the server. */
   chunkSize?: number;
+  /** Total chunk count, learned from the first produced chunk. */
+  totalChunks?: number;
+  /** Distinct chunks acknowledged by the server (incl. server-resumed ones). */
+  ackedChunks: number;
 }
 
 interface DownloadState {
@@ -42,6 +47,7 @@ interface DownloadState {
   fileMetadata: { filename: string; size: number; mimeType: string; totalChunks?: number } | null;
   chunks: Map<number, Uint8Array>;
   fileId: string;
+  document: string;
   timeoutId: ReturnType<typeof setTimeout> | null;
   encryptionKey?: CryptoKey;
   skipCache?: boolean;
@@ -77,6 +83,43 @@ class FileClientHandler implements ClientRpcHandler {
   constructor(options?: FileClientHandlerOptions) {
     this.#encryptionKey = options?.encryptionKey;
     this.#cache = options?.cache;
+  }
+
+  #emitUploadProgress(state: UploadState, status: "active" | "complete" | "error", error?: string) {
+    emitFileTransferProgress({
+      fileId: state.uploadId,
+      document: state.document,
+      direction: "upload",
+      chunksTransferred: state.ackedChunks,
+      totalChunks: state.totalChunks,
+      bytesTransferred: Math.min(
+        state.file.size,
+        state.ackedChunks * (state.chunkSize ?? CHUNK_SIZE),
+      ),
+      status,
+      error,
+    });
+  }
+
+  #emitDownloadProgress(
+    state: DownloadState,
+    status: "active" | "complete" | "error",
+    error?: string,
+  ) {
+    const size = state.fileMetadata?.size;
+    emitFileTransferProgress({
+      fileId: state.fileId,
+      document: state.document,
+      direction: "download",
+      chunksTransferred: state.chunks.size,
+      totalChunks: state.fileMetadata?.totalChunks,
+      bytesTransferred:
+        size !== undefined
+          ? Math.min(size, state.chunks.size * CHUNK_SIZE)
+          : state.chunks.size * CHUNK_SIZE,
+      status,
+      error,
+    });
   }
 
   init(_provider: Provider<any>): void {
@@ -130,6 +173,7 @@ class FileClientHandler implements ClientRpcHandler {
         allChunksSent: false,
         skipCache,
         retransmitting: false,
+        ackedChunks: 0,
       });
     });
 
@@ -154,6 +198,7 @@ class FileClientHandler implements ClientRpcHandler {
         if (uploadState) {
           uploadState.reject(error as Error);
           this.#activeUploads.delete(fileId);
+          this.#emitUploadProgress(uploadState, "error", (error as Error).message);
         }
       });
 
@@ -216,6 +261,7 @@ class FileClientHandler implements ClientRpcHandler {
         if (handler) {
           handler.reject(new Error(`Download timeout after ${timeout}ms`));
           this.#activeDownloads.delete(fileId);
+          this.#emitDownloadProgress(handler, "error", `Download timeout after ${timeout}ms`);
         }
         reject(new Error(`Download timeout after ${timeout}ms`));
       }, timeout);
@@ -228,6 +274,7 @@ class FileClientHandler implements ClientRpcHandler {
         fileMetadata: null,
         chunks: new Map(),
         fileId,
+        document,
         timeoutId,
         encryptionKey: key,
         skipCache,
@@ -316,6 +363,7 @@ class FileClientHandler implements ClientRpcHandler {
         ).catch((error) => {
           uploadHandler.reject(error);
           this.#activeUploads.delete(uploadHandler.uploadId);
+          this.#emitUploadProgress(uploadHandler, "error", (error as Error).message);
         });
         return true;
       }
@@ -323,18 +371,22 @@ class FileClientHandler implements ClientRpcHandler {
       // Handle error responses - check by original request ID first
       const uploadHandler = this.#activeUploads.get(message.originalRequestId!);
       if (uploadHandler) {
-        uploadHandler.reject(new Error(payload.details || "Upload permission denied"));
+        const details = payload.details || "Upload permission denied";
+        uploadHandler.reject(new Error(details));
         this.#activeUploads.delete(uploadHandler.uploadId);
+        this.#emitUploadProgress(uploadHandler, "error", details);
         return true;
       }
 
       const downloadHandler = this.#activeDownloads.get(message.originalRequestId!);
       if (downloadHandler) {
-        downloadHandler.reject(new Error(payload.details || "Download permission denied"));
+        const details = payload.details || "Download permission denied";
+        downloadHandler.reject(new Error(details));
         this.#activeDownloads.delete(downloadHandler.fileId);
         if (downloadHandler.timeoutId) {
           clearTimeout(downloadHandler.timeoutId);
         }
+        this.#emitDownloadProgress(downloadHandler, "error", details);
         return true;
       }
     }
@@ -376,10 +428,15 @@ class FileClientHandler implements ClientRpcHandler {
           this.#startRetransmitLoop(handler, ackMessage.payload.retryAfter);
         } else {
           // Positive ACK — chunk accepted.
-          handler.unackedChunks.delete(chunkIndex);
+          if (handler.unackedChunks.delete(chunkIndex)) {
+            handler.ackedChunks++;
+          }
           if (handler.allChunksSent && handler.unackedChunks.size === 0) {
             handler.resolve(handler.fileId!);
             this.#activeUploads.delete(handler.uploadId);
+            this.#emitUploadProgress(handler, "complete");
+          } else {
+            this.#emitUploadProgress(handler, "active");
           }
         }
       }
@@ -403,6 +460,9 @@ class FileClientHandler implements ClientRpcHandler {
     const cache = this.#cache && !uploadState.skipCache ? this.#cache : undefined;
     const cachedChunks: { index: number; data: Uint8Array }[] = [];
 
+    // Server-resumed chunks count as already transferred.
+    uploadState.ackedChunks += skipChunks.size;
+
     // Set up routing context before streaming — the onPart callback fires
     // during processing and builds messages from these.
     uploadState.context = context ?? { documentId: uploadState.document };
@@ -420,6 +480,8 @@ class FileClientHandler implements ClientRpcHandler {
         ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
         : undefined,
       (chunk) => {
+        uploadState.totalChunks = chunk.totalChunks;
+
         if (cache) {
           cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
         }
@@ -483,6 +545,7 @@ class FileClientHandler implements ClientRpcHandler {
     if (uploadState.unackedChunks.size === 0) {
       uploadState.resolve(uploadState.fileId!);
       this.#activeUploads.delete(uploadState.uploadId);
+      this.#emitUploadProgress(uploadState, "complete");
     }
   }
 
@@ -542,14 +605,13 @@ class FileClientHandler implements ClientRpcHandler {
         if (handler.allChunksSent) {
           handler.resolve(handler.fileId!);
           this.#activeUploads.delete(handler.uploadId);
+          this.#emitUploadProgress(handler, "complete");
         }
       } else {
-        handler.reject(
-          new Error(
-            `Upload failed: ${handler.unackedChunks.size} chunks unacknowledged after ${MAX_RETRANSMIT_ROUNDS} retransmission rounds`,
-          ),
-        );
+        const reason = `Upload failed: ${handler.unackedChunks.size} chunks unacknowledged after ${MAX_RETRANSMIT_ROUNDS} retransmission rounds`;
+        handler.reject(new Error(reason));
         this.#activeUploads.delete(handler.uploadId);
+        this.#emitUploadProgress(handler, "error", reason);
       }
     };
 
@@ -583,11 +645,13 @@ class FileClientHandler implements ClientRpcHandler {
 
     const isValid = this.#verifyChunk(payload, handler.fileId);
     if (!isValid) {
-      handler.reject(new Error(`Chunk ${payload.chunkIndex} failed merkle proof verification`));
+      const reason = `Chunk ${payload.chunkIndex} failed merkle proof verification`;
+      handler.reject(new Error(reason));
       this.#activeDownloads.delete(payload.fileId);
       if (handler.timeoutId) {
         clearTimeout(handler.timeoutId);
       }
+      this.#emitDownloadProgress(handler, "error", reason);
       return;
     }
 
@@ -600,6 +664,10 @@ class FileClientHandler implements ClientRpcHandler {
       payload.chunkIndex,
       decryptPromise ? await decryptPromise : payload.chunkData,
     );
+    if (handler.fileMetadata && handler.fileMetadata.totalChunks === undefined) {
+      handler.fileMetadata.totalChunks = payload.totalChunks;
+    }
+    this.#emitDownloadProgress(handler, "active");
     this.#checkDownloadCompletion(handler);
   }
 
@@ -639,8 +707,10 @@ class FileClientHandler implements ClientRpcHandler {
         }
 
         handler.resolve(file);
+        this.#emitDownloadProgress(handler, "complete");
       } catch (err) {
         handler.reject(err as Error);
+        this.#emitDownloadProgress(handler, "error", (err as Error).message);
       } finally {
         this.#activeDownloads.delete(handler.fileId);
         if (handler.timeoutId) {

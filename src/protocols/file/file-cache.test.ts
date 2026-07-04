@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import { AckMessage, type Message } from "teleportal";
 import { RpcMessage } from "teleportal/protocol";
 import { buildMerkleTree, CHUNK_SIZE, generateMerkleProof } from "teleportal/merkle-tree";

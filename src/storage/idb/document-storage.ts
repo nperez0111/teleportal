@@ -1,7 +1,7 @@
 import * as idb from "lib0/indexeddb";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
-import { toBase64, fromBase64, toHexString } from "lib0/buffer";
+import { toBase64, fromBase64, toHexString } from "teleportal/utils";
 import type { IndexedSidecar, SidecarIndex } from "../../lib/protocol/encryption/content-cipher";
 import { EncryptedBinary } from "../../encryption-key";
 import type { SidecarCompaction } from "../../lib/protocol/encryption/encoding";

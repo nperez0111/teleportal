@@ -1,4 +1,4 @@
-import { fromBase64, toBase64 } from "lib0/buffer";
+import { fromBase64, toBase64 } from "teleportal/utils";
 import {
   BinaryMessage,
   ClientContext,

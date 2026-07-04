@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import {
   buildMerkleTree,
   deserializeMerkleTree,

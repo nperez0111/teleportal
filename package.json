@@ -55,7 +55,8 @@
     "./devtools": "./dist/devtools/index.mjs",
     "./agent": "./dist/agent/index.mjs",
     "./attribution": "./dist/lib/attribution/index.mjs",
-    "./rpc": "./dist/lib/rpc/index.mjs"
+    "./rpc": "./dist/lib/rpc/index.mjs",
+    "./utils": "./dist/utils/index.mjs"
   },
   "publishConfig": {
     "access": "public"

@@ -1,9 +1,9 @@
 /**
- * Per-tab user identity for the attribution demo.
+ * Stable user identity for the playground.
  *
- * Stored in sessionStorage (not localStorage) so that two tabs in the same
- * browser can act as two different authors — open a second tab, change the
- * name, and edits from each tab are attributed to a distinct user.
+ * Stored in localStorage so the identity persists across tabs and sessions,
+ * matching how a real app with authentication works. This ensures the
+ * encryption key registry always finds the user's wrapped key on reconnect.
  */
 
 const KEY = "teleportal-identity";
@@ -27,7 +27,19 @@ export function colorForUser(userId: string): string {
   for (let i = 0; i < userId.length; i++) {
     hue = (hue * 31 + userId.charCodeAt(i)) % 360;
   }
-  return `hsl(${hue}, 70%, 50%)`;
+  return hslToHex(hue, 70, 50);
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  s /= 100;
+  l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
 }
 
 export interface Identity {
@@ -36,10 +48,10 @@ export interface Identity {
 }
 
 export function getIdentity(): Identity {
-  let name = sessionStorage.getItem(KEY);
+  let name = localStorage.getItem(KEY);
   if (!name) {
     name = randomName();
-    sessionStorage.setItem(KEY, name);
+    localStorage.setItem(KEY, name);
   }
   return { name, color: colorForUser(name) };
 }
@@ -50,6 +62,6 @@ export function getIdentity(): Identity {
  */
 export function setIdentity(name: string): Identity {
   const trimmed = name.trim() || randomName();
-  sessionStorage.setItem(KEY, trimmed);
+  localStorage.setItem(KEY, trimmed);
   return { name: trimmed, color: colorForUser(trimmed) };
 }

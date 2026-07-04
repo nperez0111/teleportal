@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import { type Message, type RpcServerContext, type ServerContext } from "teleportal";
 import {
   AES_GCM_OVERHEAD,

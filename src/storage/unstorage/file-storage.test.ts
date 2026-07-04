@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
 import { createStorage } from "unstorage";
 import { UnstorageFileStorage } from "./file-storage";
