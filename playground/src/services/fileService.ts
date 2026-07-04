@@ -15,11 +15,25 @@ export type Document = {
   wrappingKey?: string;
 };
 
+/**
+ * Suffix for a per-tab `?user=` identity override (see identity.ts), so each
+ * simulated user keeps an isolated document list — as if in its own browser.
+ */
+function userSuffix(): string {
+  const user =
+    typeof location !== "undefined" ? new URLSearchParams(location.search).get("user") : null;
+  return user ? `:${user}` : "";
+}
+
 class FileService extends Observable<{
   documents: (documents: Document[]) => void;
 }> {
-  private readonly STORAGE_KEY = "teleportal-documents";
-  private readonly CURRENT_DOC_KEY = "teleportal-current-document";
+  private get STORAGE_KEY() {
+    return `teleportal-documents${userSuffix()}`;
+  }
+  private get CURRENT_DOC_KEY() {
+    return `teleportal-current-document${userSuffix()}`;
+  }
   public documents: Document[] = [];
 
   constructor() {
@@ -85,8 +99,12 @@ class FileService extends Observable<{
     wrappingKey?: string;
   }): Promise<Document> {
     const documents = await this.getDocuments();
-    if (documents.find((doc) => doc.id === options.id)) {
-      return documents.find((doc) => doc.id === options.id)!;
+    const existing = documents.find((doc) => doc.id === options.id);
+    if (existing) {
+      if (existing.wrappingKey) {
+        await this.ensureKeyAccess(existing.id);
+      }
+      return existing;
     }
 
     const documentId = options.id ?? this.generateId(options.encrypted ?? false);
@@ -176,6 +194,27 @@ class FileService extends Observable<{
   // Get the current document ID from localStorage
   getCurrentDocumentId(): string | null {
     return localStorage.getItem(this.CURRENT_DOC_KEY);
+  }
+
+  private async ensureKeyAccess(documentId: string): Promise<void> {
+    const { getIdentity } = await import("../utils/identity");
+    const identity = getIdentity();
+    const headers = { "Content-Type": "application/json" };
+    const body = JSON.stringify({ userId: identity.name, room: "docs" });
+
+    const grantRes = await fetch(`/keys/${documentId}/grant`, {
+      method: "POST",
+      headers,
+      body,
+    });
+
+    if (!grantRes.ok) {
+      await fetch(`/keys/${documentId}/mint`, {
+        method: "POST",
+        headers,
+        body,
+      });
+    }
   }
 
   private generateId(encrypted: boolean): string {

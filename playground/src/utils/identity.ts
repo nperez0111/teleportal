@@ -37,7 +37,9 @@ function hslToHex(h: number, s: number, l: number): string {
   const f = (n: number) => {
     const k = (n + h / 30) % 12;
     const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-    return Math.round(255 * color).toString(16).padStart(2, "0");
+    return Math.round(255 * color)
+      .toString(16)
+      .padStart(2, "0");
   };
   return `#${f(0)}${f(8)}${f(4)}`;
 }
@@ -48,6 +50,18 @@ export interface Identity {
 }
 
 export function getIdentity(): Identity {
+  // Per-tab override (`?user=Name`) to simulate independent users/browsers in
+  // one profile — e.g. cross-browser sync testing. sessionStorage keeps it
+  // stable across in-tab reloads without leaking to sibling tabs.
+  const paramUser =
+    typeof location !== "undefined" ? new URLSearchParams(location.search).get("user") : null;
+  if (paramUser) {
+    sessionStorage.setItem(KEY, paramUser);
+  }
+  const sessionUser = sessionStorage.getItem(KEY);
+  if (sessionUser) {
+    return { name: sessionUser, color: colorForUser(sessionUser) };
+  }
   let name = localStorage.getItem(KEY);
   if (!name) {
     name = randomName();

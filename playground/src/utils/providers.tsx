@@ -70,7 +70,11 @@ class ProviderManager {
       this.connectionPromise = fetchToken(getIdentity().name)
         .then((token) =>
           createConnection({
-            workerUrl: "/worker.js",
+            // `?direct` skips the SharedWorker so each tab gets an isolated
+            // in-tab connection — simulates separate browsers for sync testing.
+            workerUrl: new URLSearchParams(location.search).has("direct")
+              ? undefined
+              : "/worker.js",
             url: `${window.location.protocol}//${window.location.host}/`,
             token: { token },
             transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
