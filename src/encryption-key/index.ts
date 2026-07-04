@@ -134,11 +134,8 @@ export async function decryptUpdate(
   encryptedBinary: EncryptedBinary,
 ): Promise<DecryptedBinary> {
   try {
-    // Extract IV (first 12 bytes) and encrypted data (which includes auth tag)
-    const iv = encryptedBinary.slice(0, 12);
-    const encryptedData = encryptedBinary.slice(12);
-
-    // Decrypt the data
+    const iv = encryptedBinary.subarray(0, 12) as Uint8Array<ArrayBuffer>;
+    const encryptedData = encryptedBinary.subarray(12) as Uint8Array<ArrayBuffer>;
     const decryptedData = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encryptedData);
 
     return new Uint8Array(decryptedData);
