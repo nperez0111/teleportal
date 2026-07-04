@@ -1,6 +1,6 @@
 # Server Module
 
-The server module provides the core `Server` class that manages real-time collaborative document synchronization, client connections, and file operations. It serves as the central orchestrator for handling Y.js document updates, awareness messages, file transfers, and milestone operations.
+The server module provides the core `Server` class that manages real-time collaborative document synchronization, client connections, and RPC operations. It serves as the central orchestrator for handling Y.js document updates, presence messages, RPC methods (milestones, file transfers, etc.), and message routing.
 
 ## Overview
 
@@ -8,8 +8,8 @@ The `Server` class is the main entry point for the Teleportal server-side implem
 
 - **Document Sessions**: Creates and manages sessions for collaborative documents
 - **Client Connections**: Handles client connections via transports (WebSocket, HTTP, etc.)
-- **Message Processing**: Routes and processes all protocol messages (doc, awareness, file, ACK)
-- **Permission Checking**: Validates client permissions for document and file operations
+- **Message Processing**: Routes and processes all protocol messages (doc, presence, RPC, ACK)
+- **Permission Checking**: Validates client permissions for document and RPC operations
 - **Multi-Node Support**: Uses PubSub for cross-node message fanout in distributed deployments
 - **Metrics & Monitoring**: Tracks server health, metrics, and operational status
 
@@ -46,8 +46,8 @@ A **Session** represents an active collaborative document. Each session:
 
 - Manages multiple clients connected to the same document
 - Handles Y.js document synchronization (sync-step-1, sync-step-2, updates)
-- Processes awareness updates (cursor positions, user presence)
-- Manages milestone operations (create, list, retrieve snapshots)
+- Processes presence messages (join/leave/heartbeat for cross-node awareness)
+- Routes RPC messages (milestones, file transfers, custom handlers)
 - Automatically cleans up when all clients disconnect (after 60s timeout)
 - Uses PubSub to replicate messages across server nodes
 
@@ -67,23 +67,26 @@ A **Client** represents a single connection to the server. Each client:
 Client → Transport → Server.createClient()
                           │
                           ▼
+                    Rate Limiter (optional)
+                          │
+                          ▼
                     Message Validator
                     (permission check)
                           │
                           ▼
-                    Message Router
+                    Session.apply()
                     ┌─────┴─────┐
                     │           │
                     ▼           ▼
-              File Message   Doc/Awareness
+              Doc/Presence   RPC Message
                     │           │
                     ▼           ▼
-              FileHandler   Session.apply()
-                    │           │
-                    ▼           ▼
-              Storage API   PubSub (if multi-node)
+              Storage API   RPC Handlers
                     │           │
                     └─────┬─────┘
+                          ▼
+                    PubSub (if multi-node)
+                          │
                           ▼
                     Broadcast to
                     other clients
@@ -95,13 +98,16 @@ Client → Transport → Server.createClient()
 type ServerOptions<Context extends ServerContext> = {
   /**
    * Retrieve per-document storage.
-   * Called when a session is created for a document.
+   * Can be a direct instance, a promise, or a factory function called per-session.
    */
-  getStorage: (ctx: {
-    documentId: string;
-    context: Context;
-    encrypted: boolean;
-  }) => Promise<DocumentStorage>;
+  storage:
+    | DocumentStorage
+    | Promise<DocumentStorage>
+    | ((ctx: {
+        documentId: string;
+        context: Context;
+        encrypted: boolean;
+      }) => DocumentStorage | Promise<DocumentStorage>);
 
   /**
    * Optional permission checker for read/write operations.
@@ -114,6 +120,7 @@ type ServerOptions<Context extends ServerContext> = {
     fileId?: string;
     message: Message<Context>;
     type: "read" | "write";
+    rpcMethod?: string;
   }) => Promise<boolean>;
 
   /**
@@ -131,6 +138,14 @@ type ServerOptions<Context extends ServerContext> = {
   nodeId?: string;
 
   /**
+   * Configuration for document size limits and warnings.
+   */
+  documentSizeConfig?: {
+    warningThreshold?: number;
+    limit?: number;
+  };
+
+  /**
    * Configuration for automatic milestone triggers.
    */
   milestoneTriggerConfig?: {
@@ -138,15 +153,34 @@ type ServerOptions<Context extends ServerContext> = {
   };
 
   /**
+   * Configuration for client presence (join/leave) notifications
+   * broadcast to a session's peers.
+   */
+  presenceConfig?: PresenceConfig<Context>;
+
+  /**
+   * Configuration for custom attribution metadata on document updates.
+   */
+  attributionConfig?: AttributionConfig<Context>;
+
+  /**
+   * RPC handlers for the server.
+   * Built-in handlers (milestone, file) should be merged with any custom handlers.
+   */
+  rpcHandlers?: RpcHandlerRegistry;
+
+  /**
    * Configuration for rate limiting on client transports.
    * If provided, all transports will be rate-limited before processing messages.
+   * Rate limiting uses a rules-based approach where each rule defines its own
+   * limits, tracking mode, and optional storage.
    */
   rateLimitConfig?: {
-    maxMessages?: number | ((message: Message<Context>) => number | Promise<number>); // default: 100
-    windowMs?: number | ((message: Message<Context>) => number | Promise<number>); // default: 1000ms
+    rules: RateLimitRule<Context>[];
     maxMessageSize?: number; // default: 10MB
-    rateLimitStorage?: RateLimitStorage; // Optional persistent storage (Redis, etc.)
-    trackBy?: "user" | "document" | "user-document" | "transport"; // default: "user"
+    rateLimitStorage?: RateLimitStorage;
+    getUserId?: (message: Message<Context>) => string | undefined;
+    getDocumentId?: (message: Message<Context>) => string | undefined;
     shouldSkipRateLimit?: (message: Message<Context>) => Promise<boolean> | boolean;
     onRateLimitExceeded?: (details: {
       ruleId: string;
@@ -174,14 +208,17 @@ type ServerOptions<Context extends ServerContext> = {
 
 ```typescript
 import { Server } from "teleportal/server";
-import { createInMemory } from "teleportal/storage";
+import { MemoryDocumentStorage } from "teleportal/storage";
 
+// Option 1: Direct instance (shared across all documents)
 const server = new Server({
-  getStorage: async (ctx) => {
-    const { documentStorage } = createInMemory({
-      encrypted: ctx.encrypted,
-    });
-    return documentStorage;
+  storage: new MemoryDocumentStorage(),
+});
+
+// Option 2: Factory function (per-document storage)
+const server2 = new Server({
+  storage: async (ctx) => {
+    return new MemoryDocumentStorage();
   },
 });
 ```
@@ -190,10 +227,10 @@ const server = new Server({
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // ... create storage
   },
-  checkPermission: async ({ context, documentId, fileId, message, type }) => {
+  checkPermission: async ({ context, documentId, fileId, message, type, rpcMethod }) => {
     // Check if user has permission
     const userId = context.userId;
 
@@ -216,7 +253,7 @@ const server = new Server({
 import { RedisPubSub } from "teleportal/pubsub/redis";
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // ... create storage
   },
   pubSub: new RedisPubSub({
@@ -276,7 +313,7 @@ server.disconnectClient(client, "manual");
 await server[Symbol.asyncDispose]();
 
 // Or using explicit resource management
-using server = new Server({ ... });
+await using server = new Server({ ... });
 // Server automatically disposes when exiting scope
 ```
 
@@ -312,65 +349,65 @@ This allows:
 
 The server handles all Teleportal protocol message types:
 
-### Document Messages
+### Document Messages (`doc`)
 
 - **sync-step-1**: Client sends state vector, server responds with missing updates
 - **sync-step-2**: Server sends updates, client applies them
 - **update**: Real-time document updates from clients
 - **sync-done**: Synchronization completion signal
 - **auth-message**: Permission denied/granted responses
-- **milestone-\***: Milestone operations (list, create, update, retrieve)
 
-### Awareness Messages
+### Presence Messages (`presence`)
 
-- **awareness-update**: User presence and cursor information
-- **awareness-request**: Request current awareness state
+- **presence-announce**: Client announces its awareness client ID (triggers join broadcast)
+- **presence-join**: Server-authored notification that a peer joined
+- **presence-leave**: Server-authored notification that a peer left
+- **presence-heartbeat**: Periodic snapshot of a node's local clients (cross-node roster)
 
-### File Messages
+### RPC Messages (`rpc`)
 
-- **file-upload**: Initiate file upload with metadata
-- **file-download**: Request file download by content ID
-- **file-part**: Chunk data with Merkle proof
-- **file-auth-message**: File operation authorization responses
+- **request**: Client sends an RPC request (milestones, file operations, custom methods)
+- **stream**: Streaming chunks (e.g., file upload parts)
+- **response**: Server response to an RPC request
 
-### ACK Messages
+### ACK Messages (`ack`)
 
-- **ack**: Message delivery confirmation
+- **ack**: Message delivery confirmation (with optional `retryAfter` for rate limiting)
 
 ## Rate Limiting
 
-The server supports automatic rate limiting on all client transports when `rateLimitConfig` is provided. Rate limiting uses a token bucket algorithm to throttle messages based on configurable limits.
+The server supports automatic rate limiting on all client transports when `rateLimitConfig` is provided. Rate limiting uses a rules-based approach where multiple rules can be defined, each with its own limits, tracking mode, and optional storage override.
 
 ### Rate Limit Configuration
 
 ```typescript
 import { Server } from "teleportal/server";
-import { RedisRateLimitStorage } from "teleportal/transports/redis";
-import { UnstorageRateLimitStorage } from "teleportal/storage";
-import { createStorage } from "unstorage";
-import redisDriver from "unstorage/drivers/redis";
-
-// Option 1: Use Redis for shared rate limiting across server instances
-const redisStorage = new RedisRateLimitStorage(redisClient);
-
-// Option 2: Use Unstorage (works with Redis, PostgreSQL, etc.)
-const storage = createStorage({
-  driver: redisDriver({ base: "teleportal:" }),
-});
-const unstorageRateLimit = new UnstorageRateLimitStorage(storage);
 
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // ... create storage
   },
   rateLimitConfig: {
-    maxMessages: 100, // 100 messages per window
-    windowMs: 1000, // 1 second window
-    trackBy: "user", // Track per user ID
-    rateLimitStorage: redisStorage, // Shared across server instances
-    // Optional: Dynamic limits based on message
-    // maxMessages: (msg) => msg.context.userId === "admin" ? 1000 : 100,
-    // windowMs: (msg) => msg.document?.startsWith("public/") ? 500 : 1000,
+    rules: [
+      {
+        id: "per-user",
+        maxMessages: 100,
+        windowMs: 1000,
+        trackBy: "user",
+      },
+      {
+        id: "per-document",
+        maxMessages: 500,
+        windowMs: 10000,
+        trackBy: "document",
+      },
+    ],
+    maxMessageSize: 10 * 1024 * 1024, // 10MB (default)
+    // Optional: Default storage for all rules (individual rules can override)
+    // rateLimitStorage: myRateLimitStorage,
+    // Optional: Default user/document ID extractors
+    // getUserId: (msg) => msg.context.userId,
+    // getDocumentId: (msg) => msg.document,
     // Optional: Skip rate limiting for certain messages
     shouldSkipRateLimit: async (msg) => {
       return msg.context.userId === "admin";
@@ -383,9 +420,18 @@ const server = new Server({
 });
 ```
 
+### Rate Limit Rules
+
+Each rule in the `rules` array defines:
+
+- **`id`**: Unique identifier for the rule (used in metrics and events)
+- **`maxMessages`**: Maximum messages per window (number or function)
+- **`windowMs`**: Time window in milliseconds (number or function)
+- **`trackBy`**: How to track limits for this rule
+
 ### Rate Limit Tracking Modes
 
-- **`"user"`** (default): Track rate limits per user ID. All connections from the same user share the same limit.
+- **`"user"`**: Track rate limits per user ID. All connections from the same user share the same limit.
 - **`"document"`**: Track rate limits per document ID. All users editing the same document share the same limit.
 - **`"user-document"`**: Track rate limits per user-document pair. Each user has separate limits for each document.
 - **`"transport"`**: Track rate limits per transport instance (in-memory only, not shared).
@@ -397,7 +443,7 @@ const server = new Server({
 
 ### Integration with Permissions
 
-Rate limiting is applied **before** permission checking. Messages that exceed rate limits are rejected immediately, without checking permissions. ACK messages and file-auth-message responses are automatically excluded from rate limiting.
+Rate limiting is applied **before** permission checking. Messages that exceed rate limits are rejected immediately with an ACK containing a `retryAfter` hint. ACK messages are automatically excluded from rate limiting.
 
 ### Metrics
 
@@ -411,24 +457,25 @@ Rate limit metrics are automatically recorded via the server's `MetricsCollector
 
 The server supports optional permission checking via the `checkPermission` option. The checker is called for:
 
-- **Document operations**: `sync-step-2`, `update`, milestone operations
-- **File operations**: `file-upload`, `file-download`, `file-part`
+- **Document operations**: `sync-step-1` (read), `sync-step-2` (write), `update` (write)
+- **RPC operations**: Any RPC request, with `rpcMethod` provided in the context
 
 ### Permission Check Behavior
 
 1. **ACK messages**: Always allowed (they're acknowledgments, not requests)
-2. **Read operations**: Checked when client requests data (sync-step-1, file-download)
-3. **Write operations**: Checked when client sends updates (sync-step-2, update, file-upload)
-4. **Denied responses**: Server sends appropriate auth-message with denial reason
+2. **Read operations**: Checked when client requests data (e.g., sync-step-1)
+3. **Write operations**: Checked when client sends updates (e.g., sync-step-2, update)
+4. **RPC operations**: Checked with the `rpcMethod` name for fine-grained control
+5. **Denied responses**: Server sends appropriate auth-message or RPC error response
 
 ### Example Permission Checker
 
 ```typescript
 const server = new Server({
-  getStorage: async (ctx) => {
+  storage: async (ctx) => {
     // ... create storage
   },
-  checkPermission: async ({ context, documentId, fileId, message, type }) => {
+  checkPermission: async ({ context, documentId, fileId, message, type, rpcMethod }) => {
     const userId = context.userId;
 
     // Document permissions
@@ -436,17 +483,13 @@ const server = new Server({
       if (type === "read") {
         return await canReadDocument(userId, documentId);
       } else if (type === "write") {
-        // Special handling for sync-step-2 without write permission
-        if (message.type === "doc" && message.payload.type === "sync-step-2") {
-          // Client tried to send updates but doesn't have write permission
-          // Server will drop the message and send sync-done instead
-          return false;
-        }
+        // Special handling for sync-step-2 without write permission:
+        // Server will drop the message and send sync-done instead
         return await canWriteDocument(userId, documentId);
       }
     }
 
-    // File permissions
+    // File permissions (fileId comes from RPC stream messages)
     if (fileId) {
       if (type === "read") {
         return await canReadFile(userId, fileId);
@@ -472,6 +515,13 @@ server.on("document-load", (data) => {
   console.log("Document loaded:", data.documentId);
   console.log("Session ID:", data.sessionId);
   console.log("Encrypted:", data.encrypted);
+});
+
+// Emitted when a new session is opened (provides the Session instance)
+server.on("session-open", (data) => {
+  console.log("Session opened:", data.session.id);
+  console.log("Document:", data.documentId);
+  // Set up session-level event listeners here
 });
 
 // Emitted when a document session is unloaded
@@ -533,9 +583,9 @@ server.on("client-disconnect", (data) => {
 
 // Emitted for all client messages (for metrics/webhooks)
 server.on("client-message", (data) => {
-  console.log("Message:", data.messageId);
+  console.log("Client:", data.clientId);
   console.log("Direction:", data.direction); // "in" | "out"
-  console.log("Type:", data.messageType);
+  console.log("Type:", data.message.type);
 });
 ```
 
@@ -601,13 +651,16 @@ console.log(status);
 //   pendingSessions: 0,
 //   totalMessagesProcessed: 1000,
 //   totalDocumentsOpened: 50,
-//   messageTypeBreakdown: {
-//     doc: 500,
-//     awareness: 300,
-//     file: 200
-//   },
+//   messageTypeBreakdown: { doc: 500, presence: 200, rpc: 100 },
+//   rateLimitExceededTotal: 5,
+//   rateLimitBreakdown: { ... },
+//   rateLimitTopOffenders: [ ... ],
+//   rateLimitRecentEvents: [ ... ],
 //   uptime: 3600,
-//   timestamp: "2024-01-01T00:00:00.000Z"
+//   timestamp: "2024-01-01T00:00:00.000Z",
+//   totalDocumentSizeBytes: 1048576,
+//   documentsOverWarningThreshold: 1,
+//   documentsOverLimit: 0
 // }
 ```
 
@@ -639,24 +692,23 @@ Sessions are automatically cleaned up when:
 
 The cleanup delay (60s) allows clients to reconnect without losing the session state.
 
-## File Handling
+## RPC & File Handling
 
-File messages are processed by a `FileHandler` that:
-
-- Manages file uploads with chunk verification
-- Handles file downloads with Merkle proof validation
-- Stores files via the session's `fileStorage`
-- Requires `fileStorage` to be configured on the document storage
+File operations and milestones are handled through the RPC system. The server dispatches
+RPC messages to registered handlers in `rpcHandlers`. Built-in handlers exist for file
+upload/download and milestone operations.
 
 ```typescript
-// File storage must be configured on document storage
-const { documentStorage, fileStorage } = createUnstorage(storage, {
-  fileKeyPrefix: "file",
-  documentKeyPrefix: "doc",
-});
+import { createFileHandler, createMilestoneHandler } from "teleportal/protocols";
 
-// FileHandler is automatically created per file message
-// Uses session.storage.fileStorage for file operations
+const server = new Server({
+  storage: myStorage,
+  rpcHandlers: {
+    ...createFileHandler(),
+    ...createMilestoneHandler(),
+    // Add your own custom RPC handlers here
+  },
+});
 ```
 
 ## Error Handling
@@ -670,9 +722,9 @@ The server handles errors gracefully:
 
 ### Error Response Types
 
-- **Document Auth Message**: Sent for denied document operations
-- **File Auth Message**: Sent for denied file operations (with HTTP status codes)
-- **Milestone Auth Message**: Sent for denied milestone operations
+- **Document Auth Message**: Sent for denied document operations (`doc` messages with `auth-message` payload)
+- **RPC Error Response**: Sent for denied RPC operations (403 status code with "Permission denied")
+- **Sync Done**: Sent when a read-only client sends sync-step-2 (graceful denial)
 
 ## Best Practices
 
@@ -696,6 +748,7 @@ import { WebSocketTransport } from "teleportal/transports/websocket";
 
 const app = express();
 const server = new Server({
+  storage: myStorage,
   /* ... */
 });
 
@@ -733,6 +786,7 @@ import { Server as TeleportalServer } from "teleportal/server";
 import { HttpTransport } from "teleportal/transports/http";
 
 const teleportalServer = new TeleportalServer({
+  storage: myStorage,
   /* ... */
 });
 
@@ -773,17 +827,19 @@ Bun.serve({
 
 ## Summary
 
-The `Server` class is the core of the Teleportal server implementation. It manages document sessions, client connections, message routing, and file operations. With support for multi-tenancy, permission checking, metrics, and multi-node deployments, it provides a robust foundation for building collaborative applications.
+The `Server` class is the core of the Teleportal server implementation. It manages document sessions, client connections, message routing, and RPC operations. With support for multi-tenancy, permission checking, presence, attribution, metrics, and multi-node deployments, it provides a robust foundation for building collaborative applications.
 
 Key features:
 
-- ✅ **Session Management**: Automatic session creation and cleanup
-- ✅ **Client Handling**: Multi-client support per document
-- ✅ **Message Routing**: Handles all protocol message types
-- ✅ **Permission Checking**: Optional fine-grained access control
-- ✅ **Multi-Node Support**: PubSub integration for distributed deployments
-- ✅ **Multi-Tenancy**: Room-based document namespacing
-- ✅ **Metrics & Monitoring**: Prometheus metrics and health checks
-- ✅ **File Operations**: Integrated file upload/download handling
-- ✅ **Event System**: Observable events for integration
-- ✅ **Error Handling**: Graceful error handling and client notifications
+- Session Management: Automatic session creation and cleanup
+- Client Handling: Multi-client support per document
+- Message Routing: Handles all protocol message types (doc, presence, RPC, ACK)
+- Permission Checking: Optional fine-grained access control with RPC method awareness
+- Multi-Node Support: PubSub integration for distributed deployments
+- Multi-Tenancy: Room-based document namespacing
+- Presence: Cross-node join/leave/heartbeat with TTL-based self-healing
+- Attribution: Automatic authorship tracking on document updates
+- Metrics & Monitoring: Prometheus metrics and health checks
+- RPC System: Extensible handler registry for milestones, files, and custom operations
+- Event System: Observable events for integration
+- Error Handling: Graceful error handling and client notifications
