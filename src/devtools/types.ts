@@ -16,12 +16,24 @@ export type DevtoolsMessage = {
   };
 };
 
+/**
+ * Where a document is in the sync handshake. "idle" means no sync activity
+ * on the current connection (e.g. after a disconnect).
+ */
+export type DocumentSyncPhase = "idle" | "sync-step-1" | "sync-step-2" | "synced";
+
 export type DocumentState = {
   id: string;
   name: string;
   provider: Provider;
-  synced: boolean;
+  /** Document id of the parent, for subdocuments. */
+  parentId?: string;
+  isSubdoc: boolean;
+  encrypted: boolean;
+  syncPhase: DocumentSyncPhase;
   messageCount: number;
+  bytesSent: number;
+  bytesReceived: number;
   lastActivity: number;
 };
 
@@ -32,6 +44,18 @@ export type ConnectionStateInfo = {
   availableTransports: string[];
   error?: string;
   timestamp: number;
+};
+
+/**
+ * One entry in the connection timeline: a state transition or a notable
+ * diagnostic event (token refresh, reconnect scheduling, upgrade probe).
+ */
+export type ConnectionTimelineEntry = {
+  timestamp: number;
+  kind: "connected" | "connecting" | "disconnected" | "errored" | "info" | "warn";
+  label: string;
+  /** Full error text or extra context, shown on hover/expansion. */
+  detail?: string;
 };
 
 export type Statistics = {

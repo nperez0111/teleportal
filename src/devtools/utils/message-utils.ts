@@ -154,6 +154,34 @@ function formatRpcPayload(message: MessageType & { type: "rpc" }): unknown {
   return payload;
 }
 
+/**
+ * Decrypts a content-encrypted doc payload into a plaintext V2 update by
+ * decrypting the sidecars and restoring the content placeholders.
+ */
+export async function decryptContentPayload(
+  data: Uint8Array,
+  encryptionKey: CryptoKey,
+): Promise<{
+  update: VersionedSyncStep2Update;
+  compaction: ReturnType<typeof decodeContentEncryptedPayload>["compaction"];
+} | null> {
+  try {
+    const payload = decodeContentEncryptedPayload(data as any);
+    const sidecars = [];
+    for (const encrypted of payload.encryptedSidecars) {
+      const sidecarBytes = await decryptUpdate(encryptionKey, encrypted);
+      sidecars.push(decodeSidecar(sidecarBytes));
+    }
+    const v2 = restoreContent(payload.structureUpdate, mergeSidecars(sidecars));
+    return {
+      update: { version: 2, data: v2 as SyncStep2UpdateV2 } as VersionedSyncStep2Update,
+      compaction: payload.compaction,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function formatEncryptedPayload(
   data: Uint8Array,
   message: MessageType,
@@ -163,50 +191,40 @@ async function formatEncryptedPayload(
     return toBase64(data);
   }
 
-  try {
-    const payload = decodeContentEncryptedPayload(data as any);
-    const sidecars = [];
-    for (const encrypted of payload.encryptedSidecars) {
-      const sidecarBytes = await decryptUpdate(provider.encryptionKey, encrypted);
-      sidecars.push(decodeSidecar(sidecarBytes));
-    }
-    const v2 = restoreContent(payload.structureUpdate, mergeSidecars(sidecars));
-
-    const result = await formatMessagePayload(
-      new DocMessage(
-        getDocId(message),
-        {
-          type: "sync-step-2",
-          update: {
-            version: 2,
-            data: v2 as SyncStep2UpdateV2,
-          } as VersionedSyncStep2Update,
-        },
-        message.context,
-        false,
-      ),
-      provider,
-    );
-
-    if (result && payload.compaction) {
-      try {
-        const parsed = JSON.parse(result);
-        parsed.compaction = {
-          sidecarBytes: payload.compaction.sidecar.length,
-          index: payload.compaction.index,
-          hash: toBase64(payload.compaction.hash),
-          sourceHashes: payload.compaction.sourceHashes.map((h) => toBase64(h)),
-        };
-        return JSON.stringify(parsed, null, 2);
-      } catch {
-        return result;
-      }
-    }
-
-    return result;
-  } catch {
+  const decrypted = await decryptContentPayload(data, provider.encryptionKey);
+  if (!decrypted) {
     return toBase64(data);
   }
+
+  const result = await formatMessagePayload(
+    new DocMessage(
+      getDocId(message),
+      {
+        type: "sync-step-2",
+        update: decrypted.update as VersionedSyncStep2Update,
+      },
+      message.context,
+      false,
+    ),
+    provider,
+  );
+
+  if (result && decrypted.compaction) {
+    try {
+      const parsed = JSON.parse(result);
+      parsed.compaction = {
+        sidecarBytes: decrypted.compaction.sidecar.length,
+        index: decrypted.compaction.index,
+        hash: toBase64(decrypted.compaction.hash),
+        sourceHashes: decrypted.compaction.sourceHashes.map((h) => toBase64(h)),
+      };
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return result;
+    }
+  }
+
+  return result;
 }
 
 export function formatEncryptedDocEnvelope(data: Uint8Array): string | null {
@@ -409,6 +427,31 @@ export function formatLogEntry(msg: {
   }
 
   return `[${time}] ${arrow} | ${type} | ${doc} | ${encrypted}${ack}`;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
+/**
+ * Buckets an ACK round-trip against the 30s in-flight timeout:
+ * fast (comfortably acked), slow (getting close), stalled (about to time out).
+ */
+export function getAckLatencyLevel(latencyMs: number): "fast" | "slow" | "stalled" {
+  if (latencyMs < 3_000) return "fast";
+  if (latencyMs < 15_000) return "slow";
+  return "stalled";
 }
 
 export function formatRelativeTime(timestamp: number): string {

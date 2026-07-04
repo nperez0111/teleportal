@@ -1,8 +1,24 @@
 import { teleportalEventClient } from "teleportal/providers";
-import type { DevtoolsMessage, ConnectionStateInfo, Statistics } from "./types";
+import { onFileTransferProgress, type FileTransferProgress } from "teleportal/protocols/file";
+import type {
+  DevtoolsMessage,
+  ConnectionStateInfo,
+  ConnectionTimelineEntry,
+  DocumentState,
+  Statistics,
+} from "./types";
 import type { Message, RawReceivedMessage } from "teleportal";
 import { DocumentTracker } from "./utils/document-tracker";
+import {
+  PresenceTracker,
+  type PresenceFeedEntry,
+  type PresencePeer,
+} from "./utils/presence-tracker";
+import { formatDuration } from "./utils/message-utils";
 import type { SettingsManager } from "./settings-manager";
+
+const TIMELINE_LIMIT = 200;
+const TRANSFER_PROGRESS_LIMIT = 100;
 
 export class EventManager {
   private messages: DevtoolsMessage[] = [];
@@ -25,6 +41,7 @@ export class EventManager {
   };
 
   private tracker = new DocumentTracker();
+  private presence = new PresenceTracker();
   private messageRateTimestamps: number[] = [];
   private ackMessages = new Map<
     string,
@@ -41,9 +58,119 @@ export class EventManager {
   private settingsManager: SettingsManager;
   private generation = 0;
 
+  private timeline: ConnectionTimelineEntry[] = [];
+  private lastConnectedAt: number | null = null;
+  private diagnosticUnsubscribe: (() => void) | null = null;
+
+  /**
+   * Live file-transfer progress by fileId. Chunk messages deliberately stay
+   * off the message pipeline (see Connection.sendStream), so transfer state
+   * arrives via the file protocol's tiny progress events instead.
+   */
+  private transferProgress = new Map<string, FileTransferProgress>();
+
   constructor(settingsManager: SettingsManager) {
     this.settingsManager = settingsManager;
     this.setupEventListeners();
+  }
+
+  /**
+   * Captures the connection object and subscribes to its diagnostic events
+   * (token refreshes, reconnect scheduling, upgrade probes) for the timeline.
+   */
+  private attachConnection(connection: any) {
+    if (!connection || connection === this.connection) return;
+    this.connection = connection;
+    this.diagnosticUnsubscribe?.();
+    this.diagnosticUnsubscribe = null;
+    if (typeof connection.on === "function") {
+      try {
+        this.diagnosticUnsubscribe = connection.on("diagnostic", (event: any) => {
+          this.recordDiagnostic(event);
+          this.emitChange();
+        });
+      } catch {
+        // Connection implementation without diagnostic events
+      }
+    }
+  }
+
+  private pushTimeline(entry: ConnectionTimelineEntry) {
+    this.timeline.push(entry);
+    if (this.timeline.length > TIMELINE_LIMIT) {
+      this.timeline.splice(0, this.timeline.length - TIMELINE_LIMIT);
+    }
+    this.generation++;
+  }
+
+  private recordDiagnostic(event: any) {
+    switch (event?.type) {
+      case "token-refresh":
+        this.pushTimeline({
+          timestamp: Date.now(),
+          kind: "info",
+          label: `token refreshed (${event.reason})`,
+        });
+        break;
+      case "token-refresh-error":
+        this.pushTimeline({
+          timestamp: Date.now(),
+          kind: "warn",
+          label: "token refresh failed",
+          detail: event.error,
+        });
+        break;
+      case "reconnect-scheduled":
+        this.pushTimeline({
+          timestamp: Date.now(),
+          kind: "info",
+          label: `reconnect #${event.attempt}/${event.maxAttempts} in ${formatDuration(event.delayMs)}`,
+        });
+        break;
+      case "upgrade-probe":
+        this.pushTimeline({
+          timestamp: Date.now(),
+          kind: "info",
+          label:
+            event.result === "upgraded"
+              ? "upgraded to preferred transport (probe succeeded)"
+              : "upgrade probe: preferred transport still unavailable",
+        });
+        break;
+    }
+  }
+
+  /**
+   * Single write path for connection state: dedupes repeats (multiple
+   * providers observe the same connection) and records real transitions on
+   * the timeline.
+   */
+  private applyConnectionState(newState: ConnectionStateInfo) {
+    const prev = this.connectionState;
+    if (
+      prev &&
+      prev.type === newState.type &&
+      prev.transport === newState.transport &&
+      prev.error === newState.error
+    ) {
+      return;
+    }
+
+    this.connectionState = newState;
+    if (newState.type === "connected") {
+      this.lastConnectedAt = newState.timestamp;
+    }
+
+    const label =
+      newState.type === "connected" || newState.type === "connecting"
+        ? `${newState.type}${newState.transport ? ` (${newState.transport})` : ""}`
+        : newState.type;
+    this.pushTimeline({
+      timestamp: newState.timestamp,
+      kind: newState.type,
+      label,
+      detail: newState.error,
+    });
   }
 
   private rebuildIndex() {
@@ -92,28 +219,23 @@ export class EventManager {
       (event) => {
         const { message, provider, connection } = event.payload;
 
-        if (connection) this.connection = connection;
+        this.attachConnection(connection);
 
         // Check connection state from the connection object if available
         if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
-          const transport = connState.type === "connected" ? (connState.transport ?? null) : null;
-          if (
-            (connState.type && connState.type !== this.connectionState?.type) ||
-            transport !== this.connectionState?.transport
-          ) {
-            const newState: ConnectionStateInfo = {
+          if (connState.type) {
+            this.applyConnectionState({
               type: connState.type,
               hosting: connection.hosting,
-              transport,
+              transport: connState.type === "connected" ? (connState.transport ?? null) : null,
               availableTransports: connection.availableTransports ?? [],
               error:
                 connState.type === "errored"
                   ? connState.error?.message || String(connState.error)
                   : undefined,
               timestamp: Date.now(),
-            };
-            this.connectionState = newState;
+            });
           }
         }
 
@@ -153,7 +275,6 @@ export class EventManager {
 
         const docId = message.document || "unknown";
         this.tracker.addDocument(docId, provider, docId);
-        this.tracker.updateDocumentActivity(docId);
 
         const messageId = message.id;
 
@@ -162,6 +283,9 @@ export class EventManager {
           this.messageRateTimestamps.push(Date.now());
           return;
         }
+
+        this.tracker.recordMessage(docId, message, "received");
+        this.presence.recordMessage(message);
 
         const devtoolsMessage: DevtoolsMessage = {
           id: messageId,
@@ -202,13 +326,13 @@ export class EventManager {
       (event) => {
         const { message, provider, connection } = event.payload;
 
-        if (connection) this.connection = connection;
+        this.attachConnection(connection);
 
         // Check connection state from the connection object if available
         if (connection && typeof connection.state === "object" && connection.state) {
           const connState = connection.state;
-          if (connState.type && connState.type !== this.connectionState?.type) {
-            const newState: ConnectionStateInfo = {
+          if (connState.type) {
+            this.applyConnectionState({
               type: connState.type,
               hosting: connection.hosting,
               transport: connState.type === "connected" ? (connState.transport ?? null) : null,
@@ -218,8 +342,7 @@ export class EventManager {
                   ? connState.error?.message || String(connState.error)
                   : undefined,
               timestamp: Date.now(),
-            };
-            this.connectionState = newState;
+            });
           }
         }
 
@@ -259,7 +382,6 @@ export class EventManager {
 
         const docId = message.document || "unknown";
         this.tracker.addDocument(docId, provider, docId);
-        this.tracker.updateDocumentActivity(docId);
 
         const messageId = message.id;
 
@@ -268,6 +390,8 @@ export class EventManager {
           this.messageRateTimestamps.push(Date.now());
           return;
         }
+
+        this.tracker.recordMessage(docId, message, "sent");
 
         const devtoolsMessage: DevtoolsMessage = {
           id: messageId,
@@ -305,9 +429,16 @@ export class EventManager {
       const unsubLoadSubdoc = teleportalEventClient.on(
         "teleportal-provider:load-subdoc",
         (event: any) => {
-          const { document, provider } = event.payload;
+          // `document` is the PARENT provider's document; the subdoc's own
+          // provider carries the namespaced id ("parent/guid").
+          const { document, provider, subdoc } = event.payload;
           this.tracker.addDocument(document, provider, document);
+          this.tracker.addDocument(provider?.document ?? document, provider, subdoc?.guid, {
+            parentId: document,
+            isSubdoc: true,
+          });
           this.refreshStatsMeta();
+          this.generation++;
           this.emitChange();
         },
         { withEventTarget: true },
@@ -322,9 +453,10 @@ export class EventManager {
       const unsubUnloadSubdoc = teleportalEventClient.on(
         "teleportal-provider:unload-subdoc",
         (event: any) => {
-          const { document } = event.payload;
-          this.tracker.removeDocument(document);
+          const { document, provider } = event.payload;
+          this.tracker.removeDocument(provider?.document ?? document);
           this.refreshStatsMeta();
+          this.generation++;
           this.emitChange();
         },
         { withEventTarget: true },
@@ -339,16 +471,15 @@ export class EventManager {
       "teleportal-provider:connected",
       (event) => {
         const connection = event.payload.connection;
-        if (connection) this.connection = connection;
+        this.attachConnection(connection);
         const connState = connection?.state;
-        const newState: ConnectionStateInfo = {
+        this.applyConnectionState({
           type: "connected",
           hosting: connection?.hosting,
           transport: connState?.type === "connected" ? (connState.transport ?? null) : null,
           availableTransports: connection?.availableTransports ?? [],
           timestamp: Date.now(),
-        };
-        this.connectionState = newState;
+        });
         this.refreshStatsMeta();
         this.emitChange();
       },
@@ -359,14 +490,18 @@ export class EventManager {
     const unsubDisconnected = teleportalEventClient.on(
       "teleportal-provider:disconnected",
       (_event) => {
-        const newState: ConnectionStateInfo = {
+        this.applyConnectionState({
           type: "disconnected",
           hosting: this.connection?.hosting,
           transport: null,
           availableTransports: this.connection?.availableTransports ?? [],
           timestamp: Date.now(),
-        };
-        this.connectionState = newState;
+        });
+        // Every document re-syncs on the next connection.
+        this.tracker.resetSyncState();
+        // Peers re-join on the next connection.
+        this.presence.clearPeers();
+        this.generation++;
         this.refreshStatsMeta();
         this.emitChange();
       },
@@ -377,22 +512,37 @@ export class EventManager {
     const unsubUpdate = teleportalEventClient.on(
       "teleportal-provider:update",
       (event) => {
-        const { state } = event.payload;
-        const newState: ConnectionStateInfo = {
+        const { state, connection } = event.payload;
+        this.attachConnection(connection);
+        this.applyConnectionState({
           type: state.type,
           hosting: this.connection?.hosting,
           transport: state.type === "connected" ? (state.transport ?? null) : null,
           availableTransports: this.connection?.availableTransports ?? [],
           error: state.type === "errored" ? state.error?.message || String(state.error) : undefined,
           timestamp: Date.now(),
-        };
-        this.connectionState = newState;
+        });
         this.refreshStatsMeta();
         this.emitChange();
       },
       { withEventTarget: true },
     );
     this.unsubscribers.push(unsubUpdate);
+
+    // File-transfer progress (uploads have no visible chunk messages)
+    this.unsubscribers.push(
+      onFileTransferProgress((progress) => {
+        // Delete-then-set keeps insertion order = recency for eviction.
+        this.transferProgress.delete(progress.fileId);
+        this.transferProgress.set(progress.fileId, progress);
+        if (this.transferProgress.size > TRANSFER_PROGRESS_LIMIT) {
+          const oldest = this.transferProgress.keys().next().value;
+          if (oldest !== undefined) this.transferProgress.delete(oldest);
+        }
+        this.generation++;
+        this.emitChange();
+      }),
+    );
 
     // Listen to settings changes to update message limit
     this.settingsManager.subscribe(() => {
@@ -439,6 +589,51 @@ export class EventManager {
     return this.connectionState;
   }
 
+  getConnectionTimeline(): ConnectionTimelineEntry[] {
+    return this.timeline;
+  }
+
+  getTransferProgress(): ReadonlyMap<string, FileTransferProgress> {
+    return this.transferProgress;
+  }
+
+  getConnection(): any {
+    return this.connection;
+  }
+
+  /** Timestamp of the last transition into "connected", for uptime display. */
+  getLastConnectedAt(): number | null {
+    return this.lastConnectedAt;
+  }
+
+  getPresencePeers(): PresencePeer[] {
+    if (this.presencePeersCache && this.presenceCacheGeneration === this.generation) {
+      return this.presencePeersCache;
+    }
+    this.presencePeersCache = this.presence.getPeers();
+    this.presenceCacheGeneration = this.generation;
+    return this.presencePeersCache;
+  }
+
+  getPresenceFeed(): PresenceFeedEntry[] {
+    return this.presence.getFeed();
+  }
+
+  private presencePeersCache: PresencePeer[] | null = null;
+  private presenceCacheGeneration = -1;
+
+  private documentsCache: DocumentState[] | null = null;
+  private documentsCacheGeneration = -1;
+
+  getDocuments(): DocumentState[] {
+    if (this.documentsCache && this.documentsCacheGeneration === this.generation) {
+      return this.documentsCache;
+    }
+    this.documentsCache = this.tracker.getAllDocuments();
+    this.documentsCacheGeneration = this.generation;
+    return this.documentsCache;
+  }
+
   getStatistics(): Statistics {
     return this.statistics;
   }
@@ -470,6 +665,8 @@ export class EventManager {
   destroy() {
     this.unsubscribers.forEach((unsub) => unsub());
     this.unsubscribers = [];
+    this.diagnosticUnsubscribe?.();
+    this.diagnosticUnsubscribe = null;
     this.listeners.clear();
   }
 }

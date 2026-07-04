@@ -1,12 +1,19 @@
+import type { VersionedUpdate } from "teleportal";
 import type { DevtoolsMessage } from "../types";
+import type { RpcGroup } from "../utils/rpc-tracker";
 import {
+  decryptContentPayload,
+  formatBytes,
+  formatDuration,
   formatLogEntry,
   formatMessagePayload,
   formatEncryptedDocEnvelope,
   formatEncryptedAwarenessEnvelope,
+  getAckLatencyLevel,
   getMessageTypeLabel,
   getMessageTypeColor,
 } from "../utils/message-utils";
+import { decodeUpdateOps, formatUpdateOp, type DecodedUpdateOps } from "../utils/update-decoder";
 import {
   cloneSvg,
   ICON_COPY,
@@ -25,6 +32,7 @@ import {
 export class MessageInspector {
   private element: HTMLElement;
   private message: DevtoolsMessage | null = null;
+  private group: RpcGroup | null = null;
   private showAckDetails = false;
 
   constructor() {
@@ -35,6 +43,14 @@ export class MessageInspector {
 
   setMessage(message: DevtoolsMessage | null) {
     this.message = message;
+    this.group = null;
+    this.showAckDetails = false;
+    this.render();
+  }
+
+  setGroup(group: RpcGroup | null) {
+    this.group = group;
+    this.message = null;
     this.showAckDetails = false;
     this.render();
   }
@@ -52,6 +68,12 @@ export class MessageInspector {
 
   private render() {
     this.element.innerHTML = "";
+
+    if (this.group) {
+      this.renderGroupHeader();
+      this.renderGroupContent();
+      return;
+    }
 
     if (!this.message) {
       this.renderEmptyState();
@@ -147,6 +169,8 @@ export class MessageInspector {
     if (this.message.ackedBy) {
       content.append(this.renderAckSection());
     }
+
+    this.appendOpsSection(content);
 
     const msg = this.message.message;
     if (msg.encrypted) {
@@ -407,6 +431,13 @@ export class MessageInspector {
       this.message!.direction === "sent" ? "Acknowledged by server" : "Acknowledged by client";
     ackButton.append(label);
 
+    const ackLatency = Math.max(0, this.message!.ackedBy!.timestamp - this.message!.timestamp);
+    const latencyBadge = document.createElement("span");
+    latencyBadge.className = `devtools-ack-indicator devtools-ack-${getAckLatencyLevel(ackLatency)}`;
+    latencyBadge.textContent = formatDuration(ackLatency);
+    latencyBadge.title = `Round-trip until acknowledgement: ${ackLatency}ms`;
+    ackButton.append(latencyBadge);
+
     const chevron = document.createElement("span");
     chevron.className = "devtools-inspector-ack-chevron";
     chevron.append(cloneSvg(this.showAckDetails ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
@@ -465,6 +496,332 @@ export class MessageInspector {
 
     row.append(valueContainer);
     return row;
+  }
+
+  // --- Update operations (human-readable diff) ---
+
+  private async getUpdateOps(): Promise<DecodedUpdateOps | null> {
+    const devtoolsMessage = this.message;
+    if (!devtoolsMessage) return null;
+    const msg = devtoolsMessage.message;
+    if (msg.type !== "doc") return null;
+    const payload = msg.payload;
+    if (payload.type !== "update" && payload.type !== "sync-step-2") return null;
+
+    let update = payload.update as VersionedUpdate;
+    if (msg.encrypted) {
+      const key = devtoolsMessage.provider.encryptionKey;
+      if (!key) return null;
+      const decrypted = await decryptContentPayload(update.data as Uint8Array, key);
+      if (!decrypted) return null;
+      update = decrypted.update as unknown as VersionedUpdate;
+    }
+
+    try {
+      return decodeUpdateOps(update);
+    } catch {
+      return null;
+    }
+  }
+
+  private appendOpsSection(content: HTMLElement) {
+    const selected = this.message;
+    this.getUpdateOps().then((decoded) => {
+      // Bail if the selection changed while decoding.
+      if (!decoded || decoded.ops.length === 0 || this.message !== selected) return;
+
+      const section = document.createElement("div");
+      section.className = "devtools-inspector-section";
+
+      const titleContainer = document.createElement("div");
+      titleContainer.className = "devtools-inspector-section-title";
+      const icon = document.createElement("div");
+      icon.className = "devtools-inspector-section-icon";
+      icon.append(cloneSvg(ICON_PAYLOAD));
+      titleContainer.append(icon);
+      const title = document.createElement("span");
+      title.textContent = `Operations (${decoded.ops.length})`;
+      titleContainer.append(title);
+      section.append(titleContainer);
+
+      const box = document.createElement("div");
+      box.className = "devtools-ops-box";
+
+      const summaryParts: string[] = [];
+      if (decoded.insertCount > 0) {
+        summaryParts.push(`${decoded.insertCount} inserts (${decoded.insertedLength} items)`);
+      }
+      if (decoded.deleteCount > 0) {
+        summaryParts.push(`${decoded.deleteCount} deletes (${decoded.deletedLength} items)`);
+      }
+      if (summaryParts.length > 0) {
+        const summary = document.createElement("div");
+        summary.className = "devtools-ops-summary";
+        summary.textContent = summaryParts.join(" · ");
+        box.append(summary);
+      }
+
+      for (const op of decoded.ops) {
+        const line = document.createElement("div");
+        line.className = `devtools-op-line devtools-op-${op.kind}`;
+        line.textContent = formatUpdateOp(op);
+        box.append(line);
+      }
+
+      section.append(box);
+
+      // Insert before the payload sections so the readable diff comes first.
+      const firstPayloadSection = content.querySelector(
+        ":scope > .devtools-inspector-section .devtools-inspector-payload",
+      )?.parentElement;
+      if (firstPayloadSection) {
+        content.insertBefore(section, firstPayloadSection);
+      } else {
+        content.append(section);
+      }
+    });
+  }
+
+  // --- RPC group (call) view ---
+
+  private renderGroupHeader() {
+    const group = this.group!;
+    const header = document.createElement("div");
+    header.className = "devtools-inspector-header";
+
+    const title = document.createElement("div");
+    title.className = "devtools-inspector-title";
+    title.textContent = "RPC Call";
+    header.append(title);
+
+    const btnGroup = document.createElement("div");
+    btnGroup.className = "devtools-inspector-btn-group";
+
+    const logBtn = document.createElement("button");
+    logBtn.className = "devtools-inspector-copy-btn";
+    logBtn.append(cloneSvg(ICON_COPY), " Copy Log");
+    logBtn.title = "Copy a log transcript of the request, parts, and response";
+    logBtn.addEventListener("click", () => {
+      const members: DevtoolsMessage[] = [];
+      if (group.request) members.push(group.request);
+      members.push(...group.parts);
+      if (group.response) members.push(group.response);
+      const log = members.map((m) => formatLogEntry(m)).join("\n");
+      navigator.clipboard.writeText(log).then(() => {
+        logBtn.replaceChildren(cloneSvg(ICON_CHECK), " Copied");
+        logBtn.classList.add("copied");
+        setTimeout(() => {
+          logBtn.replaceChildren(cloneSvg(ICON_COPY), " Copy Log");
+          logBtn.classList.remove("copied");
+        }, 1500);
+      });
+    });
+    btnGroup.append(logBtn);
+
+    header.append(btnGroup);
+    this.element.append(header);
+  }
+
+  private renderGroupContent() {
+    const group = this.group!;
+    const content = document.createElement("div");
+    content.className = "devtools-inspector-content";
+
+    content.append(this.renderGroupMetadataSection());
+
+    if (group.status === "error" && group.errorDetails) {
+      content.append(this.renderGroupErrorSection());
+    }
+
+    if (group.transfer) {
+      content.append(this.renderTransferSection());
+    }
+
+    const provider = (group.request ?? group.response ?? group.parts[0])?.provider;
+    if (group.request && provider) {
+      content.append(
+        this.renderPayloadSection(
+          formatMessagePayload(group.request.message, provider),
+          "Request Payload",
+        ),
+      );
+    }
+    if (group.response && provider) {
+      content.append(
+        this.renderPayloadSection(
+          formatMessagePayload(group.response.message, provider),
+          "Response Payload",
+        ),
+      );
+    }
+
+    this.element.append(content);
+  }
+
+  private renderGroupMetadataSection(): HTMLElement {
+    const group = this.group!;
+    const section = document.createElement("div");
+    section.className = "devtools-inspector-section";
+
+    const titleContainer = document.createElement("div");
+    titleContainer.className = "devtools-inspector-section-title";
+    const icon = document.createElement("div");
+    icon.className = "devtools-inspector-section-icon";
+    icon.append(cloneSvg(ICON_INFO));
+    titleContainer.append(icon);
+    const title = document.createElement("span");
+    title.textContent = "Details";
+    titleContainer.append(title);
+    section.append(titleContainer);
+
+    const card = document.createElement("div");
+    card.className = "devtools-inspector-card";
+
+    card.append(this.createCopyableRow("Method", group.method, true));
+    card.append(this.createGroupStatusRow());
+    if (group.latencyMs !== undefined) {
+      card.append(this.createRow("Latency", formatDuration(group.latencyMs)));
+    }
+    if (
+      group.durationMs !== undefined &&
+      group.parts.length > 0 &&
+      group.durationMs !== group.latencyMs
+    ) {
+      card.append(this.createRow("Duration", formatDuration(group.durationMs)));
+    }
+    card.append(this.createCopyableRow("Document", group.document || "N/A", !!group.document));
+    card.append(
+      this.createCopyableRow("Request ID", group.request ? group.key : "N/A", !!group.request),
+    );
+
+    const memberCount = (group.request ? 1 : 0) + group.parts.length + (group.response ? 1 : 0);
+    const partsSummary =
+      group.parts.length > 0 ? `${memberCount} (${group.parts.length} parts)` : `${memberCount}`;
+    card.append(this.createRow("Messages", partsSummary));
+
+    section.append(card);
+    return section;
+  }
+
+  private createGroupStatusRow(): HTMLElement {
+    const group = this.group!;
+    const row = document.createElement("div");
+    row.className = "devtools-inspector-row";
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "devtools-inspector-label";
+    labelEl.textContent = "Status";
+    row.append(labelEl);
+
+    const valueEl = document.createElement("div");
+    valueEl.className = "devtools-inspector-value";
+
+    const pill = document.createElement("span");
+    pill.className = `devtools-status-pill devtools-status-${group.status}`;
+    switch (group.status) {
+      case "pending":
+        pill.textContent = "pending";
+        break;
+      case "streaming":
+        pill.textContent = "streaming";
+        break;
+      case "success":
+        pill.textContent = "✓ success";
+        break;
+      case "error":
+        pill.textContent = group.statusCode !== undefined ? `✕ ${group.statusCode}` : "✕ error";
+        break;
+    }
+    valueEl.append(pill);
+    row.append(valueEl);
+    return row;
+  }
+
+  private renderGroupErrorSection(): HTMLElement {
+    const group = this.group!;
+    const section = document.createElement("div");
+    section.className = "devtools-inspector-section";
+
+    const box = document.createElement("div");
+    box.className = "devtools-inspector-error-box";
+    box.textContent = group.errorDetails ?? "Unknown error";
+    section.append(box);
+    return section;
+  }
+
+  private renderTransferSection(): HTMLElement {
+    const group = this.group!;
+    const transfer = group.transfer!;
+    const section = document.createElement("div");
+    section.className = "devtools-inspector-section";
+
+    const titleContainer = document.createElement("div");
+    titleContainer.className = "devtools-inspector-section-title";
+    const icon = document.createElement("div");
+    icon.className = "devtools-inspector-section-icon";
+    icon.append(cloneSvg(ICON_PAYLOAD));
+    titleContainer.append(icon);
+    const title = document.createElement("span");
+    title.textContent = transfer.direction === "upload" ? "File Upload" : "File Download";
+    titleContainer.append(title);
+    section.append(titleContainer);
+
+    const card = document.createElement("div");
+    card.className = "devtools-inspector-card";
+
+    // Progress bar spanning the card
+    if (transfer.totalChunks !== undefined) {
+      const done = transfer.direction === "upload" ? transfer.chunksAcked : transfer.chunksSeen;
+      const percent =
+        transfer.totalChunks > 0
+          ? Math.min(100, Math.round((done / transfer.totalChunks) * 100))
+          : 0;
+
+      const progressRow = document.createElement("div");
+      progressRow.className = "devtools-inspector-progress-row";
+
+      const track = document.createElement("div");
+      track.className = "devtools-progress-track devtools-progress-track-lg";
+      const fill = document.createElement("div");
+      fill.className = `devtools-progress-fill${group.status === "error" ? " devtools-progress-fill-error" : ""}`;
+      fill.style.width = `${percent}%`;
+      track.append(fill);
+      progressRow.append(track);
+
+      const label = document.createElement("span");
+      label.className = "devtools-progress-label";
+      label.textContent = `${percent}%`;
+      progressRow.append(label);
+
+      card.append(progressRow);
+    }
+
+    if (transfer.filename) {
+      card.append(this.createCopyableRow("Filename", transfer.filename, true));
+    }
+    if (transfer.fileId) {
+      card.append(this.createCopyableRow("File ID", transfer.fileId, true));
+    }
+    if (transfer.size !== undefined) {
+      card.append(this.createRow("Size", formatBytes(transfer.size)));
+    }
+    if (transfer.mimeType) {
+      card.append(this.createRow("MIME Type", transfer.mimeType));
+    }
+    const chunksText =
+      transfer.totalChunks !== undefined
+        ? transfer.direction === "upload"
+          ? `${transfer.chunksAcked} acked / ${transfer.chunksSeen} sent / ${transfer.totalChunks} total`
+          : `${transfer.chunksSeen} received / ${transfer.totalChunks} total`
+        : `${transfer.chunksSeen} seen`;
+    card.append(this.createRow("Chunks", chunksText));
+    if (transfer.bytesTransferred > 0) {
+      card.append(this.createRow("Transferred", formatBytes(transfer.bytesTransferred)));
+    }
+    card.append(this.createRow("Encrypted", transfer.encrypted ? "Yes" : "No"));
+
+    section.append(card);
+    return section;
   }
 
   private renderPayloadSection(

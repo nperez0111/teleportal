@@ -1,21 +1,39 @@
+import type { FileTransferProgress } from "teleportal/protocols/file";
 import type { DevtoolsMessage } from "../types";
 import { formatLogEntry } from "../utils/message-utils";
+import { buildRpcGroups, rpcGroupSignature, type RpcGroup } from "../utils/rpc-tracker";
 import { createMessageItem } from "./message-item";
+import { createRpcGroupItem } from "./rpc-group-item";
+
+export type MessageListSelection = { kind: "message"; id: string } | { kind: "group"; key: string };
+
+type RowModel =
+  | { kind: "message"; key: string; msg: DevtoolsMessage }
+  | { kind: "group"; key: string; group: RpcGroup }
+  | { kind: "child"; key: string; msg: DevtoolsMessage };
 
 export class MessageList {
   private element: HTMLElement;
   private messages: DevtoolsMessage[] = [];
-  private selectedMessageId: string | null = null;
+  private selection: MessageListSelection | null = null;
   private onSelectMessage: (message: DevtoolsMessage) => void;
+  private onSelectGroup: (group: RpcGroup) => void;
   private onClearMessages: (() => void) | null = null;
   private listContainer: HTMLElement;
   private titleElement: HTMLElement;
-  private itemElements = new Map<string, HTMLElement>();
-  private itemMessages = new Map<string, DevtoolsMessage>();
+  private rowElements = new Map<string, HTMLElement>();
+  private rowSignatures = new Map<string, unknown>();
   private renderedOrder: string[] = [];
+  private expandedGroups = new Set<string>();
+  private groups = new Map<string, RpcGroup>();
 
-  constructor(onSelectMessage: (message: DevtoolsMessage) => void, onClearMessages?: () => void) {
+  constructor(
+    onSelectMessage: (message: DevtoolsMessage) => void,
+    onSelectGroup: (group: RpcGroup) => void,
+    onClearMessages?: () => void,
+  ) {
     this.onSelectMessage = onSelectMessage;
+    this.onSelectGroup = onSelectGroup;
     this.onClearMessages = onClearMessages || null;
     this.element = document.createElement("div");
     this.element.className = "devtools-flex devtools-flex-col devtools-h-full devtools-bg-white";
@@ -68,26 +86,48 @@ export class MessageList {
     this.updateTitle();
   }
 
-  setMessages(messages: DevtoolsMessage[]) {
+  setMessages(
+    messages: DevtoolsMessage[],
+    transferProgress?: ReadonlyMap<string, FileTransferProgress>,
+  ) {
     this.messages = messages;
+    this.groups = buildRpcGroups(messages, transferProgress).groups;
     this.updateTitle();
     this.reconcile();
   }
 
-  setSelectedMessageId(messageId: string | null) {
-    const prevId = this.selectedMessageId;
-    this.selectedMessageId = messageId;
+  getGroup(key: string): RpcGroup | undefined {
+    return this.groups.get(key);
+  }
 
-    if (prevId === messageId) return;
+  setSelection(selection: MessageListSelection | null) {
+    const prevKey = this.selectionKey(this.selection);
+    const nextKey = this.selectionKey(selection);
+    this.selection = selection;
 
-    if (prevId) {
-      const oldEl = this.itemElements.get(prevId);
+    if (prevKey === nextKey) return;
+
+    if (prevKey) {
+      const oldEl = this.rowElements.get(prevKey);
       if (oldEl) oldEl.classList.remove("devtools-bg-blue-50");
     }
-    if (messageId) {
-      const newEl = this.itemElements.get(messageId);
+    if (nextKey) {
+      const newEl = this.rowElements.get(nextKey);
       if (newEl) newEl.classList.add("devtools-bg-blue-50");
     }
+  }
+
+  private selectionKey(selection: MessageListSelection | null): string | null {
+    if (!selection) return null;
+    return selection.kind === "group" ? `g:${selection.key}` : `m:${selection.id}`;
+  }
+
+  private isRowSelected(row: RowModel): boolean {
+    if (!this.selection) return false;
+    if (row.kind === "group") {
+      return this.selection.kind === "group" && this.selection.key === row.key;
+    }
+    return this.selection.kind === "message" && this.selection.id === row.msg.id;
   }
 
   private updateTitle() {
@@ -95,12 +135,96 @@ export class MessageList {
       this.messages.length === 1 ? "1 Message" : `${this.messages.length} Messages`;
   }
 
+  /**
+   * Builds display rows, newest first. RPC messages collapse into one group
+   * row anchored at the call's oldest visible message; expanding a group
+   * inserts its members chronologically (request → parts → response) below.
+   */
+  private buildRows(): RowModel[] {
+    const rows: RowModel[] = [];
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const msg = this.messages[i];
+      if (msg.message.type === "rpc") {
+        const group = this.findGroupAnchoredAt(msg, i);
+        if (!group) continue; // rendered at its anchor position
+        rows.push({ kind: "group", key: `g:${group.key}`, group });
+        if (this.expandedGroups.has(group.key)) {
+          const members: DevtoolsMessage[] = [];
+          if (group.request) members.push(group.request);
+          members.push(...group.parts);
+          if (group.response) members.push(group.response);
+          for (const member of members) {
+            rows.push({ kind: "child", key: `m:${member.id}`, msg: member });
+          }
+        }
+      } else {
+        rows.push({ kind: "message", key: `m:${msg.id}`, msg });
+      }
+    }
+    return rows;
+  }
+
+  private groupKeyByMessageId = new Map<string, string>();
+
+  private findGroupAnchoredAt(msg: DevtoolsMessage, index: number): RpcGroup | null {
+    const key = this.groupKeyByMessageId.get(msg.id);
+    if (!key) return null;
+    const group = this.groups.get(key);
+    if (!group) return null;
+    return group.firstIndex === index ? group : null;
+  }
+
+  private renderRow(row: RowModel): HTMLElement {
+    const selected = this.isRowSelected(row);
+    switch (row.kind) {
+      case "message":
+        return createMessageItem(row.msg, selected, () => this.onSelectMessage(row.msg));
+      case "child":
+        return createMessageItem(row.msg, selected, () => this.onSelectMessage(row.msg), {
+          child: true,
+        });
+      case "group":
+        return createRpcGroupItem(
+          row.group,
+          selected,
+          this.expandedGroups.has(row.group.key),
+          () => this.onSelectGroup(row.group),
+          () => {
+            if (this.expandedGroups.has(row.group.key)) {
+              this.expandedGroups.delete(row.group.key);
+            } else {
+              this.expandedGroups.add(row.group.key);
+            }
+            this.reconcile();
+          },
+        );
+    }
+  }
+
+  private rowSignature(row: RowModel): unknown {
+    if (row.kind === "group") {
+      return `${rpcGroupSignature(row.group)}|${this.expandedGroups.has(row.group.key) ? 1 : 0}`;
+    }
+    // Message objects are replaced on change (e.g. ackedBy), so identity works.
+    return row.msg;
+  }
+
   private reconcile() {
-    if (this.messages.length === 0) {
+    // Refresh message-id → group-key mapping (groups were rebuilt in setMessages)
+    this.groupKeyByMessageId.clear();
+    for (const group of this.groups.values()) {
+      if (group.request) this.groupKeyByMessageId.set(group.request.id, group.key);
+      for (const part of group.parts) this.groupKeyByMessageId.set(part.id, group.key);
+      if (group.response) this.groupKeyByMessageId.set(group.response.id, group.key);
+    }
+
+    const rows = this.buildRows();
+
+    if (rows.length === 0) {
       if (this.renderedOrder.length > 0 || !this.listContainer.firstChild) {
         this.listContainer.innerHTML = "";
-        this.itemElements.clear();
-        this.itemMessages.clear();
+        this.rowElements.clear();
+        this.rowSignatures.clear();
         this.renderedOrder = [];
         const emptyState = document.createElement("div");
         emptyState.className =
@@ -111,21 +235,16 @@ export class MessageList {
       return;
     }
 
-    // Newest first
-    const newOrder: string[] = [];
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      newOrder.push(this.messages[i].id);
-    }
-
+    const newOrder = rows.map((r) => r.key);
     const newSet = new Set(newOrder);
 
-    // Remove items no longer present
-    for (const id of this.renderedOrder) {
-      if (!newSet.has(id)) {
-        const el = this.itemElements.get(id);
+    // Remove rows no longer present
+    for (const key of this.renderedOrder) {
+      if (!newSet.has(key)) {
+        const el = this.rowElements.get(key);
         if (el) el.remove();
-        this.itemElements.delete(id);
-        this.itemMessages.delete(id);
+        this.rowElements.delete(key);
+        this.rowSignatures.delete(key);
       }
     }
 
@@ -134,31 +253,25 @@ export class MessageList {
       this.listContainer.innerHTML = "";
     }
 
-    // Build/reorder items — walk the desired order and ensure DOM matches
+    // Build/reorder rows — walk the desired order and ensure DOM matches
     let refNode: ChildNode | null = null;
-    for (let i = newOrder.length - 1; i >= 0; i--) {
-      const id = newOrder[i];
-      const msg = this.messages[this.messages.length - 1 - i];
-      let el = this.itemElements.get(id);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      const key = row.key;
+      const signature = this.rowSignature(row);
+      let el = this.rowElements.get(key);
 
       if (!el) {
-        // New item
-        el = createMessageItem(msg, this.selectedMessageId === id, () => {
-          this.onSelectMessage(msg);
-        });
-        this.itemElements.set(id, el);
-        this.itemMessages.set(id, msg);
+        el = this.renderRow(row);
+        this.rowElements.set(key, el);
+        this.rowSignatures.set(key, signature);
         this.listContainer.insertBefore(el, refNode);
       } else {
-        // Existing item — check if the message object changed (e.g. ackedBy added)
-        const prevMsg = this.itemMessages.get(id);
-        if (prevMsg !== msg) {
-          const newEl = createMessageItem(msg, this.selectedMessageId === id, () => {
-            this.onSelectMessage(msg);
-          });
+        if (this.rowSignatures.get(key) !== signature) {
+          const newEl = this.renderRow(row);
           this.listContainer.replaceChild(newEl, el);
-          this.itemElements.set(id, newEl);
-          this.itemMessages.set(id, msg);
+          this.rowElements.set(key, newEl);
+          this.rowSignatures.set(key, signature);
           el = newEl;
         }
 

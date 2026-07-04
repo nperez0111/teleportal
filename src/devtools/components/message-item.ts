@@ -1,16 +1,33 @@
 import type { DevtoolsMessage } from "../types";
-import { getMessageTypeLabel, getMessageTypeColor, formatTimestamp } from "../utils/message-utils";
+import {
+  getMessageTypeLabel,
+  getMessageTypeColor,
+  formatTimestamp,
+  formatDuration,
+  getAckLatencyLevel,
+} from "../utils/message-utils";
 import { cloneSvg, ICON_ARROW_SENT, ICON_ARROW_RECEIVED } from "../utils/svg-cache";
+
+export function createAckBadge(message: DevtoolsMessage): HTMLElement | null {
+  if (!message.ackedBy) return null;
+  const latency = Math.max(0, message.ackedBy.timestamp - message.timestamp);
+  const badge = document.createElement("span");
+  badge.className = `devtools-ack-indicator devtools-ack-${getAckLatencyLevel(latency)}`;
+  badge.textContent = `✓ ${formatDuration(latency)}`;
+  badge.title = `Acknowledged after ${latency}ms`;
+  return badge;
+}
 
 export function createMessageItem(
   message: DevtoolsMessage,
   isSelected: boolean,
   onClick: () => void,
+  options?: { child?: boolean },
 ): HTMLElement {
   const item = document.createElement("div");
   item.className = `devtools-px-2 devtools-py-1.5 devtools-border-b devtools-border-gray-200 devtools-cursor-pointer devtools-hover:bg-gray-50 devtools-transition-colors devtools-text-xs ${
     isSelected ? "devtools-bg-blue-50" : ""
-  }`;
+  }${options?.child ? " devtools-child-row" : ""}`;
   item.addEventListener("click", onClick);
 
   const typeLabel = getMessageTypeLabel(message.message);
@@ -34,14 +51,9 @@ export function createMessageItem(
   typeBadge.textContent = typeLabel;
   container.append(typeBadge);
 
-  // ACK indicator
-  if (message.ackedBy) {
-    const ackIndicator = document.createElement("span");
-    ackIndicator.className = "devtools-ack-indicator";
-    ackIndicator.textContent = "✓";
-    ackIndicator.title = "ACK'd";
-    container.append(ackIndicator);
-  }
+  // ACK indicator with round-trip latency
+  const ackBadge = createAckBadge(message);
+  if (ackBadge) container.append(ackBadge);
 
   // Document name - flexible
   const descriptionEl = document.createElement("div");
