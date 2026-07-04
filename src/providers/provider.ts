@@ -397,7 +397,13 @@ export class Provider<
 
   #handlePresenceMessage(message: PresenceMessage<any>) {
     const payload = message.payload;
-    if (payload.type === "presence-announce" || payload.type === "presence-heartbeat") return;
+    if (
+      payload.type === "presence-announce" ||
+      payload.type === "presence-unannounce" ||
+      payload.type === "presence-heartbeat"
+    )
+      return;
+    if (payload.awarenessId === this.awareness.clientID) return;
 
     const peer: PresenceEvent = {
       awarenessId: payload.awarenessId,
@@ -707,6 +713,19 @@ export class Provider<
     destroyConnection?: boolean;
     destroyDoc?: boolean;
   } = {}) {
+    // Best-effort: retract our awareness presence so the server can notify
+    // peers immediately instead of waiting for the connection to close.
+    try {
+      this.#connection.send(
+        new PresenceMessage(this.document, {
+          type: "presence-unannounce",
+          awarenessId: this.awareness.clientID,
+        }),
+      );
+    } catch {
+      // Connection may already be torn down
+    }
+
     this.doc.off("subdocs", this.#subdocListener);
     super.destroy();
 

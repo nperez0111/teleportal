@@ -1,7 +1,7 @@
 import { Observable, type BinaryMessage, type Message, type RawReceivedMessage } from "teleportal";
 import { decodeMessage } from "teleportal/protocol";
 import { createFanOutWriter, type FanOutReader } from "teleportal/transports";
-import type { ConnectionState, ConnectionEvents } from "../types";
+import type { ConnectionDiagnostics, ConnectionState, ConnectionEvents } from "../types";
 import type { DownstreamMessage, UpstreamMessage } from "./protocol";
 
 const RPC_TIMEOUT_MS = 30_000;
@@ -17,6 +17,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   #availableTransports: string[] = [];
   #destroyed = false;
   #inFlightMessageCount = 0;
+  #diagnostics: ConnectionDiagnostics | null = null;
 
   #connectedPromise: Promise<void> | null = null;
   #connectedResolve: (() => void) | null = null;
@@ -45,6 +46,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   #onWorkerDeath?: () => void;
   #onlineHandler: (() => void) | null = null;
   #offlineHandler: (() => void) | null = null;
+  #pagehideHandler: ((event: Event) => void) | null = null;
 
   constructor(port: MessagePort, options?: { onWorkerDeath?: () => void }) {
     super();
@@ -99,6 +101,10 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
 
       case "heartbeat-ack":
         this.#missedHeartbeats = 0;
+        break;
+
+      case "diagnostics":
+        this.#diagnostics = msg.diagnostics;
         break;
 
       case "file-upload-result": {
@@ -231,6 +237,31 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
     return this.#inFlightMessageCount;
   }
 
+  /** Consecutive tab↔worker heartbeats without an ack (resets on each ack). */
+  get missedHeartbeats(): number {
+    return this.#missedHeartbeats;
+  }
+
+  /**
+   * Last diagnostics snapshot received from the worker. Reading it requests a
+   * fresh snapshot, so pollers (e.g. devtools) see at-most-one-read-stale data.
+   */
+  get diagnostics(): ConnectionDiagnostics {
+    if (!this.#destroyed) {
+      this.#postUpstream({ type: "get-diagnostics" });
+    }
+    return (
+      this.#diagnostics ?? {
+        batchIntervalMs: 0,
+        maxBatchIntervalMs: 0,
+        bufferedMessageCount: 0,
+        reconnectAttempt: 0,
+        maxReconnectAttempts: 0,
+        online: true,
+      }
+    );
+  }
+
   get connected(): Promise<void> {
     if (this.#state.type === "connected") return Promise.resolve();
     if (this.#state.type === "errored") return Promise.reject(this.#state.error);
@@ -281,6 +312,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
     this.#destroyed = true;
     this.#stopHeartbeat();
     this.#stopListeningForNetworkStatus();
+    this.#stopListeningForPageHide();
     this.#postUpstream({ type: "destroy", tabId: "" });
     this.#fanOutWriter.close();
     this.#port.close();
@@ -366,6 +398,32 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
     if (this.#offlineHandler) {
       globalThis.removeEventListener("offline", this.#offlineHandler);
       this.#offlineHandler = null;
+    }
+  }
+
+  // --- Page lifecycle ---
+
+  /**
+   * Destroy the connection when the page is being discarded, so the worker
+   * releases this tab's port (and retracts its presence) immediately instead
+   * of waiting for the port `close` event or the stale sweep. Skipped when the
+   * page enters the back/forward cache (`persisted`), since it may come back
+   * with this connection still live.
+   */
+  listenForPageHide(): void {
+    this.#stopListeningForPageHide();
+    if (typeof globalThis.addEventListener !== "function") return;
+    this.#pagehideHandler = (event: Event) => {
+      if ((event as PageTransitionEvent).persisted) return;
+      void this.destroy();
+    };
+    globalThis.addEventListener("pagehide", this.#pagehideHandler);
+  }
+
+  #stopListeningForPageHide(): void {
+    if (this.#pagehideHandler) {
+      globalThis.removeEventListener("pagehide", this.#pagehideHandler);
+      this.#pagehideHandler = null;
     }
   }
 

@@ -246,9 +246,9 @@ function decodeAckMessageWithDecoder(decoder: decoding.Decoder): DecodedAckMessa
 
 function decodePresenceMessageWithDecoder(decoder: decoding.Decoder): PresenceStep {
   const subType = decoding.readUint8(decoder);
-  if (subType === 0) {
+  if (subType === 0 || subType === 4) {
     return {
-      type: "presence-announce",
+      type: subType === 0 ? "presence-announce" : "presence-unannounce",
       awarenessId: decoding.readVarUint(decoder),
     };
   }

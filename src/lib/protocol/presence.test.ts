@@ -96,6 +96,23 @@ describe("presence message encoding", () => {
     });
   });
 
+  it("round-trips a presence-unannounce", () => {
+    const message = new PresenceMessage("doc-6", {
+      type: "presence-unannounce",
+      awarenessId: 987_654,
+    });
+
+    const decoded = decodeMessage(message.encoded);
+
+    expect(decoded.type).toBe("presence");
+    expect(decoded.document).toBe("doc-6");
+    expect(decoded.encrypted).toBe(false);
+    expect(decoded.payload).toEqual({
+      type: "presence-unannounce",
+      awarenessId: 987_654,
+    });
+  });
+
   it("round-trips a presence-heartbeat with an empty roster", () => {
     const message = new PresenceMessage("doc-5", {
       type: "presence-heartbeat",

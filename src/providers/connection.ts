@@ -17,9 +17,16 @@ import type {
   TransportConnectContext,
 } from "./transports/types";
 import { ExponentialBackoff, TimerManager, type Timer } from "./utils";
-import type { Connection, ConnectionEvents, ConnectionState } from "./types";
+import type { Connection, ConnectionDiagnostics, ConnectionEvents, ConnectionState } from "./types";
 
-export type { Connection, ConnectionEvents, ConnectionState } from "./types";
+export type {
+  Connection,
+  ConnectionDiagnosticEvent,
+  ConnectionDiagnostics,
+  ConnectionEvents,
+  ConnectionState,
+  WorkerConnectionDiagnostics,
+} from "./types";
 
 export type ConnectionOptions = {
   url?: string;
@@ -288,6 +295,17 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     return this.#inFlightMessages.size;
   }
 
+  get diagnostics(): ConnectionDiagnostics {
+    return {
+      batchIntervalMs: this.#batchIntervalMs,
+      maxBatchIntervalMs: this.#maxBatchIntervalMs,
+      bufferedMessageCount: this.#messageBuffer.length,
+      reconnectAttempt: this.#reconnectAttempt,
+      maxReconnectAttempts: this.#maxReconnectAttempts,
+      online: this.#isOnline,
+    };
+  }
+
   get connected(): Promise<void> {
     const currentState = this.#state;
 
@@ -331,7 +349,10 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
 
   /**
    * Fire-and-forget send for RPC stream messages (file chunks).
-   * Skips in-flight tracking and event dispatch for throughput.
+   * Skips in-flight tracking and event dispatch for throughput — chunk
+   * payloads must never flow through the per-message event pipeline. Tooling
+   * observes transfers via the file protocol's progress events instead
+   * (`onFileTransferProgress` in teleportal/protocols/file).
    * Buffers if not connected so chunks are never silently dropped.
    */
   sendStream(message: Message): void {
@@ -503,7 +524,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
           (message.payload as any)?.permission === "denied" &&
           this.#tokenOptions?.onTokenExpired
         ) {
-          this.#doTokenRefresh();
+          this.#doTokenRefresh("reactive");
         }
       },
       onClose: (_error?) => {
@@ -649,6 +670,13 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
       delay += Math.random() * this.#reconnectDelayJitter;
     }
     delay = Math.max(0, Math.floor(delay));
+
+    this.call("diagnostic", {
+      type: "reconnect-scheduled",
+      attempt: this.#reconnectAttempt + 1,
+      maxAttempts: this.#maxReconnectAttempts,
+      delayMs: delay,
+    });
 
     this.#reconnectTimeout = this.#timerManager.setTimeout(() => {
       this.#reconnectTimeout = null;
@@ -927,23 +955,24 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     const refreshAt = expiry - refreshBefore - Date.now();
 
     if (refreshAt <= 0) {
-      this.#doTokenRefresh();
+      this.#doTokenRefresh("scheduled");
       return;
     }
 
     this.#tokenRefreshTimer = this.#timerManager.setTimeout(() => {
       this.#tokenRefreshTimer = null;
-      this.#doTokenRefresh();
+      this.#doTokenRefresh("scheduled");
     }, refreshAt);
   }
 
-  async #doTokenRefresh() {
+  async #doTokenRefresh(reason: "scheduled" | "reactive") {
     if (!this.#tokenOptions?.onTokenExpired || !this.#token) return;
 
     try {
       const newToken = await this.#tokenOptions.onTokenExpired(this.#token);
       this.#token = newToken;
       this.#tokenOptions = { ...this.#tokenOptions, token: newToken };
+      this.call("diagnostic", { type: "token-refresh", reason });
 
       // Reconnect with new token
       await this.#closeActiveTransport();
@@ -951,9 +980,11 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
         await this.#initConnection();
       }
     } catch (cause) {
+      const error = new TokenRefreshError(cause);
+      this.call("diagnostic", { type: "token-refresh-error", error: error.message });
       this.#setState({
         type: "errored",
-        error: new TokenRefreshError(cause),
+        error,
       });
     }
   }
@@ -1015,10 +1046,12 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
       }
 
       if (succeeded) {
+        this.call("diagnostic", { type: "upgrade-probe", result: "upgraded" });
         this.#currentUpgradeProbeIntervalMs = this.#upgradeProbeIntervalMs;
         this.#activeTransportIndex = 0;
         await this.#closeActiveTransport();
       } else {
+        this.call("diagnostic", { type: "upgrade-probe", result: "unavailable" });
         this.#currentUpgradeProbeIntervalMs = Math.min(
           this.#currentUpgradeProbeIntervalMs * 2,
           this.#maxUpgradeProbeIntervalMs,

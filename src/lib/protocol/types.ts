@@ -159,6 +159,18 @@ export type DecodedPresenceAnnounce = {
 };
 
 /**
+ * Sent by a client to retract a previously announced awareness clientID.
+ * The server removes that awarenessId from its roster and broadcasts a
+ * presence-leave to peers. Used when a Provider is destroyed (e.g. switching
+ * documents) so stale awareness entries are cleaned up eagerly.
+ */
+export type DecodedPresenceUnannounce = {
+  type: "presence-unannounce";
+  /** The y-awareness clientID to retract. */
+  awarenessId: number;
+};
+
+/**
  * Broadcast by the server when a client joins (after it announces) or leaves a
  * session. `data` is an integrator-configurable bag (see `presenceConfig`).
  */
@@ -208,6 +220,7 @@ export type DecodedPresenceHeartbeat = {
  */
 export type PresenceStep =
   | DecodedPresenceAnnounce
+  | DecodedPresenceUnannounce
   | DecodedPresenceJoin
   | DecodedPresenceLeave
   | DecodedPresenceHeartbeat;

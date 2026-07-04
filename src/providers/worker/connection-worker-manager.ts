@@ -1,5 +1,5 @@
 import { decodeMessage } from "teleportal/protocol";
-import type { BinaryMessage, Message } from "teleportal";
+import { PresenceMessage, type BinaryMessage, type Message } from "teleportal";
 import type { ConnectionTransport } from "../transports/types";
 import { DirectConnection } from "../connection";
 import { RpcClient } from "../rpc-client";
@@ -10,6 +10,12 @@ import {
 import type { DownstreamMessage, SerializedConnectionOptions, UpstreamMessage } from "./protocol";
 
 const DEFAULT_GRACE_PERIOD_MS = 5_000;
+const DEFAULT_STALE_PORT_CHECK_MS = 60_000;
+// The sweep is a last-resort fallback behind the port `close` event and the
+// tab's pagehide destroy. Browsers throttle timers in hidden tabs to as little
+// as one wake per minute (Chrome's intensive throttling), so the threshold
+// must sit well above that or healthy backgrounded tabs get reaped.
+const DEFAULT_STALE_PORT_THRESHOLD_MS = 300_000;
 
 /**
  * Default pooling key: URL *and* token. Two tabs share an underlying connection
@@ -23,6 +29,19 @@ const defaultConnectionKey = (options: SerializedConnectionOptions): string =>
 
 export interface ConnectionWorkerManagerOptions {
   gracePeriodMs?: number;
+  /**
+   * How often (ms) the manager checks for ports whose tab-side heartbeat has
+   * stopped. This is a fallback for browsers without the MessagePort `close`
+   * event; dead tabs are normally detected via `close`. Defaults to 60 000.
+   */
+  stalePortCheckMs?: number;
+  /**
+   * A port that has heartbeated before is considered stale when its last
+   * heartbeat is older than this (ms). Must sit well above the browser's
+   * hidden-tab timer throttling (Chrome wakes throttled timers at most once
+   * per minute), or healthy backgrounded tabs get reaped. Defaults to 300 000.
+   */
+  stalePortThresholdMs?: number;
   /**
    * Decides which incoming connections share an underlying transport: two tabs
    * whose options produce the same key reuse one connection, different keys get
@@ -41,6 +60,8 @@ export class ConnectionWorkerManager {
   #transportFactory: (desc: SerializedConnectionOptions) => ConnectionTransport[];
   #gracePeriodMs: number;
   #getConnectionKey: (options: SerializedConnectionOptions) => string;
+  #stalePortTimer: ReturnType<typeof setInterval> | null = null;
+  #stalePortThresholdMs: number;
 
   constructor(
     transportFactory: (desc: SerializedConnectionOptions) => ConnectionTransport[],
@@ -49,6 +70,8 @@ export class ConnectionWorkerManager {
     this.#transportFactory = transportFactory;
     this.#gracePeriodMs = options?.gracePeriodMs ?? DEFAULT_GRACE_PERIOD_MS;
     this.#getConnectionKey = options?.getConnectionKey ?? defaultConnectionKey;
+    this.#stalePortThresholdMs = options?.stalePortThresholdMs ?? DEFAULT_STALE_PORT_THRESHOLD_MS;
+    this.#startStalePortSweep(options?.stalePortCheckMs ?? DEFAULT_STALE_PORT_CHECK_MS);
   }
 
   addPort(port: MessagePort): void {
@@ -57,6 +80,14 @@ export class ConnectionWorkerManager {
     port.onmessage = (event: MessageEvent<UpstreamMessage>) => {
       this.#handleUpstream(event.data, portState);
     };
+
+    // Primary dead-tab signal: the `close` event fires when the tab-side port
+    // is disentangled (tab refreshed, closed, or crashed) — the cases where no
+    // `destroy` message ever arrives. Older browsers without it fall back to
+    // the pagehide destroy and the stale-port sweep.
+    port.addEventListener?.("close", () => {
+      this.#releasePort(portState);
+    });
 
     port.start?.();
   }
@@ -71,7 +102,26 @@ export class ConnectionWorkerManager {
         const conn = portState.managedConnection;
         if (!conn) return;
         const decoded = decodeMessage(msg.encoded as BinaryMessage);
+        if (decoded.type === "presence") {
+          const payload = decoded.payload;
+          if (payload.type === "presence-announce") {
+            portState.trackAnnounce(decoded.document, payload.awarenessId);
+          } else if (payload.type === "presence-unannounce") {
+            portState.trackUnannounce(decoded.document, payload.awarenessId);
+          }
+        }
         conn.connection.send(decoded).catch(() => {});
+        // Sibling tabs share this connection, and the server excludes the
+        // whole connection when broadcasting a client's own messages — so
+        // tab-to-tab content must be relayed here. Only content messages:
+        // sync/awareness-request handshakes are server-directed, and a
+        // sibling receiving one would answer it and cross-talk the protocol.
+        if (
+          (decoded.type === "doc" && decoded.payload.type === "update") ||
+          (decoded.type === "awareness" && decoded.payload.type === "awareness-update")
+        ) {
+          conn.relayToSiblings(portState, msg.encoded as Uint8Array);
+        }
         break;
       }
 
@@ -135,8 +185,16 @@ export class ConnectionWorkerManager {
       }
 
       case "heartbeat":
+        portState.lastHeartbeat = Date.now();
         portState.post({ type: "heartbeat-ack" });
         break;
+
+      case "get-diagnostics": {
+        const conn = portState.managedConnection;
+        if (!conn) return;
+        portState.post({ type: "diagnostics", diagnostics: conn.buildDiagnostics() });
+        break;
+      }
 
       case "file-upload": {
         const conn = portState.managedConnection;
@@ -222,7 +280,7 @@ export class ConnectionWorkerManager {
         isOnline: true,
       });
 
-      managed = new ManagedConnection(key, connection, networkTarget);
+      managed = new ManagedConnection(key, connection, networkTarget, this.#gracePeriodMs);
       this.#connections.set(key, managed);
     }
 
@@ -234,17 +292,58 @@ export class ConnectionWorkerManager {
   }
 
   #handleDestroy(portState: PortState): void {
+    this.#releasePort(portState);
+    portState.port.close();
+  }
+
+  /**
+   * Release a port's connection resources: retract any presence it never
+   * unannounced, detach it, and start the grace period if the connection has
+   * no ports left. Idempotent — a port can be released by an explicit
+   * `destroy` message, the port `close` event, or the stale sweep, in any
+   * combination.
+   */
+  #releasePort(portState: PortState): void {
+    if (portState.released) return;
+    portState.released = true;
     const conn = portState.managedConnection;
-    if (conn) {
-      conn.removePort(portState);
-      if (conn.portCount === 0) {
-        conn.scheduleGracePeriod(this.#gracePeriodMs, () => {
-          conn.destroy();
-          this.#connections.delete(conn.key);
+    if (!conn) return;
+    this.#sendPendingUnannounces(portState, conn);
+    conn.removePort(portState);
+    if (conn.portCount === 0) {
+      conn.scheduleGracePeriod(this.#gracePeriodMs, () => {
+        conn.destroy();
+        this.#connections.delete(conn.key);
+      });
+    }
+  }
+
+  #sendPendingUnannounces(portState: PortState, conn: ManagedConnection): void {
+    for (const [document, ids] of portState.announcedPresence) {
+      for (const awarenessId of ids) {
+        const msg = new PresenceMessage(document, {
+          type: "presence-unannounce",
+          awarenessId,
         });
+        conn.connection.send(msg).catch(() => {});
       }
     }
-    portState.port.close();
+    portState.announcedPresence.clear();
+  }
+
+  #startStalePortSweep(intervalMs: number): void {
+    this.#stalePortTimer = setInterval(() => this.#sweepStalePorts(), intervalMs);
+    (this.#stalePortTimer as { unref?: () => void }).unref?.();
+  }
+
+  #sweepStalePorts(): void {
+    const now = Date.now();
+    for (const managed of this.#connections.values()) {
+      for (const port of managed.getStalePorts(now, this.#stalePortThresholdMs)) {
+        this.#releasePort(port);
+        port.port.close();
+      }
+    }
   }
 
   getConnection(key: string): DirectConnection | undefined {
@@ -261,9 +360,36 @@ class PortState {
   tabId = "";
   online = true;
   managedConnection: ManagedConnection | null = null;
+  /** Awareness IDs this port has announced, keyed by document name. */
+  announcedPresence = new Map<string, Set<number>>();
+  /**
+   * When the tab last heartbeated, or null if it never has. Only ports that
+   * heartbeat are eligible for the stale sweep — a silent-by-design port
+   * (custom WorkerConnection without startHeartbeat) is never reaped.
+   */
+  lastHeartbeat: number | null = null;
+  /** Set once the port's connection resources have been released. */
+  released = false;
 
   constructor(port: MessagePort) {
     this.port = port;
+  }
+
+  trackAnnounce(document: string, awarenessId: number): void {
+    let ids = this.announcedPresence.get(document);
+    if (!ids) {
+      ids = new Set();
+      this.announcedPresence.set(document, ids);
+    }
+    ids.add(awarenessId);
+  }
+
+  trackUnannounce(document: string, awarenessId: number): void {
+    const ids = this.announcedPresence.get(document);
+    if (ids) {
+      ids.delete(awarenessId);
+      if (ids.size === 0) this.announcedPresence.delete(document);
+    }
   }
 
   post(msg: DownstreamMessage, transfer?: Transferable[]): void {
@@ -297,15 +423,33 @@ class ManagedConnection {
   #unsubscribes: (() => void)[] = [];
   #currentOnline = true;
   #graceTimer: ReturnType<typeof setTimeout> | null = null;
+  #gracePeriodMs: number;
   #fileHandler: FileClientHandlerInstance | null = null;
   #rpcClient: RpcClient | null = null;
 
-  constructor(key: string, connection: DirectConnection, networkTarget: EventTarget) {
+  constructor(
+    key: string,
+    connection: DirectConnection,
+    networkTarget: EventTarget,
+    gracePeriodMs: number = DEFAULT_GRACE_PERIOD_MS,
+  ) {
     this.key = key;
     this.connection = connection;
     this.#networkTarget = networkTarget;
+    this.#gracePeriodMs = gracePeriodMs;
     this.#setupEventForwarding();
     this.#setupMessageFanOut();
+  }
+
+  buildDiagnostics() {
+    return {
+      ...this.connection.diagnostics,
+      worker: {
+        tabIds: [...this.#ports].map((p) => p.tabId),
+        connectionKey: this.key,
+        gracePeriodMs: this.#gracePeriodMs,
+      },
+    };
   }
 
   #getFileHandler() {
@@ -369,6 +513,24 @@ class ManagedConnection {
     this.reconcileOnlineState();
   }
 
+  /** Deliver one tab's outgoing content message to the other tabs' receive path. */
+  relayToSiblings(sender: PortState, encoded: Uint8Array): void {
+    for (const port of this.#ports) {
+      if (port === sender) continue;
+      port.post({ type: "message", encoded });
+    }
+  }
+
+  getStalePorts(now: number, thresholdMs: number): PortState[] {
+    const stale: PortState[] = [];
+    for (const port of this.#ports) {
+      if (port.lastHeartbeat !== null && now - port.lastHeartbeat > thresholdMs) {
+        stale.push(port);
+      }
+    }
+    return stale;
+  }
+
   scheduleGracePeriod(ms: number, onExpire: () => void): void {
     this.cancelGracePeriod();
     this.#graceTimer = setTimeout(onExpire, ms);
@@ -404,7 +566,7 @@ class ManagedConnection {
     });
     this.#unsubscribes.push(stateUnsub);
 
-    const eventOnly = ["ping", "messages-in-flight"] as const;
+    const eventOnly = ["ping", "messages-in-flight", "diagnostic"] as const;
     for (const event of eventOnly) {
       const unsub = this.connection.on(event, (...args: unknown[]) => {
         this.#broadcast({ type: "event", event, args });
@@ -432,6 +594,12 @@ class ManagedConnection {
     // structured clone (they have getters, prototypes, cached state).
     // Forward the encoded bytes so the other side can reconstruct.
     const sentUnsub = this.connection.on("sent-message", (message: Message) => {
+      // Guard: chunk streams are high-volume — copying each chunk to every
+      // tab would undo the offload win. Transfers are observed via the file
+      // protocol's progress events instead.
+      if (message.type === "rpc" && (message as any).requestType === "stream") {
+        return;
+      }
       const encoded = message.encoded;
       for (const port of this.#ports) {
         port.post({

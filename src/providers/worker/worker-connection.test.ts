@@ -577,4 +577,264 @@ describe("WorkerConnection", () => {
     expect(sentMsg).toBeDefined();
     expect(sentMsg.encoded).toBeInstanceOf(Uint8Array);
   });
+
+  it("sends presence-unannounce for tracked awarenessIds when port is destroyed", async () => {
+    const { PresenceMessage } = await import("teleportal");
+
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
+    const channel = new MessageChannel();
+    manager.addPort(channel.port1);
+    const workerConn = new WorkerConnection(channel.port2);
+
+    await initAndConnect(workerConn);
+
+    // key is "default::" because init has no url/token
+    const directConn = manager.getConnection("default::");
+    expect(directConn).toBeDefined();
+
+    const sentMessages: any[] = [];
+    const unsub = directConn!.on("sent-message", (msg: any) => {
+      sentMessages.push(msg);
+    });
+
+    // Send a presence-announce through the worker
+    const announce = new PresenceMessage("test-doc", {
+      type: "presence-announce",
+      awarenessId: 42,
+    });
+    await workerConn.send(announce);
+    await tick();
+    await tick();
+
+    // Clear recorded messages before destroy
+    sentMessages.length = 0;
+
+    // Destroy the port — should trigger presence-unannounce
+    await workerConn.destroy();
+    await tick();
+    await tick();
+    await tick();
+
+    unsub();
+
+    const unannounces = sentMessages.filter(
+      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+    );
+    expect(unannounces).toHaveLength(1);
+    expect(unannounces[0].payload.awarenessId).toBe(42);
+  });
+
+  it("releases the port and unannounces presence on the port close event", async () => {
+    const { PresenceMessage } = await import("teleportal");
+
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
+    const channel = new MessageChannel();
+    manager.addPort(channel.port1);
+    const workerConn = new WorkerConnection(channel.port2);
+
+    await initAndConnect(workerConn);
+
+    const directConn = manager.getConnection("default::");
+    const sentMessages: any[] = [];
+    const unsub = directConn!.on("sent-message", (msg: any) => {
+      sentMessages.push(msg);
+    });
+
+    await workerConn.send(
+      new PresenceMessage("test-doc", { type: "presence-announce", awarenessId: 7 }),
+    );
+    await tick();
+    await tick();
+    sentMessages.length = 0;
+
+    // Simulate the tab dying without a destroy message (refresh/crash): the
+    // browser fires `close` on the worker-side port.
+    channel.port1.dispatchEvent(new Event("close"));
+    await tick();
+
+    unsub();
+
+    const unannounces = sentMessages.filter(
+      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+    );
+    expect(unannounces).toHaveLength(1);
+    expect(unannounces[0].payload.awarenessId).toBe(7);
+
+    // With its last port gone, the connection is destroyed after the grace period.
+    await tick(SHORT_GRACE_MS * 3);
+    expect(manager.connectionCount).toBe(0);
+  });
+
+  it("close event after an explicit destroy does not unannounce twice", async () => {
+    const { PresenceMessage } = await import("teleportal");
+
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
+    const channel = new MessageChannel();
+    manager.addPort(channel.port1);
+    const workerConn = new WorkerConnection(channel.port2);
+
+    await initAndConnect(workerConn);
+
+    const directConn = manager.getConnection("default::");
+    const sentMessages: any[] = [];
+    const unsub = directConn!.on("sent-message", (msg: any) => {
+      sentMessages.push(msg);
+    });
+
+    await workerConn.send(
+      new PresenceMessage("test-doc", { type: "presence-announce", awarenessId: 9 }),
+    );
+    await tick();
+    await tick();
+    sentMessages.length = 0;
+
+    await workerConn.destroy();
+    await tick();
+    channel.port1.dispatchEvent(new Event("close"));
+    await tick();
+
+    unsub();
+
+    const unannounces = sentMessages.filter(
+      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+    );
+    expect(unannounces).toHaveLength(1);
+  });
+
+  it("relays updates and awareness to sibling tabs, but not to the sender or for sync steps", async () => {
+    const { AwarenessMessage, DocMessage } = await import("teleportal");
+
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+    });
+    const chA = new MessageChannel();
+    manager.addPort(chA.port1);
+    const connA = new WorkerConnection(chA.port2);
+    const chB = new MessageChannel();
+    manager.addPort(chB.port1);
+    const connB = new WorkerConnection(chB.port2);
+    await initAndConnect(connA);
+    await initAndConnect(connB);
+
+    const aReceived: any[] = [];
+    connA.on("received-message", (m: any) => aReceived.push(m));
+    const bReceived: any[] = [];
+    connB.on("received-message", (m: any) => bReceived.push(m));
+
+    // A doc update from tab A reaches sibling tab B locally — the server
+    // never echoes it back to the shared connection.
+    await connA.send(makeDocUpdate("doc-1"));
+    // Awareness updates relay the same way.
+    await connA.send(
+      new AwarenessMessage(
+        "doc-1",
+        { type: "awareness-update", update: new Uint8Array([1]) as any },
+        {},
+      ),
+    );
+    // Sync handshake messages are server-directed and must NOT be relayed —
+    // a sibling would answer them and cross-talk the handshake.
+    await connA.send(new DocMessage("doc-1", { type: "sync-done" }, {}, false));
+    await tick();
+    await tick();
+
+    const bDocUpdates = bReceived.filter((m) => m.type === "doc" && m.payload?.type === "update");
+    const bAwareness = bReceived.filter((m) => m.type === "awareness");
+    const bSync = bReceived.filter((m) => m.type === "doc" && m.payload?.type === "sync-done");
+    expect(bDocUpdates).toHaveLength(1);
+    expect(bAwareness).toHaveLength(1);
+    expect(bSync).toHaveLength(0);
+    // The sender must not receive its own messages back.
+    expect(aReceived).toHaveLength(0);
+
+    await connA.destroy();
+    await connB.destroy();
+    await tick(SHORT_GRACE_MS * 3);
+  });
+
+  it("destroys the connection on pagehide unless the page enters the bfcache", async () => {
+    const { workerConn } = setup();
+    await initAndConnect(workerConn);
+    workerConn.listenForPageHide();
+
+    // Entering the back/forward cache: the page may come back, keep the connection.
+    const persisted = new Event("pagehide");
+    Object.defineProperty(persisted, "persisted", { value: true });
+    globalThis.dispatchEvent(persisted);
+    await tick();
+    expect(workerConn.destroyed).toBe(false);
+
+    // Real discard (refresh/close): destroy so the worker releases the port.
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await tick();
+    expect(workerConn.destroyed).toBe(true);
+  });
+
+  it("sweeps a port whose heartbeats stopped, but never a port that has not heartbeated", async () => {
+    const { PresenceMessage } = await import("teleportal");
+
+    const [clientTransport] = createMemoryTransportPair();
+    const manager = new ConnectionWorkerManager(() => [clientTransport], {
+      gracePeriodMs: SHORT_GRACE_MS,
+      stalePortCheckMs: 2,
+      stalePortThresholdMs: 5,
+    });
+
+    // Port A heartbeats once, then goes silent. Port B never heartbeats.
+    const channelA = new MessageChannel();
+    manager.addPort(channelA.port1);
+    const connA = new WorkerConnection(channelA.port2);
+    const channelB = new MessageChannel();
+    manager.addPort(channelB.port1);
+    const connB = new WorkerConnection(channelB.port2);
+
+    await initAndConnect(connA);
+    await initAndConnect(connB);
+
+    const directConn = manager.getConnection("default::");
+    const sentMessages: any[] = [];
+    const unsub = directConn!.on("sent-message", (msg: any) => {
+      sentMessages.push(msg);
+    });
+
+    await connA.send(
+      new PresenceMessage("doc-a", { type: "presence-announce", awarenessId: 1 }),
+    );
+    await connB.send(
+      new PresenceMessage("doc-b", { type: "presence-announce", awarenessId: 2 }),
+    );
+    // A single heartbeat from A makes it sweep-eligible once it goes silent.
+    (channelA.port2 as MessagePort).postMessage({ type: "heartbeat" });
+    await tick();
+    await tick();
+    sentMessages.length = 0;
+
+    // Wait past the stale threshold so the sweep fires.
+    await tick(20);
+
+    unsub();
+
+    const unannounces = sentMessages.filter(
+      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+    );
+    // Only port A's presence is retracted; the never-heartbeating port B is
+    // left alone (it may be a custom WorkerConnection without startHeartbeat).
+    expect(unannounces).toHaveLength(1);
+    expect(unannounces[0].payload.awarenessId).toBe(1);
+    // The connection survives because port B is still attached.
+    expect(manager.connectionCount).toBe(1);
+
+    await connB.destroy();
+    await tick(SHORT_GRACE_MS * 3);
+  });
 });

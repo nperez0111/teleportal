@@ -1022,7 +1022,7 @@ describe("Session", () => {
           (m): m is PresenceMessage<ServerContext> => m.type === "presence",
         );
 
-      it("broadcasts a join to already-announced peers (not the sender)", async () => {
+      it("broadcasts a join to already-announced peers and echoes it to the sender's connection", async () => {
         session.addClient(client1 as any);
         session.addClient(client2 as any);
 
@@ -1032,10 +1032,16 @@ describe("Session", () => {
 
         await session.apply(announce("client-1", 111), client1 as any);
 
-        // The announcing client is never told about its own join.
-        expect(presenceMsgs(client1).some((m) => (m.payload as any).clientId === "client-1")).toBe(
-          false,
-        );
+        // The sender's connection receives its own join too: a SharedWorker
+        // fans it out to sibling tabs, and each tab self-filters its own
+        // awarenessId (see Provider#handlePresenceMessage).
+        expect(
+          presenceMsgs(client1).some(
+            (m) =>
+              (m.payload as any).type === "presence-join" &&
+              (m.payload as any).clientId === "client-1",
+          ),
+        ).toBe(true);
         // The already-announced peer learns of the join, with both ids + userId.
         const joins = presenceMsgs(client2).slice(prev);
         expect(joins).toHaveLength(1);
@@ -1045,6 +1051,50 @@ describe("Session", () => {
           clientId: "client-1",
           userId: "user-1",
         });
+      });
+
+      it("fans sibling joins out to the shared connection so tabs learn each other", async () => {
+        session.addClient(client1 as any);
+
+        // Two tabs of one SharedWorker connection announce in sequence.
+        await session.apply(announce("client-1", 111), client1 as any);
+        const prev = client1.sentMessages.length;
+        await session.apply(announce("client-1", 222), client1 as any);
+
+        // The second announce's roster replay goes to the shared connection,
+        // so the first tab learns the second (and vice versa via fan-out);
+        // each tab drops its own awarenessId client-side.
+        const joinIds = presenceMsgs(client1)
+          .slice(0)
+          .filter((m) => (m.payload as any).type === "presence-join")
+          .map((m) => (m.payload as any).awarenessId);
+        expect(client1.sentMessages.length).toBeGreaterThan(prev);
+        expect(new Set(joinIds)).toEqual(new Set([111, 222]));
+      });
+
+      it("presence-unannounce leave reaches the sender's connection for sibling tabs", async () => {
+        session.addClient(client1 as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-1", 222), client1 as any);
+
+        const prev = client1.sentMessages.length;
+        const unannounce = new PresenceMessage(
+          "test-doc",
+          { type: "presence-unannounce", awarenessId: 111 },
+          { clientId: "client-1", userId: "user-1", room: "room" },
+        );
+        await session.apply(unannounce, client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        // The surviving sibling tab (same connection) must see the leave.
+        const leaves = client1.sentMessages
+          .slice(prev)
+          .filter(
+            (m) => m.type === "presence" && (m.payload as any).type === "presence-leave",
+          );
+        expect(leaves).toHaveLength(1);
+        expect((leaves[0]!.payload as any).awarenessId).toBe(111);
       });
 
       it("sends the current roster to a newly-announced client", async () => {
@@ -1101,6 +1151,201 @@ describe("Session", () => {
         });
 
         await presenceSession[Symbol.asyncDispose]();
+      });
+
+      it("tracks multiple awarenessIds from the same client without a spurious leave", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // client-2 announces first so it can observe client-1's joins
+        await session.apply(announce("client-2", 333), client2 as any);
+
+        // Same client announces two different awarenessIds (e.g. SharedWorker with two tabs)
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-1", 222), client1 as any);
+
+        // client-2 should learn about both
+        const joins = presenceMsgs(client2).filter(
+          (m) =>
+            (m.payload as any).type === "presence-join" &&
+            (m.payload as any).clientId === "client-1",
+        );
+        expect(joins).toHaveLength(2);
+        const ids = joins.map((m) => (m.payload as any).awarenessId).sort();
+        expect(ids).toEqual([111, 222]);
+
+        // Both tabs are live — the second announce must NOT retract the first.
+        const leaves = presenceMsgs(client2).filter(
+          (m) => (m.payload as any).type === "presence-leave",
+        );
+        expect(leaves).toHaveLength(0);
+      });
+
+      it("includes all of a client's awarenessIds in the roster sent to a newcomer", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // Two tabs of client-1 announce, then client-2 announces.
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-1", 222), client1 as any);
+        await session.apply(announce("client-2", 333), client2 as any);
+
+        const roster = presenceMsgs(client2).filter(
+          (m) =>
+            (m.payload as any).type === "presence-join" &&
+            (m.payload as any).clientId === "client-1",
+        );
+        const ids = roster.map((m) => (m.payload as any).awarenessId).sort();
+        expect(ids).toEqual([111, 222]);
+      });
+
+      it("re-announcing the same awarenessId does not duplicate the roster entry", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // client-1 announces the same awarenessId twice (e.g. reconnect replay).
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-2", 333), client2 as any);
+
+        const roster = presenceMsgs(client2).filter(
+          (m) =>
+            (m.payload as any).type === "presence-join" &&
+            (m.payload as any).clientId === "client-1",
+        );
+        expect(roster).toHaveLength(1);
+      });
+
+      it("presence-unannounce removes the awarenessId and broadcasts leave", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-2", 333), client2 as any);
+
+        const prevCount = client2.sentMessages.length;
+
+        const unannounce = new PresenceMessage(
+          "test-doc",
+          { type: "presence-unannounce", awarenessId: 111 },
+          { clientId: "client-1", userId: "user-1", room: "room" },
+        );
+        await session.apply(unannounce, client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const newMsgs = client2.sentMessages.slice(prevCount);
+        const leaves = newMsgs.filter(
+          (m) => m.type === "presence" && (m.payload as any).type === "presence-leave",
+        );
+        expect(leaves).toHaveLength(1);
+        expect((leaves[0].payload as any).awarenessId).toBe(111);
+      });
+
+      it("presence-unannounce retracts only the targeted awarenessId", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // Two tabs of client-1; one closes its provider.
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-1", 222), client1 as any);
+
+        const unannounce = new PresenceMessage(
+          "test-doc",
+          { type: "presence-unannounce", awarenessId: 111 },
+          { clientId: "client-1", userId: "user-1", room: "room" },
+        );
+        await session.apply(unannounce, client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        // A newcomer still learns about the surviving tab, and only it.
+        await session.apply(announce("client-2", 333), client2 as any);
+        const roster = presenceMsgs(client2).filter(
+          (m) =>
+            (m.payload as any).type === "presence-join" &&
+            (m.payload as any).clientId === "client-1",
+        );
+        const ids = roster.map((m) => (m.payload as any).awarenessId);
+        expect(ids).toEqual([222]);
+      });
+
+      it("re-announcing an awarenessId from a new client transfers ownership silently", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // client-1 reconnects as client-1b: same Y.Doc (same awarenessId),
+        // new connection. The announce from the new connection arrives while
+        // the old connection is still lingering.
+        const client1b = new MockClient<ServerContext>("client-1b");
+        session.addClient(client1b as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-2", 333), client2 as any);
+        await session.apply(announce("client-1b", 111), client1b as any);
+
+        const prevCount = client2.sentMessages.length;
+
+        // The old connection finally dies. Its awarenessId now belongs to
+        // client-1b, so no leave may be broadcast — the awareness is live.
+        session.removeClient(client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const leaves = presenceMsgs(client2)
+          .slice(0)
+          .filter((m) => (m.payload as any).type === "presence-leave");
+        expect(leaves).toHaveLength(0);
+        expect(client2.sentMessages.length).toBe(prevCount);
+
+        // The new owner disconnecting does broadcast the leave.
+        session.removeClient(client1b as any);
+        await new Promise((r) => setTimeout(r, 0));
+        const finalLeaves = presenceMsgs(client2).filter(
+          (m) => (m.payload as any).type === "presence-leave",
+        );
+        expect(finalLeaves).toHaveLength(1);
+        expect((finalLeaves[0]!.payload as any).awarenessId).toBe(111);
+      });
+
+      it("presence-unannounce is a no-op for unknown awarenessId", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+
+        const prevCount = client2.sentMessages.length;
+        const unannounce = new PresenceMessage(
+          "test-doc",
+          { type: "presence-unannounce", awarenessId: 999 },
+          { clientId: "client-1", userId: "user-1", room: "room" },
+        );
+        await session.apply(unannounce, client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        // No leave broadcast for an awarenessId that was never announced
+        const newMsgs = client2.sentMessages.slice(prevCount);
+        expect(newMsgs).toHaveLength(0);
+      });
+
+      it("client disconnect broadcasts a leave for every announced awarenessId", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        // Two tabs of client-1 on one shared connection.
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-1", 222), client1 as any);
+        await session.apply(announce("client-2", 333), client2 as any);
+
+        const prevCount = client2.sentMessages.length;
+        session.removeClient(client1 as any);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const leaves = client2.sentMessages
+          .slice(prevCount)
+          .filter(
+            (m): m is PresenceMessage<ServerContext> =>
+              m.type === "presence" && (m.payload as any).type === "presence-leave",
+          );
+        const ids = leaves.map((m) => (m.payload as any).awarenessId).sort();
+        expect(ids).toEqual([111, 222]);
       });
 
       it("does not broadcast a leave for a client that never announced", async () => {

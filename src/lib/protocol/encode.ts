@@ -115,9 +115,10 @@ export function encodeMessage(
         encoding.writeUint8(encoder, 3);
 
         switch (message.payload.type) {
-          case "presence-announce": {
-            // sub-type
-            encoding.writeUint8(encoder, 0);
+          case "presence-announce":
+          case "presence-unannounce": {
+            // sub-type: 0 = announce, 4 = unannounce
+            encoding.writeUint8(encoder, message.payload.type === "presence-announce" ? 0 : 4);
             encoding.writeVarUint(encoder, message.payload.awarenessId);
             break;
           }

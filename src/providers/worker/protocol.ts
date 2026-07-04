@@ -1,4 +1,4 @@
-import type { ConnectionState } from "../types";
+import type { ConnectionDiagnostics, ConnectionState } from "../types";
 
 // ---------------------------------------------------------------------------
 // MessagePort protocol — shared between main thread and worker
@@ -16,6 +16,7 @@ export type UpstreamMessage =
   | { type: "destroy"; tabId: string }
   | { type: "network-status"; online: boolean }
   | { type: "heartbeat" }
+  | { type: "get-diagnostics" }
   | {
       type: "file-upload";
       requestId: string;
@@ -49,6 +50,7 @@ export type DownstreamMessage =
     }
   | { type: "response"; requestId: string; error?: string }
   | { type: "heartbeat-ack" }
+  | { type: "diagnostics"; diagnostics: ConnectionDiagnostics }
   | { type: "file-upload-result"; requestId: string; fileId: string }
   | { type: "file-upload-error"; requestId: string; error: string }
   | { type: "file-download-result"; requestId: string; file: File }

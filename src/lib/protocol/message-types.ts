@@ -10,6 +10,7 @@ import type {
   DecodedPresenceHeartbeat,
   DecodedPresenceJoin,
   DecodedPresenceLeave,
+  DecodedPresenceUnannounce,
   PresenceMessageBinary,
   DecodedSyncDone,
   DecodedSyncStep1,
@@ -214,6 +215,7 @@ export class PresenceMessage<Context extends Record<string, unknown>> extends Cu
     public document: string,
     public payload:
       | DecodedPresenceAnnounce
+      | DecodedPresenceUnannounce
       | DecodedPresenceJoin
       | DecodedPresenceLeave
       | DecodedPresenceHeartbeat,

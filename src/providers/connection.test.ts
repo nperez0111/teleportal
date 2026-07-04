@@ -3519,3 +3519,42 @@ describe("Connection", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// sendStream observability
+// ---------------------------------------------------------------------------
+
+describe("sendStream observability", () => {
+  it("does NOT emit per-chunk events — stream sends stay off the event pipeline", async () => {
+    // Chunk payloads are 64KB each; routing them through sent-message (and
+    // the devtools pipeline behind it) measurably slows uploads. Transfers
+    // are observed via the file protocol's progress events instead.
+    const [clientTransport] = createMemoryTransportPair();
+    const conn = new Connection({
+      transports: [clientTransport],
+      connect: false,
+      batchIntervalMs: 0,
+    });
+    await conn.connect();
+
+    const sent: unknown[] = [];
+    conn.on("sent-message", (m) => sent.push(m));
+
+    const { RpcMessage } = await import("teleportal/protocol");
+    const chunk = new RpcMessage(
+      "doc-1",
+      { type: "success", payload: { fileId: "f1", chunkIndex: 0, totalChunks: 1 } },
+      "fileUpload",
+      "stream",
+      "f1",
+    );
+    conn.sendStream(chunk);
+    await flushMicrotasks();
+
+    expect(sent).toHaveLength(0);
+    // Streams also stay out of in-flight tracking (fire-and-forget contract).
+    expect(conn.inFlightMessageCount).toBe(0);
+
+    await conn.destroy();
+  });
+});
