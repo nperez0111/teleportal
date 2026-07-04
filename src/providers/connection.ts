@@ -84,6 +84,13 @@ const DEFAULT_UPGRADE_PROBE_INTERVAL = 30_000;
 const DEFAULT_MAX_UPGRADE_PROBE_INTERVAL = 300_000;
 const MIN_BATCH_INTERVAL_MS = 10;
 
+/**
+ * How many times a rate-limit NACKed message is retransmitted before being
+ * given up on. Each NACK also doubles the batch interval, so consecutive
+ * NACKs are increasingly unlikely; the cap is a runaway guard, not a budget.
+ */
+const MAX_NACK_RETRANSMITS = 5;
+
 export class DirectConnection extends Observable<ConnectionEvents> implements Connection {
   static location: { hostname: string } | undefined = globalThis.location;
 
@@ -133,7 +140,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
   // In-flight tracking
   #inFlightMessages = new Map<
     string,
-    { message: Message; timer: ReturnType<typeof setTimeout> | null }
+    { message: Message; timer: ReturnType<typeof setTimeout> | null; nackRetransmits?: number }
   >();
   #inFlightMessageTimeoutMs: number;
 
@@ -251,16 +258,20 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
 
     this.on("received-message", (message) => {
       if (message.type === "ack") {
-        const messageId = message.payload.messageId;
+        const { messageId, retryAfter } = (message as AckMessage<any>).payload;
         const entry = this.#inFlightMessages.get(messageId);
         if (entry) {
-          if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
-          this.#inFlightMessages.delete(messageId);
-          if (this.#inFlightMessages.size === 0) {
-            this.call("messages-in-flight", false);
-          }
-          if (this.#batchIntervalMs > 0) {
-            this.#batchIntervalMs = Math.max(MIN_BATCH_INTERVAL_MS, this.#batchIntervalMs - 10);
+          if (retryAfter !== undefined) {
+            this.#handleNack(messageId, entry, retryAfter);
+          } else {
+            if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
+            this.#inFlightMessages.delete(messageId);
+            if (this.#inFlightMessages.size === 0) {
+              this.call("messages-in-flight", false);
+            }
+            if (this.#batchIntervalMs > 0) {
+              this.#batchIntervalMs = Math.max(MIN_BATCH_INTERVAL_MS, this.#batchIntervalMs - 10);
+            }
           }
         }
       } else {
@@ -749,6 +760,91 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     this.#flushing = false;
   }
 
+  /**
+   * An ack carrying `retryAfter` is a NACK: the server rate-limited and
+   * DROPPED the message. Treating it like a plain ack would silently lose the
+   * message — and a lost doc update permanently diverges this client, since
+   * every later update builds on it and the server parks them as pending.
+   * Keep the message in flight and retransmit after the advised delay,
+   * doubling the batch interval as backpressure (mirroring the in-flight
+   * timeout path). Gives up after {@link MAX_NACK_RETRANSMITS} rounds.
+   */
+  #handleNack(
+    messageId: string,
+    entry: {
+      message: Message;
+      timer: ReturnType<typeof setTimeout> | null;
+      nackRetransmits?: number;
+    },
+    retryAfterMs: number,
+  ): void {
+    if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
+
+    const retries = (entry.nackRetransmits ?? 0) + 1;
+    if (retries > MAX_NACK_RETRANSMITS) {
+      this.#inFlightMessages.delete(messageId);
+      if (this.#inFlightMessages.size === 0) {
+        this.call("messages-in-flight", false);
+      }
+      return;
+    }
+    entry.nackRetransmits = retries;
+
+    // The server explicitly told us we are sending too fast.
+    this.#batchIntervalMs = Math.min(
+      this.#maxBatchIntervalMs,
+      Math.max(50, this.#batchIntervalMs * 2),
+    );
+
+    entry.timer = this.#timerManager.setTimeout(
+      () => {
+        // Disconnect/destroy clears the map (and this timer); re-check anyway.
+        if (this.#inFlightMessages.get(messageId) !== entry) return;
+        if (this.#state.type === "connected" && this.#activeTransport) {
+          entry.timer = this.#armInFlightTimeout(messageId);
+          this.#activeTransport
+            .send(entry.message)
+            .then(() => {
+              this.call("sent-message", entry.message);
+            })
+            .catch(() => {
+              // Transport failures are handled by the connection error path;
+              // the entry is cleared when the state leaves "connected".
+            });
+        } else {
+          // No live transport: requeue through the normal buffer so the
+          // reconnect flush retransmits it.
+          this.#inFlightMessages.delete(messageId);
+          if (this.#inFlightMessages.size === 0) {
+            this.call("messages-in-flight", false);
+          }
+          this.#bufferMessage(entry.message);
+        }
+      },
+      Math.max(1, retryAfterMs),
+    );
+  }
+
+  /**
+   * Arm the in-flight timeout for a tracked message: when no ack arrives in
+   * time, presume it lost, drop it from tracking, and grow the batch interval.
+   */
+  #armInFlightTimeout(messageId: string): ReturnType<typeof setTimeout> | null {
+    if (this.#inFlightMessageTimeoutMs <= 0) return null;
+    return this.#timerManager.setTimeout(() => {
+      if (this.#inFlightMessages.has(messageId)) {
+        this.#inFlightMessages.delete(messageId);
+        if (this.#inFlightMessages.size === 0) {
+          this.call("messages-in-flight", false);
+        }
+        this.#batchIntervalMs = Math.min(
+          this.#maxBatchIntervalMs,
+          Math.max(50, this.#batchIntervalMs * 2),
+        );
+      }
+    }, this.#inFlightMessageTimeoutMs);
+  }
+
   async #sendOrBuffer(message: Message): Promise<void> {
     if (this.destroyed) return;
     if (this.#connectionIntent === "manual") return;
@@ -771,22 +867,10 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     if (this.#state.type === "connected" && this.#activeTransport) {
       if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
         const wasEmpty = this.#inFlightMessages.size === 0;
-        const timer =
-          this.#inFlightMessageTimeoutMs > 0
-            ? this.#timerManager.setTimeout(() => {
-                if (this.#inFlightMessages.has(message.id)) {
-                  this.#inFlightMessages.delete(message.id);
-                  if (this.#inFlightMessages.size === 0) {
-                    this.call("messages-in-flight", false);
-                  }
-                  this.#batchIntervalMs = Math.min(
-                    this.#maxBatchIntervalMs,
-                    Math.max(50, this.#batchIntervalMs * 2),
-                  );
-                }
-              }, this.#inFlightMessageTimeoutMs)
-            : null;
-        this.#inFlightMessages.set(message.id, { message, timer });
+        this.#inFlightMessages.set(message.id, {
+          message,
+          timer: this.#armInFlightTimeout(message.id),
+        });
         if (wasEmpty) {
           this.call("messages-in-flight", true);
         }

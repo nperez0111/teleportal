@@ -807,12 +807,8 @@ describe("WorkerConnection", () => {
       sentMessages.push(msg);
     });
 
-    await connA.send(
-      new PresenceMessage("doc-a", { type: "presence-announce", awarenessId: 1 }),
-    );
-    await connB.send(
-      new PresenceMessage("doc-b", { type: "presence-announce", awarenessId: 2 }),
-    );
+    await connA.send(new PresenceMessage("doc-a", { type: "presence-announce", awarenessId: 1 }));
+    await connB.send(new PresenceMessage("doc-b", { type: "presence-announce", awarenessId: 2 }));
     // A single heartbeat from A makes it sweep-eligible once it goes silent.
     (channelA.port2 as MessagePort).postMessage({ type: "heartbeat" });
     await tick();
@@ -836,5 +832,70 @@ describe("WorkerConnection", () => {
 
     await connB.destroy();
     await tick(SHORT_GRACE_MS * 3);
+  });
+
+  describe("heartbeat liveness", () => {
+    async function until(cond: () => boolean, timeoutMs = 500) {
+      const start = Date.now();
+      while (!cond()) {
+        if (Date.now() - start > timeoutMs) {
+          throw new Error("condition not met in time");
+        }
+        await tick(1);
+      }
+    }
+
+    it("treats any downstream worker message as proof of liveness", async () => {
+      // Raw channel with no manager: heartbeats are never acked, but the
+      // "worker" keeps sending other traffic — as happens when heartbeat-acks
+      // queue behind bulk data (e.g. 1MB file-download parts) on a congested
+      // main thread. The worker is alive; the connection must not error.
+      const channel = new MessageChannel();
+      const conn = new WorkerConnection(channel.port2);
+      cleanup.push(() => {
+        conn.destroy();
+        channel.port1.close();
+      });
+
+      let errored = false;
+      conn.on("update", (state) => {
+        if (state.type === "errored") errored = true;
+      });
+
+      conn.startHeartbeat(3, 2);
+      for (let i = 0; i < 25; i++) {
+        channel.port1.postMessage({ type: "event", event: "ping", args: [] });
+        await tick(1);
+      }
+
+      expect(errored).toBe(false);
+    });
+
+    it("recovers and restarts the heartbeat when the worker resumes", async () => {
+      const channel = new MessageChannel();
+      const conn = new WorkerConnection(channel.port2);
+      cleanup.push(() => {
+        conn.destroy();
+        channel.port1.close();
+      });
+
+      channel.port1.postMessage({
+        type: "state-update",
+        state: { type: "connected", transport: "memory" },
+      });
+      await until(() => conn.state.type === "connected");
+
+      // Total silence from the worker → presumed dead.
+      conn.startHeartbeat(1, 2);
+      await until(() => conn.state.type === "errored");
+
+      // The worker resumes sending: the connection must revive to its prior
+      // state instead of staying bricked until a page reload.
+      channel.port1.postMessage({ type: "event", event: "ping", args: [] });
+      await until(() => conn.state.type === "connected");
+
+      // And the heartbeat must be running again: renewed silence re-errors.
+      await until(() => conn.state.type === "errored");
+    });
   });
 });

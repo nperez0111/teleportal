@@ -445,6 +445,100 @@ describe("Connection", () => {
   });
 
   // =========================================================================
+  // 3b. NACK retransmission
+  // =========================================================================
+
+  describe("NACK retransmission", () => {
+    // Minimal server-side hookup so the raw memory transport can push acks
+    // back to the client without a full server Connection (which would
+    // auto-ack cleanly and defeat the NACK scenario).
+    const stubCtx = (): TransportConnectContext => ({
+      onMessage: () => {},
+      onClose: () => {},
+      onPing: () => {},
+      timer: {
+        setTimeout: (cb, ms) => setTimeout(cb, ms),
+        clearTimeout: (id) => clearTimeout(id as any),
+        setInterval: (cb, ms) => setInterval(cb, ms),
+        clearInterval: (id) => clearInterval(id as any),
+      } as Timer,
+    });
+
+    async function until(cond: () => boolean, timeoutMs = 500) {
+      const start = Date.now();
+      while (!cond()) {
+        if (Date.now() - start > timeoutMs) {
+          throw new Error("condition not met in time");
+        }
+        await new Promise((r) => setTimeout(r, 1));
+      }
+    }
+
+    it("retransmits a NACKed message after retryAfter instead of dropping it", async () => {
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-nack");
+      await conn.send(msg);
+      expect(clientTransport.sentMessages).toHaveLength(1);
+      expect(conn.inFlightMessageCount).toBe(1);
+
+      // Rate-limit NACK: the server dropped the message.
+      await serverTransport.send(
+        new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+      );
+
+      await until(() => clientTransport.sentMessages.length === 2);
+      expect(clientTransport.sentMessages[1].id).toBe(msg.id);
+      // Still awaiting a real ack.
+      expect(conn.inFlightMessageCount).toBe(1);
+
+      // Clean ack settles it.
+      await serverTransport.send(new AckMessage({ type: "ack", messageId: msg.id }, undefined));
+      await until(() => conn.inFlightMessageCount === 0);
+
+      await conn.destroy();
+    });
+
+    it("gives up after the retransmit cap instead of retrying forever", async () => {
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-nack-cap");
+      await conn.send(msg);
+
+      // NACK every (re)transmission as it arrives.
+      let rounds = 0;
+      while (conn.inFlightMessageCount > 0 && rounds < 20) {
+        rounds++;
+        const sends = clientTransport.sentMessages.length;
+        await serverTransport.send(
+          new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+        );
+        await until(
+          () => clientTransport.sentMessages.length > sends || conn.inFlightMessageCount === 0,
+        );
+      }
+
+      // 1 original + 5 retransmits, then dropped from in-flight.
+      expect(clientTransport.sentMessages).toHaveLength(6);
+      expect(conn.inFlightMessageCount).toBe(0);
+
+      await conn.destroy();
+    });
+  });
+
+  // =========================================================================
   // 4. Update Batching
   // =========================================================================
 

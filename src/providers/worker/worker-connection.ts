@@ -43,6 +43,12 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
 
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #missedHeartbeats = 0;
+  #heartbeatIntervalMs = 5000;
+  #heartbeatMaxMisses = 2;
+  /** True after the heartbeat declared the worker dead (see startHeartbeat). */
+  #heartbeatDead = false;
+  /** State to restore if the worker turns out to be alive after all. */
+  #stateBeforeHeartbeatTimeout: ConnectionState | null = null;
   #onWorkerDeath?: () => void;
   #onlineHandler: (() => void) | null = null;
   #offlineHandler: (() => void) | null = null;
@@ -61,6 +67,14 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   }
 
   #handleMessage(msg: DownstreamMessage): void {
+    // Any downstream traffic proves the worker is alive — count it as a
+    // heartbeat ack. When the main thread is congested (e.g. heartbeat-acks
+    // queued behind megabyte file-download parts), the acks alone can arrive
+    // too late even though the worker is healthy and delivering data.
+    this.#missedHeartbeats = 0;
+    if (this.#heartbeatDead) {
+      this.#reviveFromHeartbeatTimeout();
+    }
     switch (msg.type) {
       case "ready":
       case "state-update":
@@ -431,17 +445,44 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
 
   startHeartbeat(intervalMs = 5000, maxMisses = 2): void {
     this.#stopHeartbeat();
+    this.#heartbeatIntervalMs = intervalMs;
+    this.#heartbeatMaxMisses = maxMisses;
     this.#missedHeartbeats = 0;
+    this.#heartbeatDead = false;
     this.#heartbeatInterval = setInterval(() => {
       this.#missedHeartbeats++;
       if (this.#missedHeartbeats > maxMisses) {
+        // Presumed dead — but not terminal: if any downstream message arrives
+        // later (the worker was alive and merely starved of event-loop time),
+        // #handleMessage revives the connection. Without that path a single
+        // false positive bricked the tab until a full page reload.
         this.#stopHeartbeat();
+        this.#heartbeatDead = true;
+        this.#stateBeforeHeartbeatTimeout = this.#state;
         this.#updateState({ type: "errored", error: new Error("Worker heartbeat timeout") });
         this.#onWorkerDeath?.();
         return;
       }
       this.#postUpstream({ type: "heartbeat" });
     }, intervalMs);
+  }
+
+  /**
+   * The heartbeat declared the worker dead, yet a message just arrived from
+   * it — the timeout was a false positive (typically a congested main thread
+   * delaying ack delivery, not an actual worker crash). Restore the last live
+   * state and restart the heartbeat. If the underlying connection state
+   * really changed meanwhile, the worker's next `state-update` corrects it.
+   */
+  #reviveFromHeartbeatTimeout(): void {
+    if (this.#destroyed) return;
+    this.#heartbeatDead = false;
+    const prior = this.#stateBeforeHeartbeatTimeout;
+    this.#stateBeforeHeartbeatTimeout = null;
+    if (prior && this.#state.type === "errored") {
+      this.#updateState(prior);
+    }
+    this.startHeartbeat(this.#heartbeatIntervalMs, this.#heartbeatMaxMisses);
   }
 
   #stopHeartbeat(): void {
