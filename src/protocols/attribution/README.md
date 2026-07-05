@@ -81,8 +81,14 @@ const segments = await provider.rpc.attribution.getForRange(text, 0, 40);
 // Point lookup by CRDT id
 const author = await provider.rpc.attribution.resolveItem(clientID, clock);
 
+// Who deleted characters within a range?
+const deleted = await provider.rpc.attribution.getDeletedForRange(text, 0, 40);
+
 // Raw decoded ContentMap (cached after first fetch)
 const map = await provider.rpc.attribution.getMap();
+
+// Merge a server-pushed incremental ContentMap into the local cache
+provider.rpc.attribution.mergeIncremental(incomingContentMap);
 
 // Invalidate the cache when you know the map has changed
 provider.rpc.attribution.invalidateCache();
@@ -96,11 +102,12 @@ The protocol contract is defined in `methods.ts`:
 import { attributionProtocol } from "teleportal/protocols/attribution";
 
 // attributionProtocol.methods:
-//   activity → wire name "attributionActivity"
-//   get      → wire name "attributionGet"
+//   activity         → wire name "attributionActivity"
+//   get              → wire name "attributionGet"
+//   getIncremental   → wire name "attributionGetIncremental"
 ```
 
-Both methods use type-first definitions (no schema validation).
+All methods use type-first definitions (no schema validation).
 
 ## Milestones
 
@@ -173,6 +180,18 @@ The encoded ContentMap for client-side resolution.
 
 `null` when the storage has no attribution data. When a filter is supplied, the map is
 narrowed server-side before encoding.
+
+### attributionGetIncremental
+
+Diff-based ContentMap fetch. The client sends the operation IDs it already has; the
+server returns only the ranges the client is missing.
+
+**Request:** `{ knownIds: EncodedContentIds }`
+
+**Response:** `{ contentMap: EncodedContentMap | null }`
+
+`null` when the storage has no attribution data. Otherwise returns the ContentMap
+with ranges present in `knownIds` excluded.
 
 ## See Also
 

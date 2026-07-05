@@ -499,9 +499,7 @@ describe("incremental ContentMap sync", () => {
     expect(response.contentMap).not.toBeNull();
     const diffMap = decodeContentMap(response.contentMap!);
 
-    const firstClientRanges = diffMap.inserts.clients.get(
-      map.inserts.clients.keys().next().value!,
-    );
+    const firstClientRanges = diffMap.inserts.clients.get(map.inserts.clients.keys().next().value!);
     expect(firstClientRanges).toBeUndefined();
 
     let hasOtherClient = false;
@@ -549,6 +547,57 @@ describe("resolveDeletedRangeAttribution", () => {
     expect(segments.length).toBeGreaterThan(0);
     expect(segments[0].userId).toBe("user-2");
     expect(segments[0].timestamp).toBe(2000);
+  });
+
+  it("finds a deletion when index falls in the interior of a visible item", () => {
+    // Regression: when `index` is in the interior of a visible (non-deleted)
+    // item, the walk-to-start loop must still advance so the main loop does
+    // not re-process that visible item and overshoot the deleted block.
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    text.insert(0, "ABCDEFGHIJKLMNOPQRST"); // 20 visible chars
+    text.delete(10, 5); // deleted block at visible position 10, visible len -> 15
+
+    // Baseline: querying from 0 correctly finds the deletion.
+    const fromZero = collectDeletedRangeIds(text, 0, 15);
+    expect(fromZero.length).toBe(1);
+    expect(fromZero[0].contentStart).toBe(10);
+
+    // The bug: querying with a non-boundary index (5) inside the leading
+    // visible item skipped the deletion entirely.
+    const fromInterior = collectDeletedRangeIds(text, 5, 10); // range [5, 15)
+    expect(fromInterior.length).toBe(1);
+    expect(fromInterior[0].contentStart).toBe(10);
+    expect(fromInterior[0].len).toBe(5);
+  });
+
+  it("finds a deletion when index is exactly at a visible-item boundary", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    text.insert(0, "ABCDEFGHIJKLMNOPQRST");
+    text.delete(10, 5); // deleted block at visible position 10
+
+    // index=10 lands exactly at the start of the deleted block.
+    const ids = collectDeletedRangeIds(text, 10, 5);
+    expect(ids.length).toBe(1);
+    expect(ids[0].contentStart).toBe(10);
+  });
+
+  it("finds multiple deleted blocks interspersed with visible items", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    text.insert(0, "ABCDEFGHIJKLMNOPQRSTUVWXYZ"); // 26 visible chars
+    // Delete two separate blocks (delete higher offset first so lower
+    // positions are unaffected).
+    text.delete(15, 3); // removes "PQR"
+    text.delete(5, 2); // removes "FG"
+    // Visible now: ABCDE HIJKLMNO STUVWXYZ (deleted blocks at visible pos 5 and 13)
+
+    // Query a range spanning both deleted blocks, starting inside the first
+    // visible run so the walk-to-start begins mid-item.
+    const ids = collectDeletedRangeIds(text, 2, 18); // range [2, 20)
+    const starts = ids.map((id) => id.contentStart).sort((a, b) => a - b);
+    expect(starts).toEqual([5, 13]);
   });
 });
 

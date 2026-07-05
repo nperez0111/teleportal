@@ -970,3 +970,107 @@ describe("configurable grouping window", () => {
     expect(activity.length).toBe(2);
   });
 });
+
+describe("edge cases", () => {
+  it("getActivity skips entries without a timestamp attribute", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    const map = createContentMapFromContentIds(ids, [
+      createContentAttribute("insert", "user-1"),
+    ]);
+
+    const activity = getActivity(map);
+    expect(activity.length).toBe(0);
+  });
+
+  it("resolveItemAttribution returns null when userId is missing", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    const map = createContentMapFromContentIds(ids, [
+      createContentAttribute("insertAt", 1000),
+    ]);
+
+    expect(resolveItemAttribution(map, 1, 0)).toBeNull();
+  });
+
+  it("resolveItemAttribution returns null when timestamp is missing", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    const map = createContentMapFromContentIds(ids, [
+      createContentAttribute("insert", "user-1"),
+    ]);
+
+    expect(resolveItemAttribution(map, 1, 0)).toBeNull();
+  });
+
+  it("encodes and decodes an empty ContentMap", () => {
+    const map = createContentMapFromContentIds(createContentIds(), []);
+    const encoded = encodeContentMap(map);
+    const decoded = decodeContentMap(encoded);
+    expect(decoded.inserts.isEmpty()).toBe(true);
+    expect(decoded.deletes.isEmpty()).toBe(true);
+  });
+
+  it("IdSet.isEmpty returns true after adding then deleting all ranges", () => {
+    const set = new IdSet();
+    set.add(1, 0, 5);
+    set.delete(1, 0, 5);
+    expect(set.isEmpty()).toBe(true);
+  });
+
+  it("mergeContentIds with an empty array returns empty ContentIds", () => {
+    const merged = mergeContentIds([]);
+    expect(merged.inserts.isEmpty()).toBe(true);
+    expect(merged.deletes.isEmpty()).toBe(true);
+  });
+
+  it("excludeContentIds with empty exclude returns the original", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 5);
+    const empty = createContentIds();
+    const diff = excludeContentIds(ids, empty);
+    expect(diff.inserts.has(1, 0)).toBe(true);
+    expect(diff.inserts.has(1, 4)).toBe(true);
+  });
+
+  it("intersectContentIds with empty set returns empty", () => {
+    const ids = createContentIds();
+    ids.inserts.add(1, 0, 10);
+    const empty = createContentIds();
+    const result = intersectContentIds(ids, empty);
+    expect(result.inserts.isEmpty()).toBe(true);
+  });
+
+  it("getActivity includes both insert and delete activity in chronological order", () => {
+    const insertIds = createContentIds();
+    insertIds.inserts.add(1, 0, 5);
+    const insertMap = createContentMapFromContentIds(
+      insertIds,
+      [createContentAttribute("insert", "user-1"), createContentAttribute("insertAt", 1000)],
+      [],
+    );
+
+    const deleteIds = createContentIds();
+    deleteIds.deletes.add(2, 0, 3);
+    const deleteMap = createContentMapFromContentIds(
+      deleteIds,
+      [],
+      [createContentAttribute("delete", "user-2"), createContentAttribute("deleteAt", 2000)],
+    );
+
+    const merged = mergeContentMaps([insertMap, deleteMap]);
+    const activity = getActivity(merged);
+    expect(activity.length).toBe(2);
+    expect(activity[0].userId).toBe("user-1");
+    expect(activity[0].from).toBe(1000);
+    expect(activity[1].userId).toBe("user-2");
+    expect(activity[1].from).toBe(2000);
+  });
+
+  it("IdSet.slice on a non-existent client returns the full range as non-existing", () => {
+    const set = new IdSet();
+    set.add(1, 0, 5);
+    const slices = set.slice(99, 0, 10);
+    expect(slices).toEqual([{ clock: 0, len: 10, exists: false }]);
+  });
+});

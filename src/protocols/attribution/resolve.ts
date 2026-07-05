@@ -37,9 +37,7 @@ function findNearestMarker(
   type: Y.AbstractType<any>,
   index: number,
 ): { item: Y.Item | null; pos: number } {
-  const markers = (type as any)._searchMarker as
-    | Array<{ p: Y.Item; index: number }>
-    | null;
+  const markers = (type as any)._searchMarker as Array<{ p: Y.Item; index: number }> | null;
   if (!markers || markers.length === 0 || index === 0) {
     return { item: type._start, pos: 0 };
   }
@@ -137,12 +135,15 @@ export function collectDeletedRangeIds(
   let pos = startPos;
   let item = startItem;
 
-  // Walk to the start of the range
+  // Walk to the start of the range. Advance in lockstep with `pos`: when
+  // `index` falls in the interior of a visible item, counting it makes
+  // `pos > index`, but we must still move past that item so the main loop
+  // does not re-process it and overshoot.
   while (item !== null && pos < index) {
     if (!item.deleted && item.countable) {
       pos += item.length;
     }
-    if (pos <= index) item = item.right;
+    item = item.right;
   }
 
   while (item !== null && pos <= end) {
