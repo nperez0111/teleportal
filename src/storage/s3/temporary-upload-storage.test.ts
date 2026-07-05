@@ -31,7 +31,7 @@ class FakeS3 extends S3Http {
   ): Promise<void> {
     this.#store.set(key, {
       body: body.slice(),
-      meta: { ...(options.meta ?? {}) },
+      meta: { ...options.meta },
       lastModified: this.#clock++,
     });
   }
