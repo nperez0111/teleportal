@@ -964,11 +964,27 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
               await Promise.all([
                 this.broadcast(message, client?.id),
-                this.#pubSub.publish(
-                  `document/${this.namespacedDocumentId}` as const,
-                  message.encoded,
-                  this.#nodeId,
-                ),
+                this.#pubSub
+                  .publish(
+                    `document/${this.namespacedDocumentId}` as const,
+                    message.encoded,
+                    this.#nodeId,
+                  )
+                  // A failed publish on the doc-update fan-out lane silently
+                  // desyncs clients on other nodes; name it instead of
+                  // folding it into the generic apply failure.
+                  .catch((error) => {
+                    emitWideEvent("error", {
+                      event_type: "update_publish_failed",
+                      timestamp: new Date().toISOString(),
+                      document_id: this.documentId,
+                      session_id: this.id,
+                      message_id: message.id,
+                      client_id: client?.id,
+                      error,
+                    });
+                    throw error;
+                  }),
               ]);
 
               this.#emitDocumentMessage(

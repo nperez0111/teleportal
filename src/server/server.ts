@@ -114,6 +114,15 @@ export type ServerOptions<Context extends ServerContext> = {
     maxMessageSize?: number;
 
     /**
+     * Maximum time (ms) to hold a rate-limited inbound message while its
+     * bucket refills before dropping it (and nacking the sender). Holding
+     * slows a fast client to the allowed rate without losing messages.
+     * Set to 0 to drop immediately.
+     * @default 1000
+     */
+    maxDelayMs?: number;
+
+    /**
      * Default storage backend for rate limit state.
      * Individual rules can override this with their own rateLimitStorage.
      * If not provided, rate limits will be in-memory per transport instance.
@@ -155,6 +164,22 @@ export type ServerOptions<Context extends ServerContext> = {
     }) => void;
 
     /**
+     * Called after a message was held by flow control and then delivered
+     * (rate limiting engaged without dropping anything). The signal to watch
+     * when clients feel throttled but no messages are lost.
+     */
+    onRateLimitDelay?: (details: {
+      ruleId: string;
+      userId?: string;
+      documentId?: string;
+      trackBy: string;
+      delayMs: number;
+      maxMessages: number;
+      windowMs: number;
+      message: Message<NoInfer<Context>>;
+    }) => void;
+
+    /**
      * Called when message size limit is exceeded
      */
     onMessageSizeExceeded?: (details: {
@@ -187,6 +212,13 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * Maps composite document ID to the promise that will resolve to the session.
    */
   #pendingSessions = new Map<string, Promise<Session<Context>>>();
+  /**
+   * Composite document IDs whose session's encryption mode was set by
+   * non-authoritative metadata (rpc/presence) creating the session. The
+   * first authoritative doc/awareness message either locks the mode in or
+   * corrects it by recreating the session — see {@link getOrOpenSession}.
+   */
+  #tentativeEncryptionSessions = new Set<string>();
   /**
    * Server start time for uptime calculation.
    */
@@ -256,18 +288,26 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       id = "session-" + uuidv4(),
       client,
       context,
-      ignoreEncryptionMismatch = false,
+      encryptionAuthoritative = true,
     }: {
       encrypted?: boolean;
       id?: string;
       client?: Client<Context>;
       context: Context;
       /**
-       * Skip the encryption-state validation against an existing/pending
-       * session. Used for cleartext presence metadata, which must attach to the
-       * existing session regardless of its encryption mode and never defines it.
+       * Whether this caller's `encrypted` flag is allowed to DEFINE the
+       * document's encryption mode. Doc and awareness traffic is
+       * authoritative (their flag is a property of the document's content).
+       * Metadata (rpc, presence — whose flag describes the message payload,
+       * not the document) is not: it attaches to whatever session exists
+       * without validation, and a session it CREATES is only tentative —
+       * the first authoritative message corrects the mode by recreating the
+       * session. Without this, a key-registry RPC or presence announce
+       * racing ahead of the first doc message poisoned the session with
+       * encrypted=false, after which every doc/awareness message failed
+       * with encryption_mismatch until the session died.
        */
-      ignoreEncryptionMismatch?: boolean;
+      encryptionAuthoritative?: boolean;
     },
   ) {
     if (!documentId) {
@@ -276,11 +316,67 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
     const compositeDocumentId = this.#getCompositeDocumentId(documentId, context);
 
-    // Check if session already exists
+    // If a session creation is already in flight, wait for it to settle and
+    // fall through to the existing-session handling below (a rejected
+    // creation simply means we create fresh).
+    const pending = this.#pendingSessions.get(compositeDocumentId);
+    if (pending) {
+      await pending.then(
+        () => {},
+        () => {},
+      );
+    }
+
     const existing = this.#sessions.get(compositeDocumentId);
     if (existing) {
-      // Validate that the encryption state matches the existing session
-      if (existing.encrypted !== encrypted && !ignoreEncryptionMismatch) {
+      if (existing.encrypted === encrypted) {
+        // Matching authoritative traffic locks the mode in.
+        if (encryptionAuthoritative) {
+          this.#tentativeEncryptionSessions.delete(compositeDocumentId);
+        }
+        if (client) {
+          existing.addClient(client);
+        }
+        return existing;
+      }
+
+      if (!encryptionAuthoritative) {
+        // Metadata attaches to the session regardless of its mode and never
+        // (re)defines it.
+        if (client) {
+          existing.addClient(client);
+        }
+        return existing;
+      }
+
+      if (this.#tentativeEncryptionSessions.has(compositeDocumentId)) {
+        // The session's mode was set by metadata that raced ahead of the
+        // first doc message; this caller is authoritative. Correct the mode
+        // by recreating the session instead of failing every doc message.
+        emitWideEvent("info", {
+          event_type: "encryption_mode_corrected",
+          timestamp: new Date().toISOString(),
+          document_id: compositeDocumentId,
+          session_id: existing.id,
+          tentative_encrypted: existing.encrypted,
+          corrected_encrypted: encrypted,
+        });
+        this.#tentativeEncryptionSessions.delete(compositeDocumentId);
+        this.#sessions.delete(compositeDocumentId);
+        this.#metrics.sessionsActive.dec();
+        try {
+          await existing[Symbol.asyncDispose]();
+        } catch (error) {
+          emitWideEvent("error", {
+            event_type: "session_dispose_error",
+            timestamp: new Date().toISOString(),
+            document_id: compositeDocumentId,
+            session_id: existing.id,
+            error,
+          });
+        }
+        // Fall through to create the session with the authoritative mode.
+      } else {
         const error = new Error(
           `Encryption state mismatch: existing session for document "${compositeDocumentId}" has encrypted=${existing.encrypted}, but requested encrypted=${encrypted}`,
         );
@@ -295,41 +391,6 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
         });
         throw error;
       }
-
-      if (client) {
-        existing.addClient(client);
-      }
-
-      return existing;
-    }
-
-    // Check if there's a pending session creation for this document
-    const pending = this.#pendingSessions.get(compositeDocumentId);
-    if (pending) {
-      const session = await pending;
-
-      // Validate encryption state matches
-      if (session.encrypted !== encrypted && !ignoreEncryptionMismatch) {
-        const error = new Error(
-          `Encryption state mismatch: pending session for document "${compositeDocumentId}" has encrypted=${session.encrypted}, but requested encrypted=${encrypted}`,
-        );
-        emitWideEvent("error", {
-          event_type: "encryption_mismatch",
-          timestamp: new Date().toISOString(),
-          document_id: compositeDocumentId,
-          session_id: session.id,
-          existing_encrypted: session.encrypted,
-          requested_encrypted: encrypted,
-          error,
-        });
-        throw error;
-      }
-
-      if (client) {
-        session.addClient(client);
-      }
-
-      return session;
     }
 
     // Create a new session - wrap in a promise to prevent race conditions
@@ -362,6 +423,12 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
         await session.load();
         this.#sessions.set(compositeDocumentId, session);
+        // Mark tentative inside the creation promise (not after awaiting it)
+        // so a concurrent authoritative caller that awaited the pending
+        // creation observes the flag.
+        if (!encryptionAuthoritative) {
+          this.#tentativeEncryptionSessions.add(compositeDocumentId);
+        }
 
         // Record session creation metrics
         this.#metrics.sessionsActive.inc();
@@ -457,10 +524,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     const session = this.#sessions.get(compositeDocumentId);
     let storage = session?.storage;
     if (session) {
-      // Disconnect all clients
-      storage = session.storage;
-
-      this.call("document-unload", {
+      await this.call("document-unload", {
         documentId: session.documentId,
         namespacedDocumentId: session.namespacedDocumentId,
         sessionId: session.id,
@@ -470,8 +534,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
       await session[Symbol.asyncDispose]();
       this.#sessions.delete(compositeDocumentId);
+      this.#tentativeEncryptionSessions.delete(compositeDocumentId);
+      this.#metrics.sessionsActive.dec();
     } else {
-      // Reload the storage instance directly to delete document
+      // Resolve the storage instance directly to delete the document
       storage = await (typeof this.#options.storage === "function"
         ? this.#options.storage({
             documentId: compositeDocumentId,
@@ -487,7 +553,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       try {
         const pendingSession = await pending;
 
-        this.call("document-unload", {
+        await this.call("document-unload", {
           documentId: pendingSession.documentId,
           namespacedDocumentId: pendingSession.namespacedDocumentId,
           sessionId: pendingSession.id,
@@ -496,6 +562,8 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
         });
 
         await pendingSession[Symbol.asyncDispose]();
+        this.#sessions.delete(compositeDocumentId);
+        this.#metrics.sessionsActive.dec();
       } catch {
         // Ignore errors from pending session
       }
@@ -503,9 +571,9 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     }
 
     // Delete document data via storage (this handles cascade deletion of files)
-    await storage.deleteDocument(compositeDocumentId);
+    await storage!.deleteDocument(compositeDocumentId);
 
-    this.call("document-delete", {
+    await this.call("document-delete", {
       documentId,
       namespacedDocumentId: compositeDocumentId,
       encrypted,
@@ -557,6 +625,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       rateLimitedTransport = withRateLimit(transport, {
         rules,
         maxMessageSize: config.maxMessageSize,
+        maxDelayMs: config.maxDelayMs,
         rateLimitStorage: config.rateLimitStorage,
         getUserId: config.getUserId ?? ((msg) => msg.context.userId),
         getDocumentId: config.getDocumentId ?? ((msg) => msg.document),
@@ -591,14 +660,32 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           });
           config.onRateLimitExceeded?.(details);
         },
+        onRateLimitDelay: (details) => {
+          emitWideEvent("info", {
+            event_type: "rate_limit_delayed",
+            timestamp: new Date().toISOString(),
+            rule_id: details.ruleId,
+            user_id: details.userId,
+            document_id: details.documentId,
+            track_by: details.trackBy,
+            delay_ms: details.delayMs,
+            max_messages: details.maxMessages,
+            window_ms: details.windowMs,
+            message_type: details.message.type,
+          });
+          config.onRateLimitDelay?.(details);
+        },
         onRateLimitDrop: (message, exceeded, write) => {
-          const retryAfter = Math.max(0, exceeded.resetAt - Date.now());
+          // resetAt is when the next token refills — retryAfter must never
+          // fall back to the full window (10s for the default per-document
+          // rule), which reads as a multi-second ack stall on the client.
+          const retryAfter = Math.max(1, exceeded.resetAt - Date.now());
           Promise.resolve(
             write(
               new AckMessage({
                 type: "ack",
                 messageId: message.id,
-                retryAfter: retryAfter || exceeded.windowMs,
+                retryAfter,
               }),
             ),
           ).catch(() => {});
@@ -735,24 +822,28 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           // still published over pubsub like every other message so it reaches
           // the client when its connection lives on a different server node.
           if (message.type === "rpc" && (message as RpcMessage<Context>).requestType === "stream") {
-            const session = await this.getOrOpenSession(message.document, {
-              encrypted: message.encrypted,
-              client,
-              context: message.context,
-              ignoreEncryptionMismatch: true,
-            });
-            await session.apply(message, client);
-            this.#metrics.incrementMessage(message.type);
-            const ackMessage = new AckMessage(
-              { type: "ack", messageId: message.id },
-              message.context,
-            );
-            await client.send(ackMessage);
-            await this.pubSub.publish(
-              `ack/${client.id}` as const,
-              ackMessage.encoded,
-              `server-${client.id}`,
-            );
+            try {
+              const session = await this.getOrOpenSession(message.document, {
+                encrypted: message.encrypted,
+                client,
+                context: message.context,
+                encryptionAuthoritative: false,
+              });
+              await session.apply(message, client);
+              this.#metrics.incrementMessage(message.type);
+              const ackMessage = new AckMessage(
+                { type: "ack", messageId: message.id },
+                message.context,
+              );
+              await client.send(ackMessage);
+              await this.pubSub.publish(
+                `ack/${client.id}` as const,
+                ackMessage.encoded,
+                `server-${client.id}`,
+              );
+            } catch (error) {
+              await this.#nackFailedMessage(client, message, error);
+            }
             return;
           }
 
@@ -774,7 +865,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
               encrypted: message.encrypted,
               client,
               context: message.context,
-              ignoreEncryptionMismatch: message.type === "presence" || message.type === "rpc",
+              // Doc/awareness flags describe the document's content and may
+              // define the session's mode; rpc/presence flags describe only
+              // the message payload and may not.
+              encryptionAuthoritative: message.type !== "presence" && message.type !== "rpc",
             });
             wideEvent.session_id = session.id;
 
@@ -810,7 +904,11 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
             wideEvent.outcome = "error";
             wideEvent.status_code = 500;
             wideEvent.error = error;
-            throw error;
+            // A single bad message must not tear down the connection: nack it
+            // with the reason and keep consuming. Rethrowing here would end
+            // the consume loop while the socket stays open — the client would
+            // silently stop receiving acks and broadcasts.
+            await this.#nackFailedMessage(client, message, error);
           } finally {
             wideEvent.duration_ms = Date.now() - startTime;
             emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
@@ -825,6 +923,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
         });
       } finally {
         this.disconnectClient(client.id, "stream-ended");
+        // The consume loop is gone, so the connection can never be serviced
+        // again — close the transport so the client sees a disconnect and
+        // reconnects immediately instead of waiting out its receive timeout.
+        try {
+          validatedTransport.close();
+        } catch {
+          // ignore
+        }
       }
     })();
 
@@ -840,6 +946,31 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     }
 
     return client;
+  }
+
+  /**
+   * Nack a message that failed to apply: an ack carrying `error` tells the
+   * sender the message was permanently rejected (and why), so it stops
+   * waiting instead of retransmitting a message that would fail again. Also
+   * published over pubsub so it reaches clients homed on other nodes.
+   * Send failures are swallowed — if the transport is broken, the consume
+   * loop's stream error handling closes the connection.
+   */
+  async #nackFailedMessage(client: Client<Context>, message: Message<Context>, error: unknown) {
+    const nack = new AckMessage(
+      {
+        type: "ack",
+        messageId: message.id,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      message.context,
+    );
+    try {
+      await client.send(nack);
+      await this.pubSub.publish(`ack/${client.id}` as const, nack.encoded, `server-${client.id}`);
+    } catch {
+      // ignore — connection-level failures are handled by the consume loop
+    }
   }
 
   /**
@@ -895,6 +1026,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       });
 
       this.#sessions.delete(session.namespacedDocumentId);
+      this.#tentativeEncryptionSessions.delete(session.namespacedDocumentId);
       this.#metrics.sessionsActive.dec();
 
       session[Symbol.asyncDispose]().catch((error) => {

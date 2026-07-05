@@ -1,301 +1,116 @@
 # WebSocket Server
 
-This module provides WebSocket server functionality for Teleportal, enabling real-time bidirectional communication between clients and the server using the Teleportal binary protocol.
-
-## Overview
-
-The WebSocket server module is built on top of the [`crossws`](https://github.com/wobsoriano/crossws) library, providing a low-level abstraction for WebSocket connections. It handles the conversion between WebSocket messages and Teleportal's `BinaryTransport` interface, allowing seamless integration with the Teleportal `Server`.
+WebSocket server implementation for Teleportal, built on the [`crossws`](https://github.com/unjs/crossws) library. Handles the bridge between raw WebSocket connections and the Teleportal `Server`.
 
 ## Architecture
 
-The module provides two main functions:
+Two entry points:
 
-1. **`getWebsocketHandlers`**: A low-level API for creating custom WebSocket handlers
-2. **`tokenAuthenticatedWebsocketHandler`**: A high-level wrapper that adds token-based authentication and integrates with the Teleportal `Server`
+1. **`getWebsocketHandlers`** -- low-level: you own the upgrade/auth, you get back `crossws.Hooks`.
+2. **`tokenAuthenticatedWebsocketHandler`** -- high-level: extracts a `?token=` query param, verifies it with a `TokenManager`, and wires everything up.
 
-### Connection Lifecycle
+### Connection lifecycle
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                    WebSocket Connection Lifecycle               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. Upgrade Request                                             │
-│     └─> onUpgrade() - Authenticate & extract context            │
-│                                                                 │
-│  2. Connection Established                                      │
-│     └─> open() - Setup BinaryTransport & call onConnect()       │
-│                                                                 │
-│  3. Message Handling                                            │
-│     └─> message() - Decode BinaryMessage & call onMessage()     │
-│                                                                 │
-│  4. Disconnection                                               │
-│     └─> close() - Cleanup & call onDisconnect()                 │
-│                                                                 │
-│  5. Error Handling                                              │
-│     └─> error() - Abort streams & cleanup                       │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+1. upgrade    onUpgrade() authenticates, returns context + optional headers
+2. open       BinaryTransport created, server.createClient() called, onConnect() fires
+3. message    Binary validated, pushed to channel, onMessage() fires (observability only)
+4. close      onDisconnect() fires, client disconnected, channel + transport closed
+5. error      Channel error signalled, consumer loop exits
 ```
 
-## API Reference
+## API
 
 ### `getWebsocketHandlers`
 
-Creates WebSocket handlers using the `crossws` library. This is a low-level API that provides full control over the WebSocket connection lifecycle.
-
-**Signature:**
-
 ```typescript
-function getWebsocketHandlers<T extends Pick<crossws.PeerContext, "room" | "userId">>({
-  onUpgrade,
-  onConnect,
-  onDisconnect,
-  onMessage,
-}: {
+function getWebsocketHandlers<T extends ServerContext>(options: {
+  server: Server<T>;
   onUpgrade: (request: Request) => Promise<{
-    context: T;
+    context: Omit<T, "clientId">;
     headers?: Record<string, string>;
   }>;
   onConnect?: (ctx: {
-    transport: BinaryTransport;
+    client: Client<T>;
     context: T;
     id: string;
     peer: crossws.Peer;
   }) => void | Promise<void>;
   onDisconnect?: (ctx: {
-    transport: BinaryTransport;
+    client: Client<T>;
     context: T;
     id: string;
     peer: crossws.Peer;
   }) => void | Promise<void>;
-  onMessage?: (ctx: { message: BinaryMessage; peer: crossws.Peer }) => void | Promise<void>;
-}): {
-  hooks: crossws.Hooks;
-};
+  onMessage?: (ctx: {
+    client: Client<T>;
+    message: BinaryMessage;
+    peer: crossws.Peer;
+  }) => void | Promise<void>;
+}): crossws.Hooks;
 ```
 
-**Parameters:**
-
-- **`onUpgrade`** (required): Called when a client attempts to upgrade to a WebSocket connection. You can reject the upgrade by throwing a `Response` object. Must return the connection context and optional headers.
-
-- **`onConnect`** (optional): Called when a client successfully connects. Receives the `BinaryTransport`, connection context, client ID, and the `crossws.Peer` object.
-
-- **`onDisconnect`** (optional): Called when a client disconnects. Receives the same context as `onConnect`.
-
-- **`onMessage`** (optional): Called when a message is received from a client. Receives the decoded `BinaryMessage` and the `crossws.Peer` object.
-
-**Returns:**
-
-An object containing `crossws.Hooks` that can be passed to the `crossws()` function.
-
-**Example:**
-
-```typescript
-import { crossws } from "crossws";
-import { getWebsocketHandlers } from "teleportal/websocket-server";
-
-const ws = crossws(
-  getWebsocketHandlers({
-    onUpgrade: async (request) => {
-      // Extract authentication from request
-      const auth = request.headers.get("Authorization");
-      if (!auth) {
-        throw new Response("Unauthorized", { status: 401 });
-      }
-
-      // Return context for the connection
-      return {
-        context: {
-          userId: "user-123",
-          room: "room-456",
-        },
-        headers: {
-          "x-custom-header": "value",
-        },
-      };
-    },
-    onConnect: async (ctx) => {
-      console.log(`Client ${ctx.id} connected`);
-      // Setup your client here
-    },
-    onDisconnect: async (ctx) => {
-      console.log(`Client ${ctx.id} disconnected`);
-      // Cleanup your client here
-    },
-    onMessage: async (ctx) => {
-      console.log(`Received message from ${ctx.peer.id}`);
-      // Handle message here
-    },
-  }),
-);
-```
+- **`onUpgrade`** (required) -- authenticate the request. Throw a `Response` to reject.
+- **`onConnect`** (optional) -- fires after the client is registered with the server.
+- **`onDisconnect`** (optional) -- fires before cleanup. A throwing hook does not prevent cleanup.
+- **`onMessage`** (optional) -- observability hook. The message is delivered to the server regardless of whether this hook succeeds or throws.
 
 ### `tokenAuthenticatedWebsocketHandler`
 
-A high-level wrapper around `getWebsocketHandlers` that implements token-based authentication and integrates with the Teleportal `Server`. This is the recommended way to set up WebSocket connections for most use cases.
-
-**Signature:**
-
 ```typescript
-function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
-  server,
-  tokenManager,
-  hooks = {},
-}: {
+function tokenAuthenticatedWebsocketHandler<T extends ServerContext>(options: {
   server: Server<T>;
   tokenManager: TokenManager;
-  hooks?: Partial<Parameters<typeof getWebsocketHandlers>[0]>;
-}): ReturnType<typeof getWebsocketHandlers>;
+  hooks?: Partial<Omit<Parameters<typeof getWebsocketHandlers<T>>[0], "server">>;
+}): crossws.Hooks;
 ```
 
-**Parameters:**
-
-- **`server`** (required): The Teleportal `Server` instance to use for managing clients and sessions.
-
-- **`tokenManager`** (required): A `TokenManager` instance (from `teleportal/token`) used to verify authentication tokens.
-
-- **`hooks`** (optional): Partial hooks object that allows you to extend or override the default behavior. You can provide custom `onUpgrade`, `onConnect`, `onDisconnect`, or `onMessage` handlers.
-
-**Returns:**
-
-The same return type as `getWebsocketHandlers` - an object with `crossws.Hooks`.
-
-**How it works:**
-
-1. **Token Authentication**: Extracts the `token` query parameter from the WebSocket upgrade request URL and verifies it using the `TokenManager`.
-
-2. **Context Extraction**: The token payload is used as the connection context (must include `room` and `userId` fields).
-
-3. **Client Management**: Automatically calls `server.createClient()` when a client connects and `server.disconnectClient()` when a client disconnects.
-
-4. **Transport Conversion**: Converts the `BinaryTransport` to a `Transport` using `fromBinaryTransport()` before passing it to the server.
-
-**Example:**
+Extracts `?token=` from the upgrade URL, verifies it via `tokenManager.verifyToken()`, and uses the token payload as the connection context.
 
 ```typescript
 import { crossws } from "crossws";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 import { createTokenManager } from "teleportal/token";
-import { Server } from "teleportal/server";
 
-// Create token manager
-const tokenManager = createTokenManager({
-  secret: process.env.TOKEN_SECRET!,
-});
+const tokenManager = createTokenManager({ secret: "your-secret-key" });
 
-// Create server
-const server = new Server({
-  // ... server configuration
-});
-
-// Create WebSocket handler
 const ws = crossws(
   tokenAuthenticatedWebsocketHandler({
     server,
     tokenManager,
     hooks: {
-      // Optional: Add custom logic
-      onConnect: async (ctx) => {
-        console.log(`Client ${ctx.id} connected to room ${ctx.context.room}`);
+      onConnect: async ({ client, id }) => {
+        console.log(`Client ${id} connected`);
       },
     },
   }),
 );
-
-// Use with your HTTP server
-export default {
-  fetch: ws,
-};
 ```
 
-**Client Connection:**
+Client connects with `wss://host/ws?token=<jwt>`.
 
-Clients connect by including a token in the WebSocket URL:
+## Transport bridge
 
-```typescript
-const token = await tokenManager.createToken({
-  userId: "user-123",
-  room: "room-456",
-});
+Each WebSocket connection gets a `BinaryTransport`:
 
-const ws = new WebSocket(`wss://your-server.com/ws?token=${token}`);
-```
+- **`source`** -- a `Channel<BinaryMessage>` fed by incoming WebSocket frames.
+- **`write()`** -- calls `peer.send()`. Logs backpressure (Bun returns -1/0 on `ws.send` for queued/dropped).
+- **`close()`** -- closes the peer socket so a wedged connection triggers immediate client reconnect.
 
-## BinaryTransport Integration
+## Error handling
 
-The WebSocket server uses `BinaryTransport` as the interface for message exchange. A `BinaryTransport` consists of:
-
-- **`readable: ReadableStream<BinaryMessage>`**: Stream of incoming binary messages
-- **`writable: WritableStream<BinaryMessage>`**: Stream for sending binary messages
-
-The module automatically:
-
-1. **Converts WebSocket messages to BinaryTransport**: Uses a `TransformStream` to bridge between WebSocket's `uint8Array()` messages and `BinaryMessage` objects.
-
-2. **Validates messages**: Checks that incoming messages are valid `BinaryMessage` instances using `isBinaryMessage()`.
-
-3. **Handles message flow**: Messages received from the client are written to the transport's readable stream, and messages written to the transport's writable stream are sent to the client via WebSocket.
-
-## Error Handling
-
-The WebSocket server includes comprehensive error handling:
-
-- **Upgrade Rejection**: If `onUpgrade` throws a `Response`, it's returned to the client. Other errors result in a 401 Unauthorized response.
-
-- **Connection Errors**: Errors during `onConnect` are logged and the connection is closed.
-
-- **Message Errors**: Errors during message processing are logged and the message writer is aborted.
-
-- **Stream Errors**: Errors in the transport streams are caught and logged, with streams properly aborted.
-
-## Logging
-
-The module uses structured logging via `@logtape/logtape` with the namespace `["teleportal", "websocket-server"]`. Logs include:
-
-- Connection lifecycle events (upgrade, open, close)
-- Message processing
-- Error details with context
-- Client IDs for tracing
-
-## Type Safety
-
-The module extends `crossws.PeerContext` with additional fields:
-
-```typescript
-interface PeerContext {
-  room: string;
-  userId: string;
-  clientId: string;
-  transport: BinaryTransport;
-  writer: WritableStreamDefaultWriter<BinaryMessage>;
-}
-```
-
-These fields are automatically populated during the connection lifecycle and are available in all hook callbacks.
-
-## Integration with Teleportal Server
-
-When using `tokenAuthenticatedWebsocketHandler`, the WebSocket server automatically:
-
-1. **Creates clients**: Calls `server.createClient()` with the converted transport when a client connects.
-
-2. **Manages client lifecycle**: The server handles all client state, session management, and message routing.
-
-3. **Disconnects clients**: Calls `server.disconnectClient()` when a client disconnects, ensuring proper cleanup.
-
-4. **Converts transports**: Uses `fromBinaryTransport()` to convert the WebSocket `BinaryTransport` to the `Transport` interface expected by the server.
+| Phase | Behavior |
+|-------|----------|
+| `upgrade` throws `Response` | Returned to client as-is |
+| `upgrade` throws other | 401 Unauthorized |
+| `open` (createClient) fails | Logged, peer closed |
+| `message` hook throws | Logged; message still delivered |
+| `close` hook throws | Logged; cleanup still runs |
+| `error` event | Forwarded to channel, consumer loop exits |
 
 ## Dependencies
 
-- **`crossws`**: WebSocket library (not bundled, must be installed separately)
-- **`teleportal`**: Core Teleportal types and utilities
-- **`@logtape/logtape`**: Structured logging
-
-## Notes
-
-- The `crossws` library is not bundled with this module. You must install it separately: `npm install crossws` or `bun add crossws`.
-
-- The module is designed to work with any runtime that supports WebSockets (Node.js, Bun, Cloudflare Workers, etc.) through the `crossws` abstraction.
-
-- For production use, always use `tokenAuthenticatedWebsocketHandler` rather than `getWebsocketHandlers` directly, unless you need custom authentication logic.
+- **`crossws`** -- not bundled, install separately (`bun add crossws`)
+- **`teleportal`** -- core types (`BinaryMessage`, `isBinaryMessage`, `ServerContext`)
+- **`teleportal/server`** -- `Server`, `Client`, `emitWideEvent`
+- **`teleportal/transports`** -- `fromBinaryTransport` (converts `BinaryTransport` to `Transport`)

@@ -340,7 +340,7 @@ describe("Server", () => {
       ).rejects.toThrow("Encryption state mismatch");
     });
 
-    it("attaches to an existing session of either encryption mode when ignoreEncryptionMismatch is set", async () => {
+    it("attaches to an existing session of either encryption mode when the caller is not authoritative", async () => {
       // Presence messages are always cleartext (encrypted: false) but must
       // attach to an encrypted session without throwing — otherwise the
       // encryption-mismatch error tears down the client connection.
@@ -352,11 +352,70 @@ describe("Server", () => {
       const session = await server.getOrOpenSession("enc-doc", {
         encrypted: false,
         context: { userId: "user-1", room: "room", clientId: "client-1" },
-        ignoreEncryptionMismatch: true,
+        encryptionAuthoritative: false,
       });
 
       expect(session).toBe(encryptedSession);
       expect(session.encrypted).toBe(true);
+    });
+
+    it("lets the first doc message correct a session created by metadata that raced ahead", async () => {
+      const ctx = { userId: "user-1", room: "room", clientId: "client-1" };
+      // A key-registry RPC or presence announce (encrypted=false, since the
+      // flag describes the message payload, not the document) can be the
+      // FIRST message for a document. It must not DEFINE the session's
+      // encryption mode — it used to, after which every doc/awareness
+      // message failed with encryption_mismatch and the document
+      // stalled/desynced until the poisoned session died.
+      const tentative = await server.getOrOpenSession("enc-race-doc", {
+        encrypted: false,
+        context: ctx,
+        encryptionAuthoritative: false,
+      });
+      expect(tentative.encrypted).toBe(false);
+
+      // The first doc-carrying message is authoritative: the session is
+      // recreated with the correct mode instead of throwing.
+      const corrected = await server.getOrOpenSession("enc-race-doc", {
+        encrypted: true,
+        context: ctx,
+      });
+      expect(corrected.encrypted).toBe(true);
+      expect(corrected.id).not.toBe(tentative.id);
+
+      // The corrected mode is authoritative — a real mismatch throws again.
+      await expect(
+        server.getOrOpenSession("enc-race-doc", { encrypted: false, context: ctx }),
+      ).rejects.toThrow("Encryption state mismatch");
+
+      // Metadata still attaches regardless of its flag.
+      const attached = await server.getOrOpenSession("enc-race-doc", {
+        encrypted: false,
+        context: ctx,
+        encryptionAuthoritative: false,
+      });
+      expect(attached.id).toBe(corrected.id);
+    });
+
+    it("promotes a metadata-created session to authoritative when the first doc message matches", async () => {
+      const ctx = { userId: "user-1", room: "room", clientId: "client-1" };
+      const tentative = await server.getOrOpenSession("plain-race-doc", {
+        encrypted: false,
+        context: ctx,
+        encryptionAuthoritative: false,
+      });
+
+      // Matching authoritative traffic keeps the same session...
+      const promoted = await server.getOrOpenSession("plain-race-doc", {
+        encrypted: false,
+        context: ctx,
+      });
+      expect(promoted.id).toBe(tentative.id);
+
+      // ...and locks the mode in: a mismatch now throws.
+      await expect(
+        server.getOrOpenSession("plain-race-doc", { encrypted: true, context: ctx }),
+      ).rejects.toThrow("Encryption state mismatch");
     });
 
     it("routes plaintext RPC messages to encrypted sessions", async () => {
@@ -558,6 +617,104 @@ describe("Server", () => {
       expect(session1.namespacedDocumentId).toBe("test-doc");
       expect(session2.documentId).toBe("test-doc");
       expect(session2.namespacedDocumentId).toBe("room/test-doc");
+    });
+  });
+
+  describe("consume loop resilience", () => {
+    class RecordingTransport extends MockTransport<ServerContext> {
+      public written: Message<ServerContext>[] = [];
+      public closed = false;
+      override write(message: Message<ServerContext>): void {
+        this.written.push(message);
+      }
+      override close(): void {
+        this.closed = true;
+      }
+      errorReadable(err: unknown) {
+        (this as any)._channel.error(err);
+      }
+    }
+
+    const ctx = { clientId: "client-res", userId: "user-1", room: "room" };
+
+    it("nacks a message that fails to apply and keeps processing the connection", async () => {
+      const transport = new RecordingTransport();
+      server.createClient({ transport, id: "client-res" });
+
+      // Establish an unencrypted session
+      transport.enqueueMessage(
+        new DocMessage(
+          "resilient-doc",
+          { type: "sync-step-1", sv: new Uint8Array([0]) as StateVector },
+          ctx,
+          false,
+        ),
+      );
+      await waitFor(
+        () => transport.written.filter((m) => m.type === "ack").length,
+        (n) => n >= 1,
+      );
+
+      // Claims to be encrypted for an unencrypted session — the session
+      // machinery throws, which used to tear down the whole consume loop
+      const bad = new DocMessage(
+        "resilient-doc",
+        { type: "update", update: createTestUpdate("bad") },
+        ctx,
+        true,
+      );
+      transport.enqueueMessage(bad);
+
+      // The loop must survive: a later valid update still gets applied and acked
+      const good = new DocMessage(
+        "resilient-doc",
+        { type: "update", update: createTestUpdate("good") },
+        ctx,
+        false,
+      );
+      transport.enqueueMessage(good);
+
+      const acks = await waitFor(
+        () => transport.written.filter((m) => m.type === "ack") as AckMessage<ServerContext>[],
+        (acks) => acks.some((a) => a.payload.messageId === good.id),
+      );
+
+      const badAck = acks.find((a) => a.payload.messageId === bad.id);
+      expect(badAck).toBeDefined();
+      expect(badAck!.payload.error).toContain("mismatch");
+      expect(badAck!.payload.retryAfter).toBeUndefined();
+
+      const goodAck = acks.find((a) => a.payload.messageId === good.id);
+      expect(goodAck).toBeDefined();
+      expect(goodAck!.payload.error).toBeUndefined();
+
+      transport.closeReadable();
+    });
+
+    it("proactively closes the transport when the stream errors", async () => {
+      const transport = new RecordingTransport();
+      server.createClient({ transport, id: "client-res-close" });
+
+      transport.errorReadable(new Error("boom"));
+
+      await waitFor(
+        () => transport.closed,
+        (closed) => closed,
+      );
+      expect(transport.closed).toBe(true);
+    });
+
+    it("proactively closes the transport when the stream ends", async () => {
+      const transport = new RecordingTransport();
+      server.createClient({ transport, id: "client-res-end" });
+
+      transport.closeReadable();
+
+      await waitFor(
+        () => transport.closed,
+        (closed) => closed,
+      );
+      expect(transport.closed).toBe(true);
     });
   });
 
@@ -2147,6 +2304,84 @@ describe("Server", () => {
       expect(events.length).toBe(1);
       expect(events[0].documentId).toBe("delete-test-doc");
       expect(events[0].encrypted).toBe(false);
+
+      transport.closeReadable();
+    });
+
+    it("should await event handlers in deleteDocument before returning", async () => {
+      let handlerCompleted = false;
+      server.on("document-delete", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        handlerCompleted = true;
+      });
+
+      const transport = new MockTransport();
+      const customTransport = {
+        source: transport.source,
+        write() {},
+        close() {},
+      } as Transport<ServerContext>;
+
+      server.createClient({
+        transport: customTransport,
+        id: "await-handler-client",
+      });
+
+      const message = new DocMessage(
+        "await-handler-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "await-handler-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+
+      await server.deleteDocument(
+        "await-handler-doc",
+        { clientId: "await-handler-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      expect(handlerCompleted).toBe(true);
+
+      transport.closeReadable();
+    });
+
+    it("should decrement sessionsActive metric when deleteDocument disposes an active session", async () => {
+      const transport = new MockTransport();
+      const customTransport = {
+        source: transport.source,
+        write() {},
+        close() {},
+      } as Transport<ServerContext>;
+
+      server.createClient({
+        transport: customTransport,
+        id: "metric-delete-client",
+      });
+
+      const message = new DocMessage(
+        "metric-delete-doc",
+        { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+        { clientId: "metric-delete-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      transport.enqueueMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+
+      const statusBefore = await server.getStatus();
+      expect(statusBefore.activeSessions).toBe(1);
+
+      await server.deleteDocument(
+        "metric-delete-doc",
+        { clientId: "metric-delete-client", userId: "user-1", room: "room" },
+        false,
+      );
+
+      const statusAfter = await server.getStatus();
+      expect(statusAfter.activeSessions).toBe(0);
 
       transport.closeReadable();
     });

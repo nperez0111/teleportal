@@ -178,6 +178,7 @@ type ServerOptions<Context extends ServerContext> = {
   rateLimitConfig?: {
     rules: RateLimitRule<Context>[];
     maxMessageSize?: number; // default: 10MB
+    maxDelayMs?: number; // default: 1000 — hold time before dropping; 0 = drop immediately
     rateLimitStorage?: RateLimitStorage;
     getUserId?: (message: Message<Context>) => string | undefined;
     getDocumentId?: (message: Message<Context>) => string | undefined;
@@ -191,6 +192,16 @@ type ServerOptions<Context extends ServerContext> = {
       maxMessages: number;
       windowMs: number;
       resetAt: number;
+      message: Message<Context>;
+    }) => void;
+    onRateLimitDelay?: (details: {
+      ruleId: string;
+      userId?: string;
+      documentId?: string;
+      trackBy: string;
+      delayMs: number;
+      maxMessages: number;
+      windowMs: number;
       message: Message<Context>;
     }) => void;
     onMessageSizeExceeded?: (details: {
@@ -359,10 +370,11 @@ The server handles all Teleportal protocol message types:
 
 ### Presence Messages (`presence`)
 
-- **presence-announce**: Client announces its awareness client ID (triggers join broadcast)
+- **presence-announce**: Client announces its awareness client ID (triggers join broadcast and roster replay)
+- **presence-unannounce**: Client retracts a single awareness client ID (e.g. one tab in a SharedWorker closed)
 - **presence-join**: Server-authored notification that a peer joined
 - **presence-leave**: Server-authored notification that a peer left
-- **presence-heartbeat**: Periodic snapshot of a node's local clients (cross-node roster)
+- **presence-heartbeat**: Periodic snapshot of a node's local clients (cross-node roster, self-healing)
 
 ### RPC Messages (`rpc`)
 
@@ -441,9 +453,13 @@ Each rule in the `rules` array defines:
 - **In-memory** (default): Rate limits are per-transport instance. Not shared across server instances.
 - **Persistent storage** (Redis/Unstorage): Rate limits are shared across all server instances. Recommended for multi-node deployments.
 
+### Flow control
+
+When `maxDelayMs` is set (default: 1000ms), a rate-limited message is held until its token bucket refills rather than dropped immediately. This slows a fast client to the allowed rate without losing messages. If the hold time exceeds `maxDelayMs`, the message is dropped and the client receives a NACK with `retryAfter`. Set `maxDelayMs: 0` to drop immediately.
+
 ### Integration with Permissions
 
-Rate limiting is applied **before** permission checking. Messages that exceed rate limits are rejected immediately with an ACK containing a `retryAfter` hint. ACK messages are automatically excluded from rate limiting.
+Rate limiting is applied **before** permission checking. Messages that exceed rate limits are rejected with an ACK containing a `retryAfter` hint. ACK messages are automatically excluded from rate limiting.
 
 ### Metrics
 
@@ -739,90 +755,55 @@ The server handles errors gracefully:
 
 ## Integration Examples
 
-### Express.js Integration
+### Bun + crossws Integration
 
 ```typescript
-import express from "express";
+import { crossws } from "crossws/adapters/bun";
 import { Server } from "teleportal/server";
-import { WebSocketTransport } from "teleportal/transports/websocket";
+import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
+import { createTokenManager } from "teleportal/token";
 
-const app = express();
+const tokenManager = createTokenManager({ secret: process.env.TOKEN_SECRET! });
+
 const server = new Server({
   storage: myStorage,
   /* ... */
 });
 
-// WebSocket endpoint
-app.get("/ws", (req, res) => {
-  const ws = new WebSocket(req, res);
-  const transport = new WebSocketTransport(ws, {
-    document: req.query.document as string,
-    context: { userId: req.user.id },
-    encrypted: false,
-  });
+const ws = crossws(
+  tokenAuthenticatedWebsocketHandler({ server, tokenManager }),
+);
 
-  server.createClient({ transport });
-});
-
-// Metrics endpoint
-app.get("/metrics", async (req, res) => {
-  const metrics = await server.getMetrics();
-  res.setHeader("Content-Type", "text/plain");
-  res.send(metrics);
-});
-
-// Health check endpoint
-app.get("/health", async (req, res) => {
-  const health = await server.getHealth();
-  res.json(health);
-});
+export default {
+  port: 3000,
+  fetch: ws.fetch,
+  websocket: ws.websocket,
+};
 ```
 
-### Bun HTTP Server Integration
+### Metrics and health endpoints
 
 ```typescript
-import { Server } from "bun";
-import { Server as TeleportalServer } from "teleportal/server";
-import { HttpTransport } from "teleportal/transports/http";
+const handler = async (req: Request) => {
+  const url = new URL(req.url);
 
-const teleportalServer = new TeleportalServer({
-  storage: myStorage,
-  /* ... */
-});
+  if (url.pathname === "/metrics") {
+    return new Response(await server.getMetrics(), {
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
 
-Bun.serve({
-  port: 3000,
-  websocket: {
-    message: (ws, message) => {
-      // Handle WebSocket messages
-    },
-    open: (ws) => {
-      const transport = new WebSocketTransport(ws, {
-        /* ... */
-      });
-      teleportalServer.createClient({ transport });
-    },
-  },
-  fetch: async (req) => {
-    // Handle HTTP/SSE connections
-    if (req.url.endsWith("/sse")) {
-      const transport = new HttpTransport(req, {
-        /* ... */
-      });
-      teleportalServer.createClient({ transport });
-      return new Response();
-    }
+  if (url.pathname === "/health") {
+    const health = await server.getHealth();
+    return Response.json(health);
+  }
 
-    // Metrics endpoint
-    if (req.url.endsWith("/metrics")) {
-      return new Response(await teleportalServer.getMetrics(), {
-        headers: { "Content-Type": "text/plain" },
-      });
-    }
+  if (url.pathname === "/status") {
+    return Response.json(await server.getStatus());
+  }
 
-    return new Response("Not Found", { status: 404 });
-  },
-});
+  return new Response("Not Found", { status: 404 });
+};
 ```
 
 ## Summary

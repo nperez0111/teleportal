@@ -1090,9 +1090,7 @@ describe("Session", () => {
         // The surviving sibling tab (same connection) must see the leave.
         const leaves = client1.sentMessages
           .slice(prev)
-          .filter(
-            (m) => m.type === "presence" && (m.payload as any).type === "presence-leave",
-          );
+          .filter((m) => m.type === "presence" && (m.payload as any).type === "presence-leave");
         expect(leaves).toHaveLength(1);
         expect((leaves[0]!.payload as any).awarenessId).toBe(111);
       });
