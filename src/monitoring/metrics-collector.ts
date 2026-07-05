@@ -18,6 +18,8 @@ export class MetricsCollector {
   public readonly milestonesSoftDeletedTotal: Counter;
   public readonly milestonesRestoredTotal: Counter;
   public readonly rateLimitExceededTotal: Counter;
+  public readonly rateLimitDelayedTotal: Counter;
+  public readonly rateLimitDelayMsTotal: Counter;
   public readonly rateLimitStateOperationsTotal: Counter;
   public readonly rateLimitStateSize: Gauge;
 
@@ -94,6 +96,18 @@ export class MetricsCollector {
       ["userId", "documentId", "trackBy"],
     );
 
+    this.rateLimitDelayedTotal = new Counter(
+      "teleportal_rate_limit_delayed_total",
+      "Total number of inbound messages held (delayed) by rate limiting flow control",
+      ["userId", "documentId", "trackBy"],
+    );
+
+    this.rateLimitDelayMsTotal = new Counter(
+      "teleportal_rate_limit_delay_ms_total",
+      "Cumulative milliseconds inbound messages spent held by rate limiting flow control",
+      ["userId", "documentId", "trackBy"],
+    );
+
     this.rateLimitStateOperationsTotal = new Counter(
       "teleportal_rate_limit_state_operations_total",
       "Total number of rate limit state storage operations",
@@ -157,6 +171,8 @@ export class MetricsCollector {
     registry.register(this.milestonesSoftDeletedTotal);
     registry.register(this.milestonesRestoredTotal);
     registry.register(this.rateLimitExceededTotal);
+    registry.register(this.rateLimitDelayedTotal);
+    registry.register(this.rateLimitDelayMsTotal);
     registry.register(this.rateLimitStateOperationsTotal);
     registry.register(this.rateLimitStateSize);
   }
@@ -207,10 +223,6 @@ export class MetricsCollector {
   }
 
   /**
-   * Record milestone expiration
-   */
-
-  /**
    * Record rate limit exceeded event
    */
   recordRateLimitExceeded(userId: string, documentId: string | undefined, trackBy: string): void {
@@ -230,6 +242,22 @@ export class MetricsCollector {
     if (this.rateLimitRecentEvents.length > this.MAX_RECENT_EVENTS) {
       this.rateLimitRecentEvents.pop();
     }
+  }
+
+  /**
+   * Record an inbound message held (delayed) by rate limiting flow control.
+   * Delays are the healthy signal that limiting engaged WITHOUT losing the
+   * message — track them separately from exceeded (= dropped) events.
+   */
+  recordRateLimitDelayed(
+    userId: string,
+    documentId: string | undefined,
+    trackBy: string,
+    delayMs: number,
+  ): void {
+    const labels = { userId, documentId: documentId ?? "", trackBy };
+    this.rateLimitDelayedTotal.inc(labels);
+    this.rateLimitDelayMsTotal.inc(labels, delayMs);
   }
 
   /**
