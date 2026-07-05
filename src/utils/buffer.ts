@@ -32,8 +32,11 @@ export const fromBase64: (s: string) => Uint8Array = isBrowser ? fromBase64Brows
 export const toBase64UrlEncoded = (buf: Uint8Array): string =>
   toBase64(buf).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 
-export const fromBase64UrlEncoded = (base64: string): Uint8Array =>
-  fromBase64(base64.replaceAll("-", "+").replaceAll("_", "/"));
+export const fromBase64UrlEncoded = (base64: string): Uint8Array => {
+  const standard = base64.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = standard.length % 4 === 0 ? standard : standard + "=".repeat(4 - (standard.length % 4));
+  return fromBase64(padded);
+};
 
 export const toHexString = (buf: Uint8Array): string =>
   Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");

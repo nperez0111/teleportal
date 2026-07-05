@@ -1,6 +1,23 @@
-# Teleportal Protocol Documentation
+# Teleportal Core Library (`src/lib/`)
 
-This directory contains the implementation of the Teleportal protocol, a binary messaging protocol built on top of Y.js for real-time collaborative document synchronization and awareness updates.
+This directory contains the core library modules for Teleportal.
+
+## Directory Structure
+
+| Module | Description |
+|--------|-------------|
+| [`protocol/`](./protocol/README.md) | Binary messaging protocol: encode/decode, message types, file transfer |
+| [`attribution/`](./attribution/README.md) | Attribution data model, content maps, encoding, and extraction |
+| [`iter/`](./iter/) | Async iterator primitives: channels, broadcast, batching, adapters |
+| [`rpc/`](./rpc/) | RPC message framing for request/response and streaming over the protocol |
+| `index.ts` | Re-exports protocol and utility types (`Source`, `Sink`, `Transport`, `PubSub`) |
+| `utils.ts` | `Observable` event emitter and `InMemoryPubSub` implementation |
+
+---
+
+# Protocol Documentation
+
+The Teleportal protocol is a binary messaging protocol built on top of Y.js for real-time collaborative document synchronization and awareness updates.
 
 ## Protocol Overview
 
@@ -364,7 +381,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
   - **Upload**: Client-generated UUID matching the file upload session
   - **Download**: Merkle root hash (base64 string) identifying the file
 - ChunkIndex (varint): Zero-based index of this chunk
-- ChunkData (varint array): Chunk data (typically 64KB, or smaller for encrypted chunks)
+- ChunkData (varint array): Chunk data (typically 1MB, or smaller for encrypted chunks)
 - MerkleProofLength (varint): Number of proof hashes in the Merkle proof path
 - MerkleProof (array of varint arrays): Merkle proof path hashes (sibling hashes from leaf to root)
 - TotalChunks (varint): Total number of chunks in the file
@@ -399,7 +416,7 @@ File messages handle file uploads and downloads with chunking and Merkle tree ve
 
 ### File Chunking and Merkle Trees
 
-Files are split into **64KB chunks** for efficient transfer. Each chunk is hashed using SHA-256, and a Merkle tree is constructed to verify file integrity.
+Files are split into chunks (default **1MB**) for efficient transfer. Each chunk is hashed using SHA-256, and a Merkle tree is constructed to verify file integrity.
 
 #### Merkle Tree Structure
 
@@ -414,7 +431,7 @@ Files are split into **64KB chunks** for efficient transfer. Each chunk is hashe
                0     1     2     3     4     5     6     7
 ```
 
-- **Leaf nodes**: SHA-256 hash of each 64KB chunk
+- **Leaf nodes**: SHA-256 hash of each chunk
 - **Internal nodes**: Hash of concatenated child hashes
 - **Root hash**: Content ID used to uniquely identify the file
 - **Merkle proof**: Path from chunk hash to root (sibling hashes at each level)
@@ -423,7 +440,7 @@ Files are split into **64KB chunks** for efficient transfer. Each chunk is hashe
 
 For each chunk, the client sends:
 
-1. Chunk data (64KB)
+1. Chunk data
 2. Merkle proof (array of sibling hashes from leaf to root)
 3. Chunk index
 
@@ -708,7 +725,7 @@ const filePart: FilePartStream = {
   chunkData: chunkBytes,
   merkleProof: [hash1, hash2, hash3],
   totalChunks: 16,
-  bytesUploaded: 65536,
+  bytesUploaded: 1048576,
   encrypted: false,
 };
 const filePartMessage = new RpcMessage(
@@ -764,7 +781,7 @@ const milestoneUpdateNameRequest = new DocMessage("my-document", {
 
 ### Chunk Size
 
-Files are split into **64KB (65,536 bytes) chunks** for efficient transfer. This size balances:
+Files are split into **1MB (1,048,576 bytes) chunks** by default for efficient transfer. The chunk size is configurable per-server. This size balances:
 
 - Network efficiency (larger chunks reduce overhead)
 - Memory usage (smaller chunks reduce memory pressure)

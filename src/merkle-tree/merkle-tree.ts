@@ -104,7 +104,7 @@ export async function computeLeafHash(chunk: Uint8Array): Promise<Uint8Array> {
  * binary tree structure. Leaf hashing and each level of internal node hashing
  * are parallelized via Promise.all.
  *
- * @param chunks - Array of 64KB chunks
+ * @param chunks - Array of file chunks
  * @returns The merkle tree
  */
 export async function buildMerkleTree(chunks: Uint8Array[]): Promise<MerkleTree> {
