@@ -50,6 +50,10 @@ export function getHTTPHandlers<Context extends ServerContext>({
     getContext,
   });
 
+  const healthHandler = getHealthHandler(server);
+  const metricsHandler = getMetricsHandler(server);
+  const statusHandler = getStatusHandler(server);
+
   return async (req: Request) => {
     const url = new URL(req.url);
 
@@ -66,13 +70,13 @@ export function getHTTPHandlers<Context extends ServerContext>({
     }
 
     if (req.method === "GET" && url.pathname === "/health") {
-      return await getHealthHandler(server)(req);
+      return await healthHandler(req);
     }
     if (req.method === "GET" && url.pathname === "/metrics") {
-      return await getMetricsHandler(server)(req);
+      return await metricsHandler(req);
     }
     if (req.method === "GET" && url.pathname === "/status") {
-      return await getStatusHandler(server)(req);
+      return await statusHandler(req);
     }
 
     return fallbackFetch ? await fallbackFetch(req) : new Response("Not Found", { status: 404 });
@@ -116,14 +120,16 @@ export function tokenAuthenticatedHTTPHandler({
   return getHTTPHandlers({
     server,
     getContext: async (request) => {
+      const authHeader = request.headers.get("authorization");
       const token =
-        request.headers.get("authorization")?.replace("Bearer ", "") ??
-        new URL(request.url).searchParams.get("token");
+        (authHeader && /^bearer\s+/i.test(authHeader)
+          ? authHeader.replace(/^bearer\s+/i, "")
+          : null) ?? new URL(request.url).searchParams.get("token");
 
       if (!token) {
         throw new Response("Unauthorized", { status: 401 });
       }
-      const result = await tokenManager.verifyToken(token!);
+      const result = await tokenManager.verifyToken(token);
       if (!result.valid || !result.payload) {
         throw new Response("Unauthorized", { status: 401 });
       }

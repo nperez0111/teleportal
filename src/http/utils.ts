@@ -60,9 +60,14 @@ export function getDocumentsFromQueryParams(
  * into a batched async iterable of {@link Message}s.
  */
 export function decodeHTTPRequest(response: Response): AsyncIterable<Message<ClientContext>[]> {
-  const transform = fromMessageArrayTransform({
-    clientId: response.headers.get("x-teleportal-client-id")!,
-  });
-  const source = fromReadableStream(response.body! as ReadableStream<MessageArray>);
+  const clientId = response.headers.get("x-teleportal-client-id");
+  if (!clientId) {
+    throw new Error("Response is missing the x-teleportal-client-id header");
+  }
+  if (!response.body) {
+    throw new Error("Response has no body");
+  }
+  const transform = fromMessageArrayTransform({ clientId });
+  const source = fromReadableStream(response.body as ReadableStream<MessageArray>);
   return transform(source);
 }

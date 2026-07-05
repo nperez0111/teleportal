@@ -4,11 +4,14 @@ This module provides HTTP server functionality for Teleportal, enabling real-tim
 
 ## Overview
 
-The HTTP server module provides three main endpoints that allow clients to interact with the Teleportal `Server`:
+The HTTP server module provides the following endpoints that allow clients to interact with the Teleportal `Server`:
 
 1. **GET `/sse`** - Server-Sent Events endpoint for streaming messages from server to client
 2. **POST `/sse`** - HTTP endpoint for pushing messages to an SSE connection via PubSub
 3. **POST `/message`** - Direct HTTP endpoint for request-response message handling
+4. **GET `/health`** - Health check endpoint
+5. **GET `/metrics`** - Prometheus metrics endpoint
+6. **GET `/status`** - Server status endpoint
 
 The module is designed to work with the standard `Request` and `Response` interfaces, making it compatible with any runtime that supports the Fetch API (Node.js, Bun, Cloudflare Workers, Deno, etc.).
 
@@ -86,21 +89,23 @@ The HTTP module uses a combination of Server-Sent Events (SSE) and HTTP POST req
 
 ## API Reference
 
-### `getHTTPHandler`
+### `getHTTPHandlers`
 
-Creates a unified HTTP handler that routes requests to the appropriate endpoint based on the HTTP method and path.
+Creates a unified HTTP handler that routes requests to the appropriate endpoint based on the HTTP method and path. Routes to GET `/sse`, POST `/sse`, POST `/message`, GET `/health`, GET `/metrics`, and GET `/status`.
 
 **Signature:**
 
 ```typescript
-function getHTTPHandler<Context extends ServerContext>({
+function getHTTPHandlers<Context extends ServerContext>({
   server,
   getContext,
   getInitialDocuments,
+  fetch: fallbackFetch,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   getInitialDocuments?: (request: Request) => { document: string; encrypted?: boolean }[];
+  fetch?: (req: Request) => Response | Promise<Response>;
 }): (req: Request) => Response | Promise<Response>;
 ```
 
@@ -108,9 +113,11 @@ function getHTTPHandler<Context extends ServerContext>({
 
 - **`server`** (required): The Teleportal `Server` instance to use for managing clients and sessions.
 
-- **`getContext`** (required): A function that extracts the server context from the HTTP request. The returned context will be merged with a `clientId` to create the full `Context`.
+- **`getContext`** (required): A function that extracts the server context from the HTTP request. Can be synchronous or asynchronous. The returned context will be merged with a `clientId` to create the full `Context`.
 
 - **`getInitialDocuments`** (optional): A function that extracts document IDs from the request to automatically subscribe to when establishing an SSE connection. Defaults to `getDocumentsFromQueryParams` which reads from URL query parameters.
+
+- **`fetch`** (optional): A fallback fetch handler for requests that do not match any built-in endpoint. If not provided, unmatched requests return a `404 Not Found` response.
 
 **Returns:**
 
@@ -119,14 +126,14 @@ An async function that takes a `Request` and returns a `Response`. This can be u
 **Example:**
 
 ```typescript
-import { getHTTPHandler } from "teleportal/http";
+import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
 
 const server = new Server({
   // ... server configuration
 });
 
-const handler = getHTTPHandler({
+const handler = getHTTPHandlers({
   server,
   getContext: async (request) => {
     // Extract user information from headers, cookies, etc.
@@ -158,16 +165,16 @@ function getSSEReaderEndpoint<Context extends ServerContext>({
   getInitialDocuments = getDocumentsFromQueryParams,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   getInitialDocuments?: (
     request: Request,
     ctx: {
       clientId: string;
-      transport: Transport<Context, ...>;
+      transport: Transport<Context, { subscribe; unsubscribe }>;
       client: Client<Context>;
     },
   ) => { document: string; encrypted?: boolean }[];
-})
+});
 ```
 
 **How it works:**
@@ -244,7 +251,7 @@ function getSSEWriterEndpoint<Context extends ServerContext>({
   ackTimeout = 5000,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
   ackTimeout?: number;
 });
 ```
@@ -319,7 +326,7 @@ function getHTTPEndpoint<Context extends ServerContext>({
   getContext,
 }: {
   server: Server<Context>;
-  getContext: (request: Request) => Promise<Omit<Context, "clientId">>;
+  getContext: (request: Request) => Omit<Context, "clientId"> | Promise<Omit<Context, "clientId">>;
 });
 ```
 
@@ -401,12 +408,12 @@ Documents are **encrypted by default**. Append `:plaintext` (or its alias `:unen
 
 ### `decodeHTTPRequest`
 
-Decodes a `Response` containing a stream of `MessageArray`s into a stream of `Message`s.
+Decodes a `Response` containing a stream of `MessageArray`s into a batched async iterable of `Message`s. Throws if the response is missing the `x-teleportal-client-id` header or has no body.
 
 **Signature:**
 
 ```typescript
-function decodeHTTPRequest(response: Response): ReadableStream<Message<ClientContext>>;
+function decodeHTTPRequest(response: Response): AsyncIterable<Message<ClientContext>[]>;
 ```
 
 **Example:**
@@ -419,8 +426,86 @@ const response = await fetch("/message", {
   body: messageStream,
 });
 
-const messageStream = decodeHTTPRequest(response);
+const messages = decodeHTTPRequest(response);
 // Process individual messages
+```
+
+### `getHealthHandler`
+
+Returns a handler that responds with the health status of the server as JSON.
+
+**Signature:**
+
+```typescript
+function getHealthHandler(server: Server<any>): (request: Request) => Promise<Response>;
+```
+
+Returns the result of `server.getHealth()` as JSON. On error, returns a 500 response with `{ status: "unhealthy", ... }`.
+
+### `getMetricsHandler`
+
+Returns a handler that responds with Prometheus-format metrics.
+
+**Signature:**
+
+```typescript
+function getMetricsHandler(server: Server<any>): (request: Request) => Promise<Response>;
+```
+
+Returns the result of `server.getMetrics()` as `text/plain`. On error, returns a 500 response.
+
+### `getStatusHandler`
+
+Returns a handler that responds with the server status as JSON.
+
+**Signature:**
+
+```typescript
+function getStatusHandler(server: Server<any>): (request: Request) => Promise<Response>;
+```
+
+Returns the result of `server.getStatus()` as JSON. On error, returns a 500 response.
+
+### `tokenAuthenticatedHTTPHandler`
+
+Creates a `getHTTPHandlers` instance with token-based authentication. Extracts the token from the `Authorization` header (case-insensitive Bearer scheme) or a `token` query parameter and verifies it using a `TokenManager`. Non-Bearer authorization schemes (e.g. `Basic`) are ignored.
+
+**Signature:**
+
+```typescript
+function tokenAuthenticatedHTTPHandler({
+  server,
+  tokenManager,
+  fetch: fallbackFetch,
+}: {
+  server: Server<ServerContext>;
+  tokenManager: TokenManager;
+  fetch?: (req: Request) => Response | Promise<Response>;
+}): (req: Request) => Response | Promise<Response>;
+```
+
+Throws a `Response` with status 401 if no token is provided or if the token is invalid (Bun.serve surfaces thrown `Response` objects as the HTTP response).
+
+The `/health`, `/metrics`, and `/status` endpoints bypass authentication so they remain accessible to monitoring infrastructure (load balancers, Prometheus scrapers, etc.).
+
+**Example:**
+
+```typescript
+import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
+import { createTokenManager } from "teleportal/token";
+
+const tokenManager = createTokenManager({
+  secret: "your-secret-key-here",
+});
+
+const httpHandler = tokenAuthenticatedHTTPHandler({
+  server,
+  tokenManager,
+});
+
+Bun.serve({
+  fetch: httpHandler,
+});
 ```
 
 ## Message Flow
@@ -474,23 +559,21 @@ The HTTP module includes comprehensive error handling:
 
 - **Request Abortion**: Automatically cleans up connections and unsubscribes from PubSub when requests are aborted.
 
-- **Unknown Endpoints**: Returns 404 Not Found for requests that don't match any endpoint.
+- **Unknown Endpoints**: Delegates to the `fetch` fallback handler if provided, otherwise returns 404 Not Found for requests that don't match any endpoint.
 
 ## Logging
 
-The module uses structured logging via `@logtape/logtape` with namespaces:
+The module uses structured wide-event logging via `emitWideEvent` from `teleportal/server`. Each endpoint emits a wide event with the following fields:
 
-- `["teleportal", "http", "sse-reader-endpoint"]` - SSE reader endpoint logs
-- `["teleportal", "http", "sse-writer-endpoint"]` - SSE writer endpoint logs
-- `["teleportal", "http", "http-endpoint"]` - Direct HTTP endpoint logs
-
-Logs include:
-
-- Request/response lifecycle events
-- Client ID for tracing
-- Message processing details
-- Error details with context
-- ACK tracking information
+- `event_type` - One of `"http_sse_reader"`, `"http_sse_writer"`, or `"http_endpoint"`
+- `timestamp` - ISO 8601 timestamp
+- `client_id` - The client ID for tracing
+- `url` - The request URL
+- `method` - The HTTP method
+- `outcome` - `"success"` or `"error"`
+- `status_code` - The HTTP status code
+- `duration_ms` - Request duration in milliseconds
+- `error` - Error details (when outcome is `"error"`)
 
 ## Type Safety
 
@@ -503,7 +586,7 @@ interface ServerContext {
 }
 ```
 
-The `getContext` function should return `Omit<Context, "clientId">`, and the module automatically adds the `clientId` field.
+The `getContext` function should return `Omit<Context, "clientId">` (synchronously or as a Promise), and the module automatically adds the `clientId` field.
 
 ## Integration with Teleportal Server
 
@@ -515,33 +598,26 @@ The HTTP module integrates seamlessly with the Teleportal `Server`:
 
 3. **PubSub Integration**: Uses the server's PubSub instance for message routing between endpoints.
 
-4. **Transport Abstraction**: Uses Teleportal's transport system (`getHTTPSource`, `getSSESink`, `getPubSubSource`, `getPubSubSink`) for consistent message handling.
+4. **Transport Abstraction**: Uses Teleportal's transport system (`getHTTPSource`, `getSSESink`, `getPubSubSource`, `getPubSubSink`, `withAckSink`, `withAckTrackingSink`, `compose`, `connect`, `createChannel`) for consistent message handling.
 
 ## Dependencies
 
 - **`teleportal`**: Core Teleportal types and utilities
-- **`teleportal/server`**: Server implementation
+- **`teleportal/server`**: Server implementation and wide-event logging
 - **`teleportal/transports`**: Transport utilities
-- **`@logtape/logtape`**: Structured logging
+- **`teleportal/token`**: JWT token utilities (used by `tokenAuthenticatedHTTPHandler`)
 - **`lib0/random`**: UUID generation
 
 ## Runtime Compatibility
 
-The HTTP module works with any runtime that supports the Fetch API:
-
-- ✅ **Node.js** (18+) - via native fetch or polyfills
-- ✅ **Bun** - native support
-- ✅ **Cloudflare Workers** - native support
-- ✅ **Deno** - native support
-- ✅ **Vercel Edge Functions** - native support
-- ✅ **Netlify Edge Functions** - native support
+The HTTP module uses the standard `Request`/`Response` Fetch API, so it is portable to any runtime that implements that interface. Bun is the primary supported runtime.
 
 ## Examples
 
 ### Basic Setup
 
 ```typescript
-import { getHTTPHandler } from "teleportal/http";
+import { getHTTPHandlers } from "teleportal/http";
 import { Server } from "teleportal/server";
 
 const server = new Server({
@@ -549,7 +625,7 @@ const server = new Server({
 });
 
 export default {
-  fetch: getHTTPHandler({
+  fetch: getHTTPHandlers({
     server,
     getContext: async (request) => {
       // Extract context from request
@@ -562,12 +638,29 @@ export default {
 
 ### Custom Document Subscription
 
+When using `getHTTPHandlers`, `getInitialDocuments` receives only the `Request`:
+
 ```typescript
-const handler = getHTTPHandler({
+const handler = getHTTPHandlers({
+  server,
+  getContext: async (request) => ({ userId: "user-123" }),
+  getInitialDocuments: (request) => {
+    // Parse document IDs from the request
+    const url = new URL(request.url);
+    const docId = url.searchParams.get("doc");
+    return docId ? [{ document: docId, encrypted: true }] : [];
+  },
+});
+```
+
+When using `getSSEReaderEndpoint` directly, `getInitialDocuments` also receives a context object with the `clientId`, `transport`, and `client`:
+
+```typescript
+const sseReader = getSSEReaderEndpoint({
   server,
   getContext: async (request) => ({ userId: "user-123" }),
   getInitialDocuments: (request, ctx) => {
-    // Custom logic based on user permissions, etc.
+    // Access to client and transport for custom logic
     const userDocs = getUserDocuments(ctx.client.id);
     return userDocs.map((doc) => ({
       document: doc.id,
@@ -580,7 +673,14 @@ const handler = getHTTPHandler({
 ### Using Individual Endpoints
 
 ```typescript
-import { getSSEReaderEndpoint, getSSEWriterEndpoint, getHTTPEndpoint } from "teleportal/http";
+import {
+  getSSEReaderEndpoint,
+  getSSEWriterEndpoint,
+  getHTTPEndpoint,
+  getHealthHandler,
+  getMetricsHandler,
+  getStatusHandler,
+} from "teleportal/http";
 
 const sseReader = getSSEReaderEndpoint({ server, getContext });
 const sseWriter = getSSEWriterEndpoint({ server, getContext });
