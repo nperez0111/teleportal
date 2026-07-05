@@ -351,7 +351,7 @@ describe.each(backends)("AbstractDocumentStorage encrypted sync ($name)", (backe
     const compactedSidecar: IndexedSidecar = {
       encrypted: compactedEncrypted,
       index: buildSidecarIndex(mergedSidecar.entries),
-      hash: hashSidecar(compactedEncrypted),
+      hash: await hashSidecar(compactedEncrypted),
     };
 
     const baseSV = Y.encodeStateVectorFromUpdateV2(state!.update);
@@ -528,7 +528,7 @@ async function buildCompaction(
   return {
     sidecar: encrypted,
     index: buildSidecarIndex(merged.entries),
-    hash: hashSidecar(encrypted),
-    sourceHashes: sidecars.map((s) => hashSidecar(s.encrypted)),
+    hash: await hashSidecar(encrypted),
+    sourceHashes: await Promise.all(sidecars.map((s) => hashSidecar(s.encrypted))),
   };
 }

@@ -16,6 +16,7 @@ import {
 } from "../lib/protocol/encryption/encoding";
 import type { SidecarCompaction } from "../lib/protocol/encryption/encoding";
 import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "./types";
+import { bytesEqual } from "./utils";
 
 /**
  * Internal representation of a document's persisted state: a merged V2
@@ -50,31 +51,26 @@ export function normalizeMetadata(
   };
 }
 
-export function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 /**
  * Build {@link IndexedSidecar}s from a decoded content-encrypted payload.
  * Returns an empty array when the payload carries no sidecars or the update
  * has no insert structs (delete-only diff).
  */
-export function buildIncomingSidecars(
+export async function buildIncomingSidecars(
   decoded: import("../lib/protocol/encryption/encoding").ContentEncryptedPayload,
-): IndexedSidecar[] {
+): Promise<IndexedSidecar[]> {
   if (decoded.encryptedSidecars.length === 0) return [];
   const incomingMeta = Y.parseUpdateMetaV2(decoded.structureUpdate);
   const index = buildSidecarIndexFromUpdateMeta(incomingMeta);
   if (index.length === 0) return [];
-  return decoded.encryptedSidecars.map((encrypted) => ({
-    encrypted,
-    index,
-    hash: hashSidecar(encrypted),
-  }));
+  return Promise.all(
+    decoded.encryptedSidecars.map(async (encrypted) => ({
+      encrypted,
+      index,
+      hash: await hashSidecar(encrypted),
+    })),
+  );
 }
 
 /**
@@ -89,7 +85,7 @@ export function applySidecarUpdate(
   if (compaction) {
     const matchedIndices = new Set<number>();
     for (const sourceHash of compaction.sourceHashes) {
-      const idx = existing.findIndex((s) => arraysEqual(s.hash, sourceHash));
+      const idx = existing.findIndex((s) => bytesEqual(s.hash, sourceHash));
       if (idx !== -1) matchedIndices.add(idx);
     }
     if (matchedIndices.size === compaction.sourceHashes.length) {
@@ -204,7 +200,7 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
       if (decoded.structureUpdate.length === 0) return;
 
-      const incomingSidecars = buildIncomingSidecars(decoded);
+      const incomingSidecars = await buildIncomingSidecars(decoded);
 
       await this.appendUpdate(key, {
         structureUpdate: decoded.structureUpdate,
@@ -282,7 +278,7 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       if (!state) return false;
 
       const currentSV = Y.encodeStateVectorFromUpdateV2(state.update);
-      if (!arraysEqual(currentSV, baseSV)) return false;
+      if (!bytesEqual(currentSV, baseSV)) return false;
 
       await this.replaceDocumentState(key, state.update, [compactedSidecar]);
       return true;

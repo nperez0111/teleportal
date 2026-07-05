@@ -153,9 +153,10 @@ export class AdvisoryLocker {
     for (;;) {
       let locked: boolean;
       try {
-        const rows = (await conn`SELECT pg_try_advisory_lock(hashtextextended(${lockKey}, 0)) AS locked`) as {
-          locked: boolean;
-        }[];
+        const rows =
+          (await conn`SELECT pg_try_advisory_lock(hashtextextended(${lockKey}, 0)) AS locked`) as {
+            locked: boolean;
+          }[];
         locked = rows[0]?.locked === true;
       } catch (error) {
         if (isStatementTimeout(error)) {

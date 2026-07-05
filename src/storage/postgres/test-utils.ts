@@ -16,6 +16,11 @@ export const POSTGRES_URL =
  * Ping Postgres with a short timeout. Test files check this in `beforeAll`
  * and early-return from each test when unavailable, mirroring the Redis
  * transport tests.
+ *
+ * In CI (`CI` env var set) unavailability is a hard error rather than a skip:
+ * the CI workflow provisions Postgres, so an unreachable server means the
+ * service regressed and the suite must fail loudly instead of passing as a
+ * no-op.
  */
 export async function isPostgresAvailable(): Promise<boolean> {
   const sql = postgres(POSTGRES_URL, { max: 1, connect_timeout: 2 });
@@ -23,6 +28,11 @@ export async function isPostgresAvailable(): Promise<boolean> {
     await sql`SELECT 1`;
     return true;
   } catch (error) {
+    if (process.env.CI) {
+      throw new Error(
+        `Postgres is required in CI but was not reachable at ${POSTGRES_URL}: ${error}`,
+      );
+    }
     console.log(`Postgres not available at ${POSTGRES_URL}: ${error}`);
     return false;
   } finally {

@@ -9,6 +9,7 @@ import type {
   TemporaryUploadStorage,
   UploadProgress,
 } from "../types";
+import { bytesEqual } from "../utils";
 
 /**
  * Default upload timeout in milliseconds (24 hours)
@@ -270,17 +271,4 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       }
     }
   }
-}
-
-/** Byte-wise equality check (length first, then contents). */
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-  return true;
 }

@@ -18,6 +18,11 @@ export const TEST_S3_CONFIG: S3Config = {
  * Ping the S3 endpoint (creating the test bucket when missing). Test files
  * check this in `beforeAll` and early-return from each test when unavailable,
  * mirroring the Redis transport tests.
+ *
+ * In CI (`CI` env var set) unavailability is a hard error rather than a skip:
+ * the CI workflow provisions an S3-compatible service, so an unreachable
+ * endpoint means it regressed and the suite must fail loudly instead of
+ * passing as a no-op.
  */
 export async function isS3Available(): Promise<boolean> {
   try {
@@ -26,6 +31,11 @@ export async function isS3Available(): Promise<boolean> {
     await client.listObjectsV2("", { maxKeys: 1 });
     return true;
   } catch (error) {
+    if (process.env.CI) {
+      throw new Error(
+        `S3 is required in CI but was not reachable at ${TEST_S3_CONFIG.endpoint}: ${error}`,
+      );
+    }
     console.log(`S3 not available at ${TEST_S3_CONFIG.endpoint}: ${error}`);
     return false;
   }

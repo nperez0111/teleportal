@@ -42,7 +42,7 @@ export class MergeOnWriteStorage extends AbstractDocumentStorage {
       const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
       if (decoded.structureUpdate.length === 0) return;
 
-      const incomingSidecars = buildIncomingSidecars(decoded);
+      const incomingSidecars = await buildIncomingSidecars(decoded);
       const now = Date.now();
       const existing = await this.#inner.getBaseState(key);
 

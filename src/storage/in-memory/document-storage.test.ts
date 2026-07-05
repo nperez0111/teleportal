@@ -1100,7 +1100,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
               .reduce((max, e) => Math.max(max, e.clock), 0),
           },
         ],
-        hash: hashSidecar(encrypted),
+        hash: await hashSidecar(encrypted),
       };
 
       const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
@@ -1144,7 +1144,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       const compactedSidecar = {
         encrypted: dummyEncrypted,
         index: [],
-        hash: hashSidecar(dummyEncrypted),
+        hash: await hashSidecar(dummyEncrypted),
       };
       const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
       expect(accepted).toBe(false);
@@ -1162,7 +1162,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       const compactedSidecar = {
         encrypted: dummyEncrypted,
         index: [],
-        hash: hashSidecar(dummyEncrypted),
+        hash: await hashSidecar(dummyEncrypted),
       };
       const accepted = await storage.handleCompaction(
         "nonexistent",
@@ -1189,9 +1189,9 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       }) as EncryptedUpdatePayload;
     }
 
-    function buildCompaction(
+    async function buildCompaction(
       sidecars: { encrypted: EncryptedBinary }[],
-    ): import("teleportal/protocol/encryption").SidecarCompaction {
+    ): Promise<import("teleportal/protocol/encryption").SidecarCompaction> {
       const allDecoded = sidecars.map((s) => decodeSidecar(s.encrypted as unknown as Uint8Array));
       const merged = mergeSidecars(allDecoded);
       const compactedBytes = encodeSidecar(merged);
@@ -1201,8 +1201,8 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       return {
         sidecar: encrypted,
         index: buildSidecarIndex(merged.entries),
-        hash: hashSidecar(encrypted),
-        sourceHashes: sidecars.map((s) => hashSidecar(s.encrypted)),
+        hash: await hashSidecar(encrypted),
+        sourceHashes: await Promise.all(sidecars.map((s) => hashSidecar(s.encrypted))),
       };
     }
 
@@ -1222,7 +1222,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       expect(state!.sidecars.length).toBe(3);
 
       // Build compaction from the 3 stored sidecars
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Send a new update with compaction piggy-backed
       const docNew = new Y.Doc();
@@ -1260,7 +1260,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 
       // Snapshot the 2 sidecars for compaction
       let state = await storage.getDocumentState("doc-1");
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Concurrent write arrives BEFORE compaction is applied
       const docC = new Y.Doc();
@@ -1311,7 +1311,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 
       // Client 1 snapshots sidecars for compaction
       let state = await storage.getDocumentState("doc-1");
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Client 2 already compacted via handleCompaction — replaces both sidecars
       const allDecoded = state!.sidecars.map((s) =>
@@ -1324,7 +1324,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
         {
           encrypted: otherCompactedBytes,
           index: [],
-          hash: hashSidecar(otherCompactedBytes),
+          hash: await hashSidecar(otherCompactedBytes),
         },
         Y.encodeStateVectorFromUpdateV2(state!.update),
       );
@@ -1354,8 +1354,8 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       const compaction: import("teleportal/protocol/encryption").SidecarCompaction = {
         sidecar: dummyEncrypted,
         index: [],
-        hash: hashSidecar(dummyEncrypted),
-        sourceHashes: [hashSidecar(dummyEncrypted)],
+        hash: await hashSidecar(dummyEncrypted),
+        sourceHashes: [await hashSidecar(dummyEncrypted)],
       };
 
       const doc = new Y.Doc();
@@ -1390,7 +1390,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       expect(sidecar.hash.length).toBe(32);
 
       // Hash should match recomputation
-      expect(sidecar.hash).toEqual(hashSidecar(sidecar.encrypted));
+      expect(sidecar.hash).toEqual(await hashSidecar(sidecar.encrypted));
     });
 
     it("processes compaction even when the update itself is a no-op (new client with no local changes)", async () => {
@@ -1408,7 +1408,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       let state = await storage.getDocumentState("doc-1");
       expect(state!.sidecars.length).toBe(3);
 
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Simulate a new client: apply the same updates to get identical state,
       // then compute a diff against the server's SV — should produce a no-op update
@@ -1445,7 +1445,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       // Verify 3 sidecars accumulated
       let state = await storage.getDocumentState("doc-1");
       expect(state!.sidecars.length).toBe(3);
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Client A sends back sync-step-2 with no-op diff + compaction
       const updates = [];

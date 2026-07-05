@@ -195,7 +195,7 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     // Two distinct sidecars, each keyed by its content hash.
     expect(storeSizes(dbName).sidecars).toBe(2);
     expect(sidecarKeys(dbName).sort()).toEqual(
-      [toHexString(hashSidecar(encA)), toHexString(hashSidecar(encB))].sort(),
+      [toHexString(await hashSidecar(encA)), toHexString(await hashSidecar(encB))].sort(),
     );
 
     // The state row stays tiny (references both sidecars, doesn't inline them).
@@ -230,7 +230,7 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
         sidecar: compacted.encrypted,
         index: compacted.index,
         hash: compacted.hash,
-        sourceHashes: [hashSidecar(encA), hashSidecar(encB)],
+        sourceHashes: [await hashSidecar(encA), await hashSidecar(encB)],
       },
     });
     await storage.handleUpdate("doc", envelope(payload));
@@ -242,8 +242,8 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
     await storage.replaceDocumentState("doc", state!.update, state!.sidecars);
 
     // A and B rows are gone; the compacted row + the new edit's row remain.
-    expect(sidecarKeys(dbName)).not.toContain(toHexString(hashSidecar(encA)));
-    expect(sidecarKeys(dbName)).not.toContain(toHexString(hashSidecar(encB)));
+    expect(sidecarKeys(dbName)).not.toContain(toHexString(await hashSidecar(encA)));
+    expect(sidecarKeys(dbName)).not.toContain(toHexString(await hashSidecar(encB)));
     expect(sidecarKeys(dbName)).toContain(toHexString(compacted.hash));
     expect(storeSizes(dbName).sidecars).toBe(2);
   });
@@ -281,7 +281,7 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
             sidecar: compacted.encrypted,
             index: compacted.index,
             hash: compacted.hash,
-            sourceHashes: encrypteds.map(hashSidecar),
+            sourceHashes: await Promise.all(encrypteds.map(hashSidecar)),
           },
         }),
       ),
