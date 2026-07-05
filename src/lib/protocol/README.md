@@ -16,32 +16,32 @@ Every message starts with a fixed header:
 
 Message types:
 
-| Type byte | Name        | Description                                    |
-| --------- | ----------- | ---------------------------------------------- |
+| Type byte | Name        | Description                                                        |
+| --------- | ----------- | ------------------------------------------------------------------ |
 | 0x00      | `doc`       | Y.js sync/update messages (sync-step-1/2, update, sync-done, auth) |
-| 0x01      | `awareness` | Y.js awareness updates and requests            |
-| 0x02      | `ack`       | Acknowledgement / NACK with optional retry-after or error |
-| 0x03      | `presence`  | Client join/leave/announce/unannounce/heartbeat |
-| 0x04      | `rpc`       | Remote procedure calls with request/stream/response patterns |
+| 0x01      | `awareness` | Y.js awareness updates and requests                                |
+| 0x02      | `ack`       | Acknowledgement / NACK with optional retry-after or error          |
+| 0x03      | `presence`  | Client join/leave/announce/unannounce/heartbeat                    |
+| 0x04      | `rpc`       | Remote procedure calls with request/stream/response patterns       |
 
 ### Doc sub-types (type 0x00)
 
-| Sub-type | Name          | Payload                              |
-| -------- | ------------- | ------------------------------------ |
-| 0x00     | sync-step-1   | `[varUint8Array: stateVector]`       |
-| 0x01     | sync-step-2   | `[uint8: version] [varUint8Array: update]` |
-| 0x02     | update        | `[uint8: version] [varUint8Array: update]` |
-| 0x03     | sync-done     | (no payload)                         |
-| 0x04     | auth-message  | `[uint8: permission] [varString: reason]` |
+| Sub-type | Name         | Payload                                    |
+| -------- | ------------ | ------------------------------------------ |
+| 0x00     | sync-step-1  | `[varUint8Array: stateVector]`             |
+| 0x01     | sync-step-2  | `[uint8: version] [varUint8Array: update]` |
+| 0x02     | update       | `[uint8: version] [varUint8Array: update]` |
+| 0x03     | sync-done    | (no payload)                               |
+| 0x04     | auth-message | `[uint8: permission] [varString: reason]`  |
 
 Updates carry a version byte (1 = V1, 2 = V2) so the receiver knows how to apply them.
 
 ### Awareness sub-types (type 0x01)
 
-| Sub-type | Name              | Payload                          |
-| -------- | ----------------- | -------------------------------- |
-| 0x00     | awareness-update  | `[varUint8Array: update]`        |
-| 0x01     | awareness-request | (no payload)                     |
+| Sub-type | Name              | Payload                   |
+| -------- | ----------------- | ------------------------- |
+| 0x00     | awareness-update  | `[varUint8Array: update]` |
+| 0x01     | awareness-request | (no payload)              |
 
 ### Ack message (type 0x02)
 
@@ -54,13 +54,13 @@ Updates carry a version byte (1 = V1, 2 = V2) so the receiver knows how to apply
 
 ### Presence sub-types (type 0x03)
 
-| Sub-type | Name                 | Payload                                      |
-| -------- | -------------------- | -------------------------------------------- |
-| 0x00     | presence-announce    | `[varUint: awarenessId]`                     |
-| 0x01     | presence-join        | `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]` |
-| 0x02     | presence-leave       | (same as join)                               |
-| 0x03     | presence-heartbeat   | `[varUint: count] per client: [varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]` |
-| 0x04     | presence-unannounce  | `[varUint: awarenessId]`                     |
+| Sub-type | Name                | Payload                                                                                                     |
+| -------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 0x00     | presence-announce   | `[varUint: awarenessId]`                                                                                    |
+| 0x01     | presence-join       | `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]`                              |
+| 0x02     | presence-leave      | (same as join)                                                                                              |
+| 0x03     | presence-heartbeat  | `[varUint: count] per client: [varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]` |
+| 0x04     | presence-unannounce | `[varUint: awarenessId]`                                                                                    |
 
 ### RPC message (type 0x04)
 

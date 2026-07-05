@@ -4,14 +4,14 @@ This directory contains the core library modules for Teleportal.
 
 ## Directory Structure
 
-| Module | Description |
-|--------|-------------|
-| [`protocol/`](./protocol/README.md) | Binary messaging protocol: encode/decode, message types, file transfer |
-| [`attribution/`](./attribution/README.md) | Attribution data model, content maps, encoding, and extraction |
-| [`iter/`](./iter/) | Async iterator primitives: channels, broadcast, batching, adapters |
-| [`rpc/`](./rpc/) | RPC message framing for request/response and streaming over the protocol |
-| `index.ts` | Re-exports protocol and utility types (`Source`, `Sink`, `Transport`, `PubSub`) |
-| `utils.ts` | `Observable` event emitter and `InMemoryPubSub` implementation |
+| Module                                    | Description                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------- |
+| [`protocol/`](./protocol/README.md)       | Binary messaging protocol: encode/decode, message types, file transfer          |
+| [`attribution/`](./attribution/README.md) | Attribution data model, content maps, encoding, and extraction                  |
+| [`iter/`](./iter/)                        | Async iterator primitives: channels, broadcast, batching, adapters              |
+| [`rpc/`](./rpc/)                          | RPC message framing for request/response and streaming over the protocol        |
+| `index.ts`                                | Re-exports protocol and utility types (`Source`, `Sink`, `Transport`, `PubSub`) |
+| `utils.ts`                                | `Observable` event emitter and `InMemoryPubSub` implementation                  |
 
 ---
 

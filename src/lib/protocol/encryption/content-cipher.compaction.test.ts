@@ -433,7 +433,10 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
           sidecar: compacted.encrypted,
           index: compacted.index,
           hash: compacted.hash,
-          sourceHashes: [await hashSidecar(s1.encryptedSidecar), await hashSidecar(s2.encryptedSidecar)],
+          sourceHashes: [
+            await hashSidecar(s1.encryptedSidecar),
+            await hashSidecar(s2.encryptedSidecar),
+          ],
         },
       };
       const decoded = decodeContentEncryptedPayload(encodeContentEncryptedPayload(payload));

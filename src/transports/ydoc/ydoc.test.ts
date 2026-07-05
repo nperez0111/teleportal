@@ -303,7 +303,6 @@ describe("ydoc sink", () => {
       process.off("unhandledRejection", onRejection);
     }
   });
-
 });
 
 describe("ydoc transport", () => {

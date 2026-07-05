@@ -975,9 +975,7 @@ describe("edge cases", () => {
   it("getActivity skips entries without a timestamp attribute", () => {
     const ids = createContentIds();
     ids.inserts.add(1, 0, 5);
-    const map = createContentMapFromContentIds(ids, [
-      createContentAttribute("insert", "user-1"),
-    ]);
+    const map = createContentMapFromContentIds(ids, [createContentAttribute("insert", "user-1")]);
 
     const activity = getActivity(map);
     expect(activity.length).toBe(0);
@@ -986,9 +984,7 @@ describe("edge cases", () => {
   it("resolveItemAttribution returns null when userId is missing", () => {
     const ids = createContentIds();
     ids.inserts.add(1, 0, 5);
-    const map = createContentMapFromContentIds(ids, [
-      createContentAttribute("insertAt", 1000),
-    ]);
+    const map = createContentMapFromContentIds(ids, [createContentAttribute("insertAt", 1000)]);
 
     expect(resolveItemAttribution(map, 1, 0)).toBeNull();
   });
@@ -996,9 +992,7 @@ describe("edge cases", () => {
   it("resolveItemAttribution returns null when timestamp is missing", () => {
     const ids = createContentIds();
     ids.inserts.add(1, 0, 5);
-    const map = createContentMapFromContentIds(ids, [
-      createContentAttribute("insert", "user-1"),
-    ]);
+    const map = createContentMapFromContentIds(ids, [createContentAttribute("insert", "user-1")]);
 
     expect(resolveItemAttribution(map, 1, 0)).toBeNull();
   });

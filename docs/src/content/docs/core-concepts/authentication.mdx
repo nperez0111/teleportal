@@ -236,9 +236,7 @@ const handlers = getWebsocketHandlers({
     const authHeader = request.headers.get("authorization");
     const token =
       url.searchParams.get("token") ||
-      (authHeader && /^bearer\s+/i.test(authHeader)
-        ? authHeader.replace(/^bearer\s+/i, "")
-        : null);
+      (authHeader && /^bearer\s+/i.test(authHeader) ? authHeader.replace(/^bearer\s+/i, "") : null);
 
     if (!token) {
       throw new Response("No token provided", { status: 401 });

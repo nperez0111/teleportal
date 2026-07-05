@@ -190,7 +190,10 @@ export function withAckTrackingSink<
           });
         });
         messagesToAck.add(ackPromise);
-        ackPromise.then(() => messagesToAck.delete(ackPromise), () => {});
+        ackPromise.then(
+          () => messagesToAck.delete(ackPromise),
+          () => {},
+        );
       }
 
       await sink.write(message);
@@ -200,7 +203,7 @@ export function withAckTrackingSink<
   return Object.assign(trackedSink, {
     waitForAcks: async () => {
       await subscriptionPromise;
-      await Promise.all([...messagesToAck]);
+      await Promise.all(messagesToAck);
     },
     unsubscribe: async () => {
       for (const pending of pendingAcks.values()) {

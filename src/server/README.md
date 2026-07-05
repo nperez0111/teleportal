@@ -770,9 +770,7 @@ const server = new Server({
   /* ... */
 });
 
-const ws = crossws(
-  tokenAuthenticatedWebsocketHandler({ server, tokenManager }),
-);
+const ws = crossws(tokenAuthenticatedWebsocketHandler({ server, tokenManager }));
 
 export default {
   port: 3000,

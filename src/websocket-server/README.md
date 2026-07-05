@@ -99,14 +99,14 @@ Each WebSocket connection gets a `BinaryTransport`:
 
 ## Error handling
 
-| Phase | Behavior |
-|-------|----------|
-| `upgrade` throws `Response` | Returned to client as-is |
-| `upgrade` throws other | 401 Unauthorized |
-| `open` (createClient) fails | Logged, peer closed |
-| `message` hook throws | Logged; message still delivered |
-| `close` hook throws | Logged; cleanup still runs |
-| `error` event | Forwarded to channel, consumer loop exits |
+| Phase                       | Behavior                                  |
+| --------------------------- | ----------------------------------------- |
+| `upgrade` throws `Response` | Returned to client as-is                  |
+| `upgrade` throws other      | 401 Unauthorized                          |
+| `open` (createClient) fails | Logged, peer closed                       |
+| `message` hook throws       | Logged; message still delivered           |
+| `close` hook throws         | Logged; cleanup still runs                |
+| `error` event               | Forwarded to channel, consumer loop exits |
 
 ## Dependencies
 

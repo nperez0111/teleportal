@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  getMilestoneRpcHandlers,
-  getFileRpcHandlers,
-  getKeyRegistryRpcHandlers,
-} from "./index";
+import { getMilestoneRpcHandlers, getFileRpcHandlers, getKeyRegistryRpcHandlers } from "./index";
 import type { MilestoneStorage } from "teleportal/storage";
 
 describe("protocols/index exports", () => {

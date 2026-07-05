@@ -34,7 +34,8 @@ export const toBase64UrlEncoded = (buf: Uint8Array): string =>
 
 export const fromBase64UrlEncoded = (base64: string): Uint8Array => {
   const standard = base64.replaceAll("-", "+").replaceAll("_", "/");
-  const padded = standard.length % 4 === 0 ? standard : standard + "=".repeat(4 - (standard.length % 4));
+  const padded =
+    standard.length % 4 === 0 ? standard : standard + "=".repeat(4 - (standard.length % 4));
   return fromBase64(padded);
 };
 

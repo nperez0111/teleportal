@@ -62,7 +62,9 @@ describe("MergeOnWriteStorage", () => {
     const result = await storage.getDocument("doc1");
     expect(result).not.toBeNull();
 
-    const decoded = decodeContentEncryptedPayload(result!.content.update as unknown as EncryptedUpdatePayload);
+    const decoded = decodeContentEncryptedPayload(
+      result!.content.update as unknown as EncryptedUpdatePayload,
+    );
     const verify = new Y.Doc();
     Y.applyUpdateV2(verify, decoded.structureUpdate);
     expect(verify.getText("t").toString()).toBe("test");

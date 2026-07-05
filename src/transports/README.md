@@ -253,9 +253,7 @@ const loggedTransport = withLogger(transport);
 
 // Add rate limiting
 const rateLimitedTransport = withRateLimit(loggedTransport, {
-  rules: [
-    { id: "per-user", maxMessages: 100, windowMs: 1000, trackBy: "user" },
-  ],
+  rules: [{ id: "per-user", maxMessages: 100, windowMs: 1000, trackBy: "user" }],
 });
 ```
 

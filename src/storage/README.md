@@ -93,13 +93,13 @@ Stores token-bucket rate limit state with TTL support.
 
 Stores everything in process memory. Data is lost on restart.
 
-| Class | Interface |
-|-------|-----------|
-| `MemoryDocumentStorage` | DocumentStorage |
-| `InMemoryFileStorage` | FileStorage |
+| Class                            | Interface              |
+| -------------------------------- | ---------------------- |
+| `MemoryDocumentStorage`          | DocumentStorage        |
+| `InMemoryFileStorage`            | FileStorage            |
 | `InMemoryTemporaryUploadStorage` | TemporaryUploadStorage |
-| `InMemoryMilestoneStorage` | MilestoneStorage |
-| `InMemoryKeyRegistryStorage` | KeyRegistryStorage |
+| `InMemoryMilestoneStorage`       | MilestoneStorage       |
+| `InMemoryKeyRegistryStorage`     | KeyRegistryStorage     |
 
 ```typescript
 import { MemoryDocumentStorage, InMemoryFileStorage } from "teleportal/storage";
@@ -113,10 +113,10 @@ const fileStorage = new InMemoryFileStorage();
 Client-side storage using `lib0/indexeddb`. Used by the Provider for
 encrypted-at-rest offline persistence.
 
-| Class | Interface |
-|-------|-----------|
-| `IdbDocumentStorage` | DocumentStorage |
-| `IdbFileCache` | FileCache (chunk-level read/write cache) |
+| Class                | Interface                                |
+| -------------------- | ---------------------------------------- |
+| `IdbDocumentStorage` | DocumentStorage                          |
+| `IdbFileCache`       | FileCache (chunk-level read/write cache) |
 
 One IDB database per document with four object stores: `state` (compacted base
 update + sidecar hash list), `meta` (JSON metadata), `sidecars`
@@ -136,14 +136,14 @@ Works with any backend supported by
 [unstorage](https://github.com/unjs/unstorage) (Redis, filesystem, S3, SQLite
 via db0, etc.).
 
-| Class | Interface |
-|-------|-----------|
-| `UnstorageDocumentStorage` | DocumentStorage |
-| `UnstorageFileStorage` | FileStorage |
+| Class                             | Interface              |
+| --------------------------------- | ---------------------- |
+| `UnstorageDocumentStorage`        | DocumentStorage        |
+| `UnstorageFileStorage`            | FileStorage            |
 | `UnstorageTemporaryUploadStorage` | TemporaryUploadStorage |
-| `UnstorageMilestoneStorage` | MilestoneStorage |
-| `UnstorageRateLimitStorage` | RateLimitStorage |
-| `UnstorageKeyRegistryStorage` | KeyRegistryStorage |
+| `UnstorageMilestoneStorage`       | MilestoneStorage       |
+| `UnstorageRateLimitStorage`       | RateLimitStorage       |
+| `UnstorageKeyRegistryStorage`     | KeyRegistryStorage     |
 
 All classes take an unstorage `Storage` instance plus options with a per-type
 `keyPrefix`. Transactions use TTL-based locking via
@@ -174,11 +174,11 @@ at all (the adapters type against a minimal
 [`Sql` interface](./postgres/types.ts) that both
 [`postgres`](https://github.com/porsager/postgres) and `Bun.sql` satisfy).
 
-| Class | Interface |
-|-------|-----------|
-| `PostgresDocumentStorage` | DocumentStorage |
-| `PostgresMilestoneStorage` | MilestoneStorage |
-| `PostgresRateLimitStorage` | RateLimitStorage |
+| Class                        | Interface          |
+| ---------------------------- | ------------------ |
+| `PostgresDocumentStorage`    | DocumentStorage    |
+| `PostgresMilestoneStorage`   | MilestoneStorage   |
+| `PostgresRateLimitStorage`   | RateLimitStorage   |
 | `PostgresKeyRegistryStorage` | KeyRegistryStorage |
 
 Run `ensureSchema(sql, { tablePrefix })` once at startup. All `CREATE ... IF
@@ -213,9 +213,9 @@ First-party file storage for AWS S3, Cloudflare R2, and MinIO. Built on the
 optional [`aws4fetch`](https://github.com/mhart/aws4fetch) peer dependency
 (~6KB SigV4 signer, zero deps).
 
-| Class | Interface |
-|-------|-----------|
-| `S3FileStorage` | FileStorage |
+| Class                      | Interface              |
+| -------------------------- | ---------------------- |
+| `S3FileStorage`            | FileStorage            |
 | `S3TemporaryUploadStorage` | TemporaryUploadStorage |
 
 ```typescript
@@ -263,10 +263,10 @@ const tiered = new TieredDocumentStorage(
   new MemoryDocumentStorage(true),
   new UnstorageDocumentStorage(storage, { encrypted: true }),
   {
-    persistIntervalMs: 5000,   // sweep every 5s (default)
-    maxDirtyAgeMs: 30_000,     // force persist after 30s (default)
-    persistBatchSize: 50,      // max docs per sweep (default)
-    evictAfterMs: 60_000,      // evict clean docs from fast tier
+    persistIntervalMs: 5000, // sweep every 5s (default)
+    maxDirtyAgeMs: 30_000, // force persist after 30s (default)
+    persistBatchSize: 50, // max docs per sweep (default)
+    evictAfterMs: 60_000, // evict clean docs from fast tier
     onPersistError: (id, err) => console.error(id, err),
   },
 );
@@ -346,14 +346,30 @@ export class MyStorage extends AbstractDocumentStorage {
     super(encrypted);
   }
 
-  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> { /* ... */ }
-  async getPendingUpdates(key: string) { /* ... */ }
-  async clearPendingUpdates(key: string, upToCursor: number) { /* ... */ }
-  async getBaseState(key: string): Promise<DocumentState | null> { /* ... */ }
-  async replaceBaseState(key: string, update: Uint8Array, sidecars: IndexedSidecar[]) { /* ... */ }
-  async writeDocumentMetadata(key: string, metadata: DocumentMetadata) { /* ... */ }
-  async getDocumentMetadata(key: string): Promise<DocumentMetadata> { /* ... */ }
-  async deleteDocument(key: string) { /* ... */ }
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
+    /* ... */
+  }
+  async getPendingUpdates(key: string) {
+    /* ... */
+  }
+  async clearPendingUpdates(key: string, upToCursor: number) {
+    /* ... */
+  }
+  async getBaseState(key: string): Promise<DocumentState | null> {
+    /* ... */
+  }
+  async replaceBaseState(key: string, update: Uint8Array, sidecars: IndexedSidecar[]) {
+    /* ... */
+  }
+  async writeDocumentMetadata(key: string, metadata: DocumentMetadata) {
+    /* ... */
+  }
+  async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
+    /* ... */
+  }
+  async deleteDocument(key: string) {
+    /* ... */
+  }
 
   // Optional overrides:
   // transaction<T>(key: string, cb: () => Promise<T>): Promise<T>

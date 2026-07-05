@@ -59,7 +59,9 @@ const server = new Server({
 import { S3FileStorage, S3TemporaryUploadStorage } from "teleportal/storage/s3";
 
 const fileStorage = new S3FileStorage(s3Client, { bucket: "my-bucket" });
-fileStorage.temporaryUploadStorage = new S3TemporaryUploadStorage(s3Client, { bucket: "my-bucket" });
+fileStorage.temporaryUploadStorage = new S3TemporaryUploadStorage(s3Client, {
+  bucket: "my-bucket",
+});
 ```
 
 ## Alternative Storage Backends (via unstorage)

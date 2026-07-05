@@ -14,9 +14,7 @@ function makeMsg(id: string): Message<{ clientId: string }> {
 describe("withMessageValidatorSink", () => {
   it("passes all messages through when no isAuthorized is provided", async () => {
     const written: Message[] = [];
-    const sink = withMessageValidatorSink(
-      { write: (msg) => void written.push(msg), close() {} },
-    );
+    const sink = withMessageValidatorSink({ write: (msg) => void written.push(msg), close() {} });
 
     await sink.write(makeMsg("a"));
     await sink.write(makeMsg("b"));

@@ -210,7 +210,8 @@ export function encodeMessage(
           // details
           encoding.writeVarString(encoder, message.payload.details);
           // has payload
-          const hasPayload = message.payload.payload !== undefined && message.payload.payload !== null;
+          const hasPayload =
+            message.payload.payload !== undefined && message.payload.payload !== null;
           encoding.writeUint8(encoder, hasPayload ? 1 : 0);
           if (hasPayload) {
             encoding.writeAny(encoder, message.payload.payload as any);

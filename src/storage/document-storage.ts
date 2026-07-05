@@ -51,7 +51,6 @@ export function normalizeMetadata(
   };
 }
 
-
 /**
  * Build {@link IndexedSidecar}s from a decoded content-encrypted payload.
  * Returns an empty array when the payload carries no sidecars or the update

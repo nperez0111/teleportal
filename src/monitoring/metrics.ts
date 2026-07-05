@@ -183,9 +183,7 @@ export class Histogram {
       for (const [key, series] of this.series) {
         const labels = key ? JSON.parse(key) : {};
         const baseLabelsStr = formatLabels(labels);
-        const baseEntries = Object.entries(labels).map(
-          ([k, v]) => `${k}="${escapeLabelValue(v)}"`,
-        );
+        const baseEntries = Object.entries(labels).map(([k, v]) => `${k}="${escapeLabelValue(v)}"`);
 
         for (let i = 0; i < this.bucketValues.length; i++) {
           const bucketLabels = [...baseEntries, `le="${this.bucketValues[i]}"`];
