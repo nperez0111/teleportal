@@ -59,6 +59,10 @@ export type TokenOptions = {
    * Token issuer (default: "teleportal")
    */
   issuer?: string;
+  /**
+   * Token audience (default: "teleportal")
+   */
+  audience?: string;
 };
 
 export type TokenVerificationResult =
@@ -98,6 +102,7 @@ export class TokenManager {
   private secret: Uint8Array;
   private expiresIn: number;
   private issuer: string;
+  private audience: string;
 
   constructor(options: TokenOptions) {
     this.secret =
@@ -106,6 +111,7 @@ export class TokenManager {
         : options.secret;
     this.expiresIn = options.expiresIn ?? 3600; // 1 hour default
     this.issuer = options.issuer ?? "teleportal";
+    this.audience = options.audience ?? "teleportal";
   }
 
   /**
@@ -131,7 +137,7 @@ export class TokenManager {
       exp,
       iat: now,
       iss: options?.issuer ?? this.issuer,
-      aud: options?.audience ?? "teleportal",
+      aud: options?.audience ?? this.audience,
     };
 
     const jwt = await new SignJWT(payload)
@@ -152,7 +158,7 @@ export class TokenManager {
     try {
       const { payload } = await jwtVerify(token, this.secret, {
         issuer: this.issuer,
-        audience: "teleportal",
+        audience: this.audience,
       });
 
       return {

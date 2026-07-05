@@ -360,6 +360,38 @@ describe("TokenManager", () => {
       expect(result.payload?.iss).toBe("custom-issuer");
       expect(result.payload?.aud).toBe("teleportal");
     });
+
+    it("should verify a token minted with a custom audience", async () => {
+      const customTokenManager = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+        audience: "custom-audience",
+      });
+
+      const token = await customTokenManager.generateToken("user-123", "org-456", [
+        { pattern: "*", permissions: ["read"] },
+      ]);
+
+      const result = await customTokenManager.verifyToken(token);
+      expect(result.valid).toBe(true);
+      expect(result.payload?.aud).toBe("custom-audience");
+    });
+
+    it("should reject a token whose audience does not match the manager", async () => {
+      const issuer = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+      });
+      const verifier = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+        audience: "other-service",
+      });
+
+      const token = await issuer.generateToken("user-123", "org-456", [
+        { pattern: "*", permissions: ["read"] },
+      ]);
+
+      const result = await verifier.verifyToken(token);
+      expect(result.valid).toBe(false);
+    });
   });
 
   describe("getDocumentPermissions aggregation", () => {

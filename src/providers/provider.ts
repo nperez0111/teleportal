@@ -809,13 +809,17 @@ export class Provider<
   } = {}) {
     // Best-effort: retract our awareness presence so the server can notify
     // peers immediately instead of waiting for the connection to close.
+    // send() is async, so guard against both synchronous throws and async
+    // rejections (the connection may already be torn down).
     try {
-      this.#connection.send(
-        new PresenceMessage(this.document, {
-          type: "presence-unannounce",
-          awarenessId: this.awareness.clientID,
-        }),
-      );
+      void this.#connection
+        .send(
+          new PresenceMessage(this.document, {
+            type: "presence-unannounce",
+            awarenessId: this.awareness.clientID,
+          }),
+        )
+        .catch(() => {});
     } catch {
       // Connection may already be torn down
     }
