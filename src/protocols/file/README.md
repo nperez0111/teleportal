@@ -26,9 +26,10 @@ Resume and dedup require a **stable** `contentId`, which in turn requires determ
 ```
 src/protocols/file/
   methods.ts    — method contracts (defineMethod/defineProtocol) + request/response types
-  server.ts     — server handlers (createHandlers)
+  server.ts     — server handlers (createHandlers) + FileHandler class
   client.ts     — client extension (RpcExtension wrapper)
   transfer.ts   — file transfer state machine (chunked upload/download, Merkle proofs)
+  progress.ts   — lightweight file transfer progress events
   index.ts      — public exports
 ```
 

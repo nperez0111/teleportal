@@ -1,87 +1,76 @@
 # Teleportal Protocols
 
-This package contains the protocol implementations for Teleportal's Y.js Sync Server, including the core RPC system and built-in RPC methods.
+Built-in RPC protocol implementations for Teleportal's Y.js Sync Server.
 
 ## Packages
 
-- [`teleportal/protocol`](../lib/protocol/README.md) - Core RPC messaging system (RPC types and message classes are exported from `teleportal/protocol`)
-- [`teleportal/protocols/milestone`](./milestone/README.md) - Milestone RPC methods
-- [`teleportal/protocols/file`](./file/README.md) - File RPC methods
+- [`teleportal/protocols/milestone`](./milestone/README.md) - Document versioning (milestone CRUD)
+- [`teleportal/protocols/file`](./file/README.md) - Chunked file upload/download with Merkle proof verification
+- [`teleportal/protocols/key-registry`](./key-registry/README.md) - Server-mediated encryption key distribution
 - [`teleportal/protocols/attribution`](./attribution/README.md) - Attribution (authorship) read methods
 
-## Overview
+Each protocol follows the same structure:
 
-The protocols package provides a formal RPC (Remote Procedure Call) messaging system that replaces manual request/response pairs. It offers:
+```
+methods.ts   — method contracts (defineMethod/defineProtocol)
+server.ts    — server handlers (createHandlers)
+client.ts    — client extension (createClientExtension)
+index.ts     — public exports
+```
 
-- **Extensible method registration** - Register custom RPC methods with handlers
-- **Request/response correlation** - Messages use IDs to match responses to requests
-- **Type-safe handlers** - Discriminated unions for success/error responses
-- **Streaming support** - Optional streaming via async iterables
-- **Custom serialization** - Support for custom encoders/decoders
-
-## Quick Start
-
-### Server
+## Server
 
 ```typescript
 import { Server } from "teleportal/server";
-import { getServerHandlers as getMilestoneHandlers } from "teleportal/protocols/milestone";
-import { getServerHandlers as getFileHandlers } from "teleportal/protocols/file";
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+import { getFileRpcHandlers } from "teleportal/protocols/file";
+import { getKeyRegistryRpcHandlers } from "teleportal/protocols/key-registry";
 
 const server = new Server({
-  // ... other options
+  storage: async () => documentStorage,
   rpcHandlers: {
-    ...getMilestoneHandlers(),
-    ...getFileHandlers(),
+    ...getMilestoneRpcHandlers(milestoneStorage),
+    ...getFileRpcHandlers(fileStorage),
+    ...getKeyRegistryRpcHandlers(keyRegistryStorage),
   },
 });
 ```
 
-### Client
+## Client
 
-The `Provider` automatically handles RPC requests via its internal `RpcClient`:
+Protocols are consumed via the Provider's `rpc` extension system:
 
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createMilestoneRpc } from "teleportal/protocols/milestone";
+import { createFileRpc } from "teleportal/protocols/file";
+import { createKeyRegistryRpc } from "teleportal/protocols/key-registry";
 
-const provider = await Provider.create({ url: "wss://...", document: "my-doc" });
+const provider = await Provider.create({
+  url: "wss://...",
+  document: "my-doc",
+  rpc: {
+    milestones: createMilestoneRpc,
+    file: () => createFileRpc({ encryptionKey }),
+    keys: createKeyRegistryRpc,
+  },
+});
 
-// Milestone operations
-const milestones = await provider.listMilestones();
-const milestone = await provider.createMilestone("v1.0");
-
-// File operations (requires rpcHandlers with file handlers)
-const fileId = await provider.uploadFile(file, optionalFileId, optionalEncryptionKey);
-const downloadedFile = await provider.downloadFile(fileId, optionalEncryptionKey);
+const milestones = await provider.rpc.milestones.list();
+const fileId = await provider.rpc.file.upload(myFile);
+const meta = await provider.rpc.keys.meta();
 ```
 
-## Message Format
+## Adding a New Protocol
 
-RPC messages use a binary format with the following structure:
+See [`teleportal/rpc`](../lib/rpc/README.md) for the full guide. In short:
 
-```
-[message type: 0x04]
-[method name: varstring]
-[request type: uint8]     // 0=request, 1=stream, 2=response
-[original request ID: varstring]  // present for stream/response
-[payload length: varint]
-[payload: bytes]
-```
-
-### Request Types
-
-- **request** (0x00): Initial RPC request from client to server
-- **stream** (0x01): Streaming chunk from server to client
-- **response** (0x02): Final response (success or error)
-
-### Response Types
-
-- **success**: `{ type: "success", payload: unknown }`
-- **error**: `{ type: "error", statusCode: number, details: string, payload?: unknown }`
+1. Define the contract in `methods.ts` with `defineMethod` / `defineProtocol`
+2. Implement server handlers in `server.ts` with `createHandlers`
+3. Create a client extension in `client.ts` with `createClientExtension`
+4. Re-export from `index.ts`
 
 ## See Also
 
-- [RPC System](../lib/protocol/README.md) - Core RPC types, encoding, handlers, and serialization/deserialization (exported from `teleportal/protocol`)
-- [Milestone Methods](./milestone/README.md) - Milestone CRUD operations via RPC
-- [File Methods](./file/README.md) - File upload/download authorization via RPC
-- [Attribution Methods](./attribution/README.md) - Read document authorship via RPC
+- [`teleportal/rpc`](../lib/rpc/README.md) - RPC framework (defineMethod, createHandlers, createClientExtension)
+- [`teleportal/protocol`](../lib/protocol/README.md) - Wire protocol encoding/decoding

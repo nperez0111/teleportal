@@ -579,4 +579,75 @@ describe("FileClientHandler cache integration", () => {
     expect(meta!.totalChunks).toBe(EXPECTED_CHUNKS);
     expect(meta!.filename).toBe("large.bin");
   }, 30_000);
+
+  it("a failed download does not poison the dedup cache (retry can succeed)", async () => {
+    // No cache: force the server path so the in-memory #downloadCache is used.
+    const handlers = getFileClientHandlers({});
+    const handler = handlers.fileUpload as any;
+
+    const data = makeFileData(80, 0x77);
+    const { fileId, chunks, tree } = await makeContentAddressedFile(data);
+    const metadata = { filename: "retry.bin", size: 80, mimeType: "application/octet-stream" };
+    const document = "doc-1";
+
+    handler.setRpcClient(
+      {
+        // Resolve immediately; delivery happens via handleResponse/handleStream below.
+        sendRequest: async () => {},
+        sendStream: async () => {},
+      },
+      async () => {},
+    );
+
+    // --- First attempt: deliver a corrupted chunk so merkle verification fails. ---
+    const firstPromise = handler.downloadFile(fileId, document);
+    await new Promise((r) => setTimeout(r, 0));
+
+    handler.handleResponse(
+      new RpcMessage<any>(
+        document,
+        { type: "success", payload: { fileId, ...metadata } },
+        "fileDownload",
+        "response",
+        fileId,
+      ),
+    );
+
+    // Corrupt the chunk data so it won't match the (valid) merkle proof.
+    const proof = generateMerkleProof(tree, 0);
+    const corrupted = chunks[0].slice();
+    corrupted[0] ^= 0xff;
+    handler.handleStream(
+      new RpcMessage<any>(
+        document,
+        {
+          type: "success",
+          payload: {
+            fileId,
+            chunkIndex: 0,
+            chunkData: corrupted,
+            merkleProof: proof,
+            totalChunks: chunks.length,
+            bytesUploaded: chunks[0].length,
+            encrypted: false,
+          },
+        },
+        "fileDownload",
+        "stream",
+        fileId,
+      ),
+    );
+
+    await expect(firstPromise).rejects.toThrow(/merkle proof verification/i);
+
+    // --- Second attempt: the same fileId must NOT be short-circuited to the
+    // stale rejected promise. A clean retry (valid chunk) should succeed. ---
+    const secondPromise = simulateDownload(handler, fileId, { chunks, tree }, metadata, document);
+
+    const file = await secondPromise;
+    expect(file.name).toBe("retry.bin");
+    expect(file.size).toBe(80);
+    const buf = new Uint8Array(await file.arrayBuffer());
+    expect(buf.every((b) => b === 0x77)).toBe(true);
+  });
 });

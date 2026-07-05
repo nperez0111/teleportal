@@ -400,7 +400,7 @@ class FileClientHandler implements ClientRpcHandler {
         const handler = this.#activeDownloads.get(fileId);
         if (handler) {
           handler.reject(new Error(`Download timeout after ${timeout}ms`));
-          this.#activeDownloads.delete(fileId);
+          this.#clearDownload(fileId);
           this.#emitDownloadProgress(handler, "error", `Download timeout after ${timeout}ms`);
         }
         reject(new Error(`Download timeout after ${timeout}ms`));
@@ -438,8 +438,7 @@ class FileClientHandler implements ClientRpcHandler {
         },
       });
     } catch (error) {
-      this.#activeDownloads.delete(fileId);
-      this.#downloadCache.delete(fileId);
+      this.#clearDownload(fileId);
       throw error;
     }
 
@@ -450,6 +449,18 @@ class FileClientHandler implements ClientRpcHandler {
         clearTimeout(timeoutId);
       }
     }
+  }
+
+  /**
+   * Clear all state for a failed/aborted download. Both the active-download
+   * handler and the in-memory dedup entry must be dropped so a subsequent
+   * `downloadFile(fileId)` starts fresh instead of returning the stale rejected
+   * promise. Never call this on the success path — successful dedup keeps the
+   * resolved promise in `#downloadCache` intentionally.
+   */
+  #clearDownload(fileId: string): void {
+    this.#activeDownloads.delete(fileId);
+    this.#downloadCache.delete(fileId);
   }
 
   handleResponse(message: RpcMessage<any>): boolean {
@@ -493,7 +504,7 @@ class FileClientHandler implements ClientRpcHandler {
       if (downloadHandler) {
         const details = payload.details || "Download permission denied";
         downloadHandler.reject(new Error(details));
-        this.#activeDownloads.delete(downloadHandler.fileId);
+        this.#clearDownload(downloadHandler.fileId);
         if (downloadHandler.timeoutId) {
           clearTimeout(downloadHandler.timeoutId);
         }
@@ -728,7 +739,7 @@ class FileClientHandler implements ClientRpcHandler {
     if (!isValid) {
       const reason = `Chunk ${payload.chunkIndex} failed merkle proof verification`;
       handler.reject(new Error(reason));
-      this.#activeDownloads.delete(payload.fileId);
+      this.#clearDownload(payload.fileId);
       if (handler.timeoutId) {
         clearTimeout(handler.timeoutId);
       }
@@ -788,6 +799,9 @@ class FileClientHandler implements ClientRpcHandler {
         this.#emitDownloadProgress(handler, "complete");
       } catch (err) {
         handler.reject(err as Error);
+        // Drop the poisoned dedup entry so a retry starts fresh. The success
+        // path deliberately leaves #downloadCache populated for dedup.
+        this.#downloadCache.delete(handler.fileId);
         this.#emitDownloadProgress(handler, "error", (err as Error).message);
       } finally {
         this.#activeDownloads.delete(handler.fileId);
