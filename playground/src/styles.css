@@ -103,6 +103,17 @@ select:focus-visible {
   background: #718096;
 }
 
+@keyframes avatar-pop {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 /* Make the editor fill available vertical space */
 .bn-container {
   display: flex;

@@ -18,13 +18,25 @@ export function usePresence(provider: PlaygroundProvider | null): Peer[] {
     map.clear();
 
     const offJoin = provider.on("peer-join", (peer: PresenceEvent) => {
-      console.log("[awareness] peer-join", { awarenessId: peer.awarenessId, clientId: peer.clientId, userId: peer.userId, data: peer.data, totalPeers: map.size + 1 });
+      console.log("[awareness] peer-join", {
+        awarenessId: peer.awarenessId,
+        clientId: peer.clientId,
+        userId: peer.userId,
+        data: peer.data,
+        totalPeers: map.size + 1,
+      });
       map.set(peer.awarenessId, peer);
       setPeers([...map.values()]);
     });
 
     const offLeave = provider.on("peer-leave", (peer: PresenceEvent) => {
-      console.log("[awareness] peer-leave", { awarenessId: peer.awarenessId, clientId: peer.clientId, userId: peer.userId, data: peer.data, totalPeers: map.size - 1 });
+      console.log("[awareness] peer-leave", {
+        awarenessId: peer.awarenessId,
+        clientId: peer.clientId,
+        userId: peer.userId,
+        data: peer.data,
+        totalPeers: map.size - 1,
+      });
       map.delete(peer.awarenessId);
       setPeers([...map.values()]);
     });

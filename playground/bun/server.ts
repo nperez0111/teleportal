@@ -46,10 +46,15 @@ const workerBanner =
   'if(typeof globalThis.document==="undefined")globalThis.document={};';
 await Bun.spawn(
   [
-    "bun", "build", workerSrc,
-    "--outdir", workerOutDir,
-    "--target", "browser",
-    "--format", "esm",
+    "bun",
+    "build",
+    workerSrc,
+    "--outdir",
+    workerOutDir,
+    "--target",
+    "browser",
+    "--format",
+    "esm",
     `--banner=${workerBanner}`,
   ],
   { stdout: "inherit", stderr: "inherit" },

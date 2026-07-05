@@ -4,6 +4,8 @@ import { fileService } from "../services/fileService";
 import { useProvider } from "../utils/providers";
 import { MilestonePanel } from "./milestonePanel";
 import { AttributionPanel } from "./attributionPanel";
+import { PresenceAvatars } from "./presenceAvatars";
+import { ConnectionToggle } from "./connectionToggle";
 import { getIdentity } from "../utils/identity";
 import { Milestone } from "teleportal";
 
@@ -31,6 +33,13 @@ export function DocumentEditor({ documentId, isSidebarOpen, toggleSidebar }: Doc
       fileService.off("documents", unsubscribe);
     };
   }, []);
+
+  // Expose the provider for console inspection during sync debugging, e.g.
+  // `window.__tpProvider.doc.store.pendingStructs` (non-null means the ydoc
+  // parked updates on a missing dependency).
+  useEffect(() => {
+    (window as unknown as { __tpProvider?: unknown }).__tpProvider = provider;
+  }, [provider]);
 
   // Reset milestone state when document changes
   useEffect(() => {
@@ -129,6 +138,9 @@ export function DocumentEditor({ documentId, isSidebarOpen, toggleSidebar }: Doc
           </div>
           {/* Versions + Authorship buttons - pushed to the right */}
           <div className="flex items-center ml-auto shrink-0 gap-2">
+            <PresenceAvatars provider={provider} />
+            <div className="hidden md:block w-px h-6 bg-gray-200 dark:bg-gray-700" />
+            <ConnectionToggle provider={provider} />
             <button
               onClick={() => setIsAttributionPanelOpen((v) => !v)}
               className={`px-3 py-2 text-sm font-medium border rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap ${
