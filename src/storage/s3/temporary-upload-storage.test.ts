@@ -11,7 +11,10 @@ import type { FileMetadata } from "teleportal/storage";
  */
 class FakeS3 extends S3Http {
   listAllCalls = 0;
-  #store = new Map<string, { body: Uint8Array; meta: Record<string, string>; lastModified: number }>();
+  #store = new Map<
+    string,
+    { body: Uint8Array; meta: Record<string, string>; lastModified: number }
+  >();
   #clock = 1;
 
   constructor() {

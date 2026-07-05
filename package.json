@@ -91,12 +91,12 @@
     "bench:s3": "bun test ./benchmarks/s3-storage.bench.ts --timeout 120000"
   },
   "dependencies": {
-    "@logtape/logtape": "2.2.1",
-    "hookable": "6.1.1",
-    "jose": "6.2.3",
-    "lib0": "0.2.117",
-    "y-protocols": "1.0.7",
-    "yjs": "13.6.31"
+    "@logtape/logtape": "^2.2.3",
+    "hookable": "^6.1.1",
+    "jose": "^6.2.3",
+    "lib0": "^0.2.117",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.31"
   },
   "devDependencies": {
     "@nats-io/transport-node": "3.4.0",
@@ -104,19 +104,19 @@
     "aws4fetch": "1.0.20",
     "bun-plugin-tailwind": "0.1.2",
     "changelogen": "0.6.2",
-    "crossws": "0.4.6",
+    "crossws": "0.4.9",
     "eventsource": "4.1.0",
     "ioredis": "5.11.1",
     "msw": "2.14.6",
-    "postgres": "3.4.7",
-    "srvx": "0.11.17",
+    "postgres": "3.4.9",
+    "srvx": "0.11.21",
     "tinybench": "6.0.2",
     "unstorage": "1.17.5",
-    "vite-plus": "0.2.1"
+    "vite-plus": "0.2.2"
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",
-    "@standard-schema/spec": "1.1.0",
+    "@standard-schema/spec": "^1.1.0",
     "aws4fetch": "^1.0.20",
     "crossws": "^0.4.3",
     "ioredis": "^5.8.2",

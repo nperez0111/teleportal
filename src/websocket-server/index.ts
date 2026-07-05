@@ -270,6 +270,28 @@ export function getWebsocketHandlers<T extends ServerContext>({
       });
       peer.context.channel.error(error);
     },
+    drain(peer) {
+      emitWideEvent("debug", {
+        event_type: "websocket_drain",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+        buffered_amount: peer.websocket?.bufferedAmount,
+      });
+    },
+    ping(peer) {
+      emitWideEvent("debug", {
+        event_type: "websocket_ping",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+      });
+    },
+    pong(peer) {
+      emitWideEvent("debug", {
+        event_type: "websocket_pong",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+      });
+    },
   };
 }
 
