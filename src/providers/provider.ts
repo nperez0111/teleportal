@@ -191,6 +191,10 @@ export class Provider<
   #initInProgress = false;
   #syncBridgeRegistered = false;
 
+  // Pending-structs detector state (self-healing resync)
+  #pendingStructsParked = false;
+  #pendingStructsTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor({
     connection,
     document,
@@ -284,6 +288,14 @@ export class Provider<
 
     this.doc.on("subdocs", this.#subdocListener);
 
+    // Poll for parked pending structs: a lost inbound update leaves a
+    // dependency gap and Y.js silently parks every later update in
+    // `store.pendingStructs` (no doc event fires), so a poller is the only
+    // reliable transition detector. Cleared in destroy(); unref'd so it never
+    // keeps a non-browser process alive.
+    this.#pendingStructsTimer = setInterval(this.#checkPendingStructs, 1000);
+    (this.#pendingStructsTimer as unknown as { unref?: () => void }).unref?.();
+
     if (connection.state.type === "connected") {
       this.#init();
     }
@@ -291,6 +303,20 @@ export class Provider<
     // Event forwarding
     const signal = this.#abortController.signal;
     signal.addEventListener("abort", connection.on("connected", this.#init));
+    // A permanent server rejection of one of OUR doc messages means the
+    // server (and every peer) is missing that content while later updates
+    // pile up on the gap. The rejected message itself must not be
+    // retransmitted verbatim (it would fail again), but a resync re-uploads
+    // the same content as a fresh diff against the server's state vector —
+    // usually merged smaller — healing the divergence.
+    signal.addEventListener(
+      "abort",
+      connection.on("diagnostic", (event) => {
+        if (event.type === "message-rejected" && event.document === this.document) {
+          this.#resync();
+        }
+      }),
+    );
     signal.addEventListener(
       "abort",
       connection.on("connected", () => {
@@ -425,6 +451,66 @@ export class Provider<
     } else {
       this.call("peer-join", peer);
     }
+  }
+
+  // --- Pending-structs detector + self-healing resync ---
+
+  #pendingStructsParkedSince = 0;
+  #lastParkedResyncAt = 0;
+
+  /**
+   * Smoking-gun signal for a lost update: when an inbound update depends on
+   * one that never arrived, Y.js parks it (and everything after it) in
+   * `store.pendingStructs` — edits stop propagating while the connection
+   * looks healthy, and NOTHING else in the pipeline notices (Y.js parks
+   * silently, no doc event fires).
+   *
+   * Detection alone isn't enough: without intervention the doc stays parked
+   * until the missing update happens to arrive or the connection resyncs on
+   * reconnect. So when a park persists across polls while connected, send a
+   * fresh sync-step-1 — the server replies with the diff against our state
+   * vector, which contains the missing range and un-parks everything.
+   * Cooldown prevents resync storms when the server itself lacks the update
+   * (e.g. the sender's message was lost server-side; only the sender's own
+   * resync can heal that case).
+   */
+  #checkPendingStructs = () => {
+    const store = this.doc.store as unknown as {
+      pendingStructs: { missing: Map<number, number>; update: Uint8Array } | null;
+      pendingDs: Uint8Array | null;
+    };
+    const pending = store.pendingStructs;
+    const parked = pending !== null;
+    const now = Date.now();
+    if (parked && !this.#pendingStructsParked) {
+      this.#pendingStructsParkedSince = now;
+    }
+    this.#pendingStructsParked = parked;
+
+    if (
+      parked &&
+      now - this.#pendingStructsParkedSince >= 2000 &&
+      now - this.#lastParkedResyncAt >= 10_000 &&
+      this.#connection.state.type === "connected"
+    ) {
+      this.#lastParkedResyncAt = now;
+      this.#resync();
+    }
+  };
+
+  /**
+   * Re-run the sync handshake for this document on the live connection:
+   * sync-step-1 with our current state vector, to which the server replies
+   * with exactly the range we're missing. Safe to call repeatedly — the
+   * exchange is idempotent.
+   */
+  #resync(): void {
+    void this.transport.handler
+      .start()
+      .then((msg) => this.#connection.send(msg))
+      .catch(() => {
+        // Connection dropped mid-resync — the reconnect handshake resyncs.
+      });
   }
 
   // --- Offline persistence ---
@@ -735,6 +821,10 @@ export class Provider<
     }
 
     this.doc.off("subdocs", this.#subdocListener);
+    if (this.#pendingStructsTimer !== null) {
+      clearInterval(this.#pendingStructsTimer);
+      this.#pendingStructsTimer = null;
+    }
     super.destroy();
 
     if (this.#localStorage) {

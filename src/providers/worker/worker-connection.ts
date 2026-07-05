@@ -173,10 +173,13 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   // `disconnected` events on the client side. The worker forwards state via
   // `ready`/`state-update` messages (not as generic events) precisely so these
   // aren't dispatched twice — see ConnectionWorkerManager.#setupEventForwarding.
-  // The transition conditions mirror DirectConnection.#setState.
+  // The transition conditions and emission order mirror DirectConnection.#setState:
+  // `update` fires first, then `connected`/`disconnected`.
   #updateState(newState: ConnectionState): void {
     const prev = this.#state;
     this.#state = newState;
+
+    this.call("update", newState);
 
     if (newState.type === "connected") {
       if (this.#connectedResolve) {
@@ -189,10 +192,6 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
         this.call("connected");
       }
     } else if (newState.type === "disconnected") {
-      // Matches DirectConnection: emit on any transition into `disconnected`
-      // (e.g. `connecting` → `disconnected`), not just from `connected`. The
-      // `connected` promise is left pending so it resolves on a later reconnect
-      // rather than hanging its awaiters.
       if (prev.type !== "disconnected") {
         this.call("disconnected");
       }
@@ -204,8 +203,6 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
         this.#connectedReject = null;
       }
     }
-
-    this.call("update", newState);
   }
 
   #postUpstream(msg: UpstreamMessage, transfer?: Transferable[]): void {

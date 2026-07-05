@@ -19,7 +19,23 @@ export type ConnectionDiagnosticEvent =
   | { type: "token-refresh"; reason: "scheduled" | "reactive" }
   | { type: "token-refresh-error"; error: string }
   | { type: "reconnect-scheduled"; attempt: number; maxAttempts: number; delayMs: number }
-  | { type: "upgrade-probe"; result: "upgraded" | "unavailable" };
+  | { type: "upgrade-probe"; result: "upgraded" | "unavailable" }
+  /** The server permanently rejected a message (nack with a reason). */
+  | { type: "message-rejected"; messageId: string; error: string; document?: string }
+  /**
+   * The server rate-limited and dropped a message (retryable nack). The
+   * content is NOT lost: doc updates fold back into the pending batch
+   * (`foldedIntoBatch: true`) or retransmit verbatim after `retryAfterMs`.
+   * Watch these to see backpressure engage — `batchIntervalMs` is the grown
+   * AIMD send interval after this nack.
+   */
+  | {
+      type: "message-nacked";
+      messageId: string;
+      retryAfterMs: number;
+      batchIntervalMs: number;
+      foldedIntoBatch: boolean;
+    };
 
 /** SharedWorker-side view of a pooled connection (see ConnectionWorkerManager). */
 export type WorkerConnectionDiagnostics = {

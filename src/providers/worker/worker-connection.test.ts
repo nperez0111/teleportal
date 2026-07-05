@@ -898,4 +898,48 @@ describe("WorkerConnection", () => {
       await until(() => conn.state.type === "errored");
     });
   });
+
+  describe("event emission ordering", () => {
+    it("emits update before connected, matching DirectConnection ordering", async () => {
+      const { workerConn, channel } = setup();
+      cleanup.push(() => {
+        workerConn.destroy();
+        channel.port1.close();
+      });
+
+      const eventOrder: string[] = [];
+      workerConn.on("update", (state) => {
+        if (state.type === "connected") eventOrder.push("update:connected");
+      });
+      workerConn.on("connected", () => eventOrder.push("connected"));
+
+      await initAndConnect(workerConn);
+
+      expect(eventOrder[0]).toBe("update:connected");
+      expect(eventOrder[1]).toBe("connected");
+    });
+
+    it("emits update before disconnected, matching DirectConnection ordering", async () => {
+      const { workerConn, channel } = setup();
+      cleanup.push(() => {
+        workerConn.destroy();
+        channel.port1.close();
+      });
+
+      await initAndConnect(workerConn);
+
+      const eventOrder: string[] = [];
+      workerConn.on("update", (state) => {
+        if (state.type === "disconnected") eventOrder.push("update:disconnected");
+      });
+      workerConn.on("disconnected", () => eventOrder.push("disconnected"));
+
+      await workerConn.disconnect();
+      await tick();
+      await tick();
+
+      expect(eventOrder[0]).toBe("update:disconnected");
+      expect(eventOrder[1]).toBe("disconnected");
+    });
+  });
 });

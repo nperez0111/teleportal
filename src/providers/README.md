@@ -105,6 +105,11 @@ The `Connection` interface extends `Observable` and emits the following events:
 - **`received-message: (message: Message) => void`**
   - Emitted when a message is received from the server
 
+- **`diagnostic: (event: ConnectionDiagnosticEvent) => void`**
+  - Emitted for notable connection happenings that aren't state transitions
+  - Events: `token-refresh`, `token-refresh-error`, `reconnect-scheduled`, `upgrade-probe`, `message-rejected`, `message-nacked`
+  - Used by tooling (e.g. devtools) to build a connection timeline
+
 ### DirectConnection
 
 `DirectConnection` is the single connection class. It takes an ordered array of `ConnectionTransport[]` and manages transport selection, fallback, and auto-upgrade:
@@ -138,27 +143,27 @@ Two built-in transport factories are provided:
 
 ```typescript
 type ConnectionOptions = {
-  url?: string;                      // Server URL
+  url?: string; // Server URL
   transports: ConnectionTransport[]; // Ordered list of transports (required)
-  token?: TokenOptions;              // Authentication token with auto-refresh
-  connect?: boolean;                 // Auto-connect on creation (default: true)
-  maxReconnectAttempts?: number;     // Max reconnection attempts (default: 10)
-  initialReconnectDelay?: number;    // Initial backoff delay in ms (default: 100)
-  maxBackoffTime?: number;           // Max backoff time in ms (default: 30000)
-  reconnectBackoffFactor?: number;   // Backoff growth factor (default: 1.3)
-  heartbeatInterval?: number;        // Heartbeat interval in ms (default: 0 = disabled)
-  messageReconnectTimeout?: number;  // Timeout if no messages received (default: 30000)
-  minUptime?: number;                // Min ms before resetting backoff (default: 0)
-  reconnectDelayJitter?: number;     // Max random ms added to reconnect delay (default: 0)
-  maxBufferedMessages?: number;      // Cap on buffered messages (default: Infinity)
-  inFlightMessageTimeout?: number;   // Timeout for in-flight message ACK (default: 30000)
-  batchIntervalMs?: number;          // Update batch interval in ms (default: 100)
-  maxBatchIntervalMs?: number;       // Max batch interval / AIMD upper bound (default: 5000)
-  upgradeProbeInterval?: number;     // Upgrade probe interval in ms (default: 30000)
-  maxUpgradeProbeInterval?: number;  // Max probe interval after backoff (default: 300000)
-  timer?: Timer;                     // Timer implementation for testing
-  eventTarget?: EventTarget;         // For online/offline events
-  isOnline?: boolean;                // Initial online state (default: true)
+  token?: TokenOptions; // Authentication token with auto-refresh
+  connect?: boolean; // Auto-connect on creation (default: true)
+  maxReconnectAttempts?: number; // Max reconnection attempts (default: 10)
+  initialReconnectDelay?: number; // Initial backoff delay in ms (default: 100)
+  maxBackoffTime?: number; // Max backoff time in ms (default: 30000)
+  reconnectBackoffFactor?: number; // Backoff growth factor (default: 1.3)
+  heartbeatInterval?: number; // Heartbeat interval in ms (default: 0 = disabled)
+  messageReconnectTimeout?: number; // Timeout if no messages received (default: 30000)
+  minUptime?: number; // Min ms before resetting backoff (default: 0)
+  reconnectDelayJitter?: number; // Max random ms added to reconnect delay (default: 0)
+  maxBufferedMessages?: number; // Cap on buffered messages (default: Infinity)
+  inFlightMessageTimeout?: number; // Timeout for in-flight message ACK (default: 30000)
+  batchIntervalMs?: number; // Update batch interval in ms (default: 100)
+  maxBatchIntervalMs?: number; // Max batch interval / AIMD upper bound (default: 5000)
+  upgradeProbeInterval?: number; // Upgrade probe interval in ms (default: 30000)
+  maxUpgradeProbeInterval?: number; // Max probe interval after backoff (default: 300000)
+  timer?: Timer; // Timer implementation for testing
+  eventTarget?: EventTarget; // For online/offline events
+  isOnline?: boolean; // Initial online state (default: true)
 };
 ```
 
@@ -314,16 +319,16 @@ The `Provider` class extends `Observable` and emits the following events:
 
 ```typescript
 type ProviderOptions<T, R> = {
-  connection: Connection;             // Connection instance (required)
-  document: string;                   // Document ID (required)
-  encryptionKey: CryptoKey | false;   // E2EE key -- required (use `false` for plaintext)
-  ydoc?: Y.Doc;                       // Existing Y.Doc (default: new Y.Doc())
-  awareness?: Awareness;              // Existing Awareness (default: new Awareness(ydoc))
-  enableOfflinePersistence?: boolean;  // Enable IndexedDB persistence (default: true)
-  indexedDBPrefix?: string;           // IndexedDB prefix (default: 'teleportal-')
+  connection: Connection; // Connection instance (required)
+  document: string; // Document ID (required)
+  encryptionKey: CryptoKey | false; // E2EE key -- required (use `false` for plaintext)
+  ydoc?: Y.Doc; // Existing Y.Doc (default: new Y.Doc())
+  awareness?: Awareness; // Existing Awareness (default: new Awareness(ydoc))
+  enableOfflinePersistence?: boolean; // Enable IndexedDB persistence (default: true)
+  indexedDBPrefix?: string; // IndexedDB prefix (default: 'teleportal-')
   offlineStorage?: AbstractDocumentStorage; // Custom offline storage backend
-  rpc?: R;                            // RPC extension map
-  getTransport?: (ctx) => T;          // Custom transport factory
+  rpc?: R; // RPC extension map
+  getTransport?: (ctx) => T; // Custom transport factory
 };
 ```
 
@@ -435,7 +440,12 @@ provider.on("update", (state) => {
 ### Custom Connection
 
 ```typescript
-import { Provider, DirectConnection, websocketTransport, httpTransport } from "teleportal/providers";
+import {
+  Provider,
+  DirectConnection,
+  websocketTransport,
+  httpTransport,
+} from "teleportal/providers";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
 // Create a custom connection with specific transports
@@ -503,7 +513,7 @@ await newProvider.synced;
 ```typescript
 // Check available and active transports
 console.log(provider.connection.availableTransports); // ["websocket", "http"]
-console.log(provider.connection.activeTransport);     // "websocket"
+console.log(provider.connection.activeTransport); // "websocket"
 
 // Manually switch to HTTP transport
 await provider.connection.switchTransport("http");
@@ -676,37 +686,37 @@ All communication between the main thread (`WorkerConnection`) and the worker (`
 
 These messages handle connection lifecycle and data transport. They are feature-agnostic and would exist for any sync protocol:
 
-| Direction | Type | Purpose |
-|-----------|------|---------|
-| upstream | `init` | Initialize connection with serialized options and tab ID |
-| upstream | `send` | Send an encoded message (reliable, with ACK tracking) |
-| upstream | `send-stream` | Send an encoded message (fire-and-forget stream) |
-| upstream | `connect` | Request connection (RPC with request ID) |
-| upstream | `disconnect` | Request disconnection (RPC with request ID) |
-| upstream | `switch-transport` | Switch active transport (RPC with request ID) |
-| upstream | `destroy` | Tear down this tab's port |
-| upstream | `network-status` | Forward browser online/offline state |
-| upstream | `heartbeat` | Liveness probe |
-| downstream | `ready` | Initial state snapshot on connection |
-| downstream | `state-update` | Connection state change |
-| downstream | `event` | Generic event forwarding (ping, messages-in-flight, sent-message) |
-| downstream | `message` | Incoming message from server |
-| downstream | `property` | Property snapshot (inFlightMessageCount, destroyed, transports) |
-| downstream | `response` | RPC response (success or error, keyed by request ID) |
-| downstream | `heartbeat-ack` | Heartbeat response |
+| Direction  | Type               | Purpose                                                           |
+| ---------- | ------------------ | ----------------------------------------------------------------- |
+| upstream   | `init`             | Initialize connection with serialized options and tab ID          |
+| upstream   | `send`             | Send an encoded message (reliable, with ACK tracking)             |
+| upstream   | `send-stream`      | Send an encoded message (fire-and-forget stream)                  |
+| upstream   | `connect`          | Request connection (RPC with request ID)                          |
+| upstream   | `disconnect`       | Request disconnection (RPC with request ID)                       |
+| upstream   | `switch-transport` | Switch active transport (RPC with request ID)                     |
+| upstream   | `destroy`          | Tear down this tab's port                                         |
+| upstream   | `network-status`   | Forward browser online/offline state                              |
+| upstream   | `heartbeat`        | Liveness probe                                                    |
+| downstream | `ready`            | Initial state snapshot on connection                              |
+| downstream | `state-update`     | Connection state change                                           |
+| downstream | `event`            | Generic event forwarding (ping, messages-in-flight, sent-message) |
+| downstream | `message`          | Incoming message from server                                      |
+| downstream | `property`         | Property snapshot (inFlightMessageCount, destroyed, transports)   |
+| downstream | `response`         | RPC response (success or error, keyed by request ID)              |
+| downstream | `heartbeat-ack`    | Heartbeat response                                                |
 
 #### Feature-specific messages (file operations)
 
 These messages are specific to the file upload/download protocol. They carry domain-specific payloads (`File`, `CryptoKey`, `fileId`, `document`) and have dedicated result/error message types:
 
-| Direction | Type | Purpose |
-|-----------|------|---------|
-| upstream | `file-upload` | Upload a file (with optional encryption key) |
-| upstream | `file-download` | Download a file by ID |
-| downstream | `file-upload-result` | Upload succeeded, returns file ID |
-| downstream | `file-upload-error` | Upload failed |
-| downstream | `file-download-result` | Download succeeded, returns `File` |
-| downstream | `file-download-error` | Download failed |
+| Direction  | Type                   | Purpose                                      |
+| ---------- | ---------------------- | -------------------------------------------- |
+| upstream   | `file-upload`          | Upload a file (with optional encryption key) |
+| upstream   | `file-download`        | Download a file by ID                        |
+| downstream | `file-upload-result`   | Upload succeeded, returns file ID            |
+| downstream | `file-upload-error`    | Upload failed                                |
+| downstream | `file-download-result` | Download succeeded, returns `File`           |
+| downstream | `file-download-error`  | Download failed                              |
 
 ### Grace Period on Last-Tab Disconnect
 

@@ -231,30 +231,32 @@ const connection = createConnection({
 
 ### `createConnection` / `CreateConnectionOptions`
 
-| Option                    | Type                    | Default    | Description                                                      |
-| ------------------------- | ----------------------- | ---------- | ---------------------------------------------------------------- |
-| `workerUrl`               | `string \| URL`         | -          | URL of the SharedWorker script. Omit to use a direct connection. |
-| `url`                     | `string`                | (required) | Sync server URL.                                                 |
-| `token`                   | `TokenOptions`          | -          | Authentication token.                                            |
-| `transports`              | `ConnectionTransport[]` | (required) | Transport instances for the direct fallback path.                |
-| `workerTransports`        | `TransportDescriptor[]` | -          | Serializable transport descriptors forwarded to the worker.      |
-| `onWorkerDeath`           | `() => void`            | -          | Called if the SharedWorker crashes or heartbeat times out.       |
-| `connect`                 | `boolean`               | `true`     | Auto-connect on creation.                                        |
-| `maxReconnectAttempts`    | `number`                | 10         | Max reconnection attempts before giving up.                      |
-| `initialReconnectDelay`   | `number`                | 100        | Initial backoff delay (ms).                                      |
-| `maxBackoffTime`          | `number`                | 30000      | Maximum backoff delay (ms).                                      |
-| `reconnectBackoffFactor`  | `number`                | 2          | Backoff multiplier per attempt.                                  |
-| `heartbeatInterval`       | `number`                | 0          | Server-level heartbeat interval (ms). 0 = disabled.              |
-| `messageReconnectTimeout` | `number`                | 30000      | Reconnect if no messages received within this period.            |
-| `batchIntervalMs`         | `number`                | 10         | Minimum batch interval for outgoing updates (ms).                |
-| `maxBatchIntervalMs`      | `number`                | -          | Maximum batch interval (AIMD upper bound).                       |
+| Option                    | Type                    | Default    | Description                                                                                         |
+| ------------------------- | ----------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `workerUrl`               | `string \| URL`         | -          | URL of the SharedWorker script. Omit to use a direct connection.                                    |
+| `url`                     | `string`                | (required) | Sync server URL.                                                                                    |
+| `token`                   | `TokenOptions`          | -          | Authentication token.                                                                               |
+| `transports`              | `ConnectionTransport[]` | (required) | Transport instances for the direct fallback path.                                                   |
+| `workerTransports`        | `TransportDescriptor[]` | -          | Serializable transport descriptors forwarded to the worker.                                         |
+| `onWorkerDeath`           | `() => void`            | -          | Called if the SharedWorker crashes or heartbeat times out.                                          |
+| `connect`                 | `boolean`               | `true`     | Auto-connect on creation.                                                                           |
+| `maxReconnectAttempts`    | `number`                | 10         | Max reconnection attempts before giving up.                                                         |
+| `initialReconnectDelay`   | `number`                | 100        | Initial backoff delay (ms).                                                                         |
+| `maxBackoffTime`          | `number`                | 30000      | Maximum backoff delay (ms).                                                                         |
+| `reconnectBackoffFactor`  | `number`                | 1.3        | Backoff multiplier per attempt.                                                                     |
+| `heartbeatInterval`       | `number`                | 0          | Server-level heartbeat interval (ms). 0 = disabled.                                                 |
+| `messageReconnectTimeout` | `number`                | 30000      | Reconnect if no messages received within this period.                                               |
+| `batchIntervalMs`         | `number`                | 100        | Target batch interval for outgoing updates (ms); the ack-decay recovery floor. 0 disables batching. |
+| `maxBatchIntervalMs`      | `number`                | 5000       | Maximum batch interval (AIMD upper bound).                                                          |
 
 ### `ConnectionWorkerManagerOptions`
 
-| Option             | Type                  | Default     | Description                                                         |
-| ------------------ | --------------------- | ----------- | ------------------------------------------------------------------- |
-| `gracePeriodMs`    | `number`              | 5000        | How long to keep a connection alive after the last tab disconnects. |
-| `getConnectionKey` | `(options) => string` | URL + token | Custom function to determine which tabs share a connection.         |
+| Option                 | Type                  | Default     | Description                                                                                                                                              |
+| ---------------------- | --------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gracePeriodMs`        | `number`              | 5000        | How long to keep a connection alive after the last tab disconnects.                                                                                      |
+| `getConnectionKey`     | `(options) => string` | URL + token | Custom function to determine which tabs share a connection.                                                                                              |
+| `stalePortCheckMs`     | `number`              | 60000       | How often (ms) the manager checks for ports whose tab-side heartbeat has stopped. Fallback for browsers without the MessagePort `close` event.           |
+| `stalePortThresholdMs` | `number`              | 300000      | A port that has heartbeated before is considered stale when its last heartbeat is older than this (ms). Must exceed browser hidden-tab timer throttling. |
 
 ### `WorkerConnection` Constructor
 

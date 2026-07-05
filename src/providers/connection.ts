@@ -85,9 +85,15 @@ const DEFAULT_MAX_UPGRADE_PROBE_INTERVAL = 300_000;
 const MIN_BATCH_INTERVAL_MS = 10;
 
 /**
- * How many times a rate-limit NACKed message is retransmitted before being
- * given up on. Each NACK also doubles the batch interval, so consecutive
- * NACKs are increasingly unlikely; the cap is a runaway guard, not a budget.
+ * How many times a rate-limit NACKed NON-DOC message is retransmitted before
+ * being given up on. Each NACK also doubles the batch interval, so
+ * consecutive NACKs are increasingly unlikely; the cap is a runaway guard,
+ * not a budget.
+ *
+ * Doc messages are exempt: abandoning a doc update permanently diverges this
+ * client (every later update builds on it, so the receiving side parks
+ * everything after the gap), and updates are idempotent so retrying forever
+ * is safe. RPC requests are not idempotent, hence the cap.
  */
 const MAX_NACK_RETRANSMITS = 5;
 
@@ -140,13 +146,31 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
   // In-flight tracking
   #inFlightMessages = new Map<
     string,
-    { message: Message; timer: ReturnType<typeof setTimeout> | null; nackRetransmits?: number }
+    {
+      message: Message;
+      timer: ReturnType<typeof setTimeout> | null;
+      nackRetransmits?: number;
+    }
   >();
   #inFlightMessageTimeoutMs: number;
 
   // Update batching (AIMD)
   #batchIntervalMs: number;
   #maxBatchIntervalMs: number;
+  /**
+   * Whether batching was enabled by configuration. #batchIntervalMs can't
+   * answer this: NACK/timeout backpressure floors it at 50ms, which would
+   * read as "enabled" on a connection configured with batchIntervalMs 0.
+   */
+  readonly #batchingEnabled: boolean;
+  /**
+   * The interval as configured — the ack-decay recovery floor. Decaying
+   * BELOW the configured interval (down to the 10ms global floor, as this
+   * used to do) turns one healthy fast typist into ~100 doc messages/s,
+   * which single-handedly drains the server's per-document rate budget
+   * after ~20s of sustained typing and stalls propagation for every peer.
+   */
+  readonly #configuredBatchIntervalMs: number;
   #pendingUpdates = new Map<string, { updates: VersionedUpdate[]; message: DocMessage<any> }>();
   #batchFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -215,6 +239,8 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     this.#inFlightMessageTimeoutMs = inFlightMessageTimeout;
     this.#batchIntervalMs = batchIntervalMs;
     this.#maxBatchIntervalMs = maxBatchIntervalMs;
+    this.#batchingEnabled = batchIntervalMs > 0;
+    this.#configuredBatchIntervalMs = batchIntervalMs;
     this.#upgradeProbeIntervalMs = upgradeProbeInterval;
     this.#maxUpgradeProbeIntervalMs = maxUpgradeProbeInterval;
     this.#currentUpgradeProbeIntervalMs = upgradeProbeInterval;
@@ -241,7 +267,6 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     }
 
     this.#setupHeartbeat();
-    this.#setupConnectionTimeoutCheck();
 
     if (connect) {
       this.#timerManager.setTimeout(() => {
@@ -258,10 +283,25 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
 
     this.on("received-message", (message) => {
       if (message.type === "ack") {
-        const { messageId, retryAfter } = (message as AckMessage<any>).payload;
+        const { messageId, retryAfter, error } = (message as AckMessage<any>).payload;
         const entry = this.#inFlightMessages.get(messageId);
         if (entry) {
-          if (retryAfter !== undefined) {
+          if (error !== undefined) {
+            // Permanent rejection: retransmitting the same message would fail
+            // again (size limit, apply failure), so stop tracking it and
+            // surface the reason instead of retrying.
+            if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
+            this.#inFlightMessages.delete(messageId);
+            if (this.#inFlightMessages.size === 0) {
+              this.call("messages-in-flight", false);
+            }
+            this.call("diagnostic", {
+              type: "message-rejected",
+              messageId,
+              error,
+              document: entry.message.document ?? undefined,
+            });
+          } else if (retryAfter !== undefined) {
             this.#handleNack(messageId, entry, retryAfter);
           } else {
             if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
@@ -270,7 +310,18 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
               this.call("messages-in-flight", false);
             }
             if (this.#batchIntervalMs > 0) {
-              this.#batchIntervalMs = Math.max(MIN_BATCH_INTERVAL_MS, this.#batchIntervalMs - 10);
+              // Recover multiplicatively (with a -10ms floor per ack): NACKs
+              // and timeouts double the interval, so a purely additive -10ms
+              // recovery would need hundreds of acked updates to walk back
+              // from a congestion spike — leaving the session laggy long
+              // after the storm ended. Recovery stops at the CONFIGURED
+              // interval: overshooting below it floods the server with more
+              // messages than the app ever asked to send.
+              this.#batchIntervalMs = Math.max(
+                MIN_BATCH_INTERVAL_MS,
+                this.#configuredBatchIntervalMs,
+                Math.min(this.#batchIntervalMs - 10, this.#batchIntervalMs * 0.9),
+              );
             }
           }
         }
@@ -765,9 +816,19 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
    * DROPPED the message. Treating it like a plain ack would silently lose the
    * message — and a lost doc update permanently diverges this client, since
    * every later update builds on it and the server parks them as pending.
-   * Keep the message in flight and retransmit after the advised delay,
-   * doubling the batch interval as backpressure (mirroring the in-flight
-   * timeout path). Gives up after {@link MAX_NACK_RETRANSMITS} rounds.
+   * Doubling the batch interval as backpressure (mirroring the in-flight
+   * timeout path), the message is then recovered one of two ways:
+   *
+   * - Batchable doc updates fold back into the pending batch: a solo
+   *   retransmit would race the fresh updates this client keeps producing —
+   *   they consume each refilled server token first, so the retransmit keeps
+   *   getting NACKed while the server parks every causally-later update on
+   *   the missing one, and peers see nothing until the user stops typing.
+   *   Merging instead sends ONE message carrying the dropped content plus
+   *   everything typed since, costing a single token.
+   * - Everything else stays in flight and retransmits verbatim after the
+   *   advised delay. Doc messages retry indefinitely; other messages give up
+   *   after {@link MAX_NACK_RETRANSMITS} rounds.
    */
   #handleNack(
     messageId: string,
@@ -781,7 +842,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     if (entry.timer) this.#timerManager.clearTimeout(entry.timer);
 
     const retries = (entry.nackRetransmits ?? 0) + 1;
-    if (retries > MAX_NACK_RETRANSMITS) {
+    if (entry.message.type !== "doc" && retries > MAX_NACK_RETRANSMITS) {
       this.#inFlightMessages.delete(messageId);
       if (this.#inFlightMessages.size === 0) {
         this.call("messages-in-flight", false);
@@ -790,11 +851,51 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     }
     entry.nackRetransmits = retries;
 
+    const foldIntoBatch = this.#batchingEnabled && this.#isBatchableDocUpdate(entry.message);
+
     // The server explicitly told us we are sending too fast.
     this.#batchIntervalMs = Math.min(
       this.#maxBatchIntervalMs,
       Math.max(50, this.#batchIntervalMs * 2),
     );
+
+    this.call("diagnostic", {
+      type: "message-nacked",
+      messageId,
+      retryAfterMs,
+      batchIntervalMs: this.#batchIntervalMs,
+      foldedIntoBatch: foldIntoBatch,
+    });
+
+    if (foldIntoBatch) {
+      this.#inFlightMessages.delete(messageId);
+      if (this.#inFlightMessages.size === 0) {
+        this.call("messages-in-flight", false);
+      }
+      const docMessage = entry.message as DocMessage<any>;
+      const update = (docMessage.payload as { update: VersionedUpdate }).update;
+      const pending = this.#pendingUpdates.get(docMessage.document);
+      if (pending) {
+        // The dropped update precedes anything typed since.
+        pending.updates.unshift(update);
+      } else {
+        this.#pendingUpdates.set(docMessage.document, {
+          updates: [update],
+          message: docMessage,
+        });
+      }
+      // Hold the flush until the server can accept it; updates arriving in
+      // the meantime join this batch instead of racing it for tokens.
+      if (this.#batchFlushTimer) this.#timerManager.clearTimeout(this.#batchFlushTimer);
+      this.#batchFlushTimer = this.#timerManager.setTimeout(
+        () => {
+          this.#batchFlushTimer = null;
+          this.#flushBatch();
+        },
+        Math.max(retryAfterMs, this.#batchIntervalMs),
+      );
+      return;
+    }
 
     entry.timer = this.#timerManager.setTimeout(
       () => {
@@ -827,20 +928,42 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
 
   /**
    * Arm the in-flight timeout for a tracked message: when no ack arrives in
-   * time, presume it lost, drop it from tracking, and grow the batch interval.
+   * time, presume it lost and grow the batch interval. Doc messages are
+   * retransmitted (updates are idempotent, and dropping one permanently
+   * diverges this client); everything else is dropped from tracking.
    */
   #armInFlightTimeout(messageId: string): ReturnType<typeof setTimeout> | null {
     if (this.#inFlightMessageTimeoutMs <= 0) return null;
     return this.#timerManager.setTimeout(() => {
-      if (this.#inFlightMessages.has(messageId)) {
-        this.#inFlightMessages.delete(messageId);
-        if (this.#inFlightMessages.size === 0) {
-          this.call("messages-in-flight", false);
-        }
-        this.#batchIntervalMs = Math.min(
-          this.#maxBatchIntervalMs,
-          Math.max(50, this.#batchIntervalMs * 2),
-        );
+      const entry = this.#inFlightMessages.get(messageId);
+      if (!entry) return;
+
+      this.#batchIntervalMs = Math.min(
+        this.#maxBatchIntervalMs,
+        Math.max(50, this.#batchIntervalMs * 2),
+      );
+
+      if (
+        entry.message.type === "doc" &&
+        this.#state.type === "connected" &&
+        this.#activeTransport
+      ) {
+        entry.timer = this.#armInFlightTimeout(messageId);
+        this.#activeTransport
+          .send(entry.message)
+          .then(() => {
+            this.call("sent-message", entry.message);
+          })
+          .catch(() => {
+            // Transport failures are handled by the connection error path;
+            // the entry is cleared when the state leaves "connected".
+          });
+        return;
+      }
+
+      this.#inFlightMessages.delete(messageId);
+      if (this.#inFlightMessages.size === 0) {
+        this.call("messages-in-flight", false);
       }
     }, this.#inFlightMessageTimeoutMs);
   }
@@ -849,8 +972,17 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     if (this.destroyed) return;
     if (this.#connectionIntent === "manual") return;
 
-    // Batch doc updates
-    if (this.#batchIntervalMs > 0 && !this.#flushing && this.#isBatchableDocUpdate(message)) {
+    // Batch doc updates. Gate on #batchingEnabled (the configured intent), not
+    // just #batchIntervalMs > 0: a NACK or in-flight timeout bumps the interval
+    // to a non-zero backpressure value even when the app configured
+    // batchIntervalMs:0, and without this guard that would silently and
+    // permanently start batching a connection that opted out of it.
+    if (
+      this.#batchingEnabled &&
+      this.#batchIntervalMs > 0 &&
+      !this.#flushing &&
+      this.#isBatchableDocUpdate(message)
+    ) {
       const docMessage = message as DocMessage<any>;
       const doc = docMessage.document;
       const update = (docMessage.payload as { update: VersionedUpdate }).update;
@@ -995,10 +1127,6 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
         }
       }, this.#heartbeatIntervalMs);
     }
-  }
-
-  #setupConnectionTimeoutCheck() {
-    // no-op: #scheduleTimeoutCheck is called from #setState on connected transition
   }
 
   #scheduleTimeoutCheck() {

@@ -2,9 +2,12 @@ import { describe, expect, it, beforeEach } from "bun:test";
 import * as Y from "yjs";
 import { DirectConnection as Connection } from "./connection";
 import { createMemoryTransportPair, type MemoryTransportHandle } from "./transports/memory";
-import { AckMessage, AwarenessMessage, DocMessage } from "teleportal";
+import { AckMessage, AwarenessMessage, DocMessage, RpcMessage } from "teleportal";
 import type { VersionedUpdate } from "teleportal/protocol";
-import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
+import {
+  decodeContentEncryptedPayload,
+  encodeContentEncryptedPayload,
+} from "teleportal/protocol/encryption";
 import type { Timer } from "./utils";
 import type { ConnectionTransport, TransportConnectContext } from "./transports/types";
 
@@ -505,7 +508,7 @@ describe("Connection", () => {
       await conn.destroy();
     });
 
-    it("gives up after the retransmit cap instead of retrying forever", async () => {
+    it("gives up on non-doc messages after the retransmit cap instead of retrying forever", async () => {
       const conn = new Connection({
         transports: [clientTransport],
         connect: false,
@@ -514,7 +517,15 @@ describe("Connection", () => {
       await conn.connect();
       await serverTransport.connect(stubCtx());
 
-      const msg = makeDocUpdate("doc-nack-cap");
+      // RPC requests are not idempotent, so the retransmit cap still applies.
+      const msg = new RpcMessage<any>(
+        "doc-nack-cap",
+        { type: "success", payload: {} } as any,
+        "milestoneCreate" as any,
+        "request",
+        undefined,
+        {} as any,
+      );
       await conn.send(msg);
 
       // NACK every (re)transmission as it arrives.
@@ -533,6 +544,277 @@ describe("Connection", () => {
       // 1 original + 5 retransmits, then dropped from in-flight.
       expect(clientTransport.sentMessages).toHaveLength(6);
       expect(conn.inFlightMessageCount).toBe(0);
+
+      await conn.destroy();
+    });
+
+    it("recovers the batch interval multiplicatively after a NACK storm", async () => {
+      // Regression: recovery used to be -10ms per clean ack. After a burst of
+      // NACKs grew the interval to seconds, hundreds of acked updates were
+      // needed to return to the floor — the session felt laggy long after the
+      // storm ended.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0, // send immediately; AIMD state still tracked
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-aimd-recovery");
+      await conn.send(msg);
+
+      // Four NACK rounds double the interval: 0 → 50 → 100 → 200 → 400
+      for (let round = 0; round < 4; round++) {
+        const sends = clientTransport.sentMessages.length;
+        await serverTransport.send(
+          new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+        );
+        await until(() => clientTransport.sentMessages.length > sends);
+      }
+      expect(conn.diagnostics.batchIntervalMs).toBe(400);
+
+      // One clean ack must recover more than a token 10ms
+      await serverTransport.send(new AckMessage({ type: "ack", messageId: msg.id }, undefined));
+      await until(() => conn.inFlightMessageCount === 0);
+      expect(conn.diagnostics.batchIntervalMs).toBeLessThanOrEqual(400 * 0.9);
+
+      await conn.destroy();
+    });
+
+    it("keeps sending immediately after a NACK when batching is disabled (batchIntervalMs:0)", async () => {
+      // Regression: a NACK bumps the AIMD interval to 50ms even when the app
+      // configured batchIntervalMs:0. Batching must stay disabled — otherwise a
+      // single NACK would permanently convert an immediate-send connection into
+      // a batching one, silently delaying and coalescing every later update.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-immediate");
+      await conn.send(msg);
+      await until(() => clientTransport.sentMessages.length === 1);
+
+      // NACK grows the interval to 50ms.
+      await serverTransport.send(
+        new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+      );
+      await until(() => clientTransport.sentMessages.length === 2);
+      expect(conn.diagnostics.batchIntervalMs).toBe(50);
+
+      // A fresh doc update must still be sent immediately, not coalesced into a
+      // pending batch flushed later.
+      const msg2 = makeDocUpdate("doc-immediate-2");
+      await conn.send(msg2);
+      expect(clientTransport.sentMessages.some((m) => m.id === msg2.id)).toBe(true);
+
+      await conn.destroy();
+    });
+
+    it("never gives up retransmitting a NACKed doc update", async () => {
+      // A doc update abandoned after N retries is permanently lost — every
+      // later update builds on it, so the receiving side parks everything
+      // after the gap. Updates are idempotent, so retrying forever is safe.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-nack-persist");
+      await conn.send(msg);
+
+      // NACK well past the non-doc retransmit cap of 5.
+      for (let round = 0; round < 8; round++) {
+        const sends = clientTransport.sentMessages.length;
+        await serverTransport.send(
+          new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+        );
+        await until(() => clientTransport.sentMessages.length > sends);
+      }
+
+      // Still in flight, still retransmitting.
+      expect(clientTransport.sentMessages).toHaveLength(9);
+      expect(conn.inFlightMessageCount).toBe(1);
+
+      // Clean ack settles it.
+      await serverTransport.send(new AckMessage({ type: "ack", messageId: msg.id }, undefined));
+      await until(() => conn.inFlightMessageCount === 0);
+
+      await conn.destroy();
+    });
+
+    it("folds a NACKed doc update into the pending batch so one merged retransmit carries newer edits", async () => {
+      // Regression: a NACKed update used to retransmit solo while the client
+      // kept flushing fresh updates. The fresh sends consumed every refilled
+      // server token first, so the retransmit kept getting NACKed — and the
+      // server parked all causally-later updates on the missing one. Peers
+      // saw nothing until the user stopped typing, then everything arrived
+      // at once. Folding the dropped update back into the pending batch
+      // sends ONE merged message that costs a single token.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 5,
+      });
+      const diagnostics: any[] = [];
+      conn.on("diagnostic", (event) => diagnostics.push(event));
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-nack-merge", "one");
+      await conn.send(msg);
+      await until(() => clientTransport.sentMessages.length === 1);
+
+      // The server rate-limited and dropped it.
+      await serverTransport.send(
+        new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+      );
+      // The nacked update moves back into the pending batch (not in flight).
+      await until(() => conn.inFlightMessageCount === 0);
+
+      // The user keeps typing while the retransmit hold is pending.
+      const msg2 = makeDocUpdate("doc-nack-merge", "two");
+      await conn.send(msg2);
+
+      // Exactly one more transmission goes out, carrying BOTH edits.
+      await until(() => clientTransport.sentMessages.length === 2, 2000);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(clientTransport.sentMessages).toHaveLength(2);
+
+      const retrans = clientTransport.sentMessages[1] as DocMessage<any>;
+      expect(retrans.type).toBe("doc");
+      const update = (retrans.payload as { update: VersionedUpdate }).update;
+      const { structureUpdate } = decodeContentEncryptedPayload(update.data as any);
+      const merged = new Y.Doc();
+      Y.applyUpdateV2(merged, structureUpdate);
+      const text = merged.getText("t").toString();
+      expect(text).toContain("one");
+      expect(text).toContain("two");
+
+      // The NACK is observable as a diagnostic, marked as folded.
+      const nacked = diagnostics.filter((d) => d.type === "message-nacked");
+      expect(nacked).toHaveLength(1);
+      expect(nacked[0].messageId).toBe(msg.id);
+      expect(nacked[0].foldedIntoBatch).toBe(true);
+      expect(nacked[0].retryAfterMs).toBe(1);
+      expect(nacked[0].batchIntervalMs).toBeGreaterThanOrEqual(50);
+
+      await conn.destroy();
+    });
+
+    it("ack-decay recovery floors at the CONFIGURED batch interval, not the 10ms global floor", async () => {
+      // Regression: healthy acks decayed the interval from the configured
+      // 100ms all the way to the 10ms global floor — one fast typist then
+      // emitted ~100 doc messages/s (10x what the app configured), which
+      // single-handedly drained the server's per-document rate budget after
+      // ~20s of sustained typing and stalled propagation for every peer.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 20,
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      // Grow the interval via a NACK (20 → 50, the NACK growth floor)...
+      const msg = makeDocUpdate("doc-decay-floor", "seed");
+      await conn.send(msg);
+      await until(() => clientTransport.sentMessages.length === 1);
+      await serverTransport.send(
+        new AckMessage({ type: "ack", messageId: msg.id, retryAfter: 1 }, undefined),
+      );
+      await until(() => conn.inFlightMessageCount === 0);
+      expect(conn.diagnostics.batchIntervalMs).toBe(50);
+      // Settle the folded retransmit so it doesn't interleave with the loop.
+      await until(() => clientTransport.sentMessages.length === 2, 2000);
+      await serverTransport.send(
+        new AckMessage({ type: "ack", messageId: clientTransport.sentMessages[1].id }, undefined),
+      );
+      await until(() => conn.inFlightMessageCount === 0);
+
+      // ...then decay with clean acked sends: 40 → 30 → 20, then STOP at the
+      // configured 20 — the old code kept going to the 10ms global floor.
+      for (let i = 0; i < 8; i++) {
+        const sends = clientTransport.sentMessages.length;
+        await conn.send(makeDocUpdate("doc-decay-floor", `edit-${i}`));
+        await until(() => clientTransport.sentMessages.length > sends, 2000);
+        const sent = clientTransport.sentMessages[clientTransport.sentMessages.length - 1];
+        await serverTransport.send(new AckMessage({ type: "ack", messageId: sent.id }, undefined));
+        await until(() => conn.inFlightMessageCount === 0);
+      }
+      expect(conn.diagnostics.batchIntervalMs).toBe(20);
+
+      await conn.destroy();
+    });
+
+    it("treats an ack with error as permanent rejection: no retransmit, diagnostic emitted", async () => {
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const diagnostics: any[] = [];
+      conn.on("diagnostic", (event) => diagnostics.push(event));
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-rejected");
+      await conn.send(msg);
+      expect(conn.inFlightMessageCount).toBe(1);
+
+      await serverTransport.send(
+        new AckMessage(
+          { type: "ack", messageId: msg.id, error: "message-too-large: 11 > 10 bytes" },
+          undefined,
+        ),
+      );
+
+      await until(() => conn.inFlightMessageCount === 0);
+      // Rejected permanently: no retransmit.
+      await new Promise((r) => setTimeout(r, 5));
+      expect(clientTransport.sentMessages).toHaveLength(1);
+      expect(diagnostics).toContainEqual({
+        type: "message-rejected",
+        messageId: msg.id,
+        error: "message-too-large: 11 > 10 bytes",
+        document: msg.document,
+      });
+
+      await conn.destroy();
+    });
+
+    it("retransmits a doc update when its ack times out instead of dropping it", async () => {
+      // If the server never acks (e.g. its consume loop missed the message),
+      // dropping the update from tracking silently loses it. Doc updates are
+      // idempotent, so retransmitting on timeout is always safe.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+        inFlightMessageTimeout: 5,
+      });
+      await conn.connect();
+      await serverTransport.connect(stubCtx());
+
+      const msg = makeDocUpdate("doc-ack-timeout");
+      await conn.send(msg);
+      expect(clientTransport.sentMessages).toHaveLength(1);
+
+      // No ack arrives — the in-flight timeout must retransmit, not drop.
+      await until(() => clientTransport.sentMessages.length >= 2);
+      expect(clientTransport.sentMessages[1].id).toBe(msg.id);
+      expect(conn.inFlightMessageCount).toBe(1);
+
+      // Clean ack settles it.
+      await serverTransport.send(new AckMessage({ type: "ack", messageId: msg.id }, undefined));
+      await until(() => conn.inFlightMessageCount === 0);
 
       await conn.destroy();
     });
@@ -1154,7 +1436,7 @@ describe("Connection", () => {
       await conn.destroy();
     });
 
-    it("times out in-flight messages after inFlightMessageTimeout", async () => {
+    it("retransmits doc messages on ack timeout but drops non-doc messages", async () => {
       const timer = new FakeTimer();
 
       const conn = new Connection({
@@ -1168,22 +1450,37 @@ describe("Connection", () => {
       await timer.advance(0);
       await conn.connect();
 
+      // Doc updates are idempotent — the timeout retransmits instead of
+      // dropping, so the update can't be silently lost.
       const docMsg = makeDocUpdate("doc-timeout");
       await conn.send(docMsg);
-
       expect(conn.inFlightMessageCount).toBe(1);
 
-      const events: boolean[] = [];
-      conn.on("messages-in-flight", (hasInFlight) => {
-        events.push(hasInFlight);
-      });
-
-      // Advance past the timeout
+      const sendsBefore = clientTransport.sentMessages.length;
       await timer.advance(600);
       await flushMicrotasks();
 
-      expect(conn.inFlightMessageCount).toBe(0);
-      expect(events).toContain(false);
+      expect(conn.inFlightMessageCount).toBe(1);
+      expect(clientTransport.sentMessages.length).toBe(sendsBefore + 1);
+      expect(clientTransport.sentMessages.at(-1)!.id).toBe(docMsg.id);
+
+      // Non-doc messages (RPC is not idempotent) are dropped from tracking.
+      const rpcMsg = new RpcMessage<any>(
+        "doc-timeout",
+        { type: "success", payload: {} } as any,
+        "milestoneCreate" as any,
+        "request",
+        undefined,
+        {} as any,
+      );
+      await conn.send(rpcMsg);
+      expect(conn.inFlightMessageCount).toBe(2);
+
+      await timer.advance(600);
+      await flushMicrotasks();
+
+      // The rpc message is gone; the doc update is still tracked.
+      expect(conn.inFlightMessageCount).toBe(1);
 
       await conn.destroy();
     });
@@ -1468,8 +1765,10 @@ describe("Connection", () => {
       await timer.advance(500);
       await flushMicrotasks();
 
-      // In-flight should be cleared after timeout
-      expect(conn.inFlightMessageCount).toBe(0);
+      // Doc updates stay tracked (the timeout retransmits them); the AIMD
+      // slowdown is observable through the grown batch interval.
+      expect(conn.inFlightMessageCount).toBe(1);
+      expect(conn.diagnostics.batchIntervalMs).toBeGreaterThan(100);
 
       await conn.destroy();
     });
@@ -3437,11 +3736,23 @@ describe("Connection", () => {
       const events: boolean[] = [];
       conn.on("messages-in-flight", (v) => events.push(v));
 
-      await conn.send(makeDocUpdate("t1"));
+      // RPC messages drop from tracking on ack timeout (doc updates would be
+      // retransmitted instead and never leave the in-flight set this way).
+      const makeRpc = (id: string) =>
+        new RpcMessage<any>(
+          id,
+          { type: "success", payload: {} } as any,
+          "milestoneCreate" as any,
+          "request",
+          undefined,
+          {} as any,
+        );
+
+      await conn.send(makeRpc("t1"));
       // Stagger the second send so its timeout fires separately
       await timer.advance(100);
       await flushMicrotasks();
-      await conn.send(makeDocUpdate("t2"));
+      await conn.send(makeRpc("t2"));
       expect(events).toEqual([true]);
       expect(conn.inFlightMessageCount).toBe(2);
 
@@ -3648,6 +3959,176 @@ describe("sendStream observability", () => {
     expect(sent).toHaveLength(0);
     // Streams also stay out of in-flight tracking (fire-and-forget contract).
     expect(conn.inFlightMessageCount).toBe(0);
+
+    await conn.destroy();
+  });
+
+  it("buffers sendStream messages when disconnected instead of dropping them", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const conn = new Connection({
+      transports: [clientTransport],
+      connect: false,
+      batchIntervalMs: 0,
+    });
+
+    const { RpcMessage } = await import("teleportal/protocol");
+    const chunk = new RpcMessage(
+      "doc-1",
+      { type: "success", payload: { fileId: "f1", chunkIndex: 0, totalChunks: 1 } },
+      "fileUpload",
+      "stream",
+      "f1",
+    );
+
+    conn.sendStream(chunk);
+    expect(clientTransport.sentMessages).toHaveLength(0);
+
+    await conn.connect();
+    await flushMicrotasks(10);
+
+    expect(clientTransport.sentMessages.length).toBeGreaterThanOrEqual(1);
+
+    await conn.destroy();
+  });
+
+  it("is a no-op on a destroyed connection", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const conn = new Connection({
+      transports: [clientTransport],
+      connect: false,
+      batchIntervalMs: 0,
+    });
+    await conn.connect();
+    await conn.destroy();
+
+    const { RpcMessage } = await import("teleportal/protocol");
+    const chunk = new RpcMessage(
+      "doc-1",
+      { type: "success", payload: { fileId: "f1", chunkIndex: 0, totalChunks: 1 } },
+      "fileUpload",
+      "stream",
+      "f1",
+    );
+    conn.sendStream(chunk);
+    await flushMicrotasks();
+
+    expect(clientTransport.sentMessages).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Destroy during connecting
+// ---------------------------------------------------------------------------
+
+describe("Destroy during connecting", () => {
+  it("destroy while connecting aborts the connection attempt", async () => {
+    const timer = new FakeTimer();
+    const hangingTransport: ConnectionTransport = {
+      name: "hanging",
+      timeout: 100,
+      connect: () => new Promise(() => {}),
+      send: async () => {},
+      close: async () => {},
+    };
+
+    const conn = new Connection({
+      transports: [hangingTransport],
+      connect: false,
+      batchIntervalMs: 0,
+      maxReconnectAttempts: 0,
+      timer,
+    });
+
+    // Start connect; it will hang because transport never resolves.
+    // Don't await — it would hang forever.
+    conn.connect().catch(() => {});
+    await timer.advance(0);
+    await flushMicrotasks();
+    expect(conn.state.type).toBe("connecting");
+
+    await conn.destroy();
+    expect(conn.destroyed).toBe(true);
+    expect(conn.state.type).toBe("disconnected");
+  });
+
+  it("disconnect while connecting cancels the connection attempt", async () => {
+    const timer = new FakeTimer();
+    const slowTransport: ConnectionTransport = {
+      name: "slow",
+      timeout: 100,
+      connect: () => new Promise(() => {}),
+      send: async () => {},
+      close: async () => {},
+    };
+
+    const conn = new Connection({
+      transports: [slowTransport],
+      connect: false,
+      batchIntervalMs: 0,
+      maxReconnectAttempts: 0,
+      timer,
+    });
+
+    conn.connect().catch(() => {});
+    await timer.advance(0);
+    await flushMicrotasks();
+
+    await conn.disconnect();
+    expect(conn.state.type).toBe("disconnected");
+
+    await conn.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Event emission ordering (update fires before connected/disconnected)
+// ---------------------------------------------------------------------------
+
+describe("Event emission ordering", () => {
+  it("emits update before connected", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const conn = new Connection({
+      transports: [clientTransport],
+      connect: false,
+      batchIntervalMs: 0,
+    });
+
+    const eventOrder: string[] = [];
+    conn.on("update", (state) => {
+      if (state.type === "connected") eventOrder.push("update:connected");
+    });
+    conn.on("connected", () => eventOrder.push("connected"));
+
+    await conn.connect();
+
+    expect(eventOrder[0]).toBe("update:connected");
+    expect(eventOrder[1]).toBe("connected");
+
+    await conn.destroy();
+  });
+
+  it("emits update before disconnected", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const conn = new Connection({
+      transports: [clientTransport],
+      connect: false,
+      batchIntervalMs: 0,
+      maxReconnectAttempts: 0,
+    });
+
+    await conn.connect();
+
+    const eventOrder: string[] = [];
+    conn.on("update", (state) => {
+      if (state.type === "disconnected") eventOrder.push("update:disconnected");
+    });
+    conn.on("disconnected", () => eventOrder.push("disconnected"));
+
+    clientTransport.simulateDisconnect();
+    await flushMicrotasks();
+
+    expect(eventOrder[0]).toBe("update:disconnected");
+    expect(eventOrder[1]).toBe("disconnected");
 
     await conn.destroy();
   });

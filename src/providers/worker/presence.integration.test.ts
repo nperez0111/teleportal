@@ -219,9 +219,7 @@ describe("SharedWorker presence end-to-end", () => {
 
     // Presence: tab B learns tab A exists (and never sees itself).
     await waitFor(() => bSees.joins.some((p) => p.awarenessId === idA));
-    expect(bSees.joins.some((p) => p.awarenessId === tabB.provider.awareness.clientID)).toBe(
-      false,
-    );
+    expect(bSees.joins.some((p) => p.awarenessId === tabB.provider.awareness.clientID)).toBe(false);
 
     // Awareness: tab A's cursor state reaches tab B.
     tabA.provider.awareness.setLocalState({ user: "alice" });

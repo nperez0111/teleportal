@@ -651,6 +651,10 @@ class ManagedConnection {
       unsub();
     }
     this.#unsubscribes = [];
+    if (this.#rpcClient) {
+      this.#rpcClient.destroy();
+      this.#rpcClient = null;
+    }
     this.connection.destroy();
   }
 }
