@@ -47,6 +47,7 @@ describe("TieredDocumentStorage", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
 
     // Use separate backing maps so we can inspect each tier independently
     const fastDocs = new Map<string, any>();
@@ -255,7 +256,7 @@ describe("TieredDocumentStorage", () => {
     const { versioned } = makeUpdate("evictable");
     await tiered.handleUpdate("doc1", versioned);
 
-    // Wait for persist + eviction sweep
+    // Wait for persist + eviction sweep (timer + evictAfterMs need >1ms)
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     // Document should be evicted from fast but still in slow
@@ -401,6 +402,7 @@ describe("TieredDocumentStorage (unstorage slow tier)", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
     await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
   });
 

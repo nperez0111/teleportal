@@ -22,7 +22,7 @@ describe("batch", () => {
     add(2);
     expect(batches).toHaveLength(0);
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     expect(batches).toHaveLength(1);
     expect(batches[0]).toEqual([1, 2]);
   });
@@ -31,7 +31,7 @@ describe("batch", () => {
     const batches: number[][] = [];
     batch<number>((items) => batches.push(items), { wait: 1 });
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     expect(batches).toHaveLength(0);
   });
 

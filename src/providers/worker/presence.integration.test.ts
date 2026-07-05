@@ -10,7 +10,7 @@ import { ConnectionWorkerManager } from "./connection-worker-manager";
 import { WorkerConnection } from "./worker-connection";
 
 const DOC = "test-doc";
-const SHORT_GRACE_MS = 5;
+const SHORT_GRACE_MS = 1;
 
 function tick(ms = 1) {
   return new Promise<void>((r) => setTimeout(r, ms));

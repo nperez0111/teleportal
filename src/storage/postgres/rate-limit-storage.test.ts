@@ -96,7 +96,7 @@ describe("PostgresRateLimitStorage", () => {
     const storage = makeStorage();
     const key = `rl-${crypto.randomUUID()}`;
     await storage.setState(key, makeState(), 1);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     expect(await storage.getState(key)).toBeNull();
     expect(await storage.hasState(key)).toBe(false);
   });
@@ -128,7 +128,7 @@ describe("PostgresRateLimitStorage", () => {
     const storage = makeStorage({ cleanupProbability: 1 });
     const expiredKey = `rl-${crypto.randomUUID()}`;
     await storage.setState(expiredKey, makeState(), 1);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     // Any write runs the sweep when cleanupProbability is 1.
     await storage.setState(`rl-${crypto.randomUUID()}`, makeState(), 60_000);
     const rows = (await sql!.unsafe(

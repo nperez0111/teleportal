@@ -332,7 +332,7 @@ describe("withAckTrackingSink", () => {
     );
 
     // Wait a short delay (simulating slow network/pubsub)
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     // Send ACK after delay
     await pubSub.publish(ackTopic, ackMessage.encoded, "other-source");

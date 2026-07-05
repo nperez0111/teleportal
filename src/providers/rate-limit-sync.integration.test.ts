@@ -89,7 +89,11 @@ async function connectClient(server: Server<ServerContext>, clientId: string, us
     close,
   };
   server.createClient({ transport, id: clientId });
-  const conn = new DirectConnection({ transports: [clientTransport], connect: false });
+  const conn = new DirectConnection({
+    transports: [clientTransport],
+    connect: false,
+    batchIntervalMs: 5,
+  });
   await conn.connect();
   return conn;
 }
@@ -136,12 +140,11 @@ describe("rate-limited sync during sustained typing (integration)", () => {
     });
     await Promise.all([providerA.synced, providerB.synced]);
 
-    // Mash the keyboard: 60 chars at ~5ms apart (~200 chars/s) — far beyond
-    // any human typing speed, spanning several 100ms client batch flushes.
+    // Mash the keyboard: 60 chars at ~1ms apart, spanning several batch flushes.
     const textA = docA.getText("t");
     for (let i = 0; i < 60; i++) {
       textA.insert(textA.length, "x");
-      await tick(5);
+      await tick();
     }
     const lengthSeenByBWhileTyping = docB.getText("t").length;
 

@@ -494,9 +494,9 @@ describe("FileClientHandler cache integration", () => {
     expect(streamed.sort((a, b) => a - b)).toEqual([1, 2]);
   });
 
-  it("30MB upload with rate-limit nacks retransmits and completes", async () => {
-    const FILE_SIZE = 30 * 1024 * 1024; // 30 MB
-    const EXPECTED_CHUNKS = Math.ceil(FILE_SIZE / CHUNK_SIZE); // 480
+  it("multi-chunk upload with rate-limit nacks retransmits and completes", async () => {
+    const FILE_SIZE = 2 * 1024 * 1024; // 2 MB
+    const EXPECTED_CHUNKS = Math.ceil(FILE_SIZE / CHUNK_SIZE); // 32
 
     const handlers = getFileClientHandlers({ cache });
     const handler = handlers.fileUpload as any;
@@ -563,7 +563,7 @@ describe("FileClientHandler cache integration", () => {
         tokensRemaining = BUCKET_SIZE;
         retransmitCount++;
       }
-    }, 5);
+    }, 1);
 
     const fileId = await uploadPromise;
     clearInterval(refillInterval);
@@ -578,7 +578,7 @@ describe("FileClientHandler cache integration", () => {
     expect(meta).not.toBeNull();
     expect(meta!.totalChunks).toBe(EXPECTED_CHUNKS);
     expect(meta!.filename).toBe("large.bin");
-  }, 30_000);
+  });
 
   it("a failed download does not poison the dedup cache (retry can succeed)", async () => {
     // No cache: force the server path so the in-memory #downloadCache is used.

@@ -150,7 +150,6 @@ describe("withTransaction", () => {
         key2,
         async () => {
           executionOrder.push("start-2");
-          await new Promise((resolve) => setTimeout(resolve, 1));
           executionOrder.push("end-2");
           return "result-2";
         },
@@ -195,7 +194,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -247,7 +246,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
       await transactionPromise;
@@ -299,7 +298,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -354,8 +353,8 @@ describe("withTransaction", () => {
   describe("lock safety", () => {
     it("should not release lock if TTL expired and another transaction acquired it", async () => {
       const key = "test-key-lock-safety";
-      const shortTTL = 15; // Very short TTL
-      const executionTime = 40; // Longer than TTL
+      const shortTTL = 5; // Very short TTL
+      const executionTime = 15; // Longer than TTL
 
       let transactionALockId: string | undefined;
       let transactionBLockId: string | undefined;
@@ -385,7 +384,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (!transactionALockId) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -399,7 +398,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -431,7 +430,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (!transactionBStarted) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
       expect(transactionBStarted).toBeTrue();
@@ -479,7 +478,7 @@ describe("withTransaction", () => {
         async () => {
           firstAcquired = true;
           executionOrder.push(0); // First transaction
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
           executionOrder.push(0); // First transaction ends
           return "first";
         },
@@ -491,7 +490,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (!firstAcquired) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 
@@ -593,7 +592,7 @@ describe("withTransaction", () => {
         const deadline = Date.now() + 5000;
         while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
           if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
 

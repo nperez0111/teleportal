@@ -295,7 +295,7 @@ describe("getHTTPHandler", () => {
       expect(response.status).toBe(200);
 
       // Wait for async operations
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Verify session was created with custom document
       const session = await server.getOrOpenSession("custom-doc", {

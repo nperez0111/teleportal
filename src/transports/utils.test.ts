@@ -621,7 +621,7 @@ describe("Batching Transform", () => {
       const processed: number[] = [];
       const queue = createSerialQueue<number>(async (n) => {
         // Earlier items take longer; order must still be preserved.
-        await new Promise((r) => setTimeout(r, n === 1 ? 5 : 0));
+        await new Promise((r) => setTimeout(r, n === 1 ? 1 : 0));
         processed.push(n);
       });
 

@@ -94,7 +94,7 @@ describe("InMemoryFileStorage", () => {
       documentId: "test-doc",
     });
 
-    // Wait for expiration
+    // Wait for TTL (1ms) to expire — strict > check requires at least 2ms
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     await temp.cleanupExpiredUploads();

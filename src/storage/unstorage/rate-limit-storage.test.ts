@@ -69,7 +69,7 @@ describe("UnstorageRateLimitStorage", () => {
     // Start transaction 1 (slower)
     const p1 = storage.transaction(key, async () => {
       executionOrder.push("start-1");
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 1));
       executionOrder.push("end-1");
       return 1;
     });

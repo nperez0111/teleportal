@@ -133,7 +133,7 @@ describe("ydoc source batching", () => {
     doc.getText("t").insert(2, "c");
 
     // Wait for the batch to flush, then destroy to close the stream
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 1));
     doc.destroy();
     await done;
 
@@ -230,11 +230,11 @@ describe("ydoc source batching", () => {
     // First batch
     doc.getText("t").insert(0, "a");
     doc.getText("t").insert(1, "b");
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 1));
 
     // Second batch
     doc.getText("t").insert(2, "c");
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 1));
 
     doc.destroy();
     await done;

@@ -439,7 +439,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const start = performance.now();
     while (!(await predicate())) {
       if (performance.now() - start > timeoutMs) throw new Error("waitUntil timed out");
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 1));
     }
   }
 
@@ -656,7 +656,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     const SYNCED_PENDING = Symbol("pending");
     const syncedResult = await Promise.race([
       p2.synced.then(() => "synced").catch(() => "errored"),
-      new Promise((r) => setTimeout(() => r(SYNCED_PENDING), 200)),
+      new Promise((r) => setTimeout(() => r(SYNCED_PENDING), 10)),
     ]);
     expect(syncedResult).toBe(SYNCED_PENDING);
   });
@@ -1420,6 +1420,7 @@ describe("attribution e2e: full WebSocket transport", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
     pubSub = new InMemoryPubSub();
     key = await createEncryptionKey();
 

@@ -77,7 +77,7 @@ describe("TieredRateLimitStorage", () => {
     const state = makeState(5);
     await tiered.setState("k1", state, 1);
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     const freshState = makeState(99);
     await backing.setState("k1", freshState, 60_000);

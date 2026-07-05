@@ -18,12 +18,7 @@ import {
   IdMap,
 } from "../src/lib/attribution/content-map";
 import { getActivity, resolveItemAttribution } from "../src/lib/attribution/queries";
-import { type ContentIds, createContentIds, IdSet } from "../src/lib/attribution/content-ids";
-import {
-  collectRangeIds,
-  resolveRangeAttribution,
-  resolveDeletedRangeAttribution,
-} from "../src/protocols/attribution/resolve";
+import { collectRangeIds, resolveRangeAttribution } from "../src/protocols/attribution/resolve";
 import {
   encodeContentEncryptedPayload,
   decodeContentEncryptedPayload,
@@ -31,7 +26,7 @@ import {
 import type { VersionedUpdate, Update, UpdateV2 } from "teleportal";
 import type { EncryptedUpdatePayload } from "../src/lib/protocol/encryption/encoding";
 import type { EncodedContentMap } from "../src/storage/types";
-import { bench, formatBytes, formatDuration } from "./helpers";
+import { bench, formatBytes } from "./helpers";
 
 // ─── Scenario Builders ──────────────────────────────────────────────────────
 

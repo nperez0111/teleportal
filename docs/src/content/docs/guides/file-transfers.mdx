@@ -144,11 +144,20 @@ try {
 
 ### Chunked Transfer
 
-Files are split into chunks (sized by the server, default 1MB) and streamed over the RPC layer. This keeps memory usage bounded regardless of file size.
+Files are split into chunks (sized by the server, default 1MB) and transferred over the RPC layer as an ordered sequence of chunk messages. Chunking lets each chunk be encrypted, hashed, verified, and acknowledged independently, and makes uploads resumable and content-addressed.
 
-**Upload flow:** The client sends a `fileUpload` request with metadata. The server responds with its configured chunk size. The client then streams encrypted chunks, each acknowledged by the server before the next is sent. After the final chunk, the server rebuilds the Merkle tree and moves the file from temporary to durable storage.
+**Upload flow:** The client encrypts the whole file and folds its Merkle root up front — the root is the content ID, which lets the server answer "already have it" (dedup) or "here are the chunks I'm missing" (resume) in a single round-trip. The client then streams the missing chunks (pipelined, not strictly one-ACK-at-a-time) and resolves once every sent chunk is acknowledged. After the last chunk lands, the server rebuilds the Merkle tree, verifies it against the claimed content ID, and moves the file from temporary to durable storage.
 
-**Download flow:** The client sends a `fileDownload` request. The server streams chunks back, each with a Merkle proof. The client verifies each chunk against the root hash before accepting it.
+**Download flow:** The client sends a `fileDownload` request. The server streams chunks back, each with a Merkle proof. The client verifies each chunk against the root hash before accepting it, then assembles the file once all chunks arrive.
+
+<Aside type="caution">
+  Transfer today is *pipelined*, not constant-memory: the client holds the file's chunks in memory
+  for the duration of an upload (freed incrementally as chunks are acknowledged) or a download
+  (until the file is assembled), and the server loads a file's chunks from storage to serve a
+  download. Plan for roughly one file's worth of memory per concurrent transfer, and keep files
+  within the 1GB limit below. Fully bounded-memory streaming (a `ReadableStream`/`WritableStream`
+  end-to-end path) is not yet implemented.
+</Aside>
 
 ### Merkle Tree Verification
 

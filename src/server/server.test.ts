@@ -37,7 +37,7 @@ async function waitFor<T>(
   let value = fn();
   while (!predicate(value)) {
     if (Date.now() - start > timeoutMs) return value;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     value = fn();
   }
   return value;

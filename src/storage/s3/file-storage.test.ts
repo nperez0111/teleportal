@@ -220,8 +220,7 @@ describe("S3FileStorage + S3TemporaryUploadStorage", () => {
     const { temp } = makeStores("expiry", 1);
     const fileId = "expiring-upload";
     await temp.beginUpload(fileId, makeMetadata({ size: 1024 }));
-    // S3 LastModified has second granularity and floors, so any activity is
-    // at least a few ms in the past by now — already beyond the 1ms timeout.
+    // Sleep past the 1ms TTL to ensure expiry check passes.
     await new Promise((resolve) => setTimeout(resolve, 5));
     await temp.cleanupExpiredUploads();
     expect(await temp.getUploadProgress(fileId)).toBeNull();

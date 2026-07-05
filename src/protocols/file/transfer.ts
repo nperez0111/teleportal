@@ -622,6 +622,14 @@ class FileClientHandler implements ClientRpcHandler {
     // Mark all chunks as sent - upload can now resolve when all ACKs received
     uploadState.allChunksSent = true;
 
+    // Every chunk's data now lives in `unackedChunks` (the FilePartStream holds
+    // the same Uint8Array reference), which shrinks as ACKs arrive and drives
+    // retransmission. `preparedChunks` is a second full-file map that is never
+    // read again after this point, so release it: peak retained upload memory
+    // drops from ~2× file to ~1×, and toward 0 as chunks get ACKed, instead of
+    // pinning a whole extra copy until the upload resolves.
+    uploadState.preparedChunks.clear();
+
     // If all ACKs have already been received (or there was nothing to send), resolve now.
     if (uploadState.unackedChunks.size === 0) {
       uploadState.resolve(uploadState.fileId);

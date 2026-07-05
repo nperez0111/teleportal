@@ -78,7 +78,7 @@ describe("AdvisoryLocker", () => {
         );
 
       // Give the b attempt a moment to enter its acquisition path.
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 1));
 
       // Key "a" must acquire, run, release, and re-acquire promptly despite the
       // stuck b acquisition sharing the same connection.

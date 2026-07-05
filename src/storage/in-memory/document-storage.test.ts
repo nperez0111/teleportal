@@ -27,6 +27,7 @@ import {
   createContentMapFromContentIds,
   decodeContentMap,
   encodeContentMap,
+  mergeContentMaps,
   IdSet,
 } from "teleportal/attribution";
 import { MemoryDocumentStorage } from "./document-storage";
@@ -89,6 +90,7 @@ describe("MemoryDocumentStorage (unencrypted)", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
     storage = new MemoryDocumentStorage(false);
   });
 
@@ -551,6 +553,86 @@ describe("MemoryDocumentStorage (unencrypted)", () => {
       await storage.deleteDocument(key);
       expect(await storage.retrieveAttribution(key)).toBeNull();
     });
+
+    // ── Caching: byte-identity + no re-decode per read ──────────────────────
+
+    const asBytes = (b: EncodedContentMap): number[] => Array.from(b as Uint8Array);
+
+    /** Reference: the pre-cache implementation's exact output, as a byte array. */
+    function referenceMerge(list: EncodedContentMap[]): number[] {
+      return Array.from(
+        encodeContentMap(mergeContentMaps(list.map((m) => decodeContentMap(m)))) as Uint8Array,
+      );
+    }
+
+    it("retrieve returns bytes identical to a full merge of all appended maps", async () => {
+      const key = "attr-cache-bytes";
+      const raw: EncodedContentMap[] = [];
+      for (let i = 0; i < 5; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = (i + 1) * 100;
+        doc.getText("content").insert(0, `part-${i}`);
+        const update = Y.encodeStateAsUpdateV2(doc) as Update;
+        const attribution = makeAttribution(update, `user-${i}`);
+        raw.push(attribution);
+        await storage.handleUpdate(key, versionedUpdate(update), attribution);
+      }
+
+      const retrieved = await storage.retrieveAttribution(key);
+      expect(retrieved).not.toBeNull();
+      // Byte-identical to the naive full-merge-and-encode of every raw map.
+      expect(asBytes(retrieved!)).toEqual(referenceMerge(raw));
+    });
+
+    it("repeated reads with no new appends do not re-decode/re-encode", async () => {
+      const key = "attr-cache-repeat";
+      for (let i = 0; i < 4; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = (i + 1) * 100;
+        doc.getText("content").insert(0, `part-${i}`);
+        const update = Y.encodeStateAsUpdateV2(doc) as Update;
+        await storage.handleUpdate(key, versionedUpdate(update), makeAttribution(update, `u-${i}`));
+      }
+
+      const first = await storage.retrieveAttribution(key);
+      const second = await storage.retrieveAttribution(key);
+      const third = await storage.retrieveAttribution(key);
+
+      // Same object reference means no re-merge/re-encode happened: the cached
+      // blob is served directly (the list was collapsed on the first read).
+      expect(second).toBe(first);
+      expect(third).toBe(first);
+      // The raw list is collapsed to a single merged entry after the first read.
+      expect(MemoryDocumentStorage.attributionMaps.get(key)!.length).toBe(1);
+    });
+
+    it("a read after a new append reflects the appended attribution", async () => {
+      const key = "attr-cache-append";
+
+      const docA = new Y.Doc();
+      docA.clientID = 100;
+      docA.getText("content").insert(0, "A");
+      const updateA = Y.encodeStateAsUpdateV2(docA) as Update;
+      await storage.handleUpdate(key, versionedUpdate(updateA), makeAttribution(updateA, "user-A"));
+
+      const afterA = await storage.retrieveAttribution(key);
+      const clientsAfterA = decodeContentMap(afterA!).inserts.clients.size;
+
+      // Append a second, independent client's attribution.
+      const docB = new Y.Doc();
+      docB.clientID = 200;
+      docB.getText("content").insert(0, "B");
+      const updateB = Y.encodeStateAsUpdateV2(docB) as Update;
+      const attrB = makeAttribution(updateB, "user-B");
+      await storage.handleUpdate(key, versionedUpdate(updateB), attrB);
+
+      const afterB = await storage.retrieveAttribution(key);
+      // New content is reflected (a distinct client range appeared)...
+      expect(afterB).not.toBe(afterA);
+      expect(decodeContentMap(afterB!).inserts.clients.size).toBeGreaterThan(clientsAfterA);
+      // ...and it still matches a naive full merge of both raw maps.
+      expect(asBytes(afterB!)).toEqual(referenceMerge([afterA as EncodedContentMap, attrB]));
+    });
   });
 });
 
@@ -563,6 +645,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
     storage = new MemoryDocumentStorage(true);
   });
 
@@ -1537,6 +1620,7 @@ describe("MemoryDocumentStorage with custom backing options", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
   });
 
   it("deletes from the custom backing store, not the static map", async () => {

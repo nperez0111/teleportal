@@ -59,11 +59,25 @@ export function safeId(id: string): string {
  * - `chunks/{i}` — chunk bytes, carrying their domain-separated merkle leaf
  *   hash as the `x-amz-meta-leaf-hash` header
  *
- * Mutable progress (stored chunk count, bytes, last activity) derives from
- * ListObjectsV2 instead of a session counter, eliminating read-modify-write
- * races between concurrent chunk writers. The leaf-hash metadata lets
- * `completeUpload` build the merkle tree from HEAD requests — chunk bytes are
- * read back only if a chunk is missing its hash header.
+ * Authoritative progress (which chunk indices exist, bytes, last activity)
+ * derives from ListObjectsV2 in {@link S3TemporaryUploadStorage.getUploadProgress}
+ * and {@link S3TemporaryUploadStorage.completeUpload} — never from a session
+ * counter — so it is immune to read-modify-write races between concurrent chunk
+ * writers. The leaf-hash metadata lets `completeUpload` build the merkle tree
+ * from HEAD requests — chunk bytes are read back only if a chunk is missing its
+ * hash header.
+ *
+ * `storeChunk`, on the hot path, returns `storedChunks` from a per-instance
+ * high-water counter rather than a full LIST per write: a full LIST on every
+ * chunk is O(N) keys × N chunks = O(N²) on S3's slowest, most rate-limited
+ * operation (a 2.5 GB / 10k-chunk file would issue 10k LISTs). The counter is
+ * lazily seeded from a single LIST the first time this instance touches a
+ * session (covering resume/restart and a second server that already persisted
+ * chunks) and then incremented only for genuinely-new chunks. `storedChunks` is
+ * used solely as the finalize trigger in the file server (`>= expectedTotal`);
+ * `completeUpload` re-verifies every chunk index via LIST, so a momentarily
+ * approximate counter cannot corrupt a file — at worst it delays finalization
+ * until the next store, whose seed reconciles against persisted reality.
  *
  * Recommended defense-in-depth: a native lifecycle rule on `{prefix}uploads/`
  * (e.g. expire after 7 days) so orphaned sessions vanish even if
@@ -76,6 +90,15 @@ export class S3TemporaryUploadStorage implements TemporaryUploadStorage {
   readonly #prefix: string;
   readonly #uploadTimeoutMs: number;
   readonly #concurrency: number;
+
+  /**
+   * Per-instance high-water count of stored chunk indices, keyed by uploadId.
+   * Seeded from a single LIST on first touch (see {@link #storedChunkCount}) and
+   * incremented for genuinely-new chunks, so the {@link storeChunk} hot path
+   * avoids a full LIST per write. Not the source of truth — `getUploadProgress`
+   * and `completeUpload` re-derive from LIST — just a cheap finalize trigger.
+   */
+  readonly #chunkCounts = new Map<string, number>();
 
   constructor(
     configOrClient: S3Config | S3Http,
@@ -184,20 +207,39 @@ export class S3TemporaryUploadStorage implements TemporaryUploadStorage {
           `Chunk ${chunkIndex} for upload ${uploadId} conflicts with already-stored data`,
         );
       }
-      return { storedChunks: await this.#countChunks(uploadId) };
+      // Harmless retransmit of a chunk we already have: the set did not grow, so
+      // report the current high-water count without a LIST or an increment.
+      return { storedChunks: await this.#storedChunkCount(uploadId) };
     }
+
+    // Read the pre-write count first (seeding from a single LIST only on this
+    // instance's first touch of the session), so the +1 below counts exactly
+    // this genuinely-new chunk instead of double-counting it once the put lands.
+    const before = await this.#storedChunkCount(uploadId);
 
     await this.#s3.putObject(chunkKey, chunkData, {
       meta: { [LEAF_HASH_META]: leafHash },
     });
 
-    // Derive the count from actually-persisted objects (list-after-write is
-    // strongly consistent on S3/R2/MinIO) instead of a racy session counter.
-    return { storedChunks: await this.#countChunks(uploadId) };
+    // A genuinely-new chunk (headObject above returned null): bump the cheap
+    // per-instance counter by one instead of re-LISTing every key. See the class
+    // doc for why an approximate counter is safe here.
+    const count = before + 1;
+    this.#chunkCounts.set(uploadId, count);
+    return { storedChunks: count };
   }
 
-  async #countChunks(uploadId: string): Promise<number> {
+  /**
+   * Current high-water stored-chunk count for `uploadId`, seeded from a single
+   * LIST the first time this instance sees the session (so a resumed session or
+   * chunks written by another server are not undercounted) and cached in
+   * {@link #chunkCounts} thereafter.
+   */
+  async #storedChunkCount(uploadId: string): Promise<number> {
+    const cached = this.#chunkCounts.get(uploadId);
+    if (cached !== undefined) return cached;
     const { objects } = await this.#s3.listAll(this.#chunkPrefix(uploadId));
+    this.#chunkCounts.set(uploadId, objects.length);
     return objects.length;
   }
 
@@ -220,6 +262,12 @@ export class S3TemporaryUploadStorage implements TemporaryUploadStorage {
         bytesUploaded += object.size;
       }
     }
+
+    // Reconcile the hot-path counter against this authoritative LIST: the file
+    // server calls getUploadProgress after each storeChunk, so a counter that
+    // drifted low (e.g. chunks a second server wrote after this instance's seed)
+    // self-heals in time to trigger finalization. Never lower it below the LIST.
+    this.#chunkCounts.set(uploadId, Math.max(this.#chunkCounts.get(uploadId) ?? 0, chunks.size));
 
     return {
       metadata: session.metadata,
@@ -309,6 +357,10 @@ export class S3TemporaryUploadStorage implements TemporaryUploadStorage {
   }
 
   async deleteUpload(uploadId: string): Promise<void> {
+    // Drop the cached counter so a later re-creation of the same (content-
+    // addressed) session id starts counting from a clean slate rather than
+    // inheriting a stale high-water mark.
+    this.#chunkCounts.delete(uploadId);
     const { objects } = await this.#s3.listAll(this.#uploadPrefix(uploadId));
     if (objects.length > 0) {
       await this.#s3.deleteObjects(objects.map((o) => o.key));

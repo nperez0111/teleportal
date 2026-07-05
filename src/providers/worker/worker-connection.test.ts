@@ -27,7 +27,7 @@ function tick(ms = 1) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
-const SHORT_GRACE_MS = 5;
+const SHORT_GRACE_MS = 1;
 
 function setup() {
   const [clientTransport, serverTransport] = createMemoryTransportPair();
@@ -432,7 +432,7 @@ describe("WorkerConnection", () => {
     await conn.destroy();
 
     // Wait for grace period to expire
-    await new Promise<void>((r) => setTimeout(r, SHORT_GRACE_MS + 5));
+    await new Promise<void>((r) => setTimeout(r, SHORT_GRACE_MS + 1));
 
     expect(manager.connectionCount).toBe(0);
   });

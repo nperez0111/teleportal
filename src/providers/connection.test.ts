@@ -661,7 +661,7 @@ describe("Connection", () => {
       const conn = new Connection({
         transports: [clientTransport],
         connect: false,
-        batchIntervalMs: 5,
+        batchIntervalMs: 1,
       });
       const diagnostics: any[] = [];
       conn.on("diagnostic", (event) => diagnostics.push(event));
@@ -685,7 +685,6 @@ describe("Connection", () => {
 
       // Exactly one more transmission goes out, carrying BOTH edits.
       await until(() => clientTransport.sentMessages.length === 2, 2000);
-      await new Promise((r) => setTimeout(r, 20));
       expect(clientTransport.sentMessages).toHaveLength(2);
 
       const retrans = clientTransport.sentMessages[1] as DocMessage<any>;
@@ -778,7 +777,7 @@ describe("Connection", () => {
 
       await until(() => conn.inFlightMessageCount === 0);
       // Rejected permanently: no retransmit.
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 1));
       expect(clientTransport.sentMessages).toHaveLength(1);
       expect(diagnostics).toContainEqual({
         type: "message-rejected",
