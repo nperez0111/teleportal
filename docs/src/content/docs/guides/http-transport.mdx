@@ -3,62 +3,169 @@ title: HTTP Transport
 description: Using HTTP/SSE transport for environments where WebSockets are blocked
 ---
 
-This guide demonstrates a Teleportal server setup using only HTTP connections: HTTP POST & Server-Sent Events (SSE). This is useful for environments where WebSocket upgrades are blocked.
+HTTP/SSE is the right transport when your deployment environment prevents WebSocket upgrades. This happens more often than you might expect: corporate proxies and firewalls that strip `Upgrade` headers, load balancers configured without WebSocket passthrough, edge runtimes like Cloudflare Workers (without Durable Objects), and restrictive CSP policies. In these scenarios, Teleportal uses standard HTTP POST requests paired with Server-Sent Events (SSE) to provide the same real-time synchronization you get with WebSockets.
 
 ## What it demonstrates
 
-- Setting up a Teleportal server with HTTP transport only
-- Using Server-Sent Events (SSE) for real-time synchronization
-- Client connection using the `Provider` API with HTTP transport
+- Setting up a Teleportal server with HTTP-only transport using `getHTTPHandlers`
+- Extracting authentication context from HTTP headers
+- Forcing the client to use HTTP/SSE instead of the default WebSocket-first fallback
+- The SSE + POST architecture that enables bidirectional communication over plain HTTP
+- Using the stateless `POST /message` endpoint for one-off operations
 
 ## Server Setup
 
+`getHTTPHandlers` creates a unified fetch handler that routes to all three HTTP endpoints. It works with any Fetch API-compatible runtime (Bun, Node 18+, Cloudflare Workers, Deno).
+
 ```typescript
 import { Server } from "teleportal/server";
-import { getHttpHandlers } from "teleportal/http";
+import { getHTTPHandlers } from "teleportal/http";
+import { MemoryDocumentStorage } from "teleportal/storage";
 
 const server = new Server({
-  storage: async (ctx) => {
-    // Your storage implementation
-    return documentStorage;
+  storage: new MemoryDocumentStorage(),
+});
+
+const handler = getHTTPHandlers({
+  server,
+  getContext: async (request) => {
+    // Extract user identity from the request.
+    // In production, verify a JWT or session cookie here.
+    const userId = request.headers.get("x-user-id") ?? "anonymous";
+    return { userId };
   },
 });
 
-// HTTP handlers
-const handlers = getHttpHandlers({
-  server,
-  onConnect: async (request) => {
-    // Extract context from request
-    return {
-      context: { userId: "user-123" },
-    };
-  },
-});
+// Bun
+Bun.serve({ fetch: handler });
+
+// Cloudflare Workers
+// export default { fetch: handler };
+
+// Node.js (with a Fetch API adapter)
+// app.all("*", (req, res) => handler(req).then(r => res.send(r)));
 ```
+
+Documents are encrypted by default. If a client connects to a document named `my-doc`, the server opens an encrypted session. To opt a specific document into plaintext, append `:plaintext` to the document name in the query string: `?documents=my-doc:plaintext`.
 
 ## Client Setup
 
-The `Provider` automatically uses HTTP transport when WebSocket is not available:
+By default, `Provider.create` uses a `DirectConnection` with `[websocketTransport(), httpTransport()]` that tries WebSocket first and falls back to HTTP. To force HTTP-only, pass `transports: [httpTransport()]`:
 
 ```typescript
-import { Provider } from "teleportal/providers";
+import { Provider, httpTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
-// Provider will automatically use HTTP/SSE if WebSocket fails
 const provider = await Provider.create({
   url: "https://example.com",
   document: "my-document",
+  encryptionKey: await createEncryptionKey(),
+  // Force HTTP/SSE only -- skip the WebSocket attempt entirely
+  transports: [httpTransport()],
 });
 
 await provider.synced;
+
+// The Yjs document is ready to use
+const text = provider.doc.getText("content");
+text.insert(0, "Hello from HTTP/SSE!");
+```
+
+The `httpTransport` function accepts options for customizing the SSE connection timeout, providing a custom `fetch` or `EventSource` implementation, and tuning HTTP message batching:
+
+```typescript
+import { httpTransport } from "teleportal/providers";
+
+const transport = httpTransport({
+  timeout: 15000, // SSE connection timeout (default: 10000ms)
+  fetch: customFetch, // Custom fetch implementation
+  EventSource: customSSE, // Custom EventSource implementation
+  httpBatchingOptions: {
+    maxBatchSize: 10, // Max messages per HTTP POST
+    maxBatchDelay: 50, // Max ms to wait before flushing a batch
+  },
+});
 ```
 
 ## How It Works
 
-1. **HTTP POST**: Client sends messages via HTTP POST requests
-2. **Server-Sent Events**: Server sends messages via SSE connection
-3. **Automatic Fallback**: Provider automatically falls back to HTTP if WebSocket fails
+The HTTP transport uses two complementary channels to achieve bidirectional communication over plain HTTP:
+
+### Server-to-client: GET /sse
+
+The client opens a long-lived SSE connection by sending `GET /sse`. The server subscribes to a PubSub topic keyed by the client ID (`client/{clientId}`) and streams messages to the client as SSE events. This connection stays open for the lifetime of the session.
+
+### Client-to-server: POST /sse
+
+When the client needs to send data (document updates, awareness changes), it sends an `HTTP POST` to `/sse` with the `x-teleportal-client-id` header. The server publishes these messages to the same PubSub topic, where the SSE reader picks them up, processes them through the server, and streams any responses back over the open SSE connection.
+
+### Stateless alternative: POST /message
+
+For one-off operations that do not need a persistent connection, `POST /message` provides a simple request-response pattern. Each request gets a fresh client ID, processes messages, and returns the response inline. This is useful for operations like fetching a document snapshot without maintaining a long-lived connection.
+
+### ACK system
+
+The SSE writer endpoint uses an acknowledgment system to ensure reliable delivery. After the SSE reader delivers messages to the client, it publishes an ACK to `ack/{clientId}`. The writer waits for this ACK before returning a success response. If the ACK does not arrive within the configured timeout (default: 5 seconds), the writer returns a `504 Gateway Timeout`.
+
+### Performance trade-offs
+
+The server-to-client SSE channel encodes binary data as base64 (SSE is a text protocol), adding ~33% overhead compared to WebSocket's native binary frames. The client-to-server HTTP POST channel sends raw binary with no encoding overhead. Message batching (multiple messages per POST) mitigates the per-request overhead of HTTP, but for high-throughput scenarios with frequent small updates, WebSocket remains the better choice. Use HTTP when compatibility is the priority.
+
+## Dual Transport Setup
+
+In most production deployments, you want to support both WebSocket and HTTP so that clients can use the best available transport. Set up both on the same server and let the client's `DirectConnection` handle transport selection automatically.
+
+```typescript
+import { Server } from "teleportal/server";
+import { getHTTPHandlers } from "teleportal/http";
+import { getWebsocketHandlers } from "teleportal/websocket-server";
+import { MemoryDocumentStorage } from "teleportal/storage";
+
+const server = new Server({
+  storage: new MemoryDocumentStorage(),
+});
+
+const getContext = async (request: Request) => {
+  const userId = request.headers.get("x-user-id") ?? "anonymous";
+  return { userId };
+};
+
+// HTTP/SSE handler (also serves as the fetch handler for non-WS requests)
+const httpHandler = getHTTPHandlers({ server, getContext });
+
+// WebSocket handler
+const wsHandler = getWebsocketHandlers({
+  server,
+  onUpgrade: async (request) => {
+    const userId = request.headers.get("x-user-id") ?? "anonymous";
+    return { context: { userId } };
+  },
+});
+
+Bun.serve({
+  websocket: wsHandler,
+  fetch: httpHandler,
+});
+```
+
+The client does not need any changes -- `Provider.create` tries WebSocket first and falls back to HTTP automatically:
+
+```typescript
+import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
+// Tries WebSocket, falls back to HTTP if it fails
+const provider = await Provider.create({
+  url: "https://example.com",
+  document: "my-document",
+  encryptionKey: await createEncryptionKey(),
+});
+```
+
+See the [Fallback Connection](/docs/guides/fallback-connection/) guide for more details on how the automatic fallback works, including upgrade probing and transport switching.
 
 ## Next Steps
 
-- [Fallback Connection](/docs/guides/fallback-connection/) - Automatic fallback from WebSocket to HTTP
-- [Authentication](/docs/guides/authentication/) - Add authentication to your server
+- [Fallback Connection](/docs/guides/fallback-connection/) -- Automatic WebSocket-to-HTTP fallback with upgrade probing
+- [WebSocket Only](/docs/guides/websocket-only/) -- Minimal server setup when you only need WebSocket
+- [Authentication](/docs/guides/authentication/) -- Add token-based authentication to your server

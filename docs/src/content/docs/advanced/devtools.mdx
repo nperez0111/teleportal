@@ -15,6 +15,16 @@ The Teleportal DevTools helps you debug and monitor your Teleportal applications
 - **Message inspection**: View detailed payloads, metadata, and acknowledgment status
 - **Statistics**: Track message counts, rates, document counts, and message types
 
+The UI is organized as a three-panel layout:
+
+- **Filters panel** (top, collapsible): A compact header is always visible with a filters toggle, clear button, connection status indicator, document count, and message limit input. Expanding it reveals search, direction selector, document checkboxes, and message type checkboxes.
+- **Message list** (left, scrollable): Messages displayed in reverse chronological order (newest first). Each item shows a direction icon, a color-coded message type badge, an ACK indicator (if acknowledged), the document name, and a timestamp.
+- **Message inspector** (right, fixed width): When a message is selected, displays its full metadata (ID, direction, type, document, timestamp, encryption status), ACK details if applicable, and the formatted payload with a copy button.
+
+A connection status indicator is shown in the filters header with color coding: green for connected, yellow for connecting, gray for disconnected, and red for errored.
+
+Real-time statistics are displayed alongside the filters: total message count, messages per second, and document count. All settings -- including filters, message limit, and panel state -- persist in localStorage across sessions.
+
 ## Basic Integration
 
 ```typescript
@@ -62,32 +72,234 @@ export function TeleportalDevtoolsPanel() {
 }
 ```
 
-## Message Types
+## Complete Vite + React Integration Example
 
-The devtools recognizes and color-codes various message types:
+In a real application you typically want the devtools to appear only during development and to be toggleable so it does not obscure the rest of the UI. The example below shows a bottom-drawer pattern with conditional rendering and proper cleanup.
 
-- **Document Messages**: `sync-step-1`, `sync-step-2`, `update`, `sync-done`, `auth-message`, `milestone-*`
-- **Awareness Messages**: `awareness-update`, `awareness-request`
-- **File Messages**: `file-upload`, `file-download`, `file-part`, `file-auth-message`
-- **ACK Messages**: `ack` (hidden from list but tracked)
+```tsx
+// src/components/DevtoolsDrawer.tsx
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createTeleportalDevtools, getDevtoolsState } from "teleportal/devtools";
+
+export function DevtoolsDrawer() {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const devtoolsRef = useRef<HTMLElement | null>(null);
+  const [state] = useState(() => getDevtoolsState());
+
+  useEffect(() => {
+    if (!open || !containerRef.current) return;
+
+    const devtoolsElement = createTeleportalDevtools(state);
+    containerRef.current.appendChild(devtoolsElement);
+    devtoolsRef.current = devtoolsElement;
+
+    return () => {
+      if (devtoolsRef.current) {
+        const cleanup = (devtoolsRef.current as any).__teleportalDevtoolsCleanup;
+        if (cleanup) cleanup();
+        devtoolsRef.current.remove();
+        devtoolsRef.current = null;
+      }
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen((prev) => !prev)}
+        style={{
+          position: "fixed",
+          bottom: open ? 320 : 8,
+          right: 8,
+          zIndex: 10000,
+        }}
+      >
+        {open ? "Close DevTools" : "Open DevTools"}
+      </button>
+
+      {open && (
+        <div
+          ref={containerRef}
+          style={{
+            position: "fixed",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 300,
+            zIndex: 9999,
+            borderTop: "2px solid #333",
+          }}
+        />
+      )}
+    </>
+  );
+}
+```
+
+```tsx
+// src/App.tsx
+import { DevtoolsDrawer } from "./components/DevtoolsDrawer";
+
+function App() {
+  return (
+    <>
+      {/* Your application content */}
+      {import.meta.env.DEV && <DevtoolsDrawer />}
+    </>
+  );
+}
+```
+
+Key points:
+
+- `import.meta.env.DEV` is a Vite built-in that is `true` only during development, so the drawer is tree-shaken out of production builds.
+- The devtools element is created when the drawer opens and cleaned up when it closes, so resources are not held when the panel is hidden.
+- The `__teleportalDevtoolsCleanup` function unsubscribes all event listeners and clears internal state, preventing memory leaks.
+
+## Message Monitoring Capabilities
+
+The DevTools capture every message flowing through the Teleportal provider in real time. Each message is stored with metadata including its unique ID, direction (sent or received), timestamp, associated document, and the provider instance that handled it.
+
+Key behaviors:
+
+- **ACK tracking**: ACK messages are hidden from the message list to reduce noise, but they are tracked separately. When an ACK is received, the original message it acknowledges is updated with an ACK indicator, and the inspector shows the ACK details (ACK message ID, acknowledged message ID, and timestamp) in an expandable section.
+- **Message deduplication**: Messages are deduplicated by their ID using an O(1) index lookup, so duplicate deliveries do not produce duplicate entries in the list.
+- **Configurable message limit**: The message limit (default: 200) caps how many messages are kept in memory. When the limit is exceeded, the oldest messages are removed and their contributions to the statistics are subtracted. You can change the limit at any time via the input in the filters header.
+- **Message rate**: The rate is calculated as the number of messages received or sent within the last 10 seconds, divided by 10, giving a smoothed messages-per-second value.
+- **Per-document tracking**: A `DocumentTracker` maintains a registry of all documents seen in messages, recording their message counts, last activity timestamps, and provider associations.
+
+## Message Types and Color Coding
+
+The DevTools recognize and color-code messages by category and type.
+
+### Document Messages
+
+| Type           | Color        |
+| -------------- | ------------ |
+| `sync-step-1`  | Blue         |
+| `sync-step-2`  | Darker blue  |
+| `update`       | Green        |
+| `sync-done`    | Darker green |
+| `auth-message` | Red          |
+| `milestone-*`  | Purple       |
+
+### Awareness Messages
+
+| Type                | Color         |
+| ------------------- | ------------- |
+| `awareness-update`  | Yellow        |
+| `awareness-request` | Darker yellow |
+
+### File Messages
+
+| Type                | Color          |
+| ------------------- | -------------- |
+| `file-upload`       | Indigo         |
+| `file-download`     | Darker indigo  |
+| `file-part`         | Lighter indigo |
+| `file-auth-message` | Red            |
+
+### ACK Messages
+
+| Type  | Color                               |
+| ----- | ----------------------------------- |
+| `ack` | Gray (hidden from list but tracked) |
 
 ## Filtering
 
-The devtools provides powerful filtering capabilities:
+The DevTools provide filtering controls in the collapsible filters panel. All filter settings persist in localStorage and are restored on page reload.
 
-- **Document filter**: Show messages from specific documents
-- **Message type filter**: Hide/show specific message types
-- **Direction filter**: Filter by sent/received/all
-- **Search filter**: Text search across message payloads and document IDs
+### Document Filter
 
-## Settings
+Multi-select checkboxes listing every document that has appeared in a message. Documents are auto-discovered as messages arrive -- there is no manual configuration. Select one or more documents to show only their messages.
 
-Settings are automatically saved to localStorage:
+### Message Type Filter
 
-- **Message limit**: Maximum number of messages to keep in memory (default: 200)
-- **Filter persistence**: All filter settings are saved and restored on page reload
+Checkboxes for each message type allow you to hide specific types from the list. This is useful for focusing on a particular category, for example hiding all awareness updates to concentrate on sync traffic.
+
+### Direction Filter
+
+A selector with three options:
+
+- **All**: Show both sent and received messages
+- **Sent**: Show only outgoing messages
+- **Received**: Show only incoming messages
+
+### Search Filter
+
+A text input that searches across message payloads and document IDs. The search is case-insensitive and debounced by 300ms so that filtering does not block the UI during rapid typing.
+
+## Debugging Sync Issues
+
+The DevTools are especially useful for diagnosing common synchronization problems.
+
+### Sync not completing
+
+Look for a `sync-step-1` message that was sent but no corresponding `sync-step-2` received. This means the server did not respond to the initial sync request. Check whether an `auth-message` was received instead, which indicates a permission or authentication error.
+
+### Duplicate updates
+
+If you see an unusually high message rate or the same document data arriving repeatedly, check the message IDs. The DevTools deduplicate by ID, so identical IDs will not appear twice. If many distinct IDs carry the same payload, the application may have an update loop -- a common cause is subscribing to Y.js `update` events and re-broadcasting them without checking their origin.
+
+### Connection instability
+
+Watch the connection status indicator in the filters header. If it cycles rapidly between connecting (yellow) and disconnected (gray), there is likely a network issue, a server-side rejection, or a misconfigured reconnection strategy. Check for `auth-message` types with error codes that might explain the rejection.
+
+### Missing awareness updates
+
+Filter to awareness messages only using the message type filter. Verify that `awareness-request` messages are being sent. If they are sent but no `awareness-update` is received in response, the server may not be forwarding awareness state, or the document ID in the request may not match any active document on the server.
+
+### File upload failures
+
+Filter to file messages. Check for `file-auth-message` responses and inspect their payloads for HTTP status codes. Common codes: 401 (unauthorized), 403 (forbidden), 404 (document not found), 500 (server error). A `file-upload` sent without any `file-part` responses indicates the upload was rejected before chunked transfer began.
+
+## Troubleshooting Tips
+
+### DevTools not showing messages
+
+Ensure the devtools element is created **after** the Provider is initialized. The `EventManager` subscribes to `teleportalEventClient` events at construction time. If the devtools are created before the provider emits events, the subscriptions will be in place but no events will flow until the provider connects.
+
+### High memory usage
+
+Lower the message limit in the filters header. The default of 200 is conservative, but for high-traffic applications with many concurrent documents or frequent awareness updates, consider setting it to 50-100. Each stored message retains references to the original message object and the provider, so large payloads can add up.
+
+### Settings not persisting
+
+The DevTools store settings in `localStorage` under the key `teleportal-devtools-settings`. If settings are not persisting, check whether localStorage is available in your environment. Private browsing modes, iframe sandbox restrictions, and certain browser extensions can block localStorage access.
+
+### Cleanup
+
+Always call the cleanup function when the devtools element is removed from the DOM to prevent memory leaks from lingering event listeners:
+
+```typescript
+const devtoolsElement = createTeleportalDevtools();
+
+// Later, when cleaning up:
+const cleanup = (devtoolsElement as any).__teleportalDevtoolsCleanup;
+if (cleanup) {
+  cleanup();
+}
+```
+
+This unsubscribes from all `teleportalEventClient` event listeners, clears internal state, and removes subscriber callbacks.
+
+## Event System Integration
+
+The DevTools integrate with the Teleportal event system through `teleportalEventClient` from `teleportal/providers`. The `EventManager` subscribes to the following events at construction time:
+
+- `received-message` -- captures every incoming message with its provider and connection context
+- `sent-message` -- captures every outgoing message
+- `connected` -- updates the connection state indicator to connected
+- `disconnected` -- updates the connection state indicator to disconnected
+- `update` -- handles connection state transitions (connecting, errored, etc.)
+- `load-subdoc` -- registers a new subdocument in the document tracker
+- `unload-subdoc` -- removes a subdocument from the document tracker
+
+Because these are global events emitted by the provider, the DevTools automatically capture traffic from all providers and connections active on the page.
 
 ## Next Steps
 
-- [Provider](/docs/core-concepts/provider/) - Learn how providers work
-- [Protocol](/docs/core-concepts/protocol/) - Understand the message protocol
+- [Provider](/docs/core-concepts/provider/) -- Learn how providers work and how events flow
+- [Protocol](/docs/core-concepts/protocol/) -- Understand the message types the DevTools display
+- [Performance](/docs/advanced/performance/) -- Optimize your Teleportal application

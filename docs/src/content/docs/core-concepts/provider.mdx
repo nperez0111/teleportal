@@ -11,18 +11,31 @@ The `Provider` is the client-side API that manages Y.js document synchronization
 
 The provider system is built on two main abstractions:
 
-- **`Connection`**: Manages the low-level network connection (WebSocket, HTTP, or fallback), handles reconnection logic, message buffering, and connection state.
+- **`Connection`**: Manages the low-level network connection, handles reconnection logic, message buffering, transport selection, and connection state. The default implementation is `DirectConnection`, which accepts an ordered list of pluggable transports.
 - **`Provider`**: Manages Yjs document synchronization, awareness, offline persistence, and RPC operations. It uses a `Connection` for network communication.
+
+### Why the Split?
+
+The Connection and Provider are separate classes because they have fundamentally different lifecycles and responsibilities:
+
+**Connection** handles network concerns: selecting a transport (WebSocket, HTTP, or custom), reconnecting with exponential backoff when the network drops, buffering and batching messages while disconnected, and tracking heartbeats. It knows nothing about Y.js documents.
+
+**Provider** handles document concerns: running the Y.js sync protocol, managing awareness (cursor/presence) state, coordinating offline persistence with IndexedDB, and exposing RPC operations like milestones and attribution. It relies on a Connection for transport but doesn't manage the connection itself.
+
+This separation enables **connection reuse** -- multiple Providers can share a single Connection, which is how Teleportal multiplexes many documents over one WebSocket. It also enables **independent lifecycle management**: you can switch documents (destroying one Provider and creating another) without tearing down and re-establishing the network connection. The `switchDocument()` method exploits this directly. And when using a SharedWorker, the Connection lives in the worker thread while Providers remain in the main thread, a split that would be impossible if they were a single object.
 
 ## Basic Usage
 
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
-// Create a provider with automatic connection
+// Create a provider with automatic connection.
+// By default creates a DirectConnection with [websocketTransport(), httpTransport()]
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Wait for document to be synced
@@ -38,58 +51,116 @@ provider.on("update", (state) => {
 });
 ```
 
-## Connection Types
+## Connection and Transports
 
-### Fallback Connection (Default)
+### DirectConnection with Pluggable Transports
 
-Will attempt to connect over one connection type, then fallback to another if it fails (while still attempting to re-dial in the background if possible to upgrade to the preferred connection type):
-
-```typescript
-// Provider.create() automatically uses FallbackConnection
-const provider = await Provider.create({
-  url: "wss://example.com", // Tries WebSocket first, then falls back to HTTP if it fails
-  document: "my-document",
-});
-```
-
-### WebSocket Connection
-
-The default connection type, sends & receives all messages over the websocket protocol:
+`DirectConnection` is the single connection class. Instead of separate connection classes for WebSocket and HTTP, it takes an ordered array of `ConnectionTransport` instances and manages transport selection, fallback, and auto-upgrade internally:
 
 ```typescript
-import { WebSocketConnection } from "teleportal/providers/websocket";
+import { DirectConnection, websocketTransport, httpTransport } from "teleportal/providers";
 
-const connection = new WebSocketConnection({
+const connection = new DirectConnection({
   url: "wss://example.com",
-});
-
-const provider = new Provider({
-  client: connection,
-  document: "my-document",
+  transports: [websocketTransport(), httpTransport()],
 });
 ```
 
-### HTTP Connection
+**How it works:**
 
-A fallback for when websockets don't work (some corporate networks), utilizes HTTP POSTs for writes and a long-running HTTP SSE connection for reads:
+- **Transport fallback**: On connect, transports are tried in order. If WebSocket fails (e.g. blocked by a corporate firewall), the HTTP transport is tried automatically.
+- **Upgrade probing**: When connected on a non-preferred transport (e.g. HTTP), `DirectConnection` periodically probes the preferred transport (WebSocket). If the probe succeeds, it transparently upgrades back -- no reconnection logic needed from the application.
+- **Manual override**: Call `connection.switchTransport("http")` to force a specific transport and disable automatic upgrade probing.
+
+`Provider.create()` uses this by default with `[websocketTransport({ timeout: 5000 }), httpTransport()]`:
 
 ```typescript
-import { HttpConnection } from "teleportal/providers/http";
-
-const connection = new HttpConnection({
-  url: "https://example.com",
+// These are equivalent:
+const provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document",
+  encryptionKey: key,
 });
 
-const provider = new Provider({
-  client: connection,
+const provider = await Provider.create({
+  url: "wss://example.com",
   document: "my-document",
+  encryptionKey: key,
+  transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
 });
 ```
 
-<Aside type="caution">
-  This connection method has some slight overhead compared to WebSocket, in that, because it is run
-  over HTTP, it does not support binary data & instead must use base64-encoded strings for all data.
+### Built-in Transport Factories
+
+Two transport factories are provided:
+
+**`websocketTransport(options?)`** -- WebSocket-based transport. Supports `probe()` for upgrade detection.
+
+```typescript
+import { websocketTransport } from "teleportal/providers";
+
+websocketTransport({
+  timeout: 5000, // Connection timeout (ms)
+  protocols: [], // WebSocket sub-protocols
+  WebSocket: WebSocket, // WebSocket implementation override
+});
+```
+
+**`httpTransport(options?)`** -- HTTP/SSE-based transport. Uses Server-Sent Events for server-to-client messages and HTTP POST for client-to-server messages.
+
+```typescript
+import { httpTransport } from "teleportal/providers";
+
+httpTransport({
+  timeout: 10000, // SSE connection timeout (ms)
+  fetch: fetch, // fetch implementation override
+  EventSource: EventSource, // EventSource implementation override
+  httpBatchingOptions: { maxBatchSize: 10, maxBatchDelay: 50 },
+});
+```
+
+<Aside type="note">
+  The server-to-client direction uses SSE (Server-Sent Events), a text-based protocol, so binary
+  messages are base64-encoded for that leg. The client-to-server direction uses HTTP POST with raw
+  binary and has no encoding overhead.
 </Aside>
+
+### WebSocket-only or HTTP-only
+
+```typescript
+// WebSocket only (no fallback)
+const connection = new DirectConnection({
+  url: "wss://example.com",
+  transports: [websocketTransport()],
+});
+
+// HTTP only
+const connection = new DirectConnection({
+  url: "https://example.com",
+  transports: [httpTransport()],
+});
+```
+
+### SharedWorker Connection
+
+Offloads the network connection to a [SharedWorker](https://developer.mozilla.org/en-US/docs/Web/API/SharedWorker) so all open tabs share a single underlying transport. Falls back to a direct in-thread connection when `SharedWorker` is unavailable.
+
+```typescript
+import { WorkerProvider } from "teleportal/providers/worker";
+import { websocketTransport, httpTransport } from "teleportal/providers";
+
+const provider = await WorkerProvider.create({
+  workerUrl: new URL("./worker.ts", import.meta.url),
+  url: "wss://example.com/sync",
+  transports: [websocketTransport(), httpTransport()],
+  document: "my-document",
+  encryptionKey: key,
+});
+
+await provider.synced;
+```
+
+See the [SharedWorker Connection guide](/docs/guides/shared-worker/) for setup details, connection pooling, and configuration options.
 
 ## Document Operations
 
@@ -166,6 +237,7 @@ Efficiently switch between documents while maintaining the same connection:
 // Switch to a new document (reuses connection)
 const newProvider = provider.switchDocument({
   document: "new-document-id",
+  encryptionKey: key,
 });
 
 // Old provider is destroyed, new provider is ready
@@ -180,6 +252,7 @@ The provider automatically enables offline persistence by default using IndexedD
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
+  encryptionKey: await createEncryptionKey(),
   enableOfflinePersistence: true, // default
   indexedDBPrefix: "my-app-", // custom prefix
 });
@@ -195,13 +268,17 @@ Monitor connection state:
 
 ```typescript
 // Get current connection state
-const connection = provider.state;
+const state = provider.state;
 
-if (connection.type === "connected") {
-  console.log("Connected!");
-} else if (connection.type === "errored") {
-  console.error("Connection error:", connection.error);
+if (state.type === "connected") {
+  console.log("Connected via:", state.transport);
+} else if (state.type === "errored") {
+  console.error("Connection error:", state.error);
 }
+
+// Check active transport
+console.log("Active transport:", provider.connection.activeTransport);
+console.log("Available transports:", provider.connection.availableTransports);
 
 // Wait for connection
 try {
@@ -217,20 +294,28 @@ try {
 Multiple providers can share the same connection:
 
 ```typescript
+import { DirectConnection, websocketTransport, httpTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
 // Create a connection
-const connection = new WebSocketConnection({
+const connection = new DirectConnection({
   url: "wss://example.com",
+  transports: [websocketTransport(), httpTransport()],
 });
+
+const key = await createEncryptionKey();
 
 // Create multiple providers with the same connection
 const provider1 = new Provider({
-  client: connection,
+  connection,
   document: "doc-1",
+  encryptionKey: key,
 });
 
 const provider2 = new Provider({
-  client: connection,
+  connection,
   document: "doc-2",
+  encryptionKey: key,
 });
 ```
 
@@ -243,6 +328,7 @@ The provider supports explicit resource management:
 using provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document",
+  encryptionKey: key,
 });
 
 // Provider automatically disposes when exiting scope
@@ -272,10 +358,20 @@ provider.on("unload-subdoc", ({ subdoc, provider }) => {
 provider.on("update", (state) => {
   console.log("Connection state changed:", state.type);
 });
+
+// Peer presence events
+provider.on("peer-join", (peer) => {
+  console.log("Peer joined:", peer.userId);
+});
+
+provider.on("peer-leave", (peer) => {
+  console.log("Peer left:", peer.userId);
+});
 ```
 
 ## Next Steps
 
 - [Server](/docs/core-concepts/server/) - Learn how the server handles provider connections
 - [Transport](/docs/core-concepts/transport/) - Understand the transport layer
+- [SharedWorker Connection](/docs/guides/shared-worker/) - Offload connections to a SharedWorker
 - [Milestones](/docs/core-concepts/milestones/) - Learn about document versioning

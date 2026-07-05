@@ -3,27 +3,36 @@ title: Transport
 description: How messages are transmitted between clients and servers
 ---
 
-The transport layer handles how messages are sent and received between clients and servers. Teleportal's transport system is built on the **Web Streams API**, making it composable and allowing multiple transports to be chained together.
+The transport layer handles how messages are sent and received between clients and servers. Teleportal's transport system is built on **async iterables**, making it composable and allowing multiple transports to be chained together.
+
+## Why Async Iterables?
+
+Teleportal uses async iterables (`AsyncIterable<Message[]>`) as the foundation for its transport layer rather than raw callbacks, event emitters, or Web Streams. This is a deliberate architectural choice that enables three properties:
+
+- **Composability**: Transports are just iterables and write functions, so middleware (encryption, rate limiting, logging, validation) can be layered by wrapping one transport in another. Each layer is independent and testable in isolation. You can stack them in any order without the middleware needing to know about each other.
+- **Backpressure**: The pull-based async iterable model naturally pauses the producer when the consumer is slow. The consumer pulls the next batch only when it is ready, preventing unbounded memory growth from buffered messages.
+- **Runtime portability**: Async iterables are a language-level primitive available in every JavaScript runtime — browsers, Bun, Deno, Node.js, and Cloudflare Workers. By building on a language standard rather than a runtime-specific abstraction, the transport layer works everywhere without polyfills.
+
+This means that adding a new transport (say, WebTransport or a custom binary protocol) only requires implementing an async iterable source and a write function — all existing middleware automatically applies to it.
 
 ## Overview
 
-A **Transport** is a combination of a **Source** (for reading messages) and a **Sink** (for writing messages). The server's perspective is:
+A **Transport** combines a **Source** (for reading messages) and a **Sink** (for writing messages):
 
 ```typescript
-{
-  readable: messagesFromClient,
-  writable: messagesToClient
-}
+type Source<Context> = {
+  source: AsyncIterable<Message<Context>[]>;
+};
+
+type Sink<Context> = {
+  write(message: Message<Context>): void | Promise<void>;
+  close(): void;
+};
+
+type Transport<Context> = Source<Context> & Sink<Context>;
 ```
 
-The client's perspective is:
-
-```typescript
-{
-  readable: messagesFromServer,
-  writable: messagesToServer
-}
-```
+The source yields **batches** (arrays) of messages — preserving the natural batching of the underlying transport (a single WebSocket frame might carry multiple protocol messages). The write function sends a single message. The close function tears down the transport.
 
 ## Architecture
 
@@ -31,7 +40,7 @@ The transport system follows a composable architecture:
 
 1. **Base transports** handle the actual communication (HTTP, SSE, WebSocket, PubSub)
 2. **Middleware transports** wrap other transports to add functionality (encryption, rate limiting, logging, validation)
-3. **Utility functions** help compose, pipe, and transform transports
+3. **Utility functions** help compose, connect, and transform transports
 
 ### Rate Limiting
 
@@ -41,9 +50,14 @@ Throttles messages using a token bucket algorithm:
 import { withRateLimit } from "teleportal/transports/rate-limiter";
 
 const rateLimitedTransport = withRateLimit(transport, {
-  maxMessages: 100,
-  windowMs: 1000,
-  trackBy: "user",
+  rules: [
+    {
+      id: "per-user",
+      maxMessages: 100,
+      windowMs: 1000,
+      trackBy: "user",
+    },
+  ],
 });
 ```
 
@@ -119,7 +133,7 @@ let transport = getBaseTransport();
 transport = getEncryptedTransport(handler);
 
 // Add rate limiting
-transport = withRateLimit(transport, options);
+transport = withRateLimit(transport, { rules: myRules });
 
 // Add logging
 transport = withLogger(transport);
@@ -163,19 +177,19 @@ import { compose } from "teleportal/transports";
 const transport = compose(source, sink);
 ```
 
-### Pipe
+### Connect
 
-Pipes messages from a Source to a Sink:
+Drains all messages from a source and writes them to a sink (one-directional):
 
 ```typescript
-import { pipe } from "teleportal/transports";
+import { connect } from "teleportal/transports";
 
-await pipe(source, sink);
+await connect(source, sink);
 ```
 
 ### Sync
 
-Bidirectionally syncs two transports:
+Bidirectionally connects two transports — each transport's source feeds the other's sink:
 
 ```typescript
 import { sync } from "teleportal/transports";
@@ -183,11 +197,42 @@ import { sync } from "teleportal/transports";
 await sync(transportA, transportB);
 ```
 
+### Transform Helpers
+
+Transform messages flowing through a source:
+
+```typescript
+import { mapMessages, filterMessages, flatMapMessages } from "teleportal/transports";
+
+// Transform each message
+const mapped = mapMessages(source, (msg) => transform(msg));
+
+// Drop messages that don't match a predicate
+const filtered = filterMessages(source, (msg) => msg.type === "doc");
+
+// Expand or collapse messages
+const expanded = flatMapMessages(source, (msg) => [msg, derivedMsg]);
+```
+
+### Binary Conversion
+
+Convert between message-level and binary transports:
+
+```typescript
+import { toBinaryTransport, fromBinaryTransport } from "teleportal/transports";
+
+// Message transport → binary (for wire transmission)
+const binaryTransport = toBinaryTransport(transport, context);
+
+// Binary transport → message (for protocol processing)
+const messageTransport = fromBinaryTransport(binaryTransport, context);
+```
+
 ## Best Practices
 
 1. **Compose from bottom up**: Start with base transports, then add middleware
 2. **Handle errors**: Transports can error, ensure proper error handling
-3. **Clean up resources**: Call `close()` or `unsubscribe()` when done
+3. **Clean up resources**: Call `close()` when done
 4. **Use appropriate transports**: Choose transports based on your use case
 5. **Rate limit client transports**: Always rate limit client-side transports to prevent abuse
 6. **Validate messages**: Use message validators for authorization checks

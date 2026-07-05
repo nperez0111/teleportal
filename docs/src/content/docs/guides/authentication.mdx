@@ -49,9 +49,12 @@ serve({
     onUpgrade: async (request) => {
       // Extract token from request
       const url = new URL(request.url);
+      const authHeader = request.headers.get("authorization");
       const token =
         url.searchParams.get("token") ||
-        request.headers.get("authorization")?.replace("Bearer ", "");
+        (authHeader && /^bearer\s+/i.test(authHeader)
+          ? authHeader.replace(/^bearer\s+/i, "")
+          : null);
 
       if (!token) {
         throw new Response("No token provided", { status: 401 });
@@ -80,6 +83,7 @@ serve({
 ```typescript
 import { Provider } from "teleportal/providers";
 import { createTokenManager } from "teleportal/token";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 // Create token manager (should match server secret)
 const tokenManager = createTokenManager({
@@ -95,6 +99,7 @@ const token = await tokenManager.createToken("user-123", "org-456", [
 const provider = await Provider.create({
   url: `wss://example.com?token=${token}`,
   document: "user-123/my-document",
+  encryptionKey: await createEncryptionKey(),
 });
 
 await provider.synced;

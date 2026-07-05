@@ -71,9 +71,109 @@ const server = new Server({
 - **`"user-document"`**: Track rate limits per user-document pair. Each user has separate limits for each document.
 - **`"transport"`**: Track rate limits per transport instance (in-memory only, not shared).
 
+## How the Token Bucket Works
+
+Rate limiting uses a **token bucket algorithm**. Each tracking key (user, document, or user-document pair) gets a bucket that holds up to `maxMessages` tokens. Every incoming message consumes one token from the bucket. Tokens refill at a steady rate of `maxMessages` per `windowMs`. When the bucket is empty, further messages are rejected until tokens refill. This allows short bursts of activity (up to `maxMessages` at once) while enforcing an average rate over time.
+
+ACK messages and file-auth-message responses are automatically excluded from rate limiting since they are protocol-level acknowledgments, not user-initiated traffic. Rate limiting is also applied **before** permission checking -- messages that exceed the limit are rejected immediately without incurring the cost of a permission check.
+
+## Dynamic Rate Limits
+
+Both `maxMessages` and `windowMs` on each rule accept either a static number or a function that receives the current message and returns a number. This lets you vary limits based on user role, document type, or any other context.
+
+```typescript
+import { Server } from "teleportal/server";
+
+const server = new Server({
+  // ...
+  rateLimitConfig: {
+    rules: [
+      {
+        id: "per-user",
+        maxMessages: (msg) => {
+          if (msg.context.role === "premium") return 500;
+          return 100;
+        },
+        windowMs: (msg) => {
+          // Tighter window for public documents
+          if (msg.document?.startsWith("public/")) return 500;
+          return 1000;
+        },
+        trackBy: "user",
+      },
+    ],
+  },
+});
+```
+
+## Skipping Rate Limits
+
+Use `shouldSkipRateLimit` to bypass rate limiting entirely for certain messages. This is useful for admin users, internal service accounts, or specific message types that should never be throttled.
+
+```typescript
+import { Server } from "teleportal/server";
+
+const server = new Server({
+  // ...
+  rateLimitConfig: {
+    rules: [
+      {
+        id: "per-user",
+        maxMessages: 100,
+        windowMs: 1000,
+        trackBy: "user",
+      },
+    ],
+    shouldSkipRateLimit: async (msg) => {
+      return msg.context.role === "admin";
+    },
+  },
+});
+```
+
+## Alerting on Rate Limit Exceeded
+
+The `onRateLimitExceeded` callback fires every time a message is rejected due to rate limiting. It receives structured details about the event, making it straightforward to integrate with logging and alerting systems.
+
+```typescript
+import { Server } from "teleportal/server";
+
+const server = new Server({
+  // ...
+  rateLimitConfig: {
+    rules: [
+      {
+        id: "per-user",
+        maxMessages: 100,
+        windowMs: 1000,
+        trackBy: "user",
+      },
+    ],
+    onRateLimitExceeded: (details) => {
+      logger.warn("Rate limit exceeded", {
+        ruleId: details.ruleId,
+        userId: details.userId,
+        documentId: details.documentId,
+        currentCount: details.currentCount,
+        maxMessages: details.maxMessages,
+        resetAt: new Date(details.resetAt).toISOString(),
+      });
+      // Send to your alerting service
+      alertService.notify("rate-limit-exceeded", details);
+    },
+    onMessageSizeExceeded: (details) => {
+      logger.warn("Message size exceeded", {
+        size: details.size,
+        maxSize: details.maxSize,
+      });
+    },
+  },
+});
+```
+
 ## Multi-Node Deployments
 
-For multi-node deployments, use persistent rate limit storage:
+For multi-node deployments, use persistent rate limit storage so that limits are shared across all server instances:
 
 ```typescript
 import { RedisRateLimitStorage } from "teleportal/transports/redis";
@@ -88,6 +188,8 @@ const server = new Server({
   },
 });
 ```
+
+Without persistent storage, each server instance tracks limits independently (in-memory per transport), so a user could exceed the intended limit by connecting to multiple nodes.
 
 ## Next Steps
 

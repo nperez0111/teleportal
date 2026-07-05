@@ -1,118 +1,373 @@
 ---
 title: Performance
-description: Optimizing Teleportal for performance
+description: Strategies for optimizing Teleportal throughput, latency, and resource usage
 ---
 
-This guide covers performance optimization strategies for Teleportal applications.
+This guide covers performance optimization strategies for Teleportal applications, from document size management and write buffering to connection sharing and monitoring.
 
-## Rate Limiting
+## Document Size Management
 
-Rate limiting prevents abuse and ensures fair resource usage:
+Y.js documents grow over time as edits accumulate. Teleportal tracks document size in `DocumentMetadata.sizeBytes` and provides two server-level thresholds you can set to stay ahead of problems.
+
+### Server-Level Configuration
+
+Set default thresholds for all documents via `documentSizeConfig`:
 
 ```typescript
 const server = new Server({
-  rateLimitConfig: {
-    maxMessages: 100,
-    windowMs: 1000,
-    trackBy: "user",
+  documentSizeConfig: {
+    warningThreshold: 5 * 1024 * 1024, // 5 MB -- emit a warning event
+    limit: 20 * 1024 * 1024, // 20 MB -- emit a limit-exceeded event
   },
 });
 ```
 
-See [Rate Limiting Guide](/docs/guides/rate-limiting/) for details.
+### Per-Document Overrides
+
+Individual documents can override the server defaults through their `DocumentMetadata`:
+
+```typescript
+// In your storage implementation or metadata writes
+await storage.writeDocumentMetadata(documentId, {
+  encrypted: false,
+  sizeWarningThreshold: 2 * 1024 * 1024, // 2 MB for this specific document
+  sizeLimit: 10 * 1024 * 1024, // 10 MB hard limit
+});
+```
+
+Per-document values take precedence over the server-level defaults.
+
+### Events
+
+When a threshold is crossed, the server emits events you can listen to:
+
+```typescript
+server.on("document-size-warning", ({ documentId, sizeBytes, warningThreshold }) => {
+  console.warn(`Document ${documentId} is ${sizeBytes} bytes (threshold: ${warningThreshold})`);
+});
+
+server.on("document-size-limit-exceeded", ({ documentId, sizeBytes, sizeLimit }) => {
+  console.error(`Document ${documentId} exceeded limit: ${sizeBytes} > ${sizeLimit}`);
+  // Take action: reject further writes, archive the document, etc.
+});
+```
+
+Both events are advisory -- writes are not blocked automatically. Events are deduplicated: the server emits each event once per crossing. If the document shrinks back below the threshold (for example, after compaction) and then exceeds it again, the event fires again.
+
+### Monitoring Metrics
+
+Three Prometheus-compatible metrics track document size:
+
+| Metric                                          | Type    | Labels                    | Description                             |
+| ----------------------------------------------- | ------- | ------------------------- | --------------------------------------- |
+| `teleportal_document_size_bytes`                | Gauge   | `documentId`, `encrypted` | Current size of the document in bytes   |
+| `teleportal_document_size_warning_total`        | Counter | `documentId`              | Number of warning events emitted        |
+| `teleportal_document_size_limit_exceeded_total` | Counter | `documentId`              | Number of limit-exceeded events emitted |
+
+### Best Practices
+
+- **Set warning thresholds proactively.** A warning at 5 MB gives you time to investigate before a document becomes unwieldy.
+- **Monitor document growth.** Use the `teleportal_document_size_bytes` gauge to track trends and set alerts.
+- **Implement cleanup strategies.** For documents that grow large, consider periodic compaction, archiving old content, or splitting into subdocuments.
 
 ## VirtualStorage for Write Buffering
 
-`VirtualStorage` adds batching and buffering to any `DocumentStorage` implementation, improving write performance:
+`VirtualStorage` wraps any `DocumentStorage` implementation, buffering writes in memory and flushing them in batches to reduce database round-trips.
 
 ```typescript
 import { VirtualStorage } from "teleportal/storage";
 
-// Wrap any existing storage with batching
-const batchedStorage = new VirtualStorage(existingDocumentStorage, {
-  batchMaxSize: 100, // Batch every 100 updates
-  batchWaitMs: 2000, // Or every 2 seconds
+const storage = new VirtualStorage(underlyingStorage, {
+  batchMaxSize: 100, // Flush after 100 buffered updates (default: 100)
+  batchWaitMs: 2000, // Or flush after 2 seconds of inactivity (default: 2000)
 });
-
-// Use as normal DocumentStorage
-await batchedStorage.handleUpdate("doc1", update);
-const doc = await batchedStorage.getDocument("doc1"); // Flushes pending writes
 ```
 
-**Benefits**:
+### How Batching Works
 
-- **Faster writes**: Updates are buffered and batched
-- **Reduced I/O**: Fewer database calls
-- **Read consistency**: Pending writes are flushed on reads
+Updates are accumulated in an in-memory buffer, keyed by document ID. A flush happens when **either** condition is met:
 
-**When to use**:
+1. The buffer reaches `batchMaxSize` updates.
+2. `batchWaitMs` milliseconds have elapsed since the first buffered update.
 
-- High-frequency collaborative updates
-- Slow storage backends (remote DBs, object storage)
-- Write-heavy applications
+On flush, all buffered updates for a document are written sequentially to the underlying storage in a single batch operation.
 
-## Storage Optimization
+### Read Consistency
 
-### Use Appropriate Storage Backend
+Reads always see the latest state. Before any read operation (`getDocument`, `getDocumentMetadata`, `handleSyncStep1`), VirtualStorage flushes all pending writes for that document to the underlying storage. This guarantees consistency but means reads have slight additional latency when there are pending writes.
 
-Choose storage based on your needs:
+### Performance Impact
 
-- **Redis**: Fast, in-memory, good for high-frequency updates
-- **PostgreSQL**: Reliable, transactional, good for complex queries
-- **S3**: Scalable, cost-effective, good for large files
+- **Writes**: faster acknowledgment because they return immediately after buffering. Fewer database calls overall.
+- **Reads**: consistent, but may trigger a flush if writes are pending. In practice this is fast because flushes are sequential writes to the same document.
+- **Memory**: proportional to `batchMaxSize` multiplied by the number of active documents with pending writes.
+
+### When to Use
+
+- High-frequency collaborative updates (many users typing simultaneously).
+- Slow storage backends (remote databases, object storage over the network).
+- Write-heavy applications where individual update durability is less critical than throughput.
+
+### When Not to Use
+
+- If you need real-time durability guarantees (every update must be persisted before acknowledgment).
+- Single-write patterns where batching adds complexity without measurable benefit.
+
+## Y.js Update Encoding
+
+Teleportal supports both V1 and V2 Y.js update encodings. Each has different performance characteristics:
+
+- **V1 encoding**: lower per-update overhead, better for small incremental edits. Individual keystrokes and small changes are more compact in V1.
+- **V2 encoding**: more compact encoding for large state, better for full-document snapshots and merged changesets.
+
+### How Teleportal Uses Both
+
+Teleportal handles encoding automatically -- you do not need to choose. The system uses each format where it performs best:
+
+- **Wire protocol**: individual updates are sent as `VersionedUpdate` objects that carry a `version` field (1 or 2). Small per-message updates typically use V1 for lower overhead.
+- **Storage**: merged document state is always stored in V2 format. When updates of mixed versions are merged, they are converted to V2 before the merge (`mergeUpdatesV2`).
+
+```typescript
+// The VersionedUpdate type reflects this dual encoding
+type VersionedUpdate = { version: 1; data: UpdateV1 } | { version: 2; data: UpdateV2 };
+```
+
+### Why This Matters
+
+Understanding the encoding split helps diagnose size issues:
+
+- If **wire traffic** seems high, the issue is likely update frequency rather than encoding. Consider message batching (below).
+- If **stored document size** seems high, the V2-merged state may contain redundant history. Consider compaction or milestone-based cleanup.
+
+## Message Batching
+
+Teleportal batches messages at multiple layers to reduce network overhead.
+
+### HTTP Transport Batching
+
+The HTTP transport batches outgoing messages into a single HTTP POST containing a `MessageArray`:
+
+```typescript
+import { httpTransport } from "teleportal/providers";
+
+const transport = httpTransport({
+  httpBatchingOptions: {
+    maxBatchSize: 10, // Batch up to 10 messages (default: 10)
+    maxBatchDelay: 100, // Or send after 100ms (default: 100)
+  },
+});
+```
+
+Messages are collected until either `maxBatchSize` messages have accumulated or `maxBatchDelay` milliseconds have elapsed. The batch is then encoded into a single `MessageArray` -- a binary blob where each message is prefixed with a varint-encoded length -- and sent as one HTTP POST.
+
+### Trade-offs
+
+- **Larger batches** reduce network overhead (fewer HTTP requests, less header duplication) but increase tail latency because messages wait for the batch to fill or time out.
+- **Smaller batches** are more responsive but generate more network traffic.
+- For real-time typing, the defaults (10 messages / 100ms) strike a reasonable balance. For bulk operations like import or migration, consider increasing both values.
+
+### Encoding Format
+
+`MessageArray` uses lib0's varint-prefixed encoding. Each message in the array is written as a `varUint8Array`: the byte length is encoded as a variable-length integer, followed by the raw message bytes. This avoids fixed-size length headers and keeps small messages compact.
+
+## SharedWorker Connection
+
+The SharedWorker provider offloads the WebSocket connection to a SharedWorker thread, so all tabs for the same origin share a single connection to the server.
+
+```typescript
+import { WorkerProvider } from "teleportal/providers/worker";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
+const provider = await WorkerProvider.create({
+  workerUrl: new URL("./worker.ts", import.meta.url),
+  url: "wss://example.com/sync",
+  document: "my-document",
+  encryptionKey: await createEncryptionKey(),
+});
+```
+
+### Core Benefits
+
+- **Connection sharing**: N open tabs produce 1 WebSocket connection instead of N. This directly reduces server load and eliminates duplicate sync messages.
+- **Grace period**: when the last tab using a connection closes, the worker waits 5 seconds (default, configurable via `gracePeriodMs`) before tearing down the connection. Page reloads within this window reconnect instantly without a server round-trip.
+- **File operations in worker thread**: file uploads and downloads run inside the worker, keeping the main thread free for rendering.
+- **Online/offline reconciliation**: the worker uses an any-tab-online policy -- if any connected tab reports itself as online, the connection stays online. A single backgrounded or throttled tab cannot take the connection offline.
+
+### Connection Pooling
+
+Connections are pooled by a key derived from URL and token by default:
+
+```typescript
+// Default key: `${url}::${token}`
+// Two tabs with the same URL and token share one connection.
+// Different tokens get separate connections (identity isolation).
+```
+
+You can customize the key function through `ConnectionWorkerManagerOptions.getConnectionKey` if you need different sharing behavior (for example, sharing across token refreshes for the same user).
+
+### Configuration
+
+```typescript
+// Worker-side configuration (in your worker entry point)
+const manager = new ConnectionWorkerManager(transportFactory, {
+  gracePeriodMs: 10_000, // 10-second grace period (default: 5000)
+  getConnectionKey: (options) => options.url ?? "default", // Custom pooling key
+});
+```
+
+See [SharedWorker Guide](/docs/guides/shared-worker/) for full setup details including the worker entry point.
 
 ## Connection Optimization
 
 ### Connection Reuse
 
-Multiple providers can share the same connection:
+Multiple providers can share the same connection to work with different documents over a single WebSocket:
 
 ```typescript
-const connection = new WebSocketConnection({ url: "wss://..." });
+const connection = new DirectConnection({
+  url: "wss://example.com",
+  transports: [websocketTransport()],
+});
 
-const provider1 = new Provider({ client: connection, document: "doc-1" });
-const provider2 = new Provider({ client: connection, document: "doc-2" });
+const key = await createEncryptionKey();
+const provider1 = new Provider({ connection, document: "doc-1", encryptionKey: key });
+const provider2 = new Provider({ connection, document: "doc-2", encryptionKey: key });
 ```
+
+This reduces the number of open connections and avoids duplicate handshakes.
 
 ### Document Switching
 
-Use `switchDocument()` to efficiently switch documents:
+Use `switchDocument()` to transition to a new document without creating a new connection:
 
 ```typescript
-// Reuses connection instead of creating a new one
 const newProvider = provider.switchDocument({ document: "new-doc" });
 ```
 
-## Message Batching
+The existing connection is reused. The old document is unsubscribed and the new one is subscribed in a single operation, which is faster than destroying and recreating a provider.
 
-Batch multiple messages together to reduce network overhead:
+### Multi-Document Access
+
+Use `openDocument()` to open additional documents on the same connection without closing the current one:
 
 ```typescript
-import { getBatchingTransform } from "teleportal/transports";
+const secondProvider = provider.openDocument({ document: "second-doc" });
+```
 
-const batchedTransport = getBatchingTransform({
-  maxBatchSize: 10,
-  maxBatchDelay: 100,
+## Storage Performance
+
+Choose storage backends based on your workload characteristics. Teleportal supports different backends for different storage types (documents, files, milestones), so you can mix and match.
+
+### In-Memory
+
+- **Latency**: lowest (no I/O).
+- **Durability**: none -- data is lost on restart.
+- **Best for**: development, testing, ephemeral documents, caches.
+
+### Redis
+
+- **Latency**: low (in-memory with optional persistence).
+- **Durability**: configurable (RDB snapshots, AOF logs).
+- **Best for**: high-frequency updates, rate limit state storage.
+- **Watch for**: memory limits. Large documents or many concurrent documents can exhaust Redis memory. Monitor `used_memory` and set `maxmemory` policies.
+
+### PostgreSQL / SQL
+
+- **Latency**: moderate (disk I/O, network round-trip for remote instances).
+- **Durability**: strong (ACID transactions, WAL).
+- **Best for**: production document storage where durability matters. Complex queries (listing documents, filtering by metadata).
+- **Optimization**: wrap with `VirtualStorage` for high-frequency collaborative workloads to reduce write amplification.
+
+### S3 / Object Storage
+
+- **Latency**: high (HTTP round-trips, eventual consistency for some operations).
+- **Durability**: very high (cross-region replication).
+- **Best for**: `FileStorage` (large binary assets, images, PDFs). Not recommended for `DocumentStorage` due to latency.
+
+### Mixing Backends
+
+Use different backends for different storage types:
+
+```typescript
+import { getFileRpcHandlers } from "teleportal/protocols/file";
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+
+const server = new Server({
+  storage: postgresDocumentStorage, // Durable document storage
+  rpcHandlers: {
+    ...getFileRpcHandlers(s3FileStorage), // Scalable file storage
+    ...getMilestoneRpcHandlers(redisMilestoneStorage), // Fast milestone lookups
+  },
 });
 ```
 
-## Monitoring
+## Monitoring for Performance
 
-Monitor performance using built-in metrics:
+Track these key metrics to identify bottlenecks before they affect users.
+
+### Message Processing
+
+| Metric                                | What to Watch                                                                                                                     |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `teleportal_message_duration_seconds` | If p95 exceeds 100ms, investigate message processing. Check storage latency or expensive middleware. Labeled by message `type`.   |
+| `teleportal_messages_total`           | Labeled by `type`. Understand your message profile -- a high ratio of sync messages may indicate clients reconnecting frequently. |
+
+### Storage
+
+| Metric                                          | What to Watch                                                                                                           |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `teleportal_storage_operation_duration_seconds` | If consistently high, consider wrapping with `VirtualStorage` or switching to a faster backend. Labeled by `operation`. |
+| `teleportal_storage_operations_total`           | Labeled by `operation` and `result`. A high error rate indicates backend health issues.                                 |
+
+### Connections and Load
+
+| Metric                       | What to Watch                                                                                             |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `teleportal_sessions_active` | Number of active document sessions. Correlate with resource usage to plan capacity.                       |
+| `teleportal_clients_active`  | Number of connected clients. Compare with `sessions_active` to understand fan-out (clients per document). |
+
+### Document Health
+
+| Metric                                   | What to Watch                                                                                                    |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `teleportal_document_size_bytes`         | Watch for unbounded growth. Set alerts based on your warning threshold. Labeled by `documentId` and `encrypted`. |
+| `teleportal_document_size_warning_total` | Non-zero means documents are approaching your configured thresholds.                                             |
+
+See [Observability Guide](/docs/guides/observability/) for setup instructions, Prometheus scraping configuration, and dashboard examples.
+
+## Rate Limiting
+
+Rate limiting prevents abuse and ensures fair resource usage. Teleportal supports rule-based rate limiting with multiple tracking dimensions:
 
 ```typescript
-const metrics = await server.getMetrics();
-const status = await server.getStatus();
+const server = new Server({
+  rateLimitConfig: {
+    rules: [
+      {
+        id: "per-user",
+        maxMessages: 100,
+        windowMs: 1000,
+        trackBy: "user",
+      },
+      {
+        id: "per-document",
+        maxMessages: 500,
+        windowMs: 1000,
+        trackBy: "document",
+      },
+    ],
+    getUserId: (message) => message.context.userId,
+    getDocumentId: (message) => message.context.documentId,
+  },
+});
 ```
 
-Key metrics to watch:
+Rules can track by `"user"`, `"document"`, `"user-document"`, or `"transport"`. All rules must pass for a message to be allowed. You can also set a `maxMessageSize` (default: 10 MB) to reject oversized payloads.
 
-- `teleportal_message_duration_seconds`: Message processing time
-- `teleportal_storage_operation_duration_seconds`: Storage operation time
-- `teleportal_sessions_active`: Active session count
-- `teleportal_clients_active`: Active client count
+See [Rate Limiting Guide](/docs/guides/rate-limiting/) for details on dynamic limits, storage backends, skip conditions, and event handling.
 
 ## Next Steps
 
-- [Scaling](/docs/advanced/scaling/) - Learn about scaling strategies
-- [Monitoring](/docs/monitoring/) - Set up monitoring
+- [Scaling](/docs/advanced/scaling/) -- horizontal scaling, PubSub backends, and multi-node deployment
+- [Observability](/docs/guides/observability/) -- Prometheus metrics, health endpoints, and dashboard setup
+- [SharedWorker Guide](/docs/guides/shared-worker/) -- full setup walkthrough for the SharedWorker provider

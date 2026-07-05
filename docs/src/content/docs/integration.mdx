@@ -56,12 +56,12 @@ const handlers = getWebsocketHandlers({
 });
 
 // HTTP/SSE
-import { getHttpHandlers } from "teleportal/http";
+import { getHTTPHandlers } from "teleportal/http";
 
-const handlers = getHttpHandlers({
+const handlers = getHTTPHandlers({
   server,
-  onConnect: async (request) => {
-    return { context: { userId: "user-123" } };
+  getContext: async (request) => {
+    return { userId: "user-123" };
   },
 });
 ```
@@ -160,14 +160,14 @@ For **single-node** deployments, run one server instance with in-memory or local
 
 ```typescript
 // Multi-node with PubSub
-import { RedisPubSub } from "teleportal/pubsub/redis";
+import { RedisPubSub } from "teleportal/transports/redis";
 
 const server = new Server({
   storage: async (ctx) => {
     // Shared storage
   },
   pubSub: new RedisPubSub({
-    url: "redis://localhost:6379",
+    path: "redis://localhost:6379",
   }),
   nodeId: process.env.NODE_ID,
 });
@@ -181,7 +181,7 @@ Built-in **Prometheus metrics** and **health checks** are available. Integrate c
 
 ```typescript
 // Metrics & health
-import { getMetricsHandler, getHealthHandler } from "teleportal/monitoring";
+import { getMetricsHandler, getHealthHandler } from "teleportal/http";
 
 app.get("/metrics", getMetricsHandler(server));
 app.get("/health", getHealthHandler(server));
@@ -194,24 +194,42 @@ server.on("client-connect", (data) => {
 
 ## Decision Tree
 
-```
-Start
-  │
-  ├─ Storage: Unstorage (most cases) or In-Memory (dev/test)
-  │
-  ├─ Transport: WebSocket (default) or HTTP/SSE (firewalls)
-  │
-  ├─ Runtime: Bun (recommended), Node.js, Deno, or Edge
-  │
-  ├─ Auth: JWT (built-in) or Custom
-  │
-  ├─ Encryption: Content E2EE (default) or plaintext per-doc (encryptionKey: false)
-  │
-  ├─ Features: Document (always), File (optional), Milestones (optional)
-  │
-  ├─ Deployment: Single-node or Multi-node with PubSub
-  │
-  └─ Monitoring: Prometheus (built-in) or Custom
+```mermaid
+flowchart TD
+    Start([Start]) --> Storage{Storage}
+    Storage -->|Most cases| Unstorage[Unstorage]
+    Storage -->|Dev / test| InMemory[In-Memory]
+
+    Start --> Transport{Transport}
+    Transport -->|Default| WS[WebSocket]
+    Transport -->|Firewalls| HTTP[HTTP / SSE]
+
+    Start --> Runtime{Runtime}
+    Runtime -->|Recommended| Bun[Bun]
+    Runtime -->|Also supported| Node[Node.js]
+    Runtime -->|Also supported| Deno[Deno]
+    Runtime -->|Also supported| Edge[Edge Runtimes]
+
+    Start --> Auth{Auth}
+    Auth -->|Built-in| JWT[JWT]
+    Auth -->|Existing system| Custom[Custom onUpgrade]
+
+    Start --> Encryption{Encryption}
+    Encryption -->|Default| E2EE[Content E2EE]
+    Encryption -->|Per-doc opt-out| Plaintext["Plaintext (encryptionKey: false)"]
+
+    Start --> Features{Features}
+    Features -->|Always| DocSync[Document Sync]
+    Features -->|Optional| FileSync[File Sync]
+    Features -->|Optional| Milestones[Milestones]
+
+    Start --> Deployment{Deployment}
+    Deployment -->|One instance| Single[Single-node]
+    Deployment -->|Scaling| Multi[Multi-node + PubSub]
+
+    Start --> Monitoring{Monitoring}
+    Monitoring -->|Built-in| Prometheus[Prometheus]
+    Monitoring -->|Custom| CustomMon[Server Events]
 ```
 
 ## Next Steps

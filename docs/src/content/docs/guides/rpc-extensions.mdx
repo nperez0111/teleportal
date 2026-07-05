@@ -1,0 +1,199 @@
+---
+title: Custom RPC Methods
+description: Extend the Teleportal protocol with custom request/response operations
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Teleportal's RPC framework lets you define custom request/response methods that run over the existing sync connection. This extends the protocol without introducing new message types or transports -- your custom methods share the same connection, authentication, and encryption as document sync.
+
+Several built-in features use this system: file transfers, milestones, attribution queries, and the key registry are all implemented as RPC protocols.
+
+## What it demonstrates
+
+- Defining a typed RPC method contract
+- Implementing server-side handlers
+- Creating a client extension
+- Wiring everything together with the Server and Provider
+
+## Define the Contract
+
+Start by defining your method's wire name, request type, and response type using `defineMethod`. Group related methods into a protocol with `defineProtocol`:
+
+```typescript
+// comments/methods.ts
+import { defineMethod, defineProtocol } from "teleportal/rpc";
+
+interface Comment {
+  id: string;
+  text: string;
+  userId: string;
+  createdAt: number;
+}
+
+export const commentList = defineMethod<
+  "commentList",
+  { cursor?: string; limit?: number },
+  { comments: Comment[]; nextCursor?: string }
+>("commentList");
+
+export const commentCreate = defineMethod<
+  "commentCreate",
+  { text: string; parentId?: string },
+  { comment: Comment }
+>("commentCreate");
+
+export const commentProtocol = defineProtocol("comments", {
+  list: commentList,
+  create: commentCreate,
+});
+```
+
+The first type parameter is the wire name (the string sent over the connection), followed by the request and response types. `defineProtocol` groups methods under ergonomic keys (`list`, `create`) while preserving their wire names.
+
+## Implement Server Handlers
+
+Use `createHandlers` to implement the protocol. Each handler receives a dependency bag (first argument) and returns an async function that processes the request:
+
+```typescript
+// comments/server.ts
+import { createHandlers, ok, err } from "teleportal/rpc";
+import { commentProtocol } from "./methods";
+
+export function getCommentRpcHandlers(db: CommentDB) {
+  return createHandlers(
+    commentProtocol,
+    { db },
+    {
+      list:
+        ({ db }) =>
+        async (payload, ctx) => {
+          const result = await db.comments.find({
+            documentId: ctx.documentId,
+            cursor: payload.cursor,
+            limit: payload.limit ?? 50,
+          });
+          return ok({ comments: result.items, nextCursor: result.nextCursor });
+        },
+
+      create:
+        ({ db }) =>
+        async (payload, ctx) => {
+          if (!ctx.userId) return err(401, "Authentication required");
+          const comment = await db.comments.insert({
+            documentId: ctx.documentId,
+            text: payload.text,
+            userId: ctx.userId,
+          });
+          return ok({ comment });
+        },
+    },
+  );
+}
+```
+
+Handlers return `ok(value)` for success or `err(statusCode, details)` for errors. Unexpected exceptions are caught automatically and translated to `err(500, message)`.
+
+<Aside type="tip">
+  The `ctx` parameter gives you access to `documentId`, `userId`, and other session context. Use it
+  for authorization checks and document-scoped queries.
+</Aside>
+
+## Create the Client Extension
+
+For simple protocols, auto-generate the client with `createClientExtension`:
+
+```typescript
+// comments/client.ts
+import { createClientExtension } from "teleportal/rpc";
+import { commentProtocol } from "./methods";
+
+export const createCommentRpc = createClientExtension(commentProtocol);
+```
+
+For a more ergonomic API, provide a custom `build` function that transforms the raw RPC calls:
+
+```typescript
+export const createCommentRpc = createClientExtension(commentProtocol, {
+  build(methods) {
+    return {
+      async list(cursor?: string) {
+        const response = await methods.list({ cursor, limit: 50 });
+        return response.comments;
+      },
+      async create(text: string) {
+        const response = await methods.create({ text });
+        return response.comment;
+      },
+    };
+  },
+});
+```
+
+## Wire It Up
+
+Register the handlers on the server and the client extension on the provider:
+
+```typescript
+// Server
+import { Server } from "teleportal/server";
+import { MemoryDocumentStorage } from "teleportal/storage";
+import { getCommentRpcHandlers } from "./comments/server";
+
+const server = new Server({
+  storage: async (ctx) => new MemoryDocumentStorage(ctx.encrypted),
+  rpcHandlers: {
+    ...getCommentRpcHandlers(db),
+  },
+});
+
+// Client
+import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
+import { createCommentRpc } from "./comments/client";
+
+const encryptionKey = await createEncryptionKey();
+
+const provider = await Provider.create({
+  url: "wss://example.com/sync",
+  document: "my-doc",
+  encryptionKey,
+  rpc: { comments: createCommentRpc },
+});
+
+// Use the RPC methods
+const comments = await provider.rpc.comments.list({ limit: 10 });
+const newComment = await provider.rpc.comments.create({ text: "Hello!" });
+```
+
+## Error Handling
+
+Client-side RPC failures throw `RpcOperationError`, which includes the protocol and operation name:
+
+```typescript
+import { RpcOperationError } from "teleportal/rpc";
+
+try {
+  await provider.rpc.comments.create({ text: "" });
+} catch (error) {
+  if (error instanceof RpcOperationError) {
+    console.error(error.protocol); // "comments"
+    console.error(error.operation); // "create"
+  }
+}
+```
+
+## Built-in RPC Protocols
+
+These built-in protocols demonstrate the same pattern at production scale:
+
+- **File protocol** (`teleportal/protocols/file`) -- Chunked file upload/download with Merkle tree verification. Uses the `"multipart"` method kind for streaming uploads.
+- **Milestone protocol** (`teleportal/protocols/milestone`) -- Create, list, get, and delete document snapshots.
+- **Attribution protocol** (`teleportal/protocols/attribution`) -- Query authorship data for document content.
+- **Key registry protocol** (`teleportal/protocols/key-registry`) -- Server-mediated encryption key distribution with wrapping, rotation, and revocation.
+
+## Next Steps
+
+- [File Transfers](/docs/guides/file-transfers/) - File upload/download using the file RPC protocol
+- [Encryption Keys](/docs/guides/encryption-keys/) - Key management and distribution
+- [Observability](/docs/guides/observability/) - Monitor RPC calls with metrics and logging

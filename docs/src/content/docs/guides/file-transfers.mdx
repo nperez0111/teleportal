@@ -1,0 +1,172 @@
+---
+title: File Transfers
+description: Upload and download files with Merkle tree integrity verification
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Teleportal supports file uploads and downloads alongside document sync, using chunked streaming with Merkle tree integrity verification. Files are transferred as chunks (default 1MB) and can be end-to-end encrypted with the same key used for document content.
+
+## What it demonstrates
+
+- Setting up FileStorage and TemporaryUploadStorage on the server
+- Registering file RPC handlers
+- Uploading and downloading files from the client
+- Integrity verification via Merkle proofs
+- Encrypted file transfers
+
+## Server Setup
+
+File transfers require a `FileStorage` and a `TemporaryUploadStorage` (for in-progress uploads). Register the file RPC handlers with `getFileRpcHandlers()`:
+
+```typescript
+import { Server } from "teleportal/server";
+import {
+  MemoryDocumentStorage,
+  InMemoryFileStorage,
+  InMemoryTemporaryUploadStorage,
+} from "teleportal/storage";
+import { getFileRpcHandlers } from "teleportal/protocols/file";
+
+const fileStorage = new InMemoryFileStorage();
+fileStorage.temporaryUploadStorage = new InMemoryTemporaryUploadStorage();
+
+const server = new Server({
+  storage: async (ctx) => new MemoryDocumentStorage(ctx.encrypted),
+  rpcHandlers: {
+    ...getFileRpcHandlers(fileStorage),
+  },
+});
+```
+
+### Configuring Chunk Size
+
+The server controls the wire chunk size and communicates it to clients during upload initialization. The default is 1MB; adjust it to balance throughput and memory:
+
+```typescript
+const server = new Server({
+  storage: async (ctx) => new MemoryDocumentStorage(ctx.encrypted),
+  rpcHandlers: {
+    ...getFileRpcHandlers(fileStorage, { chunkSize: 256 * 1024 }), // 256KB chunks
+  },
+});
+```
+
+### Permission Checking
+
+Add upload and download permission checks to control who can transfer files:
+
+```typescript
+import { getFileRpcHandlers, type FileHandlerOptions } from "teleportal/protocols/file";
+
+const options: FileHandlerOptions = {
+  async checkUploadPermission(fileId, metadata, context) {
+    const allowed = await checkAccess(context.userId, context.documentId, "write");
+    return allowed ? { allowed: true } : { allowed: false, reason: "No write access" };
+  },
+  async checkDownloadPermission(fileId, context) {
+    const allowed = await checkAccess(context.userId, context.documentId, "read");
+    return allowed ? { allowed: true } : { allowed: false, reason: "No read access" };
+  },
+};
+
+const server = new Server({
+  storage: async (ctx) => new MemoryDocumentStorage(ctx.encrypted),
+  rpcHandlers: {
+    ...getFileRpcHandlers(fileStorage, options),
+  },
+});
+```
+
+## Client Setup
+
+Register the file RPC extension on the provider. When encryption is enabled (the default), pass the same `encryptionKey` to `createFileRpc` so files are encrypted with the same key as the document:
+
+```typescript
+import { Provider } from "teleportal/providers";
+import { createFileRpc } from "teleportal/protocols/file";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
+const encryptionKey = await createEncryptionKey();
+
+const provider = await Provider.create({
+  url: "wss://example.com/sync",
+  document: "my-doc",
+  encryptionKey,
+  rpc: {
+    file: () => createFileRpc({ encryptionKey }),
+  },
+});
+```
+
+### Uploading a File
+
+Pass a `File` object (from an `<input>` element or the File API) to `upload()`:
+
+```typescript
+const input = document.querySelector<HTMLInputElement>("#file-input");
+input.addEventListener("change", async () => {
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const fileId = await provider.rpc.file.upload(file);
+  console.log("Uploaded:", fileId);
+});
+```
+
+### Downloading a File
+
+Retrieve a file by its ID. The returned object contains the file data and metadata:
+
+```typescript
+const file = await provider.rpc.file.download(fileId);
+// file contains the downloaded data, filename, size, mimeType, etc.
+```
+
+### Error Handling
+
+File operations throw `RpcOperationError` on failure:
+
+```typescript
+import { RpcOperationError } from "teleportal/rpc";
+
+try {
+  await provider.rpc.file.upload(myFile);
+} catch (error) {
+  if (error instanceof RpcOperationError) {
+    console.error(error.protocol); // "file"
+    console.error(error.operation); // "upload"
+  }
+}
+```
+
+## How It Works
+
+### Chunked Transfer
+
+Files are split into chunks (sized by the server, default 1MB) and streamed over the RPC layer. This keeps memory usage bounded regardless of file size.
+
+**Upload flow:** The client sends a `fileUpload` request with metadata. The server responds with its configured chunk size. The client then streams encrypted chunks, each acknowledged by the server before the next is sent. After the final chunk, the server rebuilds the Merkle tree and moves the file from temporary to durable storage.
+
+**Download flow:** The client sends a `fileDownload` request. The server streams chunks back, each with a Merkle proof. The client verifies each chunk against the root hash before accepting it.
+
+### Merkle Tree Verification
+
+Every file is content-addressed using a Merkle tree built from its chunks. On download, each chunk includes a Merkle proof that the client verifies against the root hash. This guarantees that no chunk has been tampered with or corrupted in transit or at rest.
+
+On upload, the server rebuilds the Merkle tree from the received chunks and derives the authoritative content ID. The download path is the integrity boundary where proofs are checked.
+
+<Aside type="tip">
+  The maximum supported file size is 1GB. For encrypted files, each plaintext chunk is slightly
+  smaller than the configured chunk size due to AES-GCM overhead (28 bytes per chunk).
+</Aside>
+
+### Encrypted File Transfers
+
+When you pass an `encryptionKey` to `createFileRpc`, files are encrypted client-side before upload and decrypted client-side after download, using the same AES-256-GCM key that protects the document. The server never sees plaintext file content.
+
+## Next Steps
+
+- [Encryption Keys](/docs/guides/encryption-keys/) - Key creation, sharing, and management
+- [Custom RPC Methods](/docs/guides/rpc-extensions/) - Add your own RPC operations
+- [Custom Storage](/docs/guides/custom-storage/) - Implement FileStorage for S3, PostgreSQL, etc.

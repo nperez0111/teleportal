@@ -1,59 +1,295 @@
 ---
 title: Custom Storage
-description: Implementing a custom storage backend
+description: How to implement a custom storage backend for Teleportal
 ---
 
-This guide demonstrates how to create a custom storage implementation by extending `AbstractDocumentStorage`.
+Teleportal decouples storage from compute. The `AbstractDocumentStorage` base class
+handles the entire sync protocol -- update merging, state vectors, content-encryption
+envelopes, attribution -- so your custom backend only needs to persist and retrieve data.
 
-## What it demonstrates
+This guide walks through implementing document, file, and milestone storage from scratch.
+For a deeper look at the architecture and design decisions behind the storage layer, see
+[Advanced: Custom Storage](/docs/advanced/custom-storage/).
 
-- Creating a custom storage implementation
-- Implementing the required persistence methods
-- Supporting both encrypted and unencrypted documents with one class
-- Building storage backends tailored to specific use cases
+## What you will learn
 
-## Custom Storage Implementation
+- Extending `AbstractDocumentStorage` with all eight required persistence methods
+- Understanding the merge-on-read design (pending log + base state)
+- Calling `super(encrypted)` to support both encrypted and unencrypted documents
+- Overriding `transaction()` for atomic operations
+- Wiring custom storage into a Teleportal `Server`
+- Implementing the `FileStorage` and `MilestoneStorage` interfaces
 
-`AbstractDocumentStorage` implements the whole sync/update protocol for you. You only persist a `DocumentState` (the merged Y.js V2 update plus its encrypted content sidecars) and the document metadata. For unencrypted documents the sidecars are empty.
+## Implementing DocumentStorage
+
+`AbstractDocumentStorage` uses a **merge-on-read** design. Updates are appended to
+a pending log on write (O(1)). Reads materialize the log by batch-merging all
+pending updates with the base state. Your subclass implements eight abstract
+persistence primitives -- three for the pending log, two for the base state, two
+for metadata, and one for cleanup.
+
+The example below uses a hypothetical PostgreSQL client.
 
 ```typescript
 import {
   AbstractDocumentStorage,
   type DocumentState,
+  type PendingUpdate,
   type DocumentMetadata,
 } from "teleportal/storage";
 import type { IndexedSidecar } from "teleportal/protocol/encryption";
 
-export class MyCustomDocumentStorage extends AbstractDocumentStorage {
-  async getDocumentState(key: string): Promise<DocumentState | null> {
-    // Retrieve the stored update + sidecars from your backend
-    return (await myBackend.getState(key)) ?? null;
+export class PostgresDocumentStorage extends AbstractDocumentStorage {
+  private pg: PgClient;
+
+  constructor(pg: PgClient, encrypted: boolean = true) {
+    super(encrypted);
+    this.pg = pg;
   }
 
-  async replaceDocumentState(
+  // -- Pending log (merge-on-read) --
+
+  async appendUpdate(key: string, entry: PendingUpdate): Promise<void> {
+    await this.pg.query("INSERT INTO pending_updates (document_id, data) VALUES ($1, $2)", [
+      key,
+      JSON.stringify(entry),
+    ]);
+  }
+
+  async getPendingUpdates(key: string): Promise<{ updates: PendingUpdate[]; cursor: number }> {
+    const rows = await this.pg.query(
+      "SELECT data FROM pending_updates WHERE document_id = $1 ORDER BY id",
+      [key],
+    );
+    const updates = rows.map((r: any) => JSON.parse(r.data) as PendingUpdate);
+    return { updates, cursor: updates.length };
+  }
+
+  async clearPendingUpdates(key: string, upToCursor: number): Promise<void> {
+    // Delete the first `upToCursor` entries
+    await this.pg.query(
+      `DELETE FROM pending_updates WHERE id IN (
+        SELECT id FROM pending_updates WHERE document_id = $1
+        ORDER BY id LIMIT $2
+      )`,
+      [key, upToCursor],
+    );
+  }
+
+  // -- Base (compacted) state --
+
+  async getBaseState(key: string): Promise<DocumentState | null> {
+    const row = await this.pg.query("SELECT update_data, sidecars FROM documents WHERE id = $1", [
+      key,
+    ]);
+    if (!row) return null;
+    return {
+      update: new Uint8Array(row.update_data),
+      sidecars: JSON.parse(row.sidecars) as IndexedSidecar[],
+    };
+  }
+
+  async replaceBaseState(
     key: string,
     update: Uint8Array,
     sidecars: IndexedSidecar[],
   ): Promise<void> {
-    // Persist the already-merged update and its sidecars together
-    await myBackend.storeState(key, { update, sidecars });
+    await this.pg.query(
+      `INSERT INTO documents (id, update_data, sidecars)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO UPDATE
+       SET update_data = $2, sidecars = $3`,
+      [key, Buffer.from(update), JSON.stringify(sidecars)],
+    );
   }
 
+  // -- Metadata --
+
   async writeDocumentMetadata(key: string, metadata: DocumentMetadata): Promise<void> {
-    await myBackend.storeMetadata(key, metadata);
+    await this.pg.query(
+      `INSERT INTO document_metadata (id, data)
+       VALUES ($1, $2)
+       ON CONFLICT (id) DO UPDATE SET data = $2`,
+      [key, JSON.stringify(metadata)],
+    );
   }
 
   async getDocumentMetadata(key: string): Promise<DocumentMetadata> {
-    return (await myBackend.getMetadata(key)) ?? defaultMetadata();
+    const row = await this.pg.query("SELECT data FROM document_metadata WHERE id = $1", [key]);
+    if (!row) {
+      return {
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        encrypted: this.encrypted,
+      };
+    }
+    return JSON.parse(row.data) as DocumentMetadata;
   }
 
+  // -- Cleanup --
+
   async deleteDocument(key: string): Promise<void> {
-    await myBackend.deleteDocument(key);
+    await this.pg.query("DELETE FROM pending_updates WHERE document_id = $1", [key]);
+    await this.pg.query("DELETE FROM documents WHERE id = $1", [key]);
+    await this.pg.query("DELETE FROM document_metadata WHERE id = $1", [key]);
   }
 }
 ```
 
-## Next Steps
+Key points:
 
-- [Storage](/docs/storage/) - Learn more about storage interfaces
-- [Advanced: Custom Storage](/docs/advanced/custom-storage/) - Detailed custom storage guide
+- **`super(encrypted)`** passes the encryption flag to the base class. You never
+  handle encryption yourself.
+- **`appendUpdate`** appends to the pending log. The base class calls this from
+  `handleUpdate` after decoding the content-encrypted envelope.
+- **`getBaseState` / `replaceBaseState`** manage the last fully-merged snapshot.
+  The base class materializes pending updates against this on read.
+- **`getDocumentMetadata`** should return sensible defaults when no row exists yet.
+
+## Overriding transaction()
+
+The base class calls `transaction(key, cb)` to serialize concurrent writes. The
+default implementation applies no locking. Override it if your backend supports
+real transactions.
+
+```typescript
+async transaction<T>(key: string, cb: () => Promise<T>): Promise<T> {
+  return await this.pg.transaction(async (tx) => {
+    // Acquire an advisory lock scoped to this document
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+    return await cb();
+  });
+}
+```
+
+Other backends can use distributed locks (Redis `SETNX`), optimistic concurrency
+(version columns), or sequential execution (in-memory queue). The interface is
+intentionally flexible.
+
+## Wiring into the server
+
+The `Server` constructor accepts a `storage` function that receives a context
+object. Use `ctx.encrypted` to pass the session's encryption mode to your storage.
+
+```typescript
+import { Server } from "teleportal/server";
+
+const pg = createPgClient(/* connection config */);
+
+const server = new Server({
+  storage: async (ctx) => new PostgresDocumentStorage(pg, ctx.encrypted),
+});
+```
+
+A fresh storage instance is created per session. Wire in `ctx.encrypted` so
+encrypted and unencrypted documents use the same class with different configuration.
+
+## Implementing FileStorage
+
+`FileStorage` manages binary file data (images, attachments). Implement three
+methods: `getFile`, `deleteFile`, and `storeFileFromUpload`.
+
+```typescript
+import type { FileStorage, File, FileUploadResult } from "teleportal/storage";
+
+export class S3FileStorage implements FileStorage {
+  readonly type = "file-storage" as const;
+  private s3: S3Client;
+
+  constructor(s3: S3Client) {
+    this.s3 = s3;
+  }
+
+  async getFile(fileId: string): Promise<File | null> {
+    const obj = await this.s3.getObject(`files/${fileId}`);
+    return obj ? (obj as File) : null;
+  }
+
+  async deleteFile(fileId: string): Promise<void> {
+    await this.s3.deleteObject(`files/${fileId}`);
+  }
+
+  async storeFileFromUpload(uploadResult: FileUploadResult): Promise<void> {
+    for (let i = 0; i < uploadResult.totalChunks; i++) {
+      const chunk = await uploadResult.getChunk(i);
+      await this.s3.putObject(`files/${uploadResult.fileId}/chunk/${i}`, chunk);
+    }
+  }
+}
+```
+
+Wire it into the server via RPC handlers:
+
+```typescript
+import { getFileRpcHandlers } from "teleportal/protocols/file";
+
+const server = new Server({
+  storage: async (ctx) => new PostgresDocumentStorage(pg, ctx.encrypted),
+  rpcHandlers: { ...getFileRpcHandlers(new S3FileStorage(s3Client)) },
+});
+```
+
+## Implementing MilestoneStorage
+
+`MilestoneStorage` stores named document snapshots. Every milestone requires a
+`createdBy` field: `{ type: "user", id }` or `{ type: "system", id }`.
+
+```typescript
+import type { MilestoneStorage, Milestone, MilestoneSnapshot } from "teleportal/storage";
+
+export class PostgresMilestoneStorage implements MilestoneStorage {
+  readonly type = "milestone-storage" as const;
+  private pg: PgClient;
+
+  constructor(pg: PgClient) {
+    this.pg = pg;
+  }
+
+  async createMilestone(ctx: {
+    name: string;
+    documentId: string;
+    createdAt: number;
+    snapshot: MilestoneSnapshot;
+    createdBy: { type: "user" | "system"; id: string };
+  }): Promise<string> {
+    const id = crypto.randomUUID();
+    await this.pg.query(
+      `INSERT INTO milestones (id, document_id, name, created_at, snapshot, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, ctx.documentId, ctx.name, ctx.createdAt, ctx.snapshot, ctx.createdBy],
+    );
+    return id;
+  }
+
+  async getMilestones(documentId: string): Promise<Milestone[]> {
+    return await this.pg.query(
+      "SELECT * FROM milestones WHERE document_id = $1 AND deleted_at IS NULL",
+      [documentId],
+    );
+  }
+
+  // Also implement: getMilestone, deleteMilestone, restoreMilestone, updateMilestoneName
+}
+```
+
+Wire it the same way as file storage:
+
+```typescript
+import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
+
+const server = new Server({
+  storage: async (ctx) => new PostgresDocumentStorage(pg, ctx.encrypted),
+  rpcHandlers: {
+    ...getFileRpcHandlers(new S3FileStorage(s3Client)),
+    ...getMilestoneRpcHandlers(new PostgresMilestoneStorage(pg)),
+  },
+});
+```
+
+## Next steps
+
+- [Advanced: Custom Storage](/docs/advanced/custom-storage/) -- Architecture deep-dive
+  and best practices for production storage backends
+- [Persistent Storage](/docs/guides/persistent-storage/) -- Full reference for all storage interfaces and
+  provided implementations
+- [Server](/docs/core-concepts/server/) -- How storage fits into the server lifecycle

@@ -1,184 +1,272 @@
 ---
 title: Scaling
-description: Scaling Teleportal deployments
+description: Scaling Teleportal deployments from a single node to a multi-node cluster
 ---
 
-This guide covers scaling strategies for Teleportal deployments.
+This guide covers scaling strategies for Teleportal deployments, from the simplest single-server setup to horizontally scaled clusters with PubSub coordination.
 
 ## Single-Node Deployment
 
-**Best for**: Small to medium applications
+A single-node deployment is the simplest model. One server instance handles all client connections, with in-memory or local storage and no coordination overhead.
 
-- Single server instance
-- In-memory or local storage
-- No coordination needed
-
-```typescript
-const server = new Server({
-  storage: async (ctx) => {
-    // Your storage
-  },
-});
-```
-
-## Multi-Node with PubSub
-
-**Best for**: Horizontal scaling, high availability
-
-The purpose of the pubsub broker is to coordinate messages between server instances, so that multiple servers can operate on the same document simultaneously.
-
-### Setup
+This is a good fit for prototyping, small teams, or low-traffic applications where a single process can handle all concurrent sessions.
 
 ```typescript
 import { Server } from "teleportal/server";
-import { RedisPubSub } from "teleportal/pubsub/redis";
 
 const server = new Server({
   storage: async (ctx) => {
-    // Shared storage backend
+    return documentStorage;
+  },
+});
+```
+
+No `pubSub` or `nodeId` configuration is needed. All clients connect to the same process, so document state is always consistent.
+
+## Multi-Node with PubSub
+
+When a single server is not enough, you can run multiple Teleportal instances behind a load balancer. The challenge is coordination: if Client A connects to Server 1 and Client B connects to Server 2, and both are editing the same document, the two servers need a way to exchange updates. Without PubSub, clients on different servers would diverge into inconsistent states.
+
+A PubSub backend solves this by acting as a message bus between server instances. When one server receives a document update from a client, it publishes that update to a PubSub topic. Every other server subscribed to that topic receives the update and forwards it to its own connected clients.
+
+### Message Flow
+
+```mermaid
+sequenceDiagram
+    participant A as Client A
+    participant S1 as Server 1
+    participant PS as PubSub Topic
+    participant S2 as Server 2
+    participant B as Client B
+
+    A->>S1: Document update
+    S1->>S1: Apply update locally
+    S1->>PS: Publish update (sourceId: server-1)
+    PS->>S2: Deliver update
+    S2->>S2: Apply update locally
+    S2->>B: Forward update to client
+    Note over S1,PS: Server 1 ignores its own<br/>published messages via sourceId
+```
+
+When Server 1 receives an update from Client A, it applies the update to its local document state and then publishes the update to the PubSub topic for that document. Server 2, which also has clients editing the same document, receives the update via its subscription and forwards it to Client B. The result is that both clients converge on the same document state, even though they are connected to different servers.
+
+### Source ID Filtering
+
+Every PubSub message includes a `sourceId` identifying the server that published it. When a server receives a message from the PubSub topic, it checks the `sourceId` and ignores messages it published itself. This prevents message loops where a server would re-process its own updates.
+
+### Topic-Based Routing
+
+Messages are routed to PubSub topics based on document ID (by default, `document/{documentId}`). Servers only subscribe to topics for documents that have active sessions. This means a server with no clients editing a particular document will not receive updates for that document, keeping the message volume proportional to actual activity.
+
+## PubSub Implementation Options
+
+Teleportal ships with two PubSub backends and an in-memory implementation for testing.
+
+### Redis PubSub
+
+Redis is widely supported, easy to set up, and familiar to most teams. It is a good choice for moderate scale.
+
+```typescript
+import { Server } from "teleportal/server";
+import { RedisPubSub } from "teleportal/transports/redis";
+
+const server = new Server({
+  storage: async (ctx) => {
     return documentStorage;
   },
   pubSub: new RedisPubSub({
-    url: "redis://localhost:6379",
+    path: "redis://localhost:6379",
   }),
-  nodeId: process.env.NODE_ID,
+  nodeId: process.env.NODE_ID || "node-1",
 });
 ```
+
+Trade-offs to be aware of:
+
+- Messages are fire-and-forget. Redis PubSub does not persist messages or support replay. If a subscriber is temporarily disconnected, it will miss any messages published during that window.
+- Fan-out to many subscribers on a single Redis instance can add latency under high load.
+- Redis requires separate connections for publishing and subscribing. The `RedisPubSub` class manages this internally, creating two connections per instance.
+
+### NATS
+
+NATS is a lightweight, high-performance messaging system designed specifically for this kind of inter-service communication. It handles high message throughput well and supports clustering for availability.
+
+```typescript
+import { Server } from "teleportal/server";
+import { NatsPubSub } from "teleportal/transports/nats";
+import { connect } from "@nats-io/transport-node";
+
+const server = new Server({
+  storage: async (ctx) => {
+    return documentStorage;
+  },
+  pubSub: new NatsPubSub(() => connect({ servers: "nats://localhost:4222" })),
+  nodeId: process.env.NODE_ID || "node-1",
+});
+```
+
+Trade-offs:
+
+- NATS is additional infrastructure that may be less familiar to your team.
+- Core NATS PubSub is also fire-and-forget (like Redis). For durability, NATS JetStream can persist messages, but Teleportal uses the core PubSub interface.
+- NATS supports native clustering and leaf nodes for multi-region deployments.
+
+### In-Memory PubSub
+
+The in-memory PubSub implementation is useful for testing multi-server behavior in a single process. It is not shared across nodes and should never be used in production multi-node deployments.
 
 ### Running Multiple Instances
 
+With either backend, run each instance with a unique `NODE_ID`:
+
 ```bash
 # Instance 1
-NODE_ID=node-1 PORT=3000 node server.js
+NODE_ID=node-1 PORT=3000 bun run server.ts
 
 # Instance 2
-NODE_ID=node-2 PORT=3001 node server.js
+NODE_ID=node-2 PORT=3001 bun run server.ts
 
 # Instance 3
-NODE_ID=node-3 PORT=3002 node server.js
+NODE_ID=node-3 PORT=3002 bun run server.ts
 ```
 
-### PubSub Options
+## PubSub Pressure and Considerations
 
-- **Redis**: Fast, widely supported
-- **NATS**: Lightweight, high performance
-- **In-Memory**: For testing (not shared across nodes)
+PubSub becomes a bottleneck when many documents are actively edited simultaneously or when individual documents generate high update frequency (for example, many users typing rapidly in the same document). There are several strategies to reduce cross-server PubSub traffic.
 
-### Considerations
+### Co-locating Users
 
-In some cases, pubsub may put pressure on the broker. This can be mitigated by:
+Use session affinity to route users who are editing the same document to the same server instance. When all collaborators on a document are on the same server, updates stay local and do not need to traverse the PubSub layer at all. PubSub is only needed for the (ideally rare) case where a document has active sessions on multiple servers.
 
-- **Co-locating users**: Route users to the same server instance when possible
-- **Document affinity**: Route documents to specific servers
-- **Load balancing**: Use sticky sessions to keep users on the same server
+### Document Affinity / Sticky Sessions
 
-## Multi-Node with HTTP Load Balancer
+Route documents to specific servers using document ID hashing so that most updates stay local. Only documents that happen to span multiple servers (for example, during rebalancing) generate cross-server traffic.
 
-**Best for**: Simple scaling without PubSub
+### Monitoring PubSub Health
 
-- Multiple server instances behind a load balancer
-- Shared storage
-- Sticky sessions recommended (route same document to same server)
+Watch these signals to detect PubSub pressure:
 
-### Setup
+- **Message rates**: A sustained increase in published messages per second may indicate that session affinity is not working effectively.
+- **Message latency**: Growing latency between publish and delivery suggests the PubSub backend is overloaded.
+- **Subscriber counts per topic**: High subscriber counts on a single topic mean many servers are serving the same document. Consider improving session affinity to consolidate those sessions.
 
-```typescript
-// Each server instance
-const server = new Server({
-  storage: async (ctx) => {
-    // Shared storage
-    return documentStorage;
-  },
-  // No pubSub - relies on sticky sessions
-});
-```
+## Session Affinity Strategies
 
-### Load Balancer Configuration
+Session affinity ensures that clients editing the same document are routed to the same server, reducing cross-server coordination.
 
-- **Sticky Sessions**: Route same document to same server
-- **Health Checks**: Monitor server health
-- **Session Affinity**: Use document ID for routing
+### Document ID Hashing
 
-## Custom Deployment Strategy
-
-Teleportal is a framework, so you can build custom deployment strategies:
-
-### Document Sharding
-
-Route documents to specific servers based on document ID:
+The simplest approach: compute `hash(documentId) % serverCount` and route to the corresponding server. This is deterministic and requires no shared state, but rebalancing when servers are added or removed causes all clients to reconnect.
 
 ```typescript
-function getServerForDocument(documentId: string): string {
-  const hash = hashDocumentId(documentId);
-  const serverIndex = hash % serverCount;
-  return servers[serverIndex];
+function getServerForDocument(documentId: string, serverCount: number): number {
+  let hash = 0;
+  for (let i = 0; i < documentId.length; i++) {
+    hash = (hash * 31 + documentId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % serverCount;
 }
 ```
 
-### Regional Deployment
+### Consistent Hashing
 
-Deploy servers in different regions:
+Consistent hashing minimizes rebalancing when servers are added or removed. Instead of rehashing all documents, only a fraction of documents are reassigned to new servers. This is the preferred approach for deployments that scale up and down frequently.
+
+### Load Balancer Sticky Sessions
+
+Configure your load balancer to route based on a document identifier in the request. Common approaches:
+
+- **Header-based**: Route on an `X-Document-Id` header sent by the client.
+- **Query parameter**: Route on a `document` query parameter in the WebSocket upgrade URL (for example, `wss://example.com/sync?document=my-doc`).
+- **Cookie-based**: Set a cookie on the first connection and route subsequent requests to the same server.
+
+### DNS-Based Routing
+
+For regional deployments, route at the DNS level to send users to the nearest cluster. Within each region, use one of the above strategies for document-level affinity.
+
+## Multi-Node with HTTP Load Balancer (No PubSub)
+
+If you do not want to run a PubSub backend, you can still scale horizontally with a load balancer. The critical constraint is that **all clients editing the same document must connect to the same server instance**. Sticky sessions are mandatory, not optional. Without PubSub, there is no mechanism to synchronize document state between servers.
 
 ```typescript
 const server = new Server({
   storage: async (ctx) => {
-    // Regional storage
-    return regionalStorage;
+    // Shared storage backend (e.g., PostgreSQL, S3)
+    return documentStorage;
   },
-  pubSub: new RegionalPubSub({
-    region: "us-east-1",
-  }),
+  // No pubSub configured
 });
 ```
 
-## Storage Scaling
+This model is simpler to operate (no PubSub infrastructure to manage), but it means that a single server failure will disconnect all clients for the documents it was serving. Those clients must reconnect to another server and reload the document from shared storage.
 
-### Separate Storage Types
+## Document Sharding
 
-Use different backends for different storage types:
+For very large deployments, you can shard documents across server groups. Each shard handles a subset of documents, and routing is determined by the document ID:
 
 ```typescript
-// PostgreSQL for documents
+function getShardForDocument(documentId: string, shardCount: number): number {
+  let hash = 0;
+  for (let i = 0; i < documentId.length; i++) {
+    hash = (hash * 31 + documentId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % shardCount;
+}
+```
+
+Each shard can be an independent cluster with its own PubSub backend and storage, allowing you to scale different shards independently based on their load characteristics.
+
+## Storage Scaling
+
+Storage is independent of the server topology. You can use different backends for different storage types to optimize cost and performance:
+
+```typescript
+// PostgreSQL for document state (strong consistency, querying)
 const documentStorage = new PostgresDocumentStorage(db);
 
-// S3 for files
+// S3 for file uploads (cheap, durable, high throughput)
 const fileStorage = new S3FileStorage(s3Client);
 
-// Redis for milestones
+// Redis for milestones (fast reads, TTL support)
 const milestoneStorage = new RedisMilestoneStorage(redisClient);
 ```
 
-### Storage Replication
+When scaling storage, consider:
 
-Replicate storage across regions for high availability:
+- **Read replicas**: Offload read traffic from the primary database.
+- **Connection pooling**: Use connection pools to avoid exhausting database connections as the number of server instances grows.
+- **Regional replication**: Replicate storage across regions to reduce latency for geographically distributed users.
 
-```typescript
-const storage = new ReplicatedStorage([primaryStorage, replicaStorage1, replicaStorage2]);
-```
+## Monitoring a Scaled Deployment
 
-## Monitoring
+Monitoring becomes essential once you are running multiple server instances.
 
-Monitor your scaled deployment:
+### Key Metrics Per Node
 
-```typescript
-// Per-node metrics
-const metrics = await server.getMetrics();
+Each Teleportal server exposes Prometheus-compatible metrics:
 
-// Aggregate metrics across nodes
-const aggregatedMetrics = await aggregateMetrics(allNodes);
-```
+- `teleportal_clients_active` -- current number of connected clients on this node
+- `teleportal_sessions_active` -- current number of active document sessions on this node
+- `teleportal_messages_processed_total` -- total messages processed by this node
 
-## Best Practices
+### Cross-Node Aggregation
 
-1. **Use PubSub for Multi-Node**: Always use PubSub when running multiple server instances
-2. **Shared Storage**: Use shared storage backends (Redis, PostgreSQL, etc.)
-3. **Unique Node IDs**: Ensure each server instance has a unique `nodeId`
-4. **Health Checks**: Monitor server health and remove unhealthy instances
-5. **Load Balancing**: Use appropriate load balancing strategies
-6. **Co-location**: Co-locate users onto the same server instances when possible
+Aggregate metrics across all nodes to understand total system load. Use Prometheus federation or a central metrics collector to combine per-node metrics into cluster-wide dashboards.
+
+### Signs of Scaling Issues
+
+- **Uneven session distribution**: Some servers are overloaded while others are idle. Improve your load balancing or session affinity strategy.
+- **High PubSub message latency**: The PubSub backend is becoming a bottleneck. Consider improving session affinity to reduce cross-server traffic, or scaling the PubSub infrastructure itself.
+- **Increasing storage operation durations**: Storage is under pressure. Add read replicas, improve connection pooling, or shard storage.
+
+### Health Check Endpoints
+
+Use the `/health` and `/status` endpoints for load balancer health checks. Configure your load balancer to remove unhealthy instances from the pool automatically.
+
+See [Observability](/docs/guides/observability/) for full setup details on metrics, health endpoints, and structured logging.
 
 ## Next Steps
 
-- [Pub/Sub Guide](/docs/guides/pub-sub/) - Learn about pub/sub setup
-- [Performance](/docs/advanced/performance/) - Optimize performance
-- [Monitoring](/docs/monitoring/) - Set up monitoring
+- [Pub/Sub Guide](/docs/guides/pub-sub/) -- Set up PubSub for multi-server coordination
+- [Performance](/docs/advanced/performance/) -- Optimize throughput and latency
+- [Observability](/docs/guides/observability/) -- Configure metrics, health checks, and logging
