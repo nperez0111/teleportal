@@ -93,7 +93,7 @@ const access = new DocumentAccessBuilder()
 // Using convenience methods
 const access = new DocumentAccessBuilder()
   .readOnly("public/*")
-  .readWrite("user/*")
+  .write("user/*")
   .fullAccess("admin/*")
   .admin("super-admin/*")
   .build();
@@ -101,18 +101,17 @@ const access = new DocumentAccessBuilder()
 // Domain-specific methods
 const access = new DocumentAccessBuilder()
   .ownDocuments("user-123")
-  .sharedDocuments()
-  .projectDocuments("my-project")
-  .orgDocuments("acme-corp")
+  .allow("shared/*", ["read", "write"])
+  .allow("projects/my-project/*", ["read", "write"])
   .build();
 
 // Complex patterns with exclusions
 const access = new DocumentAccessBuilder()
   .allowAll(["read", "write"])
-  .denyPrivate()
-  .denySecrets()
+  .deny("private/*")
+  .deny("*.secret")
   .ownDocuments("user-456", ["read", "write", "comment", "suggest", "admin"])
-  .projectDocuments("important-project", ["read", "write", "comment", "suggest"])
+  .allow("projects/important-project/*", ["read", "write", "comment", "suggest"])
   .admin("system/*")
   .build();
 ```
@@ -128,8 +127,7 @@ const access = new DocumentAccessBuilder()
 #### Permission Convenience Methods
 
 - `readOnly(pattern)` - Read-only access
-- `writeOnly(pattern)` - Write-only access
-- `readWrite(pattern)` - Read and write access
+- `write(pattern)` - Read and write access
 - `fullAccess(pattern)` - All permissions except admin
 - `admin(pattern)` - Admin access (supersedes all other permissions)
 - `commentOnly(pattern)` - Read and comment access
@@ -138,15 +136,9 @@ const access = new DocumentAccessBuilder()
 #### Domain-Specific Methods
 
 - `ownDocuments(userId, permissions?)` - User owns their documents (`userId/*`)
-- `sharedDocuments(permissions?)` - Access to shared documents (`shared/*`)
-- `projectDocuments(projectName, permissions?)` - Access to project documents (`projects/projectName/*`)
-- `orgDocuments(orgName, permissions?)` - Access to organization documents (`orgName/*`)
 
-#### Denial Convenience Methods
+#### Denial Methods
 
-- `denyPrivate()` - Deny access to private documents (`!private/*`)
-- `denySecrets()` - Deny access to secret files (`!*.secret`)
-- `denyAdmin()` - Deny access to admin documents (`!admin/*`)
 - `denyDocument(documentName)` - Deny access to specific document
 
 #### Global Access
@@ -155,15 +147,12 @@ const access = new DocumentAccessBuilder()
 
 ## Usage Examples
 
-### 1. Create a Regular User Token
+### 1. Create a Token with Custom Access Patterns
 
 ```typescript
-// User owns all documents starting with their userId
-const userToken = await tokenManager.createUserToken("user-123", "org-456", [
-  "read",
-  "write",
-  "comment",
-  "suggest",
+const token = await tokenManager.createToken("user-123", "org-456", [
+  { pattern: "user-123/*", permissions: ["read", "write", "comment", "suggest"] },
+  { pattern: "shared/*", permissions: ["read", "comment"] },
 ]);
 ```
 
@@ -174,39 +163,22 @@ const userToken = await tokenManager.createUserToken("user-123", "org-456", [
 const adminToken = await tokenManager.createAdminToken("admin-789", "org-456");
 ```
 
-### 3. Create a Custom Token with Specific Access
+### 3. Verify and Check Permissions
 
 ```typescript
-const customToken = await tokenManager.createDocumentToken("user-101", "org-456", [
-  {
-    pattern: "shared/*",
-    permissions: ["read", "comment"],
-  },
-  {
-    pattern: "projects/my-project/*",
-    permissions: ["read", "write", "comment", "suggest"],
-  },
-  {
-    pattern: "user-101/*",
-    permissions: ["read", "write", "comment", "suggest", "admin"],
-  },
-]);
-```
-
-### 4. Verify and Check Permissions
-
-```typescript
-// Verify a token
+// Verify a token — the result is a discriminated union on `valid`
 const result = await tokenManager.verifyToken(token);
-if (result.valid && result.payload) {
-  // Check specific permissions
-  const canRead = tokenManager.hasDocumentPermission(result.payload, "user-123/document1", "read");
-
-  const canWrite = tokenManager.hasDocumentPermission(result.payload, "shared/document1", "write");
-
-  // Get all permissions for a document
-  const permissions = tokenManager.getDocumentPermissions(result.payload, "user-123/document1");
+if (!result.valid) {
+  console.error(result.error); // `payload` is undefined, `error` is string
+  return;
 }
+
+// TypeScript narrows: result.payload is TokenPayload, result.error is undefined
+const canRead = tokenManager.hasDocumentPermission(result.payload, "user-123/document1", "read");
+const canWrite = tokenManager.hasDocumentPermission(result.payload, "shared/document1", "write");
+
+// Get all permissions for a document (aggregated across matching patterns)
+const permissions = tokenManager.getDocumentPermissions(result.payload, "user-123/document1");
 ```
 
 ## Integration with WebSocket Server
@@ -224,38 +196,22 @@ const tokenManager = createTokenManager({
 });
 
 const server = new Server({
-  getStorage: async ({ context }) => {
-    // Your storage implementation
-    return {} as any;
-  },
-  checkPermission: async ({ context, documentId, fileId, message }) => {
-    // Extract token from context
+  storage: async (ctx) => documentStorage,
+  checkPermission: async ({ context, documentId, rpcMethod, message, type }) => {
     const token = (context as any).token;
     if (!token) return false;
 
-    // Verify token
     const result = await tokenManager.verifyToken(token);
     if (!result.valid || !result.payload) return false;
 
-    const payload = result.payload;
+    if (result.payload.room !== context.room) return false;
 
-    // Check room access
-    if (payload.room !== context.room) return false;
-
-    // Handle file messages (use fileId instead of documentId)
-    if (message.type === "file") {
-      // File messages use fileId for permission checks
-      // For now, allow all file messages through
-      // You can implement file-specific permission checks here
-      return true;
+    if (documentId) {
+      const requiredPermission = type === "read" ? "read" : "write";
+      return tokenManager.hasDocumentPermission(result.payload, documentId, requiredPermission);
     }
 
-    // Check document permissions (use documentId)
-    if (!documentId) {
-      throw new Error("documentId is required for doc messages");
-    }
-    const requiredPermission = message.type === "awareness" ? "read" : "write";
-    return tokenManager.hasDocumentPermission(payload, documentId, requiredPermission);
+    return true;
   },
 });
 
@@ -270,32 +226,19 @@ const handlers = getWebsocketHandlers({
       throw new Response("No token provided", { status: 401 });
     }
 
-    // Verify token
+    // Verify token (jose checks expiration, issuer, and audience automatically)
     const result = await tokenManager.verifyToken(token);
-    if (!result.valid || !result.payload) {
-      throw new Response("Invalid token", { status: 401 });
-    }
-
-    const payload = result.payload;
-
-    // Check expiration
-    if (payload.exp && Date.now() / 1000 > payload.exp) {
-      throw new Response("Token expired", { status: 401 });
+    if (!result.valid) {
+      throw new Response(result.error, { status: 401 });
     }
 
     return {
       context: {
-        userId: payload.userId,
-        room: payload.room,
+        userId: result.payload.userId,
+        room: result.payload.room,
         token, // Pass token for permission checking
       },
     };
-  },
-  onConnect: async ({ transport, context, id }) => {
-    await server.createClient(transport, context, id);
-  },
-  onDisconnect: async (id) => {
-    await server.disconnectClient(id);
   },
 });
 ```
@@ -312,13 +255,11 @@ new TokenManager(options: TokenOptions)
 
 #### Methods
 
-- `generateToken(userId, room, documentAccess, options?)`: Generate a JWT token
+- `createToken(userId, room, documentPatterns, options?)`: Create a JWT token with specific access patterns
+- `createAdminToken(userId, room, options?)`: Create an admin token with full access
 - `verifyToken(token)`: Verify and decode a JWT token
 - `hasDocumentPermission(payload, documentName, permission)`: Check if user has permission
 - `getDocumentPermissions(payload, documentName)`: Get all permissions for a document
-- `createUserToken(userId, room, permissions?, options?)`: Create token for user-owned documents
-- `createAdminToken(userId, room, options?)`: Create admin token
-- `createDocumentToken(userId, room, documentPatterns, options?)`: Create custom token
 
 ### Utility Functions
 
@@ -328,12 +269,13 @@ new TokenManager(options: TokenOptions)
 
 ## Security Considerations
 
-1. **Use strong secrets**: Generate cryptographically secure random secrets
+1. **Use strong secrets**: Generate cryptographically secure random secrets (at least 256 bits)
 2. **Set appropriate expiration**: Don't make tokens too long-lived
 3. **Validate room access**: Always check that the user is in the correct room
 4. **Check permissions on every operation**: Don't cache permission results
-5. **Use HTTPS**: Always use secure connections in production
+5. **Use HTTPS/WSS**: Always use secure connections in production
 6. **Rotate secrets**: Regularly rotate your JWT signing secrets
+7. **Expiration is enforced**: `verifyToken` automatically rejects expired tokens via `jose` -- no manual check needed
 
 ## Token Payload Structure
 
@@ -350,7 +292,7 @@ new TokenManager(options: TokenOptions)
   exp?: number;           // Expiration time (Unix timestamp)
   iat?: number;           // Issued at time (Unix timestamp)
   iss?: string;           // Issuer
-  aud: "teleportal";           // Audience
+  aud?: string;           // Audience (default: "teleportal")
 }
 ```
 

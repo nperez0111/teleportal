@@ -80,7 +80,7 @@ export type TokenVerificationResult =
       /**
        * Whether the token is valid
        */
-      valid: boolean;
+      valid: false;
       /**
        * The decoded token payload (if valid)
        */
@@ -131,7 +131,7 @@ export class TokenManager {
       exp,
       iat: now,
       iss: options?.issuer ?? this.issuer,
-      aud: "teleportal",
+      aud: options?.audience ?? "teleportal",
     };
 
     const jwt = await new SignJWT(payload)
@@ -218,11 +218,21 @@ export class TokenManager {
     if (!payload.documentAccess) {
       return [];
     }
-    const matchingAccess = payload.documentAccess.find((access) =>
-      this.matchesPattern(access.pattern, documentName),
-    );
 
-    return matchingAccess?.permissions ?? [];
+    const permissions = new Set<Permission>();
+
+    for (const access of payload.documentAccess) {
+      if (access.pattern.startsWith("!")) {
+        const excludePattern = access.pattern.slice(1);
+        if (this.matchesPattern(excludePattern, documentName)) {
+          return [];
+        }
+      } else if (this.matchesPattern(access.pattern, documentName)) {
+        for (const p of access.permissions) permissions.add(p);
+      }
+    }
+
+    return [...permissions];
   }
 
   /**

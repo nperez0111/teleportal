@@ -212,6 +212,7 @@ const imported = await importWrappingKey(keyString);
 - **Algorithm**: AES-256-GCM (authenticated encryption)
 - **IV**: 12-byte random IV generated for each encryption
 - **Authentication**: GCM mode includes built-in authentication tag
+- **Ciphertext validation**: `decryptUpdate` rejects inputs shorter than 28 bytes (12-byte IV + 16-byte GCM auth tag) before attempting decryption
 
 Each encryption operation uses a unique random IV, ensuring that encrypting the same data produces different ciphertexts each time.
 

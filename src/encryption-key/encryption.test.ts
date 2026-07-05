@@ -281,3 +281,37 @@ describe("createDeterministicEncryptor", () => {
     expect(await createDeterministicEncryptor(nonExtractable)).toBeNull();
   });
 });
+
+describe("decryptUpdate edge cases", () => {
+  it("should reject ciphertext shorter than IV + auth tag (28 bytes)", async () => {
+    const key = await createEncryptionKey();
+    await expect(decryptUpdate(key, new Uint8Array(27))).rejects.toThrow("ciphertext too short");
+    await expect(decryptUpdate(key, new Uint8Array(0))).rejects.toThrow("ciphertext too short");
+    await expect(decryptUpdate(key, new Uint8Array(12))).rejects.toThrow("ciphertext too short");
+  });
+
+  it("should reject ciphertext with a corrupted auth tag", async () => {
+    const key = await createEncryptionKey();
+    const data = new Uint8Array([1, 2, 3]);
+    const encrypted = await encryptUpdate(key, data);
+
+    // Flip a byte in the auth tag (last 16 bytes)
+    encrypted[encrypted.length - 1] ^= 0xff;
+    await expect(decryptUpdate(key, encrypted)).rejects.toThrow("Decryption failed");
+  });
+
+  it("should reject ciphertext with a corrupted IV", async () => {
+    const key = await createEncryptionKey();
+    const data = new Uint8Array([1, 2, 3]);
+    const encrypted = await encryptUpdate(key, data);
+
+    encrypted[0] ^= 0xff;
+    await expect(decryptUpdate(key, encrypted)).rejects.toThrow("Decryption failed");
+  });
+});
+
+describe("importEncryptionKey edge cases", () => {
+  it("should reject an invalid key string", async () => {
+    await expect(importEncryptionKey("not-valid-base64url!")).rejects.toThrow();
+  });
+});

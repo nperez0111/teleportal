@@ -236,6 +236,11 @@ export async function decryptUpdate(
   key: CryptoKey,
   encryptedBinary: EncryptedBinary,
 ): Promise<DecryptedBinary> {
+  // 12-byte IV + 16-byte GCM auth tag minimum
+  if (encryptedBinary.byteLength < 28) {
+    throw new Error("Decryption failed: ciphertext too short");
+  }
+
   try {
     const iv = encryptedBinary.subarray(0, 12) as Uint8Array<ArrayBuffer>;
     const encryptedData = encryptedBinary.subarray(12) as Uint8Array<ArrayBuffer>;
