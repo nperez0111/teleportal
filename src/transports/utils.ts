@@ -123,14 +123,15 @@ export function compose<
   // Spread both, but ensure `source` (the iterable) always comes from the
   // Source arg and `write`/`close` always come from the Sink arg.  Without
   // this, passing a Transport as the Sink would let its `source` property
-  // shadow the Source's filtered/wrapped one.
-  const { write, close } = sink;
+  // shadow the Source's filtered/wrapped one. Delegate `write`/`close` as
+  // method calls (not destructured references) so class-based sinks keep
+  // their `this` binding.
   return {
     ...source,
     ...sink,
     source: source.source,
-    write,
-    close,
+    write: (message) => sink.write(message),
+    close: () => sink.close(),
   } as Transport<Context, SourceAdditionalProperties & SinkAdditionalProperties>;
 }
 

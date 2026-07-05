@@ -304,27 +304,6 @@ describe("ydoc sink", () => {
     }
   });
 
-  // it("can write a doc's awareness updates", async () => {
-  //   const doc = new Y.Doc();
-  //   doc.clientID = 300;
-  //   const awareness = new Awareness(doc);
-  //   const sink = getSink({
-  //     ydoc: doc,
-  //     awareness,
-  //     document: "test",
-  //   });
-
-  //   const writer = sink.awareness.writable.getWriter();
-
-  //   await writer.write({
-  //     type: "awareness",
-  //     context: {
-  //       clientId: 200,
-  //     },
-  //     document: "test",
-  //     update: ,
-  //   });
-  // });
 });
 
 describe("ydoc transport", () => {

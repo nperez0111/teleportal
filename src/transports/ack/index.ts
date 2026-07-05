@@ -126,7 +126,7 @@ export function withAckTrackingSink<
       timeout: ReturnType<typeof setTimeout>;
     }
   >();
-  const messagesToAck: Promise<void>[] = [];
+  const messagesToAck = new Set<Promise<void>>();
   let unsubscribeAck: (() => Promise<void>) | null = null;
   let subscriptionReady = false;
 
@@ -189,7 +189,8 @@ export function withAckTrackingSink<
             timeout,
           });
         });
-        messagesToAck.push(ackPromise);
+        messagesToAck.add(ackPromise);
+        ackPromise.then(() => messagesToAck.delete(ackPromise), () => {});
       }
 
       await sink.write(message);
@@ -199,7 +200,7 @@ export function withAckTrackingSink<
   return Object.assign(trackedSink, {
     waitForAcks: async () => {
       await subscriptionPromise;
-      await Promise.all(messagesToAck);
+      await Promise.all([...messagesToAck]);
     },
     unsubscribe: async () => {
       for (const pending of pendingAcks.values()) {

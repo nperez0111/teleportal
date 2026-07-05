@@ -509,6 +509,9 @@ describe("encrypted client integration", () => {
         await client.handleUpdate(update);
       }
 
+      // Background compaction starts in handleUpdate; let it settle.
+      await new Promise((r) => setTimeout(r, 0));
+
       // The next onUpdate should carry the compaction
       const ydoc = client.ydoc;
       ydoc.getText("notes").insert(0, "my own edit");
@@ -570,6 +573,9 @@ describe("encrypted client integration", () => {
         await client.handleUpdate(update);
       }
 
+      // Background compaction starts in handleUpdate; let it settle.
+      await new Promise((r) => setTimeout(r, 0));
+
       // Consume the first compaction via onUpdate
       const ydoc = client.ydoc;
       ydoc.getText("notes").insert(0, "first send");
@@ -591,6 +597,8 @@ describe("encrypted client integration", () => {
         await client.handleUpdate(update);
       }
 
+      await new Promise((r) => setTimeout(r, 0));
+
       ydoc.getText("notes").insert(0, "second send");
       const msg2 = await client.onUpdate({
         version: 2,
@@ -602,9 +610,11 @@ describe("encrypted client integration", () => {
       }
       const decoded2 = decodeContentEncryptedPayload(msg2.payload.update.data as Update);
       expect(decoded2.compaction).toBeDefined();
-      // Lazy compaction collapses everything accumulated since the last send:
-      // the own sidecar carried over from the first send (1) plus batch2 (3).
-      expect(decoded2.compaction!.sourceHashes.length).toBe(THRESHOLD + 1);
+      // Background compaction fires when the accumulator crosses the threshold
+      // (the carry-over from the first send + the first THRESHOLD-1 batch2
+      // updates = THRESHOLD sources). The last batch2 sidecar arrives after the
+      // compaction already captured the accumulator.
+      expect(decoded2.compaction!.sourceHashes.length).toBe(THRESHOLD);
     });
 
     it("triggers compaction from outgoing updates only (single client)", async () => {
@@ -624,8 +634,10 @@ describe("encrypted client integration", () => {
         } as VersionedUpdate);
       }
 
-      // Compaction was triggered on the THRESHOLDth onUpdate but stored for the NEXT call.
-      // The next onUpdate should carry it.
+      // Compaction was triggered on the THRESHOLDth onUpdate but computed in the
+      // background. Let it settle before the next call picks it up.
+      await new Promise((r) => setTimeout(r, 0));
+
       ydoc.getText("body").insert(0, "trigger ");
       const msg = await client.onUpdate({
         version: 2,

@@ -79,6 +79,7 @@ describe("Rate Limit Analytics", () => {
       ],
       metricsCollector: server.getMetricsCollector(),
       rateLimitStorage,
+      maxDelayMs: 0,
     });
 
     server.createClient({
@@ -88,23 +89,25 @@ describe("Rate Limit Analytics", () => {
 
     const message1 = new DocMessage(
       "test-doc",
-      { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+      { type: "sync-step-1", sv: new Uint8Array([0]) as StateVector },
       { clientId: "test-client", userId: "user-1" },
       false,
     );
 
-    await rateLimitedTransport.write(message1);
+    baseTransport.enqueueMessage(message1);
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 
     const message2 = new DocMessage(
       "test-doc",
-      { type: "sync-step-1", sv: new Uint8Array() as StateVector },
+      { type: "sync-step-1", sv: new Uint8Array([0]) as StateVector },
       { clientId: "test-client", userId: "user-1" },
       false,
     );
 
-    await rateLimitedTransport.write(message2);
+    // Inbound source is the rate-limited side; the second message exceeds the
+    // 1-message transport bucket and is dropped, recording the metric.
+    baseTransport.enqueueMessage(message2);
 
     await new Promise((resolve) => setTimeout(resolve, 1));
 

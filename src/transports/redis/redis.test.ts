@@ -33,13 +33,9 @@ async function isRedisAvailable(): Promise<boolean> {
 
 describe("Redis Transport", () => {
   let redisAvailable: boolean;
-  let _testInstanceId: string;
 
   beforeAll(async () => {
     redisAvailable = await isRedisAvailable();
-    if (redisAvailable) {
-      _testInstanceId = "test-instance-" + Date.now();
-    }
   });
 
   describe("Basic Redis", () => {

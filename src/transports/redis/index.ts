@@ -26,8 +26,6 @@ export class RedisPubSub implements PubSub {
    */
   private subscribedTopics = new Map<PubSubTopic, number>();
 
-  // TODO instead of actually creating the two connections, we could just have a callback that gives us a connection
-  // So we don't have to actually bundle in the redis client. See the NATS transport for an example.
   constructor(redisOptions: { path: string; options?: RedisOptions }) {
     // Use separate connections for publishing and subscribing
     this.publisherRedis = new Redis(redisOptions.path, redisOptions.options ?? {});
@@ -67,15 +65,18 @@ export class RedisPubSub implements PubSub {
 
     this.subscriberRedis.on("messageBuffer", messageHandler);
 
+    this.subscribedTopics.set(topic, (this.subscribedTopics.get(topic) ?? 0) + 1);
+
     const unsubscribe = async (): Promise<void> => {
       this.subscriberRedis.off("messageBuffer", messageHandler);
-      this.subscribedTopics.set(topic, (this.subscribedTopics.get(topic) ?? 0) - 1);
-      if ((this.subscribedTopics.get(topic) ?? 0) <= 0) {
+      const remaining = (this.subscribedTopics.get(topic) ?? 0) - 1;
+      if (remaining <= 0) {
+        this.subscribedTopics.delete(topic);
         await this.subscriberRedis.unsubscribe(topic);
+      } else {
+        this.subscribedTopics.set(topic, remaining);
       }
     };
-
-    this.subscribedTopics.set(topic, (this.subscribedTopics.get(topic) ?? 0) + 1);
     return unsubscribe;
   }
 
