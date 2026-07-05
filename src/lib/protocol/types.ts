@@ -139,6 +139,13 @@ export type DecodedAckMessage = {
    * before retransmitting.
    */
   retryAfter?: number;
+  /**
+   * When set, indicates the message was permanently rejected (retransmitting
+   * the same message would fail again — e.g. it exceeded the size limit or
+   * failed to apply). The value is a human-readable reason. Mutually
+   * exclusive with {@link retryAfter}.
+   */
+  error?: string;
 };
 
 /**

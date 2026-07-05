@@ -108,6 +108,16 @@ export function encodeMessage(
         encoding.writeUint8(encoder, 2);
         // message id
         encoding.writeVarString(encoder, message.payload.messageId);
+        // flags: bit0 = has retryAfter (retryable NACK), bit1 = has error (permanent NACK)
+        const hasRetryAfter = message.payload.retryAfter !== undefined;
+        const hasError = message.payload.error !== undefined;
+        encoding.writeUint8(encoder, (hasRetryAfter ? 1 : 0) | (hasError ? 2 : 0));
+        if (hasRetryAfter) {
+          encoding.writeVarUint(encoder, message.payload.retryAfter!);
+        }
+        if (hasError) {
+          encoding.writeVarString(encoder, message.payload.error!);
+        }
         break;
       }
       case "presence": {
@@ -200,9 +210,11 @@ export function encodeMessage(
           // details
           encoding.writeVarString(encoder, message.payload.details);
           // has payload
-          encoding.writeVarUint(encoder, message.payload.payload ? 1 : 0);
-          // serialize payload
-          encoding.writeAny(encoder, message.payload.payload as any);
+          const hasPayload = message.payload.payload !== undefined && message.payload.payload !== null;
+          encoding.writeUint8(encoder, hasPayload ? 1 : 0);
+          if (hasPayload) {
+            encoding.writeAny(encoder, message.payload.payload as any);
+          }
         }
 
         break;

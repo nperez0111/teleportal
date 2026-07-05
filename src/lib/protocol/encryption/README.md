@@ -2,7 +2,7 @@
 
 Content-level encryption for Y.js updates, and the **default** mode for Teleportal documents. Encrypts document **content** while preserving CRDT **metadata** in plaintext. This allows the server to merge updates, compute state vectors, and perform sync — while the actual text, values, embeds, and formatting remain encrypted. The `Provider` applies this automatically; pass `encryptionKey: false` to opt a document out into plaintext.
 
-The server stores V2 updates internally for both encrypted and unencrypted documents. For encrypted documents, V1 structure updates are used on the wire (for `stripContent`/`restoreContent`), with V1↔V2 conversion happening at the storage boundary.
+The server stores V2 updates internally for both encrypted and unencrypted documents. `stripContent` accepts V1 or V2 input and always outputs a V2 structure update (with tokenized metadata). A V1 fast path (`tokenize: false`) is available for unencrypted documents that bypasses Y.js decoders entirely.
 
 ## What leaks vs. what's encrypted
 
@@ -41,11 +41,11 @@ never content" is an acceptable trade; it is not a metadata-private design.
 
 ## How it works
 
-1. **Strip**: Parse a Y.js V1 update, replace content with deterministic placeholders, extract original content into a sidecar keyed by `(clientId, clock)`.
+1. **Strip**: Parse a Y.js update (V1 or V2), replace content with deterministic placeholders, extract original content into a sidecar keyed by `(clientId, clock)`. Metadata strings are replaced with keyed tokens.
 2. **Encrypt**: AES-256-GCM encrypt the sidecar.
-3. **Store/Sync**: The server converts V1 → V2 for storage, then uses `Y.mergeUpdatesV2`/`Y.diffUpdateV2` — the same operations used for unencrypted documents.
-4. **Sync wire format**: On sync, the server converts V2 → V1, filters relevant sidecars, and wraps in a `ContentEncryptedPayload`.
-5. **Decrypt**: Client decrypts the sidecar, splices original content back into the V1 structure update.
+3. **Store/Sync**: The server stores the V2 structure update and uses `Y.mergeUpdatesV2`/`Y.diffUpdateV2` -- the same operations used for unencrypted documents.
+4. **Sync wire format**: On sync, the server filters relevant sidecars by their index and wraps the diff + sidecars in a `ContentEncryptedPayload`.
+5. **Decrypt**: Client decrypts the sidecar(s), reverses the token dictionary, and splices original content back into the structure update via `restoreContent`.
 
 ## Usage
 
@@ -136,24 +136,36 @@ the server.
 
 ## Sidecar binary format
 
-Column-based encoding, grouped by client:
+Column-based encoding with a metadata dictionary followed by client-grouped entries:
 
 ```
-[version=0] [numClients]
+[version=0 as varUint]
+[numDictEntries as varUint]
+per entry: [token as varString] [original as varString]
+[numClientGroups as varUint]
 per client group:
-  [clientId] [numEntries]
+  [clientId as varUint] [numEntries as varUint]
   [clocks as IntDiffOptRle bytes (varUint8Array)]
   [contentRefs as UintOptRle bytes (varUint8Array)]
   [itemLengths as UintOptRle bytes (varUint8Array)]
   [data lengths as UintOptRle bytes (varUint8Array)]
-  [concatenated data (raw bytes, length = sum of data lengths)]
+  [totalDataLen as varUint]
+  [concatenated data (raw bytes, length = totalDataLen)]
 ```
 
 ## Wire format (ContentEncryptedPayload)
 
 ```
-[version=2]
-[structureUpdate as varUint8Array]   — V1 update with placeholder content
+[version=1 as varUint]
+[structureUpdate as varUint8Array]   -- V2 update with placeholder content
 [numSidecars as varUint]
-per sidecar: [sidecar as varUint8Array]   — AES-GCM encrypted content
+per sidecar: [sidecar as varUint8Array]   -- AES-GCM encrypted content
+[hasCompaction as uint8]             -- 0 or 1
+if hasCompaction == 1:
+  [compactedSidecar as varUint8Array]
+  [numIndexEntries as varUint]
+  per entry: [clientId as varUint] [minClock as varUint] [maxClock as varUint]
+  [compactedHash as varUint8Array]
+  [numSourceHashes as varUint]
+  per sourceHash: [hash as varUint8Array]
 ```

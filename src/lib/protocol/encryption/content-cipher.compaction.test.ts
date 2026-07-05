@@ -328,7 +328,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
       const c = compacted!;
 
       // hash matches the encrypted bytes
-      expect(Buffer.from(c.hash).equals(Buffer.from(hashSidecar(c.encrypted)))).toBe(true);
+      expect(Buffer.from(c.hash).equals(Buffer.from(await hashSidecar(c.encrypted)))).toBe(true);
 
       // Decrypt the compacted sidecar and verify dedup: no duplicate clientId:clock.
       const decoded = decodeSidecar(await decryptUpdate(key, c.encrypted));
@@ -433,7 +433,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
           sidecar: compacted.encrypted,
           index: compacted.index,
           hash: compacted.hash,
-          sourceHashes: [hashSidecar(s1.encryptedSidecar), hashSidecar(s2.encryptedSidecar)],
+          sourceHashes: [await hashSidecar(s1.encryptedSidecar), await hashSidecar(s2.encryptedSidecar)],
         },
       };
       const decoded = decodeContentEncryptedPayload(encodeContentEncryptedPayload(payload));
@@ -470,8 +470,8 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     it("is deterministic and 32 bytes (sha256)", async () => {
       const key = await createEncryptionKey();
       const enc = await encryptUpdate(key, encodeSidecar({ entries: [], dictionary: new Map() }));
-      const h1 = hashSidecar(enc);
-      const h2 = hashSidecar(enc);
+      const h1 = await hashSidecar(enc);
+      const h2 = await hashSidecar(enc);
       expect(h1.length).toBe(32);
       expect(Buffer.from(h1)).toEqual(Buffer.from(h2));
     });

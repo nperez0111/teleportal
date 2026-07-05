@@ -146,27 +146,18 @@ export class Milestone {
   }
 
   public static encodeMeta(milestone: Milestone, existingEncoder?: encoding.Encoder): Uint8Array {
-    function encode(encoder: encoding.Encoder): Uint8Array {
-      // Y
+    function writeMetaTo(encoder: encoding.Encoder): void {
       encoding.writeUint8(encoder, 0x59);
-      // J
       encoding.writeUint8(encoder, 0x4a);
-      // S
       encoding.writeUint8(encoder, 0x53);
-      // version
       encoding.writeUint8(encoder, 0x01);
-      // documentId
       encoding.writeVarString(encoder, milestone.documentId);
-      // id
       encoding.writeVarString(encoder, milestone.id);
-      // name
       encoding.writeVarString(encoder, milestone.name);
-      // createdAt
       encoding.writeFloat64(encoder, milestone.createdAt);
 
-      // Flags for optional fields
       let flags = 0;
-      if (milestone.deletedAt !== undefined) flags |= Math.trunc(1);
+      if (milestone.deletedAt !== undefined) flags |= 1;
       if (milestone.deletedBy !== undefined) flags |= 1 << 1;
       if (milestone.lifecycleState !== undefined) flags |= 1 << 2;
       if (milestone.retentionPolicyId !== undefined) flags |= 1 << 3;
@@ -184,11 +175,13 @@ export class Milestone {
 
       encoding.writeUint8(encoder, milestone.createdBy.type === "user" ? 1 : 0);
       encoding.writeVarString(encoder, milestone.createdBy.id);
-
-      return existingEncoder ? encoding.toUint8Array(encoder) : (undefined as any);
     }
 
-    return existingEncoder ? encode(existingEncoder) : encoding.encode(encode);
+    if (existingEncoder) {
+      writeMetaTo(existingEncoder);
+      return undefined as any;
+    }
+    return encoding.encode((encoder) => writeMetaTo(encoder));
   }
 
   public static decodeMeta(source: Uint8Array, existingDecoder?: decoding.Decoder) {
@@ -215,7 +208,7 @@ export class Milestone {
     let expiresAt: number | undefined;
 
     const flags = decoding.readUint8(decoder);
-    if (flags & Math.trunc(1)) deletedAt = decoding.readFloat64(decoder);
+    if (flags & 1) deletedAt = decoding.readFloat64(decoder);
     if (flags & (1 << 1)) deletedBy = decoding.readVarString(decoder);
     if (flags & (1 << 2)) lifecycleState = decoding.readVarString(decoder) as any;
     if (flags & (1 << 3)) retentionPolicyId = decoding.readVarString(decoder);

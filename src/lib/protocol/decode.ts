@@ -49,14 +49,14 @@ export function decodeMessage(
   try {
     const decoder = decoding.createDecoder(update);
     const [y, j, s] = [
-      decoding.readVarUint(decoder),
-      decoding.readVarUint(decoder),
-      decoding.readVarUint(decoder),
+      decoding.readUint8(decoder),
+      decoding.readUint8(decoder),
+      decoding.readUint8(decoder),
     ];
     if (y !== 0x59 || j !== 0x4a || s !== 0x53) {
       throw new Error("Invalid magic number");
     }
-    const version = decoding.readVarUint(decoder);
+    const version = decoding.readUint8(decoder);
     if (version !== 0x01) {
       throw new Error("Invalid version");
     }
@@ -238,10 +238,17 @@ export function decodeDocStep<
 }
 
 function decodeAckMessageWithDecoder(decoder: decoding.Decoder): DecodedAckMessage {
-  return {
-    type: "ack",
-    messageId: decoding.readVarString(decoder),
-  };
+  const messageId = decoding.readVarString(decoder);
+  // flags: bit0 = has retryAfter (retryable NACK), bit1 = has error (permanent NACK)
+  const flags = decoding.readUint8(decoder);
+  const message: DecodedAckMessage = { type: "ack", messageId };
+  if (flags & 1) {
+    message.retryAfter = decoding.readVarUint(decoder);
+  }
+  if (flags & 2) {
+    message.error = decoding.readVarString(decoder);
+  }
+  return message;
 }
 
 function decodePresenceMessageWithDecoder(decoder: decoding.Decoder): PresenceStep {

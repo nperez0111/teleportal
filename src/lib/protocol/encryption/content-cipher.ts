@@ -184,8 +184,8 @@ export type IndexedSidecar = {
   hash: Uint8Array;
 };
 
-export function hashSidecar(encrypted: EncryptedBinary): Uint8Array {
-  return sha256(encrypted);
+export async function hashSidecar(encrypted: EncryptedBinary): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", encrypted as BufferSource));
 }
 
 export function buildSidecarIndex(entries: ContentEntry[]): SidecarIndex {
@@ -1503,11 +1503,7 @@ export async function encryptUpdateContent(
   version: 1 | 2 = 2,
 ): Promise<ContentEncryptedUpdate> {
   const tokenizer = await getOrCreateTokenizer(key);
-  const { update: structureUpdate, sidecar } = stripContent(
-    update,
-    version,
-    tokenizer,
-  );
+  const { update: structureUpdate, sidecar } = stripContent(update, version, tokenizer);
   const sidecarBytes = encodeSidecar(sidecar);
   const encryptedSidecar = await encryptUpdate(key, sidecarBytes);
   return { structureUpdate, encryptedSidecar };
@@ -1590,7 +1586,7 @@ export async function compactSidecars(
   const encrypted = await encryptUpdate(key, compactedBytes);
   const index = buildSidecarIndex(merged);
 
-  return { encrypted, index, hash: hashSidecar(encrypted) };
+  return { encrypted, index, hash: await hashSidecar(encrypted) };
 }
 
 // ── Sidecar garbage collection ─────────────────────────────────────────────
