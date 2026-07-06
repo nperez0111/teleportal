@@ -1,0 +1,150 @@
+import { beforeEach, describe, expect, it } from "bun:test";
+import type { MilestoneSnapshot } from "teleportal";
+
+import { FakeDOStorage } from "./fake-do-storage";
+import { DurableObjectMilestoneStorage } from "./milestone-storage";
+
+describe("DurableObjectMilestoneStorage", () => {
+  const createTestSnapshot = (): MilestoneSnapshot =>
+    new Uint8Array([1, 2, 3, 4, 5]) as MilestoneSnapshot;
+
+  let storage: DurableObjectMilestoneStorage;
+
+  beforeEach(() => {
+    storage = new DurableObjectMilestoneStorage(new FakeDOStorage());
+  });
+
+  it("creates milestones and returns generated ids", async () => {
+    const id = await storage.createMilestone({
+      name: "v1.0.0",
+      documentId: "doc-123",
+      createdAt: 1_234_567_890,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    expect(typeof id).toBe("string");
+    expect(id.length).toBeGreaterThan(0);
+
+    const milestone = await storage.getMilestone("doc-123", id);
+    expect(milestone).not.toBeNull();
+    expect(milestone!.id).toBe(id);
+    expect(milestone!.name).toBe("v1.0.0");
+    expect(milestone!.documentId).toBe("doc-123");
+  });
+
+  it("lazily loads snapshots", async () => {
+    const id = await storage.createMilestone({
+      name: "v1.0.0",
+      documentId: "doc-123",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    const milestone = await storage.getMilestone("doc-123", id);
+    expect(await milestone!.fetchSnapshot()).toEqual(createTestSnapshot());
+  });
+
+  it("lists milestones by document", async () => {
+    const id1 = await storage.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+    await storage.createMilestone({
+      name: "v2",
+      documentId: "doc-2",
+      createdAt: 2,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+    const id3 = await storage.createMilestone({
+      name: "v3",
+      documentId: "doc-1",
+      createdAt: 3,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    const milestones = await storage.getMilestones("doc-1");
+    const ids = milestones.map((m) => m.id);
+    expect(ids).toContain(id1);
+    expect(ids).toContain(id3);
+    expect(milestones.every((m) => m.documentId === "doc-1")).toBe(true);
+  });
+
+  it("deletes milestones by id or id[]", async () => {
+    const id1 = await storage.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+    const id2 = await storage.createMilestone({
+      name: "v2",
+      documentId: "doc-1",
+      createdAt: 2,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    await storage.deleteMilestone("doc-1", id1);
+    // First delete is soft delete
+    expect(await storage.getMilestone("doc-1", id1)).toBeNull();
+    const deletedMilestones = await storage.getMilestones("doc-1", {
+      includeDeleted: true,
+    });
+    const deletedMilestone = deletedMilestones.find((m) => m.id === id1);
+    expect(deletedMilestone).toBeDefined();
+    expect(deletedMilestone?.lifecycleState).toBe("deleted");
+
+    // Second delete is hard delete
+    await storage.deleteMilestone("doc-1", id1);
+    const hardDeletedMilestones = await storage.getMilestones("doc-1", {
+      includeDeleted: true,
+    });
+    expect(hardDeletedMilestones.find((m) => m.id === id1)).toBeUndefined();
+
+    expect(await storage.getMilestone("doc-1", id2)).not.toBeNull();
+
+    await storage.deleteMilestone("doc-1", [id2]);
+    expect(await storage.getMilestone("doc-1", id2)).toBeNull();
+  });
+
+  it("supports soft delete and restore", async () => {
+    const id = await storage.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    await storage.deleteMilestone("doc-1", id);
+    expect(await storage.getMilestone("doc-1", id)).toBeNull();
+
+    await storage.restoreMilestone("doc-1", id);
+    const restored = await storage.getMilestone("doc-1", id);
+    expect(restored).not.toBeNull();
+    expect(restored?.lifecycleState).toBe("active");
+  });
+
+  it("updates milestone names", async () => {
+    const id = await storage.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    await storage.updateMilestoneName("doc-1", id, "v1-renamed");
+    const renamed = await storage.getMilestone("doc-1", id);
+    expect(renamed?.name).toBe("v1-renamed");
+    expect(await renamed!.fetchSnapshot()).toEqual(createTestSnapshot());
+  });
+});
