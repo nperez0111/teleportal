@@ -38,6 +38,8 @@ import {
   type SidecarCompaction,
 } from "teleportal/protocol/encryption";
 
+import { DurableObjectDocumentStorage } from "../cloudflare/document-storage";
+import { FakeDOStorage } from "../cloudflare/fake-do-storage";
 import type { AbstractDocumentStorage } from "./document-storage";
 import { MemoryDocumentStorage } from "./in-memory/document-storage";
 import { MergeOnWriteStorage } from "./merge-on-write-storage";
@@ -105,6 +107,11 @@ const backends: Backend[] = [
       MemoryDocumentStorage.attributionMaps.clear();
       await Promise.all(openStorages.splice(0).map((s) => s.dispose()));
     },
+  },
+  {
+    name: "DurableObjectDocumentStorage",
+    make: () => new DurableObjectDocumentStorage(new FakeDOStorage(), { encrypted: true }),
+    cleanup: async () => {},
   },
   {
     name: "MergeOnWriteStorage",
