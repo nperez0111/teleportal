@@ -205,6 +205,23 @@ export function getWebsocketHandlers<T extends ServerContext>({
       }
     },
     async message(peer, msg) {
+      // A peer without a channel/client never ran `open` in this process —
+      // e.g. a Durable Object woken from hibernation restores its websockets
+      // with empty per-peer state. Close it so the client reconnects and
+      // resyncs instead of crashing the hook.
+      if (!peer.context.channel?.send || !peer.context.client) {
+        emitWideEvent("info", {
+          event_type: "websocket_stale_peer",
+          timestamp: new Date().toISOString(),
+          client_id: peer.id,
+        });
+        try {
+          peer.close();
+        } catch {
+          // ignore — the socket may already be closed
+        }
+        return;
+      }
       const message = msg.uint8Array();
       if (!isBinaryMessage(message)) {
         throw new Error("Invalid message");
@@ -268,7 +285,8 @@ export function getWebsocketHandlers<T extends ServerContext>({
         client_id: peer.id,
         error,
       });
-      peer.context.channel.error(error);
+      // channel may be missing on a hibernation-woken peer (see message hook)
+      peer.context.channel?.error(error);
     },
     drain(peer) {
       emitWideEvent("debug", {
