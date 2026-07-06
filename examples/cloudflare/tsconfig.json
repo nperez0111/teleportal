@@ -1,0 +1,39 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["@types/bun"],
+    "baseUrl": ".",
+    "paths": {
+      "teleportal/encryption-key": ["../../src/encryption-key/index.ts"],
+      "teleportal/storage": ["../../src/storage/index.ts"],
+      "teleportal/storage/postgres": ["../../src/storage/postgres/index.ts"],
+      "teleportal/storage/s3": ["../../src/storage/s3/index.ts"],
+      "teleportal/transports/redis": ["../../src/transports/redis/index.ts"],
+      "teleportal/transports/nats": ["../../src/transports/nats/index.ts"],
+      "teleportal/transports/rate-limiter": ["../../src/transports/rate-limiter/index.ts"],
+      "teleportal/transports": ["../../src/transports/index.ts"],
+      "teleportal/http": ["../../src/http/index.ts"],
+      "teleportal/server": ["../../src/server/index.ts"],
+      "teleportal/protocol/encryption": ["../../src/lib/protocol/encryption/index.ts"],
+      "teleportal/protocol": ["../../src/lib/protocol/index.ts"],
+      "teleportal/protocols/milestone": ["../../src/protocols/milestone/index.ts"],
+      "teleportal/protocols/file": ["../../src/protocols/file/index.ts"],
+      "teleportal/protocols/attribution": ["../../src/protocols/attribution/index.ts"],
+      "teleportal/protocols/key-registry": ["../../src/protocols/key-registry/index.ts"],
+      "teleportal/providers": ["../../src/providers/index.ts"],
+      "teleportal/providers/worker": ["../../src/providers/worker/index.ts"],
+      "teleportal/websocket-server": ["../../src/websocket-server/index.ts"],
+      "teleportal/cloudflare": ["../../src/cloudflare/index.ts"],
+      "teleportal/monitoring": ["../../src/monitoring/index.ts"],
+      "teleportal/token": ["../../src/token/index.ts"],
+      "teleportal/merkle-tree": ["../../src/merkle-tree/index.ts"],
+      "teleportal/devtools": ["../../src/devtools/index.ts"],
+      "teleportal/agent": ["../../src/agent/index.ts"],
+      "teleportal/attribution": ["../../src/lib/attribution/index.ts"],
+      "teleportal/rpc": ["../../src/lib/rpc/index.ts"],
+      "teleportal/utils": ["../../src/utils/index.ts"],
+      "teleportal": ["../../src/lib/index.ts"]
+    }
+  },
+  "include": ["./src/**/*", "./scripts/**/*"]
+}
