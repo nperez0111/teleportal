@@ -49,6 +49,7 @@
     "./transports/rate-limiter": "./dist/transports/rate-limiter/index.mjs",
     "./transports": "./dist/transports/index.mjs",
     "./websocket-server": "./dist/websocket-server/index.mjs",
+    "./cloudflare": "./dist/cloudflare/index.mjs",
     "./server": "./dist/server/index.mjs",
     "./monitoring": "./dist/monitoring/index.mjs",
     "./encryption-key": "./dist/encryption-key/index.mjs",

@@ -29,6 +29,7 @@
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/providers/worker": ["./src/providers/worker/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
+      "teleportal/cloudflare": ["./src/cloudflare/index.ts"],
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
       "teleportal/merkle-tree": ["./src/merkle-tree/index.ts"],

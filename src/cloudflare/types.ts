@@ -84,10 +84,7 @@ export async function listAllKeys(
 /**
  * Delete keys in batches of {@link MAX_KEYS_PER_DELETE}.
  */
-export async function deleteKeys(
-  storage: DurableObjectStorageLike,
-  keys: string[],
-): Promise<void> {
+export async function deleteKeys(storage: DurableObjectStorageLike, keys: string[]): Promise<void> {
   for (let i = 0; i < keys.length; i += MAX_KEYS_PER_DELETE) {
     await storage.delete(keys.slice(i, i + MAX_KEYS_PER_DELETE));
   }

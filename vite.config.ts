@@ -38,6 +38,7 @@ export default defineConfig({
       "transports/rate-limiter/index": "src/transports/rate-limiter/index.ts",
       "transports/index": "src/transports/index.ts",
       "websocket-server/index": "src/websocket-server/index.ts",
+      "cloudflare/index": "src/cloudflare/index.ts",
       "server/index": "src/server/index.ts",
       "monitoring/index": "src/monitoring/index.ts",
       "encryption-key/index": "src/encryption-key/index.ts",
