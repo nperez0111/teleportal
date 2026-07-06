@@ -6,7 +6,8 @@
   "scripts": {
     "build:client": "bun build src/client.ts --outdir public --target browser --format esm --minify",
     "dev": "bun run build:client && wrangler dev",
-    "deploy": "bun run build:client && wrangler deploy"
+    "deploy": "bun run build:client && wrangler deploy",
+    "e2e": "bun run scripts/e2e.ts"
   },
   "dependencies": {
     "crossws": "^0.4.9",

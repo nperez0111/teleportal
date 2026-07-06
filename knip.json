@@ -22,6 +22,7 @@
         "src/transports/nats/index.ts",
         "src/transports/rate-limiter/index.ts",
         "src/websocket-server/index.ts",
+        "src/cloudflare/index.ts",
         "src/server/index.ts",
         "src/monitoring/index.ts",
         "src/encryption-key/index.ts",
@@ -35,6 +36,10 @@
     "playground": {
       "entry": ["src/frontend.tsx", "src/worker.ts", "src/devtools/index.tsx", "bun/*.ts"],
       "project": ["src/**/*.{ts,tsx}", "bun/**/*.ts"]
+    },
+    "examples/cloudflare": {
+      "entry": ["src/worker.ts", "src/client.ts", "scripts/*.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts"]
     },
     "examples/*": {
       "entry": ["src/frontend.tsx", "backend/server.ts"],

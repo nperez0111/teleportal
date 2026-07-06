@@ -7,7 +7,14 @@ import { EditorView } from "prosemirror-view";
 import { schema } from "prosemirror-schema-basic";
 import { exampleSetup } from "prosemirror-example-setup";
 import { keymap } from "prosemirror-keymap";
-import { initProseMirrorDoc, redo, undo, yCursorPlugin, ySyncPlugin, yUndoPlugin } from "y-prosemirror";
+import {
+  initProseMirrorDoc,
+  redo,
+  undo,
+  yCursorPlugin,
+  ySyncPlugin,
+  yUndoPlugin,
+} from "y-prosemirror";
 
 import { Provider } from "teleportal/providers";
 
