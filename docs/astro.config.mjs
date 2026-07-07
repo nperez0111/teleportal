@@ -141,6 +141,7 @@ export default defineConfig({
             { label: "Pub/Sub", slug: "guides/pub-sub" },
             { label: "Rate Limiting", slug: "guides/rate-limiting" },
             { label: "Observability", slug: "guides/observability" },
+            { label: "Cloudflare Workers", slug: "guides/cloudflare-workers" },
           ],
         },
         {
