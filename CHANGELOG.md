@@ -1,5 +1,120 @@
 # Changelog
 
+## v0.0.5
+
+[compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.4...v0.0.5)
+
+### 🚀 Enhancements
+
+- Upgrade to logtape 2 & emit wide events ([#56](https://github.com/nperez0111/teleportal/pull/56))
+- Attribution storage, read RPC protocol, and milestone attribution ([#69](https://github.com/nperez0111/teleportal/pull/69))
+- Cluster-aware presence protocol with crash-safe awareness clearing ([#68](https://github.com/nperez0111/teleportal/pull/68))
+- Client flow control non-fatal rate limiting, ACK timeout, update batching ([#72](https://github.com/nperez0111/teleportal/pull/72))
+- Versioned update wire protocol (V1/V2) + dependency upgrades ([#73](https://github.com/nperez0111/teleportal/pull/73))
+- Custom attribution metadata, encrypted-doc attribution, and unified RPC permissions ([#74](https://github.com/nperez0111/teleportal/pull/74))
+- Refactor provider/connection to pluggable transport architecture with RPC extensions ([#75](https://github.com/nperez0111/teleportal/pull/75))
+- Content-level encryption for Y.js updates ([d6f7725](https://github.com/nperez0111/teleportal/commit/d6f7725))
+- Unified storage API and content-level encryption refinements ([a97cf44](https://github.com/nperez0111/teleportal/commit/a97cf44))
+- Automatic sidecar compaction with hash-based verification ([57bbb1a](https://github.com/nperez0111/teleportal/commit/57bbb1a))
+- Encrypted offline persistence at rest via IndexedDB ([585f3db](https://github.com/nperez0111/teleportal/commit/585f3db))
+- **encryption:** Keyed PRF for metadata tokens + document threat model (3C/3A) ([7633163](https://github.com/nperez0111/teleportal/commit/7633163))
+- **rpc:** Add RPC framework with defineMethod/defineProtocol/createHandlers/createClientExtension ([a613f4f](https://github.com/nperez0111/teleportal/commit/a613f4f))
+- **file:** Client-side IDB cache, resumable uploads, rate-limit retransmission ([bb2e88d](https://github.com/nperez0111/teleportal/commit/bb2e88d))
+- **storage:** Add TieredDocumentStorage for yhub-style two-tier caching ([e82e657](https://github.com/nperez0111/teleportal/commit/e82e657))
+- **encryption-key:** Add key distribution system with registry, wrapping, and HTTP management ([553980f](https://github.com/nperez0111/teleportal/commit/553980f))
+- **providers:** Transport upgrade probe with exponential backoff ([27b9f82](https://github.com/nperez0111/teleportal/commit/27b9f82))
+- **devtools:** Add transport toggle and fix SSE error handling ([5eaedc5](https://github.com/nperez0111/teleportal/commit/5eaedc5))
+- **storage:** Add UnstorageKeyRegistryStorage for persistent key distribution ([78fbf68](https://github.com/nperez0111/teleportal/commit/78fbf68))
+- **benchmarks:** Migrate to tinybench and add comprehensive benchmark suites ([808242a](https://github.com/nperez0111/teleportal/commit/808242a))
+- **providers:** SharedWorker connection offload + file-upload perf overhaul ([#83](https://github.com/nperez0111/teleportal/pull/83))
+- Postgres/S3 storage, resumable file uploads, pooled SharedWorker connections, and hardening ([#85](https://github.com/nperez0111/teleportal/pull/85))
+
+### 🔥 Performance
+
+- **storage:** Skip parseUpdateMetaV2 for unencrypted docs, eliminate tiered delegation overhead ([e0a1dcd](https://github.com/nperez0111/teleportal/commit/e0a1dcd))
+- **encryption:** Parallelize crypto ops and reduce allocations ([f0f7a11](https://github.com/nperez0111/teleportal/commit/f0f7a11))
+- Optimize encryption pipeline, merkle hashing, and transport middleware ([46bbb4d](https://github.com/nperez0111/teleportal/commit/46bbb4d))
+- **devtools:** Eliminate DOM thrashing with incremental rendering ([0e7a91c](https://github.com/nperez0111/teleportal/commit/0e7a91c))
+- **connection:** Reduce timer thrashing and event dispatch overhead ([e796cb5](https://github.com/nperez0111/teleportal/commit/e796cb5))
+
+### 🩹 Fixes
+
+- Slightly better reconnection logic for websockets ([3c3709d](https://github.com/nperez0111/teleportal/commit/3c3709d))
+- E2EE milestone snapshot decryption + attribution range data loss ([#71](https://github.com/nperez0111/teleportal/pull/71))
+- Address review findings in content-encryption + offline persistence ([e9351e3](https://github.com/nperez0111/teleportal/commit/e9351e3))
+- **ydoc:** Swallow unhandled rejection from abandoned synced promise ([c449157](https://github.com/nperez0111/teleportal/commit/c449157))
+- **playground:** Make editor fill available vertical space ([5be8e2b](https://github.com/nperez0111/teleportal/commit/5be8e2b))
+- **http:** Wire withAckSink into SSE reader so writer ACKs resolve ([ffc794b](https://github.com/nperez0111/teleportal/commit/ffc794b))
+- **storage:** Persist delete-only updates instead of discarding them ([dee9b85](https://github.com/nperez0111/teleportal/commit/dee9b85))
+- **build:** Add explicit type annotation for teleportalEventClient to fix DTS generation ([6fd8f5b](https://github.com/nperez0111/teleportal/commit/6fd8f5b))
+- **build:** Add missing key-wrapping and key-resolver modules ([20fa0b1](https://github.com/nperez0111/teleportal/commit/20fa0b1))
+- **key-registry:** Fix encryption mismatch and multi-client key sharing ([f9c89f2](https://github.com/nperez0111/teleportal/commit/f9c89f2))
+- **playground:** Share URL for registry-encrypted docs signals encryption ([0927692](https://github.com/nperez0111/teleportal/commit/0927692))
+- **file:** Use ENCRYPTED_CHUNK_SIZE for upload size calculation ([95ab202](https://github.com/nperez0111/teleportal/commit/95ab202))
+- Resolve type errors in benchmarks helpers, file handler tests, and merkle tree ([74603ec](https://github.com/nperez0111/teleportal/commit/74603ec))
+- Resolve CI failures — benchmark timeouts, ACK margin, and destroyed connection leak ([33d983a](https://github.com/nperez0111/teleportal/commit/33d983a))
+- **ci:** Rename benchmarks to .bench.ts and silently drop sends on destroyed connections ([383693a](https://github.com/nperez0111/teleportal/commit/383693a))
+
+### 💅 Refactors
+
+- **encryption:** Store sidecar itemLength explicitly (2B) ([62b0548](https://github.com/nperez0111/teleportal/commit/62b0548))
+- **provider:** Replace fan-in stream with a serial apply queue (1B) ([0851796](https://github.com/nperez0111/teleportal/commit/0851796))
+- **encryption:** Compute sidecar compaction lazily at send time ([0d64752](https://github.com/nperez0111/teleportal/commit/0d64752))
+- **transports:** Migrate stream plumbing to teleportal/iter ([509bb55](https://github.com/nperez0111/teleportal/commit/509bb55))
+- **merkle-tree:** Replace TransformStream with async generator ([6276491](https://github.com/nperez0111/teleportal/commit/6276491))
+- **storage:** Merge-on-read architecture with pending update log ([f025ffa](https://github.com/nperez0111/teleportal/commit/f025ffa))
+
+### 📖 Documentation
+
+- Single file demo ([46694e8](https://github.com/nperez0111/teleportal/commit/46694e8))
+- More examples ([2bfe646](https://github.com/nperez0111/teleportal/commit/2bfe646))
+- Add kitchen sink example ([eabba8e](https://github.com/nperez0111/teleportal/commit/eabba8e))
+- Update FOSDEM link ([2d79571](https://github.com/nperez0111/teleportal/commit/2d79571))
+- Use blog post ([3792006](https://github.com/nperez0111/teleportal/commit/3792006))
+- Add npmx.dev badges and Y.js storage agent skill ([#62](https://github.com/nperez0111/teleportal/pull/62))
+- Add key registry protocol and key wrapping documentation ([665bc20](https://github.com/nperez0111/teleportal/commit/665bc20))
+- **guides:** Add rate limit and message size exceeded callbacks ([ab87d33](https://github.com/nperez0111/teleportal/commit/ab87d33))
+
+### 📦 Build
+
+- Migrate to obuild/rolldown ([#55](https://github.com/nperez0111/teleportal/pull/55))
+
+### 🏡 Chore
+
+- Minor change ([293f038](https://github.com/nperez0111/teleportal/commit/293f038))
+- Og meta ([6b46a02](https://github.com/nperez0111/teleportal/commit/6b46a02))
+- Add new simple example ([9a21321](https://github.com/nperez0111/teleportal/commit/9a21321))
+- Add more TODOs ([1488dda](https://github.com/nperez0111/teleportal/commit/1488dda))
+- Bump packages ([6f9eb0b](https://github.com/nperez0111/teleportal/commit/6f9eb0b))
+- Add Dockerfile for cloud agents ([ae22299](https://github.com/nperez0111/teleportal/commit/ae22299))
+- Update dependencies to latest versions ([#58](https://github.com/nperez0111/teleportal/pull/58))
+- Upgrade logtape, hookable, and devtools event client ([#61](https://github.com/nperez0111/teleportal/pull/61))
+- Fix formatting and update vite-plus to 0.2.1 ([910acec](https://github.com/nperez0111/teleportal/commit/910acec))
+- Minor playground updates ([e3b7be2](https://github.com/nperez0111/teleportal/commit/e3b7be2))
+- Benchmarks suite ([963c454](https://github.com/nperez0111/teleportal/commit/963c454))
+
+### ✅ Tests
+
+- Lock in VirtualStorage attribution capability + batching ([#70](https://github.com/nperez0111/teleportal/pull/70))
+- Harden content restore + sidecar merge, expand subsystem test coverage ([bab1a69](https://github.com/nperez0111/teleportal/commit/bab1a69))
+- **storage:** Add recovery and correctness tests for TieredDocumentStorage ([4f9e856](https://github.com/nperez0111/teleportal/commit/4f9e856))
+- **key-registry:** Add key distribution integration test ([30c7927](https://github.com/nperez0111/teleportal/commit/30c7927))
+
+### 🎨 Styles
+
+- Formatting and lint cleanup ([3c3d61c](https://github.com/nperez0111/teleportal/commit/3c3d61c))
+- Apply formatter across benchmarks, docs, and source files ([ad1d13d](https://github.com/nperez0111/teleportal/commit/ad1d13d))
+
+### 🤖 CI
+
+- Add dependabot, harden and update GitHub Actions ([f48d4b6](https://github.com/nperez0111/teleportal/commit/f48d4b6))
+
+### ❤️ Contributors
+
+- Nick Perez ([@nperez0111](https://github.com/nperez0111))
+- Nick The Sick ([@nperez0111](https://github.com/nperez0111))
+- Pooya Parsa <pyapar@gmail.com>
+
 ## v0.0.4
 
 [compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.3...v0.0.4)
