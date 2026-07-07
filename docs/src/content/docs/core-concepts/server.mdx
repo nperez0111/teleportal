@@ -114,7 +114,7 @@ const server = new Server({
   storage: async (ctx) => {
     // ... storage setup
   },
-  checkPermission: async ({ context, documentId, fileId, message, type }) => {
+  checkPermission: async ({ context, documentId, fileId, message, type, rpcMethod }) => {
     const userId = context.userId;
 
     // Your custom permission logic
@@ -514,5 +514,5 @@ Understanding these "whys" helps you build reliable, secure, and scalable collab
 
 - [Transport](/docs/core-concepts/transport/) - Learn how messages are transmitted between clients and server
 - [Provider](/docs/core-concepts/provider/) - See how clients connect to the server
-- [Storage](/docs/storage/) - Understand how documents are persisted
+- [Persistent Storage](/docs/guides/persistent-storage/) - Understand how documents are persisted
 - [Guides](/docs/guides/) - Step-by-step implementation guides

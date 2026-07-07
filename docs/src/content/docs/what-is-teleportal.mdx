@@ -1,6 +1,6 @@
 ---
 title: What is Teleportal?
-description: What is Teleportal?
+description: Why Teleportal exists and how it compares to other Y.js server solutions
 ---
 
 Teleportal is a real-time collaborative editing framework built on Y.js. It allows you to sync documents in a conflict-free manner, with support for any storage, transport, and runtime.
@@ -33,3 +33,21 @@ While Y.js handles the client-side CRDT operations and conflict resolution, you 
 - **Supports scaling** across multiple server instances with pub/sub and distributed storage
 
 Teleportal provides all of these server-side capabilities out of the box, with a flexible, extensible architecture that lets you customize storage backends, transport mechanisms, and middleware to fit your specific needs. It's designed to be storage-agnostic, transport-agnostic, and runtime-agnostic, giving you the building blocks to create a production-ready sync server without having to implement all the infrastructure yourself.
+
+## How Teleportal Compares
+
+There are several ways to add Y.js sync to your application. Here is how Teleportal differs from the most common alternatives:
+
+**y-websocket** is the reference WebSocket server from the Y.js project. It gets you running quickly, but it stores documents only in memory (or LevelDB), uses a single transport (WebSocket), and has no built-in auth, encryption, or scaling story. If you outgrow it, you end up writing most of the infrastructure Teleportal already provides.
+
+**Hocuspocus** is a Node.js-based Y.js server with a hook/plugin system. It gives you lifecycle hooks for auth and storage, but it couples you to a specific server runtime and WebSocket library. Teleportal takes a different approach: instead of hooks on a fixed server, it gives you composable building blocks (storage interfaces, transport adapters, middleware) that you assemble however your architecture demands.
+
+**Liveblocks** is a hosted platform that includes Y.js support as part of a broader collaboration suite. It is a managed service -- you don't run the server. Teleportal is for teams that want to own their infrastructure: self-hosted, no vendor lock-in, full control over storage, networking, and encryption.
+
+### Key Differentiators
+
+- **Framework, not a server.** Teleportal gives you interfaces and adapters that you compose into your own server. You are not locked into a particular server shape or deployment model.
+- **Storage and transport agnostic.** Bring any database (SQLite, Postgres, S3, or your own) and any transport (WebSocket, HTTP/SSE, or your own). Swap them without changing application code.
+- **End-to-end encryption by default.** Content E2EE is on by default -- the server never sees plaintext document content. This is not an add-on; it is the baseline.
+- **No in-memory storage requirement.** Documents are loaded from storage on demand and can be evicted from memory when idle. This means your server's memory footprint stays constant regardless of how many documents exist.
+- **Runtime agnostic.** Teleportal uses standard JavaScript APIs and runs on Bun, Node.js, Deno, or Cloudflare Workers without platform-specific adapters.

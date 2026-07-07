@@ -1,4 +1,4 @@
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import { uuidv4 } from "lib0/random";
 import { CHUNK_SIZE, processFile } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "./message-types";

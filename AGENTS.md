@@ -25,6 +25,7 @@ There are several sub-packages built with documentation:
 - [`teleportal/protocols/attribution`](./src/protocols/attribution/README.md) - Attribution (authorship) read RPC methods
 - [`teleportal/providers`](./src/providers/README.md) - Provider and connection architecture
 - [`teleportal/transports`](./src/transports/README.md) - Transport middleware
+- [`teleportal/cloudflare`](./src/cloudflare/README.md) - Cloudflare Workers / Durable Objects support (storage + wiring)
 - [`teleportal/token`](./src/token/README.md) - JWT token utilities
 - [`teleportal/encryption-key`](./src/encryption-key/README.md) - Encryption key utilities, key wrapping, and key resolvers
 - [`teleportal/protocols/key-registry`](./src/protocols/key-registry/README.md) - Key distribution RPC + HTTP management

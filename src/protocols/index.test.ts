@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getMilestoneRpcHandlers, getFileRpcHandlers } from "./index";
+import { getMilestoneRpcHandlers, getFileRpcHandlers, getKeyRegistryRpcHandlers } from "./index";
 import type { MilestoneStorage } from "teleportal/storage";
 
 describe("protocols/index exports", () => {
@@ -12,6 +12,12 @@ describe("protocols/index exports", () => {
   describe("file exports", () => {
     it("should export getFileRpcHandlers", () => {
       expect(typeof getFileRpcHandlers).toBe("function");
+    });
+  });
+
+  describe("key-registry exports", () => {
+    it("should export getKeyRegistryRpcHandlers", () => {
+      expect(typeof getKeyRegistryRpcHandlers).toBe("function");
     });
   });
 });

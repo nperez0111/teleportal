@@ -29,9 +29,59 @@ export interface RangeId {
 }
 
 /**
+ * Find the closest cached search marker to `index` and return the item + its
+ * position. Falls back to `type._start` at position 0 when no markers exist.
+ * Read-only — does not mutate the marker cache.
+ */
+function findNearestMarker(
+  type: Y.AbstractType<any>,
+  index: number,
+): { item: Y.Item | null; pos: number } {
+  const markers = (type as any)._searchMarker as Array<{ p: Y.Item; index: number }> | null;
+  if (!markers || markers.length === 0 || index === 0) {
+    return { item: type._start, pos: 0 };
+  }
+
+  let best = markers[0];
+  let bestDist = Math.abs(index - best.index);
+  for (let i = 1; i < markers.length; i++) {
+    const dist = Math.abs(index - markers[i].index);
+    if (dist < bestDist) {
+      best = markers[i];
+      bestDist = dist;
+    }
+  }
+
+  let item: Y.Item | null = best.p;
+  let pos = best.index;
+
+  // Walk right toward index
+  while (item !== null && pos < index) {
+    if (!item.deleted && item.countable) {
+      if (index < pos + item.length) break;
+      pos += item.length;
+    }
+    item = item.right;
+  }
+
+  // Walk left if we overshot
+  while (item !== null && item.left !== null && pos > index) {
+    item = item.left;
+    if (!item.deleted && item.countable) {
+      pos -= item.length;
+    }
+  }
+
+  return { item, pos };
+}
+
+/**
  * Collect the operation IDs backing the content range `[index, index + length)`
  * of `type`. Deleted and non-countable items are skipped (they do not occupy a
  * content position), matching how Y.js computes the visible length.
+ *
+ * Uses Y.js's internal search markers when available to skip ahead instead of
+ * always walking from `type._start`.
  */
 export function collectRangeIds(
   type: Y.AbstractType<any>,
@@ -40,8 +90,10 @@ export function collectRangeIds(
 ): RangeId[] {
   const ids: RangeId[] = [];
   const end = index + length;
-  let pos = 0;
-  let item = type._start;
+
+  const { item: startItem, pos: startPos } = findNearestMarker(type, index);
+  let pos = startPos;
+  let item = startItem;
 
   while (item !== null && pos < end) {
     if (!item.deleted && item.countable) {
@@ -66,6 +118,73 @@ export function collectRangeIds(
 }
 
 /**
+ * Collect the operation IDs of deleted items interspersed between visible
+ * positions `[index, index + length)` in `type`. Each deleted item is
+ * anchored to the visible position immediately before it (or `index` if
+ * there is no preceding visible item in the range).
+ */
+export function collectDeletedRangeIds(
+  type: Y.AbstractType<any>,
+  index: number,
+  length: number,
+): RangeId[] {
+  const ids: RangeId[] = [];
+  const end = index + length;
+
+  const { item: startItem, pos: startPos } = findNearestMarker(type, index);
+  let pos = startPos;
+  let item = startItem;
+
+  // Walk to the start of the range. Advance in lockstep with `pos`: when
+  // `index` falls in the interior of a visible item, counting it makes
+  // `pos > index`, but we must still move past that item so the main loop
+  // does not re-process it and overshoot.
+  while (item !== null && pos < index) {
+    if (!item.deleted && item.countable) {
+      pos += item.length;
+    }
+    item = item.right;
+  }
+
+  while (item !== null && pos <= end) {
+    if (item.deleted && item.countable) {
+      ids.push({
+        client: item.id.client,
+        clock: item.id.clock,
+        len: item.length,
+        contentStart: Math.min(pos, end),
+      });
+    } else if (!item.deleted && item.countable) {
+      pos += item.length;
+      if (pos > end) break;
+    }
+    item = item.right;
+  }
+
+  return ids;
+}
+
+function mergeSegments(segments: AttributedSegment[]): AttributedSegment[] {
+  segments.sort((a, b) => a.from - b.from);
+  const merged: AttributedSegment[] = [];
+  for (const segment of segments) {
+    const last = merged.at(-1);
+    if (
+      last &&
+      last.to === segment.from &&
+      last.userId === segment.userId &&
+      last.timestamp === segment.timestamp &&
+      equalityDeep(last.attributes, segment.attributes)
+    ) {
+      last.to = segment.to;
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
+}
+
+/**
  * Resolve attribution for the content range `[index, index + length)` of
  * `type` against `contentMap`, returning attributed segments in the content
  * coordinate space of `type`, sorted by `from` and merged across adjacent
@@ -83,46 +202,55 @@ export function resolveRangeAttribution(
   const segments: AttributedSegment[] = [];
 
   for (const id of collectRangeIds(type, index, length)) {
-    const ranges = contentMap.inserts.clients.get(id.client);
-    if (!ranges) continue;
+    const slices = contentMap.inserts.slice(id.client, id.clock, id.len);
+    for (const slice of slices) {
+      if (!slice.attrs) continue;
 
-    const idEnd = id.clock + id.len;
-    for (const range of ranges.getIds()) {
-      const overlapStart = Math.max(range.clock, id.clock);
-      const overlapEnd = Math.min(range.clock + range.len, idEnd);
-      if (overlapStart >= overlapEnd) continue;
-
-      const userAttr = range.attrs.find((a) => a.name === "insert");
-      const timeAttr = range.attrs.find((a) => a.name === "insertAt");
-      const from = id.contentStart + (overlapStart - id.clock);
+      const userAttr = slice.attrs.find((a) => a.name === "insert");
+      const timeAttr = slice.attrs.find((a) => a.name === "insertAt");
+      const from = id.contentStart + (slice.clock - id.clock);
       segments.push({
         from,
-        to: from + (overlapEnd - overlapStart),
+        to: from + slice.len,
         userId: userAttr ? String(userAttr.val) : null,
         timestamp: timeAttr ? Number(timeAttr.val) : null,
-        attributes: attrsToRecord(range.attrs),
+        attributes: attrsToRecord(slice.attrs),
       });
     }
   }
 
-  segments.sort((a, b) => a.from - b.from);
+  return mergeSegments(segments);
+}
 
-  // Merge adjacent segments from the same author.
-  const merged: AttributedSegment[] = [];
-  for (const segment of segments) {
-    const last = merged.at(-1);
-    if (
-      last &&
-      last.to === segment.from &&
-      last.userId === segment.userId &&
-      last.timestamp === segment.timestamp &&
-      equalityDeep(last.attributes, segment.attributes)
-    ) {
-      last.to = segment.to;
-    } else {
-      merged.push({ ...segment });
+/**
+ * Resolve attribution for deleted content within `[index, index + length)`.
+ * Returns segments anchored at the visible position where the deletion
+ * occurred, with userId/timestamp from `contentMap.deletes`.
+ */
+export function resolveDeletedRangeAttribution(
+  type: Y.AbstractType<any>,
+  index: number,
+  length: number,
+  contentMap: ContentMap,
+): AttributedSegment[] {
+  const segments: AttributedSegment[] = [];
+
+  for (const id of collectDeletedRangeIds(type, index, length)) {
+    const slices = contentMap.deletes.slice(id.client, id.clock, id.len);
+    for (const slice of slices) {
+      if (!slice.attrs) continue;
+
+      const userAttr = slice.attrs.find((a) => a.name === "delete");
+      const timeAttr = slice.attrs.find((a) => a.name === "deleteAt");
+      segments.push({
+        from: id.contentStart,
+        to: id.contentStart,
+        userId: userAttr ? String(userAttr.val) : null,
+        timestamp: timeAttr ? Number(timeAttr.val) : null,
+        attributes: attrsToRecord(slice.attrs),
+      });
     }
   }
 
-  return merged;
+  return mergeSegments(segments);
 }

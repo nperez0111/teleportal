@@ -49,6 +49,38 @@ import { decryptUpdate } from "./index";
 const decrypted = await decryptUpdate(key, encrypted);
 ```
 
+### Deterministic Encryption (content-addressed file chunks)
+
+```ts
+import { createDeterministicEncryptor, decryptUpdate } from "./index";
+
+const encrypt = await createDeterministicEncryptor(key);
+// null if `key` is non-extractable — caller falls back to encryptUpdate.
+const a = await encrypt!(chunk);
+const b = await encrypt!(chunk); // byte-identical to `a`
+await decryptUpdate(key, a); // unchanged; reads the IV from the first 12 bytes
+```
+
+`encryptUpdate` uses a fresh random IV per call — **always** use it for Y.js
+updates. `createDeterministicEncryptor` derives the IV from the chunk content
+via a keyed HMAC (`IV = HMAC-SHA-256(K_iv, chunk)[:12]`, `K_iv` = HKDF of the
+key), so the same key + same chunk produces identical ciphertext. This is what
+lets the file protocol content-address (and thus dedup and resume) encrypted
+uploads by their Merkle root.
+
+- **Keyed, not a plaintext hash.** Only key-holders can compute or confirm an
+  IV. A naive `IV = SHA-256(chunk)` would let anyone holding the ciphertext
+  confirm guessed plaintext without the key.
+- **Nonce reuse here is safe.** A (key, IV) pair only ever recurs for identical
+  plaintext, which yields identical ciphertext — no two-time-pad exposure.
+- **Equality leak.** By construction, identical plaintext chunks are visibly
+  identical ciphertext. Only acceptable for content-addressed file chunks, never
+  for Y.js updates. See the [file protocol](../../protocols/file/README.md) for
+  the full trade-off.
+- **Cost.** The extra HMAC pass makes per-chunk encryption ~2–3× a random-IV
+  encrypt single-threaded, but file chunks are encrypted in parallel so
+  wall-clock impact is small.
+
 ### Export/Import Keys
 
 Keys can be exported to a storable string format and imported later:
@@ -157,28 +189,30 @@ const imported = await importWrappingKey(keyString);
 
 ### Functions
 
-| Function                               | Description                                                          |
-| -------------------------------------- | -------------------------------------------------------------------- |
-| `createEncryptionKey()`                | Generates a new 256-bit AES-GCM `CryptoKey`                          |
-| `importEncryptionKey(keyString)`       | Imports a key from a JWK string                                      |
-| `exportEncryptionKey(key)`             | Exports a key to a JWK string                                        |
-| `keyToUrlFragment(keyString)`          | Serializes an exported key into a URL fragment value (`token=<key>`) |
-| `keyFromUrlFragment(hash)`             | Parses a key string out of a URL fragment (`string \| null`)         |
-| `encryptUpdate(key, data)`             | Encrypts a Y.js update                                               |
-| `decryptUpdate(key, encryptedBinary)`  | Decrypts an encrypted update                                         |
-| `passwordKey(passphrase)`              | Returns a `KeyResolver` that derives per-document keys via PBKDF2    |
-| `registryKey({ wrappingKey })`         | Returns a `KeyResolver` that fetches + unwraps from the key registry |
-| `deriveWrappingKey(secret, userId)`    | HKDF-SHA256 → AES-KW wrapping key, domain-separated per user         |
-| `wrapDocumentKey(wrappingKey, key)`    | AES-KW wrap → `Uint8Array` blob for storage                          |
-| `unwrapDocumentKey(wrappingKey, blob)` | AES-KW unwrap → usable `CryptoKey`                                   |
-| `exportWrappingKey(key)`               | Export wrapping key to JWK string                                    |
-| `importWrappingKey(keyString)`         | Import wrapping key from JWK string                                  |
+| Function                               | Description                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| `createEncryptionKey()`                | Generates a new 256-bit AES-GCM `CryptoKey`                                     |
+| `importEncryptionKey(keyString)`       | Imports a key from a JWK string                                                 |
+| `exportEncryptionKey(key)`             | Exports a key to a JWK string                                                   |
+| `keyToUrlFragment(keyString)`          | Serializes an exported key into a URL fragment value (`token=<key>`)            |
+| `keyFromUrlFragment(hash)`             | Parses a key string out of a URL fragment (`string \| null`)                    |
+| `encryptUpdate(key, data)`             | Encrypts a Y.js update (random IV)                                              |
+| `decryptUpdate(key, encryptedBinary)`  | Decrypts an encrypted update                                                    |
+| `createDeterministicEncryptor(key)`    | Keyed-IV encryptor for content-addressed chunks (`null` if key non-extractable) |
+| `passwordKey(passphrase)`              | Returns a `KeyResolver` that derives per-document keys via PBKDF2               |
+| `registryKey({ wrappingKey })`         | Returns a `KeyResolver` that fetches + unwraps from the key registry            |
+| `deriveWrappingKey(secret, userId)`    | HKDF-SHA256 → AES-KW wrapping key, domain-separated per user                    |
+| `wrapDocumentKey(wrappingKey, key)`    | AES-KW wrap → `Uint8Array` blob for storage                                     |
+| `unwrapDocumentKey(wrappingKey, blob)` | AES-KW unwrap → usable `CryptoKey`                                              |
+| `exportWrappingKey(key)`               | Export wrapping key to JWK string                                               |
+| `importWrappingKey(keyString)`         | Import wrapping key from JWK string                                             |
 
 ## Security
 
 - **Algorithm**: AES-256-GCM (authenticated encryption)
 - **IV**: 12-byte random IV generated for each encryption
 - **Authentication**: GCM mode includes built-in authentication tag
+- **Ciphertext validation**: `decryptUpdate` rejects inputs shorter than 28 bytes (12-byte IV + 16-byte GCM auth tag) before attempting decryption
 
 Each encryption operation uses a unique random IV, ensuring that encrypting the same data produces different ciphertexts each time.
 

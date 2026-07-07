@@ -118,6 +118,7 @@ function createWorkerConn(options: CreateConnectionOptions): WorkerConnection {
 
   conn.init(serialized, crypto.randomUUID());
   conn.listenForNetworkStatus();
+  conn.listenForPageHide();
   conn.startHeartbeat();
   return conn;
 }

@@ -1,15 +1,38 @@
 ---
 title: Getting Started
-description: Learn how to set up a minimal Teleportal server and client
+description: Build your first real-time collaborative app with Teleportal in under 10 minutes
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { Card, CardGrid, Tabs, TabItem } from "@astrojs/starlight/components";
 
-## Minimal Example
+This tutorial walks you through creating a working real-time collaborative app with Teleportal. By the end, you'll have a server syncing Y.js documents and a client that connects, edits, and receives live updates.
 
-Here's a complete example of a Teleportal server and client that syncs a simple Y.js document:
+## Prerequisites
 
-### Server
+You need a JavaScript runtime installed. Teleportal works with:
+
+- **Bun** (recommended) -- [bun.sh](https://bun.sh)
+- **Node.js 24+** -- [nodejs.org](https://nodejs.org)
+
+You should also have basic familiarity with Y.js. If you haven't used Y.js before, [What is Teleportal?](/docs/what-is-teleportal/) covers the foundations.
+
+## Installation
+
+Create a new project and install Teleportal:
+
+<Tabs>
+  <TabItem label="Bun">
+    ```bash mkdir my-teleportal-app && cd my-teleportal-app bun init -y bun add teleportal yjs ```
+  </TabItem>
+  <TabItem label="npm">
+    ```bash mkdir my-teleportal-app && cd my-teleportal-app npm init -y npm install teleportal yjs
+    ```
+  </TabItem>
+</Tabs>
+
+## Step 1: Create the Server
+
+Create a file called `server.ts` with the following:
 
 ```typescript
 import { serve } from "crossws/server";
@@ -38,14 +61,16 @@ serve({
 });
 ```
 
-**What's happening:**
+Here is what each piece does:
 
-1. **`Server`**: The core Teleportal server that manages document sessions and client connections
-2. **`MemoryDocumentStorage`**: In-memory storage for documents (data is lost on restart)
-3. **`getWebsocketHandlers`**: Creates WebSocket upgrade and message handlers
-4. **`onUpgrade`**: Called when a client connects - returns the user context for authentication
+- **`Server`** is the core of Teleportal. It manages document sessions, coordinates sync between clients, and handles the Y.js protocol.
+- **`MemoryDocumentStorage`** stores documents in memory. This is fine for development -- for production, swap in a persistent storage backend like SQLite or Postgres.
+- **`getWebsocketHandlers`** bridges Teleportal to a WebSocket server. It handles connection upgrades, message routing, and disconnection cleanup.
+- **`onUpgrade`** runs when a client connects. The returned `context` object is attached to the connection and can be used for access control. In production, you would verify a JWT or session token here.
 
-### Client
+## Step 2: Create the Client
+
+Create a file called `client.ts`:
 
 ```typescript
 import { Provider } from "teleportal/providers";
@@ -78,15 +103,39 @@ ydoc.on("update", () => {
 });
 ```
 
-**What's happening:**
+Here is what each piece does:
 
-1. **`Provider.create()`**: Creates a provider and automatically connects to the server
-2. **`encryptionKey`**: End-to-end content encryption is the default — pass a key created with `createEncryptionKey()` (or import a shared one with `importEncryptionKey()`). To deliberately run a plaintext document, pass `encryptionKey: false`.
-3. **`provider.synced`**: A promise that resolves when the document is fully synchronized
-4. **`provider.doc`**: The Y.js document instance - use it like any Y.js document
-5. **Updates**: Changes are automatically synced to other clients connected to the same document
+- **`Provider.create()`** establishes a WebSocket connection to the server, performs the sync handshake, and returns a ready-to-use provider.
+- **`encryptionKey`** enables end-to-end content encryption (E2EE), which is on by default. The server never sees your plaintext content. To share a document between clients, they need the same key -- distribute it out-of-band (e.g. in the URL fragment). To run without encryption, pass `encryptionKey: false`.
+- **`provider.synced`** resolves once the initial document state has been downloaded from the server.
+- **`provider.doc`** is a standard Y.js `Y.Doc` -- use it exactly as you would in any Y.js application.
+- **Updates** are automatically synced to all other clients connected to the same document.
 
-> **Note**: With content-level E2EE the server only ever sees the plaintext CRDT structure and encrypted content sidecars — never your text or keys. Offline persistence stores the encrypted wire representation to IndexedDB, so data at rest is encrypted too. One caveat: awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload itself is encrypted.
+> **Note**: With content-level E2EE the server only ever sees the plaintext CRDT structure and encrypted content sidecars -- never your text or keys. Offline persistence stores the encrypted wire representation to IndexedDB, so data at rest is encrypted too. One caveat: awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload itself is encrypted.
+
+## Step 3: Run It
+
+Start the server:
+
+<Tabs>
+  <TabItem label="Bun">```bash bun run server.ts ```</TabItem>
+  <TabItem label="Node.js">```bash node --experimental-strip-types server.ts ```</TabItem>
+</Tabs>
+
+The server starts listening on `ws://localhost:3000`. Then in a separate terminal, run the client:
+
+<Tabs>
+  <TabItem label="Bun">```bash bun run client.ts ```</TabItem>
+  <TabItem label="Node.js">```bash node --experimental-strip-types client.ts ```</TabItem>
+</Tabs>
+
+You should see `Document updated: Hello, world!` printed as the client inserts text and the change round-trips through the server.
+
+## Step 4: Test Collaboration
+
+To see real-time sync in action, open a second terminal and run the client again. Both clients connect to the same document, so edits from one appear in the other. If you modify the client script to insert different text, you'll see both clients converge to the same state -- that's the CRDT at work.
+
+In a real application, the client code runs in a browser and connects to a Y.js editor binding (like [y-prosemirror](https://github.com/yjs/y-prosemirror), [y-monaco](https://github.com/nicklassandell/y-monaco), or [y-codemirror.next](https://github.com/yjs/y-codemirror.next)). The Provider works the same way regardless of the environment.
 
 ## How It Works
 
@@ -96,8 +145,16 @@ ydoc.on("update", () => {
 4. **Real-time updates**: When you make changes, they're sent to the server and broadcast to all other clients
 5. **Awareness**: Cursor positions and user presence are automatically synchronized
 
-## Next Steps
+## What's Next
 
-- [Integration Guide](/docs/integration/) - Learn how to integrate Teleportal into your application
-- [Core Concepts](/docs/core-concepts/) - Understand the architecture and components
-- [Guides](/docs/guides/) - Step-by-step guides for common scenarios
+<CardGrid>
+  <Card title="Integration Guide" icon="rocket" href="/docs/integration/">
+    Decide which transport, storage, and auth strategy fits your app
+  </Card>
+  <Card title="Core Concepts" icon="open-book" href="/docs/core-concepts/protocol/">
+    Understand the protocol, server architecture, and provider lifecycle
+  </Card>
+  <Card title="Guides" icon="list-format" href="/docs/guides/">
+    Step-by-step recipes for authentication, persistent storage, scaling, and more
+  </Card>
+</CardGrid>

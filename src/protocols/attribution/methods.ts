@@ -1,5 +1,5 @@
 import { defineMethod, defineProtocol } from "teleportal/rpc";
-import type { ActivityEntry } from "teleportal/attribution";
+import type { ActivityEntry, EncodedContentIds } from "teleportal/attribution";
 import type { EncodedContentMap } from "teleportal/storage";
 
 /**
@@ -71,6 +71,12 @@ export const attributionGet = defineMethod<
   { contentMap: EncodedContentMap | null }
 >("attributionGet");
 
+export const attributionGetIncremental = defineMethod<
+  "attributionGetIncremental",
+  { knownIds: EncodedContentIds },
+  { contentMap: EncodedContentMap | null }
+>("attributionGetIncremental");
+
 // ---------------------------------------------------------------------------
 // Protocol
 // ---------------------------------------------------------------------------
@@ -78,4 +84,5 @@ export const attributionGet = defineMethod<
 export const attributionProtocol = defineProtocol("attribution", {
   activity: attributionActivity,
   get: attributionGet,
+  getIncremental: attributionGetIncremental,
 });

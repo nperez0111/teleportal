@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
 import { createStorage } from "unstorage";
 import { UnstorageFileStorage } from "./file-storage";
@@ -99,7 +99,7 @@ describe("UnstorageFileStorage", () => {
     expect(progress).toBeNull();
   });
 
-  it("should cleanup upload session and chunks after all chunks are fetched via getChunk", async () => {
+  it("keeps chunks fetchable via getChunk and cleans up only on deleteUpload", async () => {
     const unstorage = createStorage();
     storage = new UnstorageFileStorage(unstorage);
     temp = new UnstorageTemporaryUploadStorage(unstorage);
@@ -133,35 +133,25 @@ describe("UnstorageFileStorage", () => {
     const chunkKeys = await unstorage.getKeys(`file:upload:${uploadId}:chunk:`);
     expect(chunkKeys.length).toBe(2);
 
-    // Fetch all chunks via getChunk
+    // Fetch all chunks via getChunk — this no longer deletes them.
     const chunk0 = await result.getChunk(0);
     expect(chunk0).toEqual(chunks[0]);
-
-    // Verify chunk 0 was deleted from temporary storage
-    const chunkKeysAfter0 = await unstorage.getKeys(`file:upload:${uploadId}:chunk:`);
-    expect(chunkKeysAfter0.length).toBe(1);
-
-    // Session should still exist (not all chunks fetched yet)
-    progress = await temp.getUploadProgress(uploadId);
-    expect(progress).not.toBeNull();
-
     const chunk1 = await result.getChunk(1);
     expect(chunk1).toEqual(chunks[1]);
 
-    // Verify all chunks and session are cleaned up
-    const chunkKeysAfter1 = await unstorage.getKeys(`file:upload:${uploadId}:chunk:`);
-    expect(chunkKeysAfter1.length).toBe(0);
-
+    // Chunks and session persist until deleteUpload (so a failed store is retriable).
+    expect((await unstorage.getKeys(`file:upload:${uploadId}:chunk:`)).length).toBe(2);
     progress = await temp.getUploadProgress(uploadId);
-    expect(progress).toBeNull();
+    expect(progress).not.toBeNull();
 
-    // Verify session key is deleted
-    const sessionKey = `file:upload:${uploadId}`;
-    const sessionData = await unstorage.getItem(sessionKey);
-    expect(sessionData).toBeNull();
+    await temp.deleteUpload(uploadId);
+
+    expect((await unstorage.getKeys(`file:upload:${uploadId}:chunk:`)).length).toBe(0);
+    expect(await temp.getUploadProgress(uploadId)).toBeNull();
+    expect(await unstorage.getItem(`file:upload:${uploadId}`)).toBeNull();
   });
 
-  it("should prevent double fetching of chunks via getChunk", async () => {
+  it("allows re-fetching a chunk via getChunk (idempotent, not one-time)", async () => {
     const unstorage = createStorage();
     storage = new UnstorageFileStorage(unstorage);
     temp = new UnstorageTemporaryUploadStorage(unstorage);
@@ -183,12 +173,11 @@ describe("UnstorageFileStorage", () => {
     await temp.storeChunk(uploadId, 0, chunks[0], []);
     const result = await temp.completeUpload(uploadId, chunks.length, fileId);
 
-    // First fetch should succeed
+    // Fetching the same chunk twice returns the same bytes (retriable store).
     const chunk = await result.getChunk(0);
     expect(chunk).toEqual(chunks[0]);
-
-    // Second fetch should fail
-    await expect(result.getChunk(0)).rejects.toThrow("Chunk 0 has already been fetched");
+    const again = await result.getChunk(0);
+    expect(again).toEqual(chunks[0]);
   });
 
   it("should not duplicate data - file persisted to durable storage, temp chunks cleaned up", async () => {
@@ -213,8 +202,10 @@ describe("UnstorageFileStorage", () => {
     await temp.storeChunk(uploadId, 0, chunks[0], []);
     const result = await temp.completeUpload(uploadId, chunks.length, fileId);
 
-    // Move file from temporary storage to durable storage incrementally
+    // Move file from temporary storage to durable storage incrementally, then
+    // clean up the temp session (the server does this after a successful store).
     await storage.storeFileFromUpload(result);
+    await temp.deleteUpload(uploadId);
 
     // File should be in durable storage
     const file = await storage.getFile(result.fileId);

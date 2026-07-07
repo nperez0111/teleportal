@@ -36,12 +36,26 @@ export type FilePartStream = {
 };
 
 export type FileUploadRequest = {
+  /**
+   * Content-addressed id: the base64 merkle root over the (encrypted) chunks,
+   * computed by the client before the request. It is both the upload session id
+   * and the durable file id, which is what makes uploads resumable (a re-upload
+   * of the same content re-derives the same id and finds the existing session)
+   * and deduplicated (the server can answer `alreadyExists` before any chunk is
+   * streamed).
+   */
   fileId: string;
   filename: string;
   size: number;
   mimeType: string;
   lastModified: number;
   encrypted: boolean;
+  /**
+   * The wire chunk size the client chunked with. Lets the server detect a
+   * chunk-size mismatch (which would make the client's fileId/chunking invalid)
+   * and ask the client to recompute with the server's size.
+   */
+  chunkSize?: number;
 };
 
 export type FileUploadResponse = {
@@ -51,6 +65,17 @@ export type FileUploadResponse = {
   statusCode?: number;
   existingChunks?: number[];
   chunkSize?: number;
+  /**
+   * True when the content already exists durably (dedup hit): the file has been
+   * attached to this document and the client can resolve without streaming.
+   */
+  alreadyExists?: boolean;
+  /**
+   * Set when the client's `chunkSize` did not match the server's. No upload
+   * session was created; the client must re-chunk/re-encrypt with `chunkSize`
+   * (which will change its `fileId`) and send a new request.
+   */
+  chunkSizeMismatch?: boolean;
 };
 
 export type FileDownloadRequest = {

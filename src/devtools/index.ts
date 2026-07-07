@@ -20,9 +20,13 @@ function injectStyles() {
     document.head.append(styleElement);
   }
 }
-export type DevtoolsState = ReturnType<typeof getDevtoolsState>;
+export type DevtoolsState = ReturnType<typeof createDevtoolsState>;
 
-export function getDevtoolsState() {
+/**
+ * Creates a fresh, isolated devtools state. Most integrations should use
+ * {@link getDevtoolsState} instead so history survives panel close/open.
+ */
+export function createDevtoolsState() {
   const settingsManager = new SettingsManager();
   const eventManager = new EventManager(settingsManager);
   const filterManager = new FilterManager(settingsManager);
@@ -31,6 +35,33 @@ export function getDevtoolsState() {
     eventManager,
     filterManager,
   };
+}
+
+let sharedState: DevtoolsState | null = null;
+
+/**
+ * Returns the shared devtools state, creating it on first call. The state
+ * keeps collecting messages, documents, presence, and the connection timeline
+ * while the panel is closed (bounded by the message limit), so reopening the
+ * devtools shows history instead of starting empty.
+ */
+export function getDevtoolsState(): DevtoolsState {
+  if (!sharedState) {
+    sharedState = createDevtoolsState();
+  }
+  return sharedState;
+}
+
+/**
+ * Tears down the shared state entirely: unsubscribes from all teleportal
+ * events and drops collected history. Only needed when the host app wants to
+ * stop background collection — closing the panel doesn't require this.
+ */
+export function destroyDevtoolsState() {
+  if (sharedState) {
+    sharedState.eventManager.destroy();
+    sharedState = null;
+  }
 }
 
 export function createTeleportalDevtools(
@@ -47,27 +78,31 @@ export function createTeleportalDevtools(
     (name: string) => {
       eventManager.switchTransport(name);
     },
+    {
+      getConnectionState: () => eventManager.getConnectionState(),
+      getConnection: () => eventManager.getConnection(),
+      getTimeline: () => eventManager.getConnectionTimeline(),
+      getStatistics: () => eventManager.getStatistics(),
+      getLastConnectedAt: () => eventManager.getLastConnectedAt(),
+    },
   );
 
   const updateUI = () => {
     const messages = eventManager.getMessages();
     const generation = eventManager.getGeneration();
-    const connectionState = eventManager.getConnectionState();
-    const statistics = eventManager.getStatistics();
-    const filters = filterManager.getFilters();
-    const filteredMessages = filterManager.getFilteredMessages(messages, generation);
-    const availableDocuments = filterManager.getAvailableDocuments(messages, generation);
-    const availableMessageTypes = filterManager.getAvailableMessageTypes(messages, generation);
 
-    layout.update(
-      messages,
-      filteredMessages,
-      connectionState,
-      statistics,
-      availableDocuments,
-      availableMessageTypes,
-      filters,
-    );
+    layout.update({
+      filteredMessages: filterManager.getFilteredMessages(messages, generation),
+      connectionState: eventManager.getConnectionState(),
+      statistics: eventManager.getStatistics(),
+      availableDocuments: filterManager.getAvailableDocuments(messages, generation),
+      availableMessageTypes: filterManager.getAvailableMessageTypes(messages, generation),
+      filters: filterManager.getFilters(),
+      documents: eventManager.getDocuments(),
+      presencePeers: eventManager.getPresencePeers(),
+      presenceFeed: eventManager.getPresenceFeed(),
+      transferProgress: eventManager.getTransferProgress(),
+    });
   };
 
   let rafId: number | null = null;
@@ -87,11 +122,15 @@ export function createTeleportalDevtools(
 
   const rootElement = layout.getElement();
 
+  // Detaches the UI only. The state object (and its event subscriptions) is
+  // owned by the caller — the shared state from getDevtoolsState() keeps
+  // collecting so a reopened panel shows history. Use destroyDevtoolsState()
+  // to stop collection entirely.
   (rootElement as any).__teleportalDevtoolsCleanup = () => {
     unsubscribeEventManager();
     unsubscribeFilterManager();
     unsubscribeSettingsManager();
-    eventManager.destroy();
+    layout.destroy();
   };
 
   return rootElement;

@@ -8,7 +8,7 @@ import {
 } from "teleportal";
 import type { Document, DocumentMetadata, DocumentStorage } from "teleportal/storage";
 import { Server } from "../server/server";
-import { getHTTPHandlers } from "./server";
+import { getHTTPHandlers, tokenAuthenticatedHTTPHandler } from "./server";
 
 // Mock DocumentStorage for testing
 class MockDocumentStorage implements DocumentStorage {
@@ -234,6 +234,46 @@ describe("getHTTPHandler", () => {
 
       expect(response.status).toBe(404);
     });
+
+    it("should route GET /health to health handler", async () => {
+      const request = new Request("http://example.com/health", { method: "GET" });
+      const response = await handler(request);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.status).toBeDefined();
+    });
+
+    it("should route GET /metrics to metrics handler", async () => {
+      const request = new Request("http://example.com/metrics", { method: "GET" });
+      const response = await handler(request);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    });
+
+    it("should route GET /status to status handler", async () => {
+      const request = new Request("http://example.com/status", { method: "GET" });
+      const response = await handler(request);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toBeDefined();
+    });
+
+    it("should use fallback fetch for unmatched routes", async () => {
+      const handlerWithFallback = getHTTPHandlers({
+        server,
+        getContext: mockGetContext,
+        fetch: () => new Response("custom", { status: 418 }),
+      });
+
+      const request = new Request("http://example.com/custom", { method: "GET" });
+      const response = await handlerWithFallback(request);
+
+      expect(response.status).toBe(418);
+      expect(await response.text()).toBe("custom");
+    });
   });
 
   describe("with getInitialDocuments", () => {
@@ -255,7 +295,7 @@ describe("getHTTPHandler", () => {
       expect(response.status).toBe(200);
 
       // Wait for async operations
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 1));
 
       // Verify session was created with custom document
       const session = await server.getOrOpenSession("custom-doc", {
@@ -343,5 +383,126 @@ describe("getHTTPHandler", () => {
       const messageResponse = await handler(messageRequest);
       expect(messageResponse.status).toBe(200);
     });
+  });
+});
+
+describe("tokenAuthenticatedHTTPHandler", () => {
+  let server: Server<ServerContext>;
+  let pubSub: InMemoryPubSub;
+
+  const validPayload = { userId: "user-1", room: "room-1" };
+
+  const mockTokenManager = {
+    verifyToken: async (token: string) => {
+      if (token === "valid-token") {
+        return { valid: true as const, payload: validPayload, error: undefined };
+      }
+      return { valid: false as const, payload: undefined, error: "Invalid token" };
+    },
+  } as any;
+
+  beforeEach(() => {
+    pubSub = new InMemoryPubSub();
+    server = new Server({
+      storage: () => Promise.resolve(new MockDocumentStorage()),
+      pubSub,
+    });
+  });
+
+  afterEach(async () => {
+    await server[Symbol.asyncDispose]();
+    await pubSub[Symbol.asyncDispose]();
+  });
+
+  it("should reject requests without a token", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+    });
+
+    const request = new Request("http://example.com/sse", { method: "GET" });
+    await expect(handler(request)).rejects.toBeInstanceOf(Response);
+  });
+
+  it("should reject requests with an invalid token", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+    });
+
+    const request = new Request("http://example.com/sse", {
+      method: "GET",
+      headers: { authorization: "Bearer bad-token" },
+    });
+    await expect(handler(request)).rejects.toBeInstanceOf(Response);
+  });
+
+  it("should accept Bearer token case-insensitively", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+    });
+
+    const request = new Request("http://example.com/sse", {
+      method: "GET",
+      headers: { authorization: "bearer valid-token" },
+    });
+    const response = await handler(request);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+  });
+
+  it("should accept token from query parameter", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+    });
+
+    const request = new Request("http://example.com/sse?token=valid-token", {
+      method: "GET",
+    });
+    const response = await handler(request);
+    expect(response.status).toBe(200);
+  });
+
+  it("should not extract token from non-Bearer authorization headers", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+    });
+
+    const request = new Request("http://example.com/sse", {
+      method: "GET",
+      headers: { authorization: "Basic dXNlcjpwYXNz" },
+    });
+    await expect(handler(request)).rejects.toBeInstanceOf(Response);
+  });
+
+  it("should not require auth for health/metrics/status endpoints", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+    });
+
+    for (const path of ["/health", "/metrics", "/status"]) {
+      const request = new Request(`http://example.com${path}`, { method: "GET" });
+      const response = await handler(request);
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it("should use fallback fetch for unmatched routes", async () => {
+    const handler = tokenAuthenticatedHTTPHandler({
+      server,
+      tokenManager: mockTokenManager,
+      fetch: () => new Response("custom fallback", { status: 200 }),
+    });
+
+    const request = new Request("http://example.com/custom", {
+      method: "GET",
+    });
+    const response = await handler(request);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("custom fallback");
   });
 });

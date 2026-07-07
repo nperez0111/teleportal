@@ -50,32 +50,39 @@ server.on(
 
 ### Client-Side: Querying Attribution
 
-The `Provider` exposes attribution methods that query the server and resolve content ranges locally:
+Attribution is accessed via a client RPC extension registered on the `Provider`. The extension queries the server and resolves content ranges locally:
 
 ```typescript
+import { Provider } from "teleportal/providers";
+import { createAttributionRpc } from "teleportal/protocols/attribution";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document",
   encryptionKey: await createEncryptionKey(), // encrypted by default
+  rpc: {
+    attribution: createAttributionRpc,
+  },
 });
 
 // Activity timeline — who edited, and when?
-const activity = await provider.getActivity();
+const activity = await provider.rpc.attribution.getActivity();
 
 // Who wrote characters 0..100 of a Y.Text?
 const text = provider.doc.getText("body");
-const segments = await provider.getAttributionForRange(text, 0, 100);
-// → [{ from: 0, to: 45, userId: "alice", timestamp: 1700000000 },
-//    { from: 45, to: 100, userId: "bob", timestamp: 1700000500 }]
+const segments = await provider.rpc.attribution.getForRange(text, 0, 100);
+// → [{ from: 0, to: 45, userId: "alice", timestamp: 1700000000,
+//       attributes: { insert: "alice", insertAt: 1700000000 } },
+//    { from: 45, to: 100, userId: "bob", timestamp: 1700000500,
+//       attributes: { insert: "bob", insertAt: 1700000500 } }]
 
 // Point lookup by CRDT ID
-const author = await provider.resolveAttribution(clientID, clock);
-// → { userId: "alice", timestamp: 1700000000 }
+const author = await provider.rpc.attribution.resolveItem(clientID, clock);
+// → { userId: "alice", timestamp: 1700000000, attributes: { ... } }
 ```
 
-`getAttributionForRange` works with any Y.js sequence type — `Y.Text`, `Y.Array`, `Y.XmlText`, `Y.XmlFragment`, etc. For key-value types like `Y.Map`, use `resolveAttribution` with the CRDT ID of the item you're interested in.
+`getForRange` works with any Y.js sequence type — `Y.Text`, `Y.Array`, `Y.XmlText`, `Y.XmlFragment`, etc. For key-value types like `Y.Map`, use `resolveItem` with the CRDT ID of the item you're interested in.
 
 ## Custom Attributes
 
@@ -97,42 +104,44 @@ const server = new Server({
 
 Custom attributes are encoded, stored, and transmitted alongside standard attributes. Use cases include AI agent tagging, change source tracking, or any domain-specific metadata.
 
-## Provider API
+## Client API
 
-Each `Provider` instance represents a single document. Attribution methods operate on that document's data — subdocuments have their own `Provider` instances with independent attribution.
+Each `Provider` instance represents a single document. Attribution methods are available on `provider.rpc.attribution` when the `createAttributionRpc` extension is registered — subdocuments have their own `Provider` instances with independent attribution.
 
 ### Activity Timeline
 
 `getActivity` is the single entrypoint for "who did what, when?" — all filters compose with AND:
 
 ```typescript
+const { attribution } = provider.rpc;
+
 // All activity
-await provider.getActivity();
+await attribution.getActivity();
 
 // Filter by user
-await provider.getActivity({ userId: "alice" });
+await attribution.getActivity({ userId: "alice" });
 
 // Time range
-await provider.getActivity({ from: hourAgo, to: now });
+await attribution.getActivity({ from: hourAgo, to: now });
 
 // Scoped to a milestone
-await provider.getActivity({ milestone: milestoneId });
+await attribution.getActivity({ milestone: milestoneId });
 
 // Changes between two milestones
-await provider.getActivity({ changeset: [fromId, toId] });
+await attribution.getActivity({ changeset: [fromId, toId] });
 
 // Custom attribute filter
-await provider.getActivity({ attributes: { source: "ai" } });
+await attribution.getActivity({ attributes: { source: "ai" } });
 
 // Combine any filters
-await provider.getActivity({ milestone: milestoneId, userId: "alice" });
+await attribution.getActivity({ milestone: milestoneId, userId: "alice" });
 ```
 
 Each entry includes an `attributes` record containing all attributes (standard and custom):
 
 ```typescript
 // → [{ from: 1700000000, to: 1700000500, userId: "alice",
-//       attributes: { insert: "alice", insertAt: 1700000000, "source": "human" } }, ...]
+//       attributes: { insert: "alice", insertAt: 1700000000, source: "human" } }, ...]
 ```
 
 Adjacent entries from the same user within 1 second are grouped, but only when their attributes match — entries from the same user but different custom attributes (e.g. human vs AI) stay separate.
@@ -148,11 +157,11 @@ Resolve who authored a range of content in a Y type:
 
 ```typescript
 const text = provider.doc.getText("body");
-const segments = await provider.getAttributionForRange(text, 0, 100);
+const segments = await provider.rpc.attribution.getForRange(text, 0, 100);
 // → [{ from: 0, to: 45, userId: "alice", timestamp: 1700000000,
-//       attributes: { insert: "alice", insertAt: 1700000000, "source": "human" } },
+//       attributes: { insert: "alice", insertAt: 1700000000, source: "human" } },
 //    { from: 45, to: 100, userId: "bob", timestamp: 1700000500,
-//       attributes: { insert: "bob", insertAt: 1700000500, "source": "ai" } }]
+//       attributes: { insert: "bob", insertAt: 1700000500, source: "ai" } }]
 ```
 
 Segments with different custom attributes are not merged, even if they have the same userId and timestamp. Runs **entirely client-side**, so it works identically for encrypted and unencrypted documents.
@@ -162,18 +171,20 @@ Segments with different custom attributes are not merged, even if they have the 
 For advanced use cases, the raw ContentMap and point-lookup APIs are available:
 
 ```typescript
+const { attribution } = provider.rpc;
+
 // Raw ContentMap (fetched once, cached for subsequent calls)
-const map = await provider.getAttributionMap();
-const filtered = await provider.getAttributionMap({ userId: "alice" });
-provider.invalidateAttributionCache(); // force re-fetch on next use
+const map = await attribution.getMap();
+const filtered = await attribution.getMap({ userId: "alice" });
+attribution.invalidateCache(); // force re-fetch on next use
 
 // Point lookup by CRDT ID
-const author = await provider.resolveAttribution(clientID, clock);
+const author = await attribution.resolveItem(clientID, clock);
 // → { userId: "alice", timestamp: 1700000000, attributes: { ... } } | null
 
 // Milestone-scoped ContentMaps (for direct set operations)
-const milestoneMap = await provider.getMilestoneContentMap(milestoneId);
-const changesetMap = await provider.getChangesetContentMap(fromId, toId);
+const milestoneMap = await attribution.getMilestoneContentMap(milestoneId);
+const changesetMap = await attribution.getChangesetContentMap(fromId, toId);
 ```
 
 ```mermaid
@@ -259,7 +270,7 @@ Every Y.js operation has a structural ID — `(clientID, clock)` — that is sep
 
 - The server holds only the encrypted content sidecars plus the plaintext structure and ContentMap (operation IDs + userId/timestamp — no document content)
 - **`getActivity`** works — it is derived purely from authorship metadata
-- **`getAttributionForRange`** works — it resolves content positions against the local decrypted document, entirely client-side
+- **`getForRange`** works — it resolves content positions against the local decrypted document, entirely client-side
 - **Milestone attribution** works — the client decrypts the milestone snapshot locally before extracting operation IDs
 
 The server never sees document content in any of these flows.
@@ -294,7 +305,7 @@ const newOnly = excludeContentMap(fullMap, alreadyAttributedIds);
 
 ## Next Steps
 
-- [Milestones](/core-concepts/milestones/) — Scope attribution to document snapshots
-- [Provider](/core-concepts/provider/) — Client-side API reference
-- [Server](/core-concepts/server/) — Server configuration and events
-- [Authentication](/core-concepts/authentication/) — How userId flows into attribution
+- [Milestones](/docs/core-concepts/milestones/) -- Scope attribution to document snapshots
+- [Provider](/docs/core-concepts/provider/) -- Client-side API reference
+- [Server](/docs/core-concepts/server/) -- Server configuration and events
+- [Authentication](/docs/core-concepts/authentication/) -- How userId flows into attribution

@@ -8,11 +8,15 @@ import mermaid from "astro-mermaid";
 // https://astro.build/config
 export default defineConfig({
   site: "https://teleportal.tools/",
+  image: {
+    service: { entrypoint: "astro/assets/services/noop" },
+  },
   integrations: [
     react(),
     mermaid(),
     starlight({
       title: "Teleportal",
+      disable404Route: true,
       plugins: [starlightLlmsTxt()],
       logo: {
         light: "./src/assets/logo_light.svg",
@@ -126,17 +130,22 @@ export default defineConfig({
             { label: "WebSocket Only", slug: "guides/websocket-only" },
             { label: "HTTP Transport", slug: "guides/http-transport" },
             { label: "Fallback Connection", slug: "guides/fallback-connection" },
+            { label: "SharedWorker Connection", slug: "guides/shared-worker" },
             { label: "Authentication", slug: "guides/authentication" },
+            { label: "Encryption Keys", slug: "guides/encryption-keys" },
             { label: "Persistent Storage", slug: "guides/persistent-storage" },
-            { label: "Encryption at Rest", slug: "guides/encryption-at-rest" },
-            { label: "Pub/Sub", slug: "guides/pub-sub" },
-            { label: "Observability", slug: "guides/observability" },
             { label: "Custom Storage", slug: "guides/custom-storage" },
+            { label: "Encryption at Rest", slug: "guides/encryption-at-rest" },
+            { label: "File Transfers", slug: "guides/file-transfers" },
+            { label: "Custom RPC Methods", slug: "guides/rpc-extensions" },
+            { label: "Pub/Sub", slug: "guides/pub-sub" },
             { label: "Rate Limiting", slug: "guides/rate-limiting" },
+            { label: "Observability", slug: "guides/observability" },
+            { label: "Cloudflare Workers", slug: "guides/cloudflare-workers" },
           ],
         },
         {
-          label: "Advanced",
+          label: "Reference & Advanced",
           items: [
             { label: "DevTools", slug: "advanced/devtools" },
             { label: "Custom Storage", slug: "advanced/custom-storage" },

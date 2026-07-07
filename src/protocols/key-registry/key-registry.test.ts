@@ -1,6 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
+import { RpcMessage } from "teleportal/protocol";
 import { InMemoryKeyRegistryStorage } from "../../storage/in-memory/key-registry-storage";
 import { getKeyRegistryHandlers } from "./http";
+import { createKeyRegistryRpc } from "./client";
 import {
   createEncryptionKey,
   deriveWrappingKey,
@@ -206,5 +208,161 @@ describe("Key Registry — end-to-end", () => {
 
     const meta = await (await handler(req("GET", "/keys/doc-1/meta"))).json();
     expect(meta.generation).toBe(5);
+  });
+});
+
+describe("Key Registry — RPC server handlers", () => {
+  it("keysGet returns 401 when userId is missing", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
+    const handler = handlers["keysGet"];
+
+    const context = {
+      documentId: "doc-1",
+      session: { broadcast: mock(async () => {}) } as any,
+      server: {} as any,
+    };
+
+    const result = await handler.handler({}, context);
+    expect(result.response).toEqual({
+      type: "error",
+      statusCode: 401,
+      details: "userId required in message context",
+      payload: undefined,
+    });
+  });
+
+  it("keysGet returns 404 when no key exists for the user", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
+    const handler = handlers["keysGet"];
+
+    const context = {
+      documentId: "doc-1",
+      userId: "alice",
+      session: { broadcast: mock(async () => {}) } as any,
+      server: {} as any,
+    };
+
+    const result = await handler.handler({}, context);
+    expect(result.response).toEqual({
+      type: "error",
+      statusCode: 404,
+      details: "No wrapped key found for this user",
+      payload: undefined,
+    });
+  });
+
+  it("keysGet returns the wrapped key for a registered user", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    const wrappedKey = new Uint8Array([1, 2, 3]);
+    await storage.set("doc-1", [{ userId: "alice", wrappedKey }]);
+
+    const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
+    const handler = handlers["keysGet"];
+
+    const context = {
+      documentId: "doc-1",
+      userId: "alice",
+      session: { broadcast: mock(async () => {}) } as any,
+      server: {} as any,
+    };
+
+    const result = await handler.handler({}, context);
+    expect(result.response).toEqual({
+      wrappedKey,
+      generation: 0,
+    });
+  });
+
+  it("keysRotate returns 409 on generation conflict", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    const wrappedKey = new Uint8Array([1, 2, 3]);
+    await storage.set("doc-1", [{ userId: "alice", wrappedKey }]);
+    await storage.rotate("doc-1", [{ userId: "alice", wrappedKey: new Uint8Array([4, 5]) }], 0);
+
+    const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
+    const handler = handlers["keysRotate"];
+
+    const context = {
+      documentId: "doc-1",
+      userId: "alice",
+      clientId: "c1",
+      session: { broadcast: mock(async () => {}) } as any,
+      server: {} as any,
+    };
+
+    const result = await handler.handler(
+      { entries: [{ userId: "alice", wrappedKey: new Uint8Array([7, 8]) }], expectedGeneration: 0 },
+      context,
+    );
+    expect((result.response as any).type).toBe("error");
+    expect((result.response as any).statusCode).toBe(409);
+  });
+});
+
+describe("Key Registry — client rotation notifications", () => {
+  it("handleMessage dispatches keysRotated via rpcMethod", () => {
+    const factory = createKeyRegistryRpc;
+    const ext = factory();
+
+    const ctx = {
+      rpcClient: {
+        sendRequest: mock(async () => ({})),
+        sendStream: mock(async () => {}),
+        onMessage: mock(() => () => {}),
+        destroy: mock(() => {}),
+      } as any,
+      document: "test-doc",
+      doc: {} as any,
+      awareness: {} as any,
+      connection: {
+        state: { type: "connected" },
+        send: mock(async () => {}),
+        connected: Promise.resolve(),
+        on: mock(() => () => {}),
+      },
+      synced: Promise.resolve(),
+    };
+
+    const api = ext.create(ctx);
+
+    let receivedGeneration: number | null = null;
+    api.onKeysRotated((gen) => {
+      receivedGeneration = gen;
+    });
+
+    const notification = new RpcMessage(
+      "test-doc",
+      { type: "success" as const, payload: { generation: 42 } },
+      "keysRotated",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const handled = ext.handleMessage!(notification);
+    expect(handled).toBe(true);
+    expect(receivedGeneration).not.toBeNull();
+    expect(receivedGeneration!).toBe(42);
+  });
+
+  it("handleMessage ignores unrelated messages", () => {
+    const factory = createKeyRegistryRpc;
+    const ext = factory();
+
+    const notification = new RpcMessage(
+      "test-doc",
+      { type: "success" as const, payload: {} },
+      "someOtherMethod",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    const handled = ext.handleMessage!(notification);
+    expect(handled).toBe(false);
   });
 });

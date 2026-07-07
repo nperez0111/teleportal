@@ -753,8 +753,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
       await bench(
         "hashSidecar (SHA-256)",
-        () => {
-          hashSidecar(encryptedSidecar);
+        async () => {
+          await hashSidecar(encryptedSidecar);
         },
         { iterations: 2000 },
       );

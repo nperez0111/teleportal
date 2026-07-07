@@ -133,9 +133,47 @@ export function getWebsocketHandlers<T extends ServerContext>({
       peer.context.transport = {
         source: channel,
         write(chunk: BinaryMessage) {
-          peer.send(chunk);
+          // Bun's ws.send returns -1 (backpressure: queued) or 0 (dropped)
+          // instead of the byte count. A dropped broadcast here is a silent
+          // server→client update loss that parks the receiver's ydoc until
+          // its next resync, so surface any non-positive result.
+          try {
+            const result = peer.send(chunk);
+            if (typeof result === "number" && result <= 0) {
+              emitWideEvent("error", {
+                event_type: "websocket_send_backpressure",
+                timestamp: new Date().toISOString(),
+                client_id: peer.id,
+                send_result: result,
+                buffered_amount: peer.websocket?.bufferedAmount,
+                chunk_bytes: chunk.byteLength,
+              });
+            }
+          } catch (err) {
+            emitWideEvent("error", {
+              event_type: "websocket_send_threw",
+              timestamp: new Date().toISOString(),
+              client_id: peer.id,
+              chunk_bytes: chunk.byteLength,
+              error: {
+                type: err instanceof Error ? err.name : "Error",
+                message: err instanceof Error ? err.message : String(err),
+              },
+            });
+            throw err;
+          }
         },
-        close() {},
+        // Called by the server when it can no longer service this connection
+        // (consume loop ended). Closing the socket makes the client reconnect
+        // immediately instead of waiting out its receive timeout on a wedged
+        // connection.
+        close() {
+          try {
+            peer.close();
+          } catch {
+            // ignore — the socket may already be closed
+          }
+        },
       };
 
       try {
@@ -167,23 +205,39 @@ export function getWebsocketHandlers<T extends ServerContext>({
       }
     },
     async message(peer, msg) {
+      // A peer without a channel/client never ran `open` in this process —
+      // e.g. a Durable Object woken from hibernation restores its websockets
+      // with empty per-peer state. Close it so the client reconnects and
+      // resyncs instead of crashing the hook.
+      if (!peer.context.channel?.send || !peer.context.client) {
+        emitWideEvent("info", {
+          event_type: "websocket_stale_peer",
+          timestamp: new Date().toISOString(),
+          client_id: peer.id,
+        });
+        try {
+          peer.close();
+        } catch {
+          // ignore — the socket may already be closed
+        }
+        return;
+      }
       const message = msg.uint8Array();
       if (!isBinaryMessage(message)) {
         throw new Error("Invalid message");
       }
+      peer.context.channel.send(message);
       try {
         await onMessage?.({
           client: peer.context.client as unknown as Client<T>,
           message,
           peer,
         });
-        peer.context.channel.send(message);
       } catch (err) {
         emitWideEvent("error", {
-          event_type: "websocket_write_failed",
+          event_type: "websocket_message_hook_failed",
           timestamp: new Date().toISOString(),
           client_id: peer.id,
-          message_id: msg.id,
           error: {
             type: err instanceof Error ? err.name : "Error",
             message: err instanceof Error ? err.message : String(err),
@@ -205,7 +259,15 @@ export function getWebsocketHandlers<T extends ServerContext>({
           id: peer.id,
           peer,
         });
-        await server.disconnectClient(peer.id);
+      } catch {
+        // onDisconnect hook failure must not prevent cleanup
+      }
+      try {
+        server.disconnectClient(peer.id);
+      } catch {
+        // no-op
+      }
+      try {
         peer.context.channel.close();
       } catch {
         // no-op
@@ -223,7 +285,30 @@ export function getWebsocketHandlers<T extends ServerContext>({
         client_id: peer.id,
         error,
       });
-      peer.context.channel.error(error);
+      // channel may be missing on a hibernation-woken peer (see message hook)
+      peer.context.channel?.error(error);
+    },
+    drain(peer) {
+      emitWideEvent("debug", {
+        event_type: "websocket_drain",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+        buffered_amount: peer.websocket?.bufferedAmount,
+      });
+    },
+    ping(peer) {
+      emitWideEvent("debug", {
+        event_type: "websocket_ping",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+      });
+    },
+    pong(peer) {
+      emitWideEvent("debug", {
+        event_type: "websocket_pong",
+        timestamp: new Date().toISOString(),
+        client_id: peer.id,
+      });
     },
   };
 }

@@ -230,5 +230,6 @@ import {
 ## See Also
 
 - [Milestone Protocol](../../protocols/milestone/README.md)
-- [Attribution Protocol](../../protocols/attribution/README.md)
 - [File Protocol](../../protocols/file/README.md)
+- [Key Registry Protocol](../../protocols/key-registry/README.md)
+- [Attribution Protocol](../../protocols/attribution/README.md)

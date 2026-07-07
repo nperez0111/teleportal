@@ -423,13 +423,6 @@ type ClientMethodsFor<P extends ProtocolDef<any>> = {
   ) => Promise<P["methods"][K]["_response"]>;
 };
 
-type AutoClientFor<P extends ProtocolDef<any>> = {
-  [K in keyof P["methods"] as P["methods"][K]["kind"] extends "multipart" ? never : K]: (
-    payload: P["methods"][K]["_request"],
-    options?: { encrypted?: boolean; timeout?: number },
-  ) => Promise<P["methods"][K]["_response"]>;
-};
-
 interface ClientExtensionOptions<P extends ProtocolDef<any>, PublicApi> {
   wrapError?: (operation: string, error: unknown) => Error;
   build?: (methods: ClientMethodsFor<P>, ctx: RpcExtensionContext) => PublicApi;
@@ -469,7 +462,7 @@ function buildTypedMethods<P extends ProtocolDef<any>>(
 // Overload 1: auto-generated client (no build)
 export function createClientExtension<P extends ProtocolDef<any>>(
   protocol: P,
-): () => RpcExtension<AutoClientFor<P>>;
+): () => RpcExtension<ClientMethodsFor<P>>;
 
 // Overload 2: custom client (with build)
 export function createClientExtension<P extends ProtocolDef<any>, PublicApi>(
@@ -483,14 +476,14 @@ export function createClientExtension<P extends ProtocolDef<any>, PublicApi>(
 export function createClientExtension<P extends ProtocolDef<any>, PublicApi>(
   protocol: P,
   options?: ClientExtensionOptions<P, PublicApi>,
-): () => RpcExtension<PublicApi | AutoClientFor<P>> {
+): () => RpcExtension<PublicApi | ClientMethodsFor<P>> {
   return () => ({
-    create(ctx: RpcExtensionContext): PublicApi | AutoClientFor<P> {
+    create(ctx: RpcExtensionContext): PublicApi | ClientMethodsFor<P> {
       const methods = buildTypedMethods(protocol, ctx, options?.wrapError);
       if (options?.build) {
         return options.build(methods, ctx);
       }
-      return methods as unknown as AutoClientFor<P>;
+      return methods as unknown as ClientMethodsFor<P>;
     },
     destroy: options?.destroy,
     handleMessage: options?.handleMessage,

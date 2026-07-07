@@ -1,4 +1,4 @@
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import type { MerkleTree } from "teleportal/merkle-tree";
 import { buildMerkleTree, serializeMerkleTree } from "teleportal/merkle-tree";
 import type {
@@ -8,13 +8,21 @@ import type {
   TemporaryUploadStorage,
   UploadProgress,
 } from "../types";
+import { bytesEqual } from "../utils";
 
 type UploadSession = {
   metadata: FileMetadata;
   chunks: Map<number, Uint8Array>;
   bytesUploaded: number;
   lastActivity: number;
-  completing?: boolean;
+  /** All document ids that have requested this (content-addressed) session. */
+  documentIds: Set<string>;
+  /**
+   * In-flight/settled completion, cached so concurrent completions of the same
+   * (content-addressed) session share one result instead of the second caller
+   * throwing.
+   */
+  completion?: Promise<FileUploadResult>;
 };
 
 /**
@@ -36,6 +44,17 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
   async beginUpload(uploadId: string, metadata: FileMetadata): Promise<void> {
     const existing = this.#sessions.get(uploadId);
     if (existing) {
+      // A content-addressed session may be shared across documents/clients. The
+      // content (size, encryption) must match; only the referencing document may
+      // differ. A mismatch means someone is trying to reuse the id for different
+      // content — reject rather than corrupt the shared session.
+      if (
+        existing.metadata.size !== metadata.size ||
+        existing.metadata.encrypted !== metadata.encrypted
+      ) {
+        throw new Error(`Upload session ${uploadId} already exists with conflicting metadata`);
+      }
+      existing.documentIds.add(metadata.documentId);
       existing.lastActivity = Date.now();
       return;
     }
@@ -48,6 +67,7 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
       chunks: new Map(),
       bytesUploaded: 0,
       lastActivity: Date.now(),
+      documentIds: new Set([metadata.documentId]),
     });
   }
 
@@ -64,7 +84,16 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
 
     const existing = session.chunks.get(chunkIndex);
     if (existing) {
-      session.bytesUploaded -= existing.length;
+      // Content-addressed session ids are guessable, so refuse to overwrite an
+      // already-stored chunk with different bytes — that would let a third party
+      // poison an in-flight upload (its merkle root would then fail to match).
+      // Identical bytes are a harmless retransmit.
+      if (!bytesEqual(existing, chunkData)) {
+        throw new Error(
+          `Chunk ${chunkIndex} for upload ${uploadId} conflicts with already-stored data`,
+        );
+      }
+      return { storedChunks: session.chunks.size };
     }
     session.chunks.set(chunkIndex, chunkData);
     session.bytesUploaded += chunkData.length;
@@ -101,74 +130,76 @@ export class InMemoryTemporaryUploadStorage implements TemporaryUploadStorage {
     if (!session) {
       throw new Error(`Upload session ${uploadId} not found`);
     }
-    if (session.completing) {
-      throw new Error(`Upload ${uploadId} is already being completed`);
-    }
-    session.completing = true;
 
-    try {
-      for (let i = 0; i < totalChunks; i++) {
-        if (!session.chunks.has(i)) {
-          throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
-        }
-      }
-
-      const chunksInOrder: Uint8Array[] = [];
-      for (let i = 0; i < totalChunks; i++) {
-        chunksInOrder.push(session.chunks.get(i)!);
-      }
-
-      const merkleTree = await buildMerkleTree(chunksInOrder);
-      const root = merkleTree.nodes.at(-1);
-      if (!root?.hash) {
-        throw new Error(`Failed to compute root hash for upload ${uploadId}`);
-      }
-      const rootHash = root.hash;
-
-      const computedFileId = toBase64(rootHash);
-      if (fileId !== undefined && computedFileId !== fileId) {
-        throw new Error(
-          `Merkle root mismatch for upload ${uploadId}. Expected ${fileId}, got ${computedFileId}`,
-        );
-      }
-
-      const finalFileId = fileId ?? computedFileId;
-      const progress = (await this.getUploadProgress(uploadId))!;
-
-      const fetchedChunks = new Set<number>();
-
-      return {
-        progress,
-        fileId: finalFileId,
-        contentId: rootHash,
-        totalChunks,
-        serializedMerkleTree: serializeMerkleTree(merkleTree),
-        getChunk: async (chunkIndex: number) => {
-          if (fetchedChunks.has(chunkIndex)) {
-            throw new Error(
-              `Chunk ${chunkIndex} has already been fetched for upload ${uploadId}. Chunks can only be fetched once.`,
-            );
-          }
-
-          const chunk = session.chunks.get(chunkIndex);
-          if (!chunk) {
-            throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
-          }
-
-          fetchedChunks.add(chunkIndex);
-          session.chunks.delete(chunkIndex);
-
-          if (session.chunks.size === 0) {
-            this.#sessions.delete(uploadId);
-          }
-
-          return chunk;
+    // Idempotent: concurrent completions of the same content-addressed session
+    // share one result rather than the second caller throwing. The completion
+    // never mutates the session (chunks stay until deleteUpload), so replaying
+    // a settled promise is safe.
+    if (!session.completion) {
+      session.completion = this.#completeUpload(uploadId, session, totalChunks, fileId).catch(
+        (err) => {
+          // Allow a later retry after a genuine failure (e.g. root mismatch).
+          session.completion = undefined;
+          throw err;
         },
-      };
-    } catch (err) {
-      session.completing = false;
-      throw err;
+      );
     }
+    return session.completion;
+  }
+
+  async #completeUpload(
+    uploadId: string,
+    session: UploadSession,
+    totalChunks: number,
+    fileId?: File["id"],
+  ): Promise<FileUploadResult> {
+    for (let i = 0; i < totalChunks; i++) {
+      if (!session.chunks.has(i)) {
+        throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
+      }
+    }
+
+    const chunksInOrder: Uint8Array[] = [];
+    for (let i = 0; i < totalChunks; i++) {
+      chunksInOrder.push(session.chunks.get(i)!);
+    }
+
+    const merkleTree = await buildMerkleTree(chunksInOrder);
+    const root = merkleTree.nodes.at(-1);
+    if (!root?.hash) {
+      throw new Error(`Failed to compute root hash for upload ${uploadId}`);
+    }
+    const rootHash = root.hash;
+
+    const computedFileId = toBase64(rootHash);
+    if (fileId !== undefined && computedFileId !== fileId) {
+      throw new Error(
+        `Merkle root mismatch for upload ${uploadId}. Expected ${fileId}, got ${computedFileId}`,
+      );
+    }
+
+    const finalFileId = fileId ?? computedFileId;
+    const progress = (await this.getUploadProgress(uploadId))!;
+
+    return {
+      progress,
+      fileId: finalFileId,
+      contentId: rootHash,
+      totalChunks,
+      documentIds: [...session.documentIds],
+      serializedMerkleTree: serializeMerkleTree(merkleTree),
+      getChunk: async (chunkIndex: number) => {
+        const chunk = session.chunks.get(chunkIndex);
+        if (!chunk) {
+          throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
+        }
+        return chunk;
+      },
+    };
+  }
+
+  async deleteUpload(uploadId: string): Promise<void> {
+    this.#sessions.delete(uploadId);
   }
 
   async cleanupExpiredUploads(): Promise<void> {

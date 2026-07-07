@@ -7,12 +7,13 @@ import {
   serializeMerkleTree,
   deserializeMerkleTree,
   processFile,
+  processFileStreaming,
   CHUNK_SIZE,
 } from "../src/merkle-tree/merkle-tree";
 import { InMemoryFileStorage } from "../src/storage/in-memory/file-storage";
 import { InMemoryTemporaryUploadStorage } from "../src/storage/in-memory/temporary-upload-storage";
 import type { FileMetadata } from "../src/storage/types";
-import { createEncryptionKey } from "../src/encryption-key";
+import { createEncryptionKey, createDeterministicEncryptor } from "../src/encryption-key";
 import { encryptUpdate, decryptUpdate } from "../src/encryption-key";
 import { FileHandler } from "../src/protocols/file/server";
 import { bench, benchBatch, formatBytes } from "./helpers";
@@ -102,7 +103,7 @@ describe("File Upload & Download Benchmarks", () => {
         "verifyMerkleProof (100-chunk tree)",
         () => {
           const idx = i++ % 100;
-          verifyMerkleProof(chunks[idx], proofs[idx], root, idx);
+          verifyMerkleProof(chunks[idx], proofs[idx], root, idx, 100);
         },
         { iterations: 1000 },
       );
@@ -281,7 +282,7 @@ describe("File Upload & Download Benchmarks", () => {
             const root = tree.nodes.at(-1)!.hash!;
             for (let i = 0; i < file.chunks.length; i++) {
               const proof = generateMerkleProof(tree, i);
-              verifyMerkleProof(file.chunks[i], proof, root, i);
+              verifyMerkleProof(file.chunks[i], proof, root, i, file.chunks.length);
             }
           },
           { iterations: 20 },
@@ -393,7 +394,7 @@ describe("File Upload & Download Benchmarks", () => {
           `verify ${chunks.length} chunks (${sizeMB}MB)`,
           () => {
             for (let i = 0; i < chunks.length; i++) {
-              verifyMerkleProof(chunks[i], proofs[i], root, i);
+              verifyMerkleProof(chunks[i], proofs[i], root, i, chunks.length);
             }
           },
           { iterations: sizeMB >= 5 ? 5 : 20 },
@@ -448,12 +449,87 @@ describe("File Upload & Download Benchmarks", () => {
             for (let i = 0; i < chunkCount; i++) {
               // Kick off decrypt before sync verify (matches optimized client code)
               const decryptPromise = decryptUpdate(key, encryptedChunks[i]);
-              verifyMerkleProof(encryptedChunks[i], proofs[i], root, i);
+              verifyMerkleProof(encryptedChunks[i], proofs[i], root, i, encryptedChunks.length);
               parts.push(await decryptPromise);
             }
             new File(parts as BlobPart[], "bench.bin", { type: "image/png" });
           },
           { iterations: sizeMB >= 5 ? 5 : 10 },
+        );
+      }
+    });
+  });
+
+  // Directly quantifies the latency trade-off of the resumable-upload change:
+  // the new client computes the whole file's ciphertext + merkle root BEFORE it
+  // can send the first byte (compute-first), whereas the old client pipelined —
+  // it sent chunk 0 as soon as that one chunk's ciphertext was ready. The gap
+  // between these two is the added time-to-first-byte on a fresh upload.
+  describe("Resumable upload: added time-to-first-byte", () => {
+    it("compute-first prepare vs pipelined first-byte (encrypted)", async () => {
+      const key = await createEncryptionKey();
+      const deterministic = (await createDeterministicEncryptor(key))!;
+
+      for (const sizeMB of [1, 5, 20, 50]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const data = new Uint8Array(fileSize);
+        crypto.getRandomValues(data.subarray(0, Math.min(fileSize, 65536)));
+        const file = new File([data as BlobPart], "bench.bin");
+        const firstChunk = data.subarray(0, CHUNK_SIZE - 28);
+
+        // NEW: whole-file deterministic encrypt + merkle fold before first byte.
+        await bench(
+          `compute-first prepare (${sizeMB}MB)`,
+          async () => {
+            await processFileStreaming(file.stream(), file.size, deterministic, () => {});
+          },
+          { iterations: sizeMB >= 20 ? 5 : 20 },
+        );
+
+        // OLD: only the first chunk had to be encrypted before sending byte 0.
+        await bench(
+          `pipelined first-byte: encrypt 1 chunk (${sizeMB}MB file)`,
+          async () => {
+            await deterministic(firstChunk);
+          },
+          { iterations: 50 },
+        );
+      }
+    });
+
+    it("per-chunk encrypt: deterministic (keyed-IV) vs random-IV", async () => {
+      const key = await createEncryptionKey();
+      const deterministic = (await createDeterministicEncryptor(key))!;
+      const chunk = new Uint8Array(CHUNK_SIZE - 28);
+      crypto.getRandomValues(chunk.subarray(0, 65536));
+
+      await bench("encryptUpdate (random IV, 1MB chunk)", async () => {
+        await encryptUpdate(key, chunk);
+      });
+      await bench("deterministic encrypt (HMAC-IV, 1MB chunk)", async () => {
+        await deterministic(chunk);
+      });
+    });
+
+    it("dedup/resume hit: cost avoided (full compute-first prepare, by size)", async () => {
+      // On a dedup or full-resume hit the client streams ZERO chunks — the whole
+      // prepare cost below is what a re-upload of known content now costs total
+      // (client-side), vs a full re-transfer previously.
+      const key = await createEncryptionKey();
+      const deterministic = (await createDeterministicEncryptor(key))!;
+
+      for (const sizeMB of [5, 20]) {
+        const fileSize = Math.floor(sizeMB * 1024 * 1024);
+        const data = new Uint8Array(fileSize);
+        crypto.getRandomValues(data.subarray(0, 65536));
+        const file = new File([data as BlobPart], "bench.bin");
+
+        await bench(
+          `recompute contentId for ${sizeMB}MB (dedup/resume probe)`,
+          async () => {
+            await processFileStreaming(file.stream(), file.size, deterministic, () => {});
+          },
+          { iterations: sizeMB >= 20 ? 5 : 15 },
         );
       }
     });

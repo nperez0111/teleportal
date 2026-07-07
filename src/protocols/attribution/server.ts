@@ -2,8 +2,10 @@ import { equalityDeep } from "lib0/function";
 import { createHandlers, ok, type RpcHandlerRegistry, type RpcServerContext } from "teleportal/rpc";
 import {
   type ContentAttribute,
+  decodeContentIds,
   decodeContentMap,
   encodeContentMap,
+  excludeContentMap,
   filterContentMap,
   getActivity,
 } from "teleportal/attribution";
@@ -54,6 +56,8 @@ function matchesFilter(filter: AttributionFilter): (attrs: ContentAttribute[]) =
  * Methods:
  * - `attributionActivity` — activity timeline (works for encrypted documents).
  * - `attributionGet` — the encoded ContentMap for client-side range resolution.
+ * - `attributionGetIncremental` — diff-based: returns only ranges the client
+ *   doesn't already have.
  */
 export function getAttributionRpcHandlers(): RpcHandlerRegistry {
   return createHandlers(
@@ -91,6 +95,16 @@ export function getAttributionRpcHandlers(): RpcHandlerRegistry {
         }
 
         return ok({ contentMap: encoded });
+      },
+
+      getIncremental: () => async (payload, context) => {
+        const encoded = await loadContentMap(context);
+        if (!encoded) return ok({ contentMap: null });
+
+        const knownIds = decodeContentIds(payload.knownIds);
+        const fullMap = decodeContentMap(encoded);
+        const diff = excludeContentMap(fullMap, knownIds);
+        return ok({ contentMap: encodeContentMap(diff) });
       },
     },
   );

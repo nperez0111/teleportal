@@ -52,6 +52,14 @@ export default defineDriver((options: TransformDriverOptions) => {
       }
       return null;
     },
+    async setMeta(key: string, opts: unknown) {
+      const driver = options.driver as Driver & {
+        setMeta?: (key: string, opts: unknown) => Promise<unknown>;
+      };
+      if (driver.setMeta) {
+        return await driver.setMeta(key, opts);
+      }
+    },
     async setItem(key, value, opts) {
       if (key.endsWith("$")) {
         return await options.driver.setItem?.(key, value, opts);

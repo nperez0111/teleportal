@@ -27,6 +27,7 @@ import {
   createContentMapFromContentIds,
   decodeContentMap,
   encodeContentMap,
+  mergeContentMaps,
   IdSet,
 } from "teleportal/attribution";
 import { MemoryDocumentStorage } from "./document-storage";
@@ -89,6 +90,7 @@ describe("MemoryDocumentStorage (unencrypted)", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
     storage = new MemoryDocumentStorage(false);
   });
 
@@ -551,6 +553,86 @@ describe("MemoryDocumentStorage (unencrypted)", () => {
       await storage.deleteDocument(key);
       expect(await storage.retrieveAttribution(key)).toBeNull();
     });
+
+    // ── Caching: byte-identity + no re-decode per read ──────────────────────
+
+    const asBytes = (b: EncodedContentMap): number[] => Array.from(b as Uint8Array);
+
+    /** Reference: the pre-cache implementation's exact output, as a byte array. */
+    function referenceMerge(list: EncodedContentMap[]): number[] {
+      return Array.from(
+        encodeContentMap(mergeContentMaps(list.map((m) => decodeContentMap(m)))) as Uint8Array,
+      );
+    }
+
+    it("retrieve returns bytes identical to a full merge of all appended maps", async () => {
+      const key = "attr-cache-bytes";
+      const raw: EncodedContentMap[] = [];
+      for (let i = 0; i < 5; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = (i + 1) * 100;
+        doc.getText("content").insert(0, `part-${i}`);
+        const update = Y.encodeStateAsUpdateV2(doc) as Update;
+        const attribution = makeAttribution(update, `user-${i}`);
+        raw.push(attribution);
+        await storage.handleUpdate(key, versionedUpdate(update), attribution);
+      }
+
+      const retrieved = await storage.retrieveAttribution(key);
+      expect(retrieved).not.toBeNull();
+      // Byte-identical to the naive full-merge-and-encode of every raw map.
+      expect(asBytes(retrieved!)).toEqual(referenceMerge(raw));
+    });
+
+    it("repeated reads with no new appends do not re-decode/re-encode", async () => {
+      const key = "attr-cache-repeat";
+      for (let i = 0; i < 4; i++) {
+        const doc = new Y.Doc();
+        doc.clientID = (i + 1) * 100;
+        doc.getText("content").insert(0, `part-${i}`);
+        const update = Y.encodeStateAsUpdateV2(doc) as Update;
+        await storage.handleUpdate(key, versionedUpdate(update), makeAttribution(update, `u-${i}`));
+      }
+
+      const first = await storage.retrieveAttribution(key);
+      const second = await storage.retrieveAttribution(key);
+      const third = await storage.retrieveAttribution(key);
+
+      // Same object reference means no re-merge/re-encode happened: the cached
+      // blob is served directly (the list was collapsed on the first read).
+      expect(second).toBe(first);
+      expect(third).toBe(first);
+      // The raw list is collapsed to a single merged entry after the first read.
+      expect(MemoryDocumentStorage.attributionMaps.get(key)!.length).toBe(1);
+    });
+
+    it("a read after a new append reflects the appended attribution", async () => {
+      const key = "attr-cache-append";
+
+      const docA = new Y.Doc();
+      docA.clientID = 100;
+      docA.getText("content").insert(0, "A");
+      const updateA = Y.encodeStateAsUpdateV2(docA) as Update;
+      await storage.handleUpdate(key, versionedUpdate(updateA), makeAttribution(updateA, "user-A"));
+
+      const afterA = await storage.retrieveAttribution(key);
+      const clientsAfterA = decodeContentMap(afterA!).inserts.clients.size;
+
+      // Append a second, independent client's attribution.
+      const docB = new Y.Doc();
+      docB.clientID = 200;
+      docB.getText("content").insert(0, "B");
+      const updateB = Y.encodeStateAsUpdateV2(docB) as Update;
+      const attrB = makeAttribution(updateB, "user-B");
+      await storage.handleUpdate(key, versionedUpdate(updateB), attrB);
+
+      const afterB = await storage.retrieveAttribution(key);
+      // New content is reflected (a distinct client range appeared)...
+      expect(afterB).not.toBe(afterA);
+      expect(decodeContentMap(afterB!).inserts.clients.size).toBeGreaterThan(clientsAfterA);
+      // ...and it still matches a naive full merge of both raw maps.
+      expect(asBytes(afterB!)).toEqual(referenceMerge([afterA as EncodedContentMap, attrB]));
+    });
   });
 });
 
@@ -563,6 +645,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
     storage = new MemoryDocumentStorage(true);
   });
 
@@ -1100,7 +1183,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
               .reduce((max, e) => Math.max(max, e.clock), 0),
           },
         ],
-        hash: hashSidecar(encrypted),
+        hash: await hashSidecar(encrypted),
       };
 
       const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
@@ -1144,7 +1227,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       const compactedSidecar = {
         encrypted: dummyEncrypted,
         index: [],
-        hash: hashSidecar(dummyEncrypted),
+        hash: await hashSidecar(dummyEncrypted),
       };
       const accepted = await storage.handleCompaction("doc-1", compactedSidecar, baseSV);
       expect(accepted).toBe(false);
@@ -1162,7 +1245,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       const compactedSidecar = {
         encrypted: dummyEncrypted,
         index: [],
-        hash: hashSidecar(dummyEncrypted),
+        hash: await hashSidecar(dummyEncrypted),
       };
       const accepted = await storage.handleCompaction(
         "nonexistent",
@@ -1189,9 +1272,9 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       }) as EncryptedUpdatePayload;
     }
 
-    function buildCompaction(
+    async function buildCompaction(
       sidecars: { encrypted: EncryptedBinary }[],
-    ): import("teleportal/protocol/encryption").SidecarCompaction {
+    ): Promise<import("teleportal/protocol/encryption").SidecarCompaction> {
       const allDecoded = sidecars.map((s) => decodeSidecar(s.encrypted as unknown as Uint8Array));
       const merged = mergeSidecars(allDecoded);
       const compactedBytes = encodeSidecar(merged);
@@ -1201,8 +1284,8 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       return {
         sidecar: encrypted,
         index: buildSidecarIndex(merged.entries),
-        hash: hashSidecar(encrypted),
-        sourceHashes: sidecars.map((s) => hashSidecar(s.encrypted)),
+        hash: await hashSidecar(encrypted),
+        sourceHashes: await Promise.all(sidecars.map((s) => hashSidecar(s.encrypted))),
       };
     }
 
@@ -1222,7 +1305,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       expect(state!.sidecars.length).toBe(3);
 
       // Build compaction from the 3 stored sidecars
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Send a new update with compaction piggy-backed
       const docNew = new Y.Doc();
@@ -1260,7 +1343,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 
       // Snapshot the 2 sidecars for compaction
       let state = await storage.getDocumentState("doc-1");
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Concurrent write arrives BEFORE compaction is applied
       const docC = new Y.Doc();
@@ -1311,7 +1394,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
 
       // Client 1 snapshots sidecars for compaction
       let state = await storage.getDocumentState("doc-1");
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Client 2 already compacted via handleCompaction — replaces both sidecars
       const allDecoded = state!.sidecars.map((s) =>
@@ -1324,7 +1407,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
         {
           encrypted: otherCompactedBytes,
           index: [],
-          hash: hashSidecar(otherCompactedBytes),
+          hash: await hashSidecar(otherCompactedBytes),
         },
         Y.encodeStateVectorFromUpdateV2(state!.update),
       );
@@ -1354,8 +1437,8 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       const compaction: import("teleportal/protocol/encryption").SidecarCompaction = {
         sidecar: dummyEncrypted,
         index: [],
-        hash: hashSidecar(dummyEncrypted),
-        sourceHashes: [hashSidecar(dummyEncrypted)],
+        hash: await hashSidecar(dummyEncrypted),
+        sourceHashes: [await hashSidecar(dummyEncrypted)],
       };
 
       const doc = new Y.Doc();
@@ -1390,7 +1473,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       expect(sidecar.hash.length).toBe(32);
 
       // Hash should match recomputation
-      expect(sidecar.hash).toEqual(hashSidecar(sidecar.encrypted));
+      expect(sidecar.hash).toEqual(await hashSidecar(sidecar.encrypted));
     });
 
     it("processes compaction even when the update itself is a no-op (new client with no local changes)", async () => {
@@ -1408,7 +1491,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       let state = await storage.getDocumentState("doc-1");
       expect(state!.sidecars.length).toBe(3);
 
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Simulate a new client: apply the same updates to get identical state,
       // then compute a diff against the server's SV — should produce a no-op update
@@ -1445,7 +1528,7 @@ describe("MemoryDocumentStorage (encrypted)", () => {
       // Verify 3 sidecars accumulated
       let state = await storage.getDocumentState("doc-1");
       expect(state!.sidecars.length).toBe(3);
-      const compaction = buildCompaction(state!.sidecars);
+      const compaction = await buildCompaction(state!.sidecars);
 
       // Client A sends back sync-step-2 with no-op diff + compaction
       const updates = [];
@@ -1537,6 +1620,7 @@ describe("MemoryDocumentStorage with custom backing options", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
   });
 
   it("deletes from the custom backing store, not the static map", async () => {

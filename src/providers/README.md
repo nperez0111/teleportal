@@ -6,27 +6,36 @@ This document explains the public interfaces of the `Provider` and `Connection` 
 
 The provider system is built on two main abstractions:
 
-- **`Connection`**: Manages the low-level network connection (WebSocket, HTTP, or fallback), handles reconnection logic, message buffering, and connection state.
-- **`Provider`**: Manages Yjs document synchronization, awareness, offline persistence, and milestone operations. It uses a `Connection` for network communication.
+- **`Connection`**: An interface that manages the low-level network connection, handles reconnection logic, message buffering, and connection state. The default implementation is `DirectConnection`, which takes an ordered list of `ConnectionTransport` instances and tries them in preference order.
+- **`Provider`**: Manages Yjs document synchronization, awareness, offline persistence, and RPC operations. It uses a `Connection` for network communication.
 
 ## Connection
 
-The `Connection` class is an abstract base class that manages connection state, reconnection logic, message buffering, and in-flight message tracking.
+The `Connection` interface defines the contract for network connections. It is implemented by `DirectConnection` (in-thread) and `WorkerConnection` (SharedWorker proxy).
 
 ### Public Interface
 
 #### Properties
 
-- **`state: ConnectionState<Context>`** (getter)
-  - Returns the current connection state: `connected`, `disconnected`, `connecting`, or `errored`
-  - The state includes context information specific to the connection type
+- **`hosting: "direct" | "worker"`** (readonly)
+  - Where the connection runs: `"direct"` (in-thread) or `"worker"` (SharedWorker)
 
-- **`destroyed: boolean`**
+- **`state: ConnectionState`** (readonly)
+  - Returns the current connection state: `connected`, `disconnected`, `connecting`, or `errored`
+  - Connected and connecting states include a `transport` string indicating the active transport name
+
+- **`activeTransport: string | null`** (readonly)
+  - Name of the currently active transport, or `null` if disconnected
+
+- **`availableTransports: string[]`** (readonly)
+  - Names of all registered transports
+
+- **`destroyed: boolean`** (readonly)
   - Whether the connection has been destroyed
   - Once destroyed, the connection cannot be reused
 
-- **`inFlightMessageCount: number`** (getter)
-  - The number of in-flight messages (excluding awareness messages)
+- **`inFlightMessageCount: number`** (readonly)
+  - The number of in-flight messages (excluding awareness and ack messages)
 
 - **`connected: Promise<void>`** (getter)
   - A promise that resolves when the connection is established
@@ -36,9 +45,19 @@ The `Connection` class is an abstract base class that manages connection state, 
 #### Methods
 
 - **`async send(message: Message): Promise<void>`**
-  - Sends a message to the server
+  - Sends a message to the server with in-flight tracking and batching
   - Messages are buffered if the connection is not yet connected
-  - Returns when the message has been queued (not necessarily delivered)
+  - Doc update messages for the same document are batched (AIMD-controlled interval)
+
+- **`sendStream(message: Message): void`**
+  - Fire-and-forget send for high-throughput streams (e.g. file chunks)
+  - Skips in-flight tracking and event dispatch for throughput
+  - Buffers if not connected so chunks are never silently dropped
+
+- **`getReader(): FanOutReader<RawReceivedMessage>`**
+  - Returns a reader for receiving messages from the connection
+  - Multiple readers can be created (fan-out pattern)
+  - Used by `Provider` to receive messages
 
 - **`async connect(): Promise<void>`**
   - Explicitly connects the connection
@@ -50,25 +69,22 @@ The `Connection` class is an abstract base class that manages connection state, 
   - Prevents automatic reconnection until `connect()` is called again
   - Clears any pending reconnection attempts
 
-- **`async destroy(): Promise<void>`**
+- **`async switchTransport(name: string): Promise<void>`**
+  - Switches to a specific transport by name
+  - Throws if the transport name is not in the registered transports list
+  - Sets a manual override flag that disables automatic upgrade probing
+
+- **`destroy(): void | Promise<void>`**
   - Permanently destroys the connection
   - Cleans up all resources, timers, and listeners
   - Cannot be reused after destruction
 
-- **`getReader(): FanOutReader<RawReceivedMessage>`**
-  - Returns a reader for receiving messages from the connection
-  - Multiple readers can be created (fan-out pattern)
-  - Used by `Provider` to receive messages
-
 #### Events
 
-The `Connection` class extends `Observable` and emits the following events:
+The `Connection` interface extends `Observable` and emits the following events:
 
-- **`update: (state: ConnectionState<Context>) => void`**
+- **`update: (state: ConnectionState) => void`**
   - Emitted whenever the connection state changes
-
-- **`message: (message: Message) => void`**
-  - Emitted when a message is received from the server
 
 - **`connected: () => void`**
   - Emitted when the connection is established
@@ -83,45 +99,97 @@ The `Connection` class extends `Observable` and emits the following events:
   - Emitted when the in-flight message status changes
   - `false` means all messages have been acknowledged
 
-### Connection Implementations
+- **`sent-message: (message: Message) => void`**
+  - Emitted when a message is successfully sent
 
-- **`WebSocketConnection`**: WebSocket-based connection
-- **`HttpConnection`**: HTTP/SSE-based connection
-- **`FallbackConnection`**: Tries WebSocket first, falls back to HTTP if WebSocket fails
+- **`received-message: (message: Message) => void`**
+  - Emitted when a message is received from the server
 
-### Connection Options
+- **`diagnostic: (event: ConnectionDiagnosticEvent) => void`**
+  - Emitted for notable connection happenings that aren't state transitions
+  - Events: `token-refresh`, `token-refresh-error`, `reconnect-scheduled`, `upgrade-probe`, `message-rejected`, `message-nacked`
+  - Used by tooling (e.g. devtools) to build a connection timeline
+
+### DirectConnection
+
+`DirectConnection` is the single connection class. It takes an ordered array of `ConnectionTransport[]` and manages transport selection, fallback, and auto-upgrade:
+
+- **Transport fallback**: On connect, transports are tried in order. If the preferred transport (e.g. WebSocket) fails, the next one (e.g. HTTP) is tried automatically.
+- **Upgrade probing**: When connected on a non-preferred transport, `DirectConnection` periodically probes the preferred transport (if it has a `probe()` method). If the probe succeeds, it transparently upgrades back to the preferred transport. Probe interval uses exponential backoff on failure.
+- **Manual override**: `switchTransport(name)` forces a specific transport and disables automatic upgrade probing.
+
+### ConnectionTransport Interface
+
+Transports are lightweight objects that implement the `ConnectionTransport` interface:
+
+```typescript
+interface ConnectionTransport {
+  readonly name: string;
+  connect(ctx: TransportConnectContext): Promise<void>;
+  send(message: Message): Promise<void>;
+  close(): Promise<void>;
+  sendHeartbeat?(): void;
+  timeout?: number;
+  probe?(ctx: { url?: string; token?: string; timer: Timer }): Promise<boolean>;
+}
+```
+
+Two built-in transport factories are provided:
+
+- **`websocketTransport(options?)`** — WebSocket-based transport. Supports `probe()` for upgrade detection. Options: `timeout` (default 5000ms), `protocols`, `WebSocket` (implementation override).
+- **`httpTransport(options?)`** — HTTP/SSE-based transport (SSE for server-to-client, HTTP POST for client-to-server). Options: `timeout` (default 10000ms), `fetch`, `EventSource`, `httpBatchingOptions`.
+
+### ConnectionOptions
 
 ```typescript
 type ConnectionOptions = {
+  url?: string; // Server URL
+  transports: ConnectionTransport[]; // Ordered list of transports (required)
+  token?: TokenOptions; // Authentication token with auto-refresh
   connect?: boolean; // Auto-connect on creation (default: true)
   maxReconnectAttempts?: number; // Max reconnection attempts (default: 10)
   initialReconnectDelay?: number; // Initial backoff delay in ms (default: 100)
   maxBackoffTime?: number; // Max backoff time in ms (default: 30000)
-  eventTarget?: EventTarget; // For online/offline events
-  isOnline?: boolean; // Initial online state (default: true)
+  reconnectBackoffFactor?: number; // Backoff growth factor (default: 1.3)
   heartbeatInterval?: number; // Heartbeat interval in ms (default: 0 = disabled)
   messageReconnectTimeout?: number; // Timeout if no messages received (default: 30000)
-  minUptime?: number; // Min ms connection must stay open before resetting backoff (default: 0)
-  reconnectDelayJitter?: number; // Max random ms added to reconnect delay to avoid thundering herd (default: 0)
-  maxBufferedMessages?: number; // Cap on buffered messages when disconnected; over cap are dropped (default: Infinity)
-  reconnectBackoffFactor?: number; // Backoff growth factor, delay = initialReconnectDelay * factor^attempt (default: 2)
+  minUptime?: number; // Min ms before resetting backoff (default: 0)
+  reconnectDelayJitter?: number; // Max random ms added to reconnect delay (default: 0)
+  maxBufferedMessages?: number; // Cap on buffered messages (default: Infinity)
+  inFlightMessageTimeout?: number; // Timeout for in-flight message ACK (default: 30000)
+  batchIntervalMs?: number; // Update batch interval in ms (default: 100)
+  maxBatchIntervalMs?: number; // Max batch interval / AIMD upper bound (default: 5000)
+  upgradeProbeInterval?: number; // Upgrade probe interval in ms (default: 30000)
+  maxUpgradeProbeInterval?: number; // Max probe interval after backoff (default: 300000)
   timer?: Timer; // Timer implementation for testing
+  eventTarget?: EventTarget; // For online/offline events
+  isOnline?: boolean; // Initial online state (default: true)
 };
+```
+
+### TokenOptions
+
+```typescript
+interface TokenOptions {
+  token: string;
+  onTokenExpired?: (currentToken: string) => Promise<string>;
+  refreshBeforeExpiryMs?: number;
+}
 ```
 
 ### Connection States
 
 ```typescript
-type ConnectionState<Context> =
-  | { type: "connected"; context: Context["connected"] }
-  | { type: "disconnected"; context: Context["disconnected"] }
-  | { type: "connecting"; context: Context["connecting"] }
-  | { type: "errored"; context: Context["errored"]; error: Error };
+type ConnectionState =
+  | { type: "connected"; transport: string }
+  | { type: "disconnected" }
+  | { type: "connecting"; transport: string }
+  | { type: "errored"; error: Error };
 ```
 
 ## Provider
 
-The `Provider` class manages Yjs document synchronization, awareness, offline persistence, and milestone operations. It wraps a `Connection` and handles the higher-level document synchronization protocol.
+The `Provider` class manages Yjs document synchronization, awareness, offline persistence, and RPC operations. It wraps a `Connection` and handles the higher-level document synchronization protocol.
 
 ### Public Interface
 
@@ -142,17 +210,21 @@ The `Provider` class manages Yjs document synchronization, awareness, offline pe
 - **`document: string`**
   - The document ID being synchronized
 
+- **`encryptionKey?: CryptoKey | false`**
+  - The encryption key used for end-to-end content encryption, or `false` for plaintext
+
 - **`subdocs: Map<string, Provider>`**
   - Map of subdocument providers (for Yjs subdocuments)
   - Automatically managed when subdocuments are loaded/unloaded
 
+- **`rpc: RpcNamespace<R>`**
+  - Namespace object containing initialized RPC extensions
+
 - **`state: ConnectionState`** (getter)
   - Delegates to the underlying connection's state
-  - Provides access to connection state without direct connection access
 
-- **`connectionType: "websocket" | "http" | null`** (getter)
-  - Returns the active connection type if using `FallbackConnection`
-  - Returns `null` for other connection types
+- **`connection: Connection`** (getter)
+  - Direct access to the underlying connection
 
 #### Getters (Promises)
 
@@ -171,45 +243,30 @@ The `Provider` class manages Yjs document synchronization, awareness, offline pe
 
 #### Methods
 
-- **`static async create<T>(options): Promise<Provider<T>>`**
+- **`static async create<T, R>(options): Promise<Provider<T, R>>`**
   - Factory method to create a new provider
-  - By default, creates a `FallbackConnection` (WebSocket with HTTP fallback)
-  - Can accept a custom `Connection` instance via `client` option
+  - Accepts either `{ url, transports?, token? }` to create a `DirectConnection`, or `{ connection }` to use an existing connection
+  - By default creates a `DirectConnection` with `[websocketTransport({ timeout: 5000 }), httpTransport()]`
+  - Resolves `KeyResolver` encryption keys before construction
   - Waits for connection to be established before returning
 
-- **`switchDocument(options): Provider<T>`**
+- **`switchDocument(options): Provider<T, R>`**
   - Switches to a new document, destroying the current provider instance
   - **Lifecycle:**
     - Destroys current provider (Y.Doc, listeners, persistence)
     - Preserves and reuses the underlying connection
     - Abandons pending in-flight messages for the old document
     - Creates and returns a new provider instance for the new document
-  - **Use case:** Efficiently switch between documents while maintaining the same connection
 
-- **`openDocument(options): Provider<T>`**
+- **`openDocument(options): Provider<T, R>`**
   - Creates a new provider instance for a new document
   - Does NOT destroy the current provider
   - Shares the same underlying connection
-  - Useful for creating subdocument providers
+  - Inherits the parent's encryption mode unless explicitly overridden
 
-- **`async listMilestones(snapshotIds?: string[]): Promise<Milestone[]>`**
-  - Lists all milestones for the current document
-  - Optional `snapshotIds` parameter for incremental updates
-  - Throws `MilestoneOperationDeniedError` if denied, `MilestoneOperationError` on failure
-
-- **`async getMilestoneSnapshot(milestoneId: string): Promise<MilestoneSnapshot>`**
-  - Fetches the snapshot content for a specific milestone
-  - Returns the snapshot as a `Uint8Array`
-  - Throws errors on failure
-
-- **`async createMilestone(name?: string): Promise<Milestone>`**
-  - Creates a new milestone from the current document state
-  - Optional name (server auto-generates if not provided)
-  - Returns the created milestone instance
-
-- **`async updateMilestoneName(milestoneId: string, name: string): Promise<Milestone>`**
-  - Updates the name of an existing milestone
-  - Returns the updated milestone instance
+- **`async openDocumentAsync(options): Promise<Provider<T, R>>`**
+  - Like `openDocument`, but resolves `KeyResolver` encryption keys asynchronously
+  - Use when the encryption key needs async resolution per document
 
 - **`destroy({ destroyConnection?, destroyDoc? }): void`**
   - Destroys the provider and cleans up resources
@@ -217,6 +274,9 @@ The `Provider` class manages Yjs document synchronization, awareness, offline pe
     - `destroyConnection` (default: `true`): Whether to destroy the underlying connection
     - `destroyDoc` (default: `true`): Whether to destroy the Y.Doc
   - Cleans up listeners, persistence, and cached promises
+
+- **`async clearOfflineData(): Promise<void>`**
+  - Clears persisted offline data for the current document
 
 - **`[Symbol.dispose](): void`**
   - Allows using `Provider` with `using` statements (explicit resource management)
@@ -234,48 +294,74 @@ The `Provider` class extends `Observable` and emits the following events:
   - Emitted when a subdocument is unloaded
   - The provider is automatically destroyed
 
+- **`received-message: (message: RawReceivedMessage) => void`**
+  - Emitted when a message is received
+
+- **`sent-message: (message: Message) => void`**
+  - Emitted when a message is sent
+
+- **`connected: () => void`**
+  - Emitted when the connection is established
+
+- **`disconnected: () => void`**
+  - Emitted when the connection is disconnected
+
+- **`update: (state: ConnectionState) => void`**
+  - Emitted when the connection state changes
+
+- **`peer-join: (peer: PresenceEvent) => void`**
+  - Emitted when a peer joins the document
+
+- **`peer-leave: (peer: PresenceEvent) => void`**
+  - Emitted when a peer leaves the document
+
 ### Provider Options
 
 ```typescript
-type ProviderOptions<T> = {
-  connection: Connection<any>; // Connection instance (required)
+type ProviderOptions<T, R> = {
+  connection: Connection; // Connection instance (required)
   document: string; // Document ID (required)
-  encryptionKey: CryptoKey | false; // E2EE key — required (use `false` for plaintext)
+  encryptionKey: CryptoKey | false; // E2EE key -- required (use `false` for plaintext)
   ydoc?: Y.Doc; // Existing Y.Doc (default: new Y.Doc())
   awareness?: Awareness; // Existing Awareness (default: new Awareness(ydoc))
   enableOfflinePersistence?: boolean; // Enable IndexedDB persistence (default: true)
   indexedDBPrefix?: string; // IndexedDB prefix (default: 'teleportal-')
+  offlineStorage?: AbstractDocumentStorage; // Custom offline storage backend
+  rpc?: R; // RPC extension map
   getTransport?: (ctx) => T; // Custom transport factory
 };
 ```
 
-> **Encryption is the default.** `encryptionKey` is required — pass a `CryptoKey` (from `createEncryptionKey()` / `importEncryptionKey()` in `teleportal/encryption-key`) to enable content-level end-to-end encryption, or pass `false` to deliberately run a plaintext document. Omitting it throws. The key is never sent to the server; only the plaintext CRDT structure update and the encrypted content sidecars are.
+> **Encryption is the default.** `encryptionKey` is required -- pass a `CryptoKey` (from `createEncryptionKey()` / `importEncryptionKey()` in `teleportal/encryption-key`) to enable content-level end-to-end encryption, or pass `false` to deliberately run a plaintext document. Omitting it throws. The key is never sent to the server; only the plaintext CRDT structure update and the encrypted content sidecars are.
 >
-> Offline persistence stores the **encrypted wire representation** (content-encrypted payload) to IndexedDB — data at rest is encrypted for encrypted documents. Plaintext documents (`encryptionKey: false`) are stored inline as-is. Awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload is encrypted.
+> Offline persistence stores the **encrypted wire representation** (content-encrypted payload) to IndexedDB -- data at rest is encrypted for encrypted documents. Plaintext documents (`encryptionKey: false`) are stored inline as-is. Awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload is encrypted.
 
 ## How Provider and Connection Interact
 
 ### Message Flow
 
-1. **Outgoing Messages (Provider → Server):**
+1. **Outgoing Messages (Provider -> Server):**
 
    ```
-   Provider.transport.readable → Connection.send() → Server
+   Provider.transport.source -> Connection.send() -> ActiveTransport -> Server
    ```
 
-   - Provider's transport writes messages to a `WritableStream`
-   - This stream pipes to `Connection.send()`
+   - Provider's transport produces messages via its `source` async iterable
+   - These are drained into `Connection.send()`
+   - Connection batches doc update messages (AIMD-controlled interval)
    - Connection buffers messages if not connected, sends when connected
+   - The active `ConnectionTransport` delivers the message over the wire
 
-2. **Incoming Messages (Server → Provider):**
+2. **Incoming Messages (Server -> Provider):**
 
    ```
-   Server → Connection → Connection.getReader() → Provider.transport.writable
+   Server -> ActiveTransport -> Connection -> Connection.getReader() -> Provider.transport.write()
    ```
 
-   - Connection receives messages and emits them via `FanOutReader`
+   - The active `ConnectionTransport` receives messages and calls `onMessage`
+   - Connection emits them via `FanOutReader`
    - Provider creates a reader via `Connection.getReader()`
-   - Messages are piped to the transport's `writable` stream
+   - Messages are written to the transport's `write()` method
    - Transport processes messages and updates the Y.Doc
 
 ### Connection Lifecycle Management
@@ -316,9 +402,10 @@ type ProviderOptions<T> = {
   - Provider's `synced` promise rejects on connection errors
   - Connection automatically attempts reconnection (if configured)
 
-- **Milestone Operation Errors:**
-  - `MilestoneOperationDeniedError`: Operation denied by server (auth/permission)
-  - `MilestoneOperationError`: Network or other errors during operation
+- **Token Refresh:**
+  - `DirectConnection` schedules automatic token refresh before expiry
+  - On token refresh, the connection disconnects and reconnects with the new token
+  - Reactive refresh triggers on server `permission denied` responses
 
 ## Usage Examples
 
@@ -329,7 +416,7 @@ import { Provider } from "teleportal/providers";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
 // Create a provider with automatic connection.
-// Content encryption is the default, so an encryptionKey is required.
+// By default creates a DirectConnection with [websocketTransport(), httpTransport()]
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
@@ -353,13 +440,18 @@ provider.on("update", (state) => {
 ### Custom Connection
 
 ```typescript
-import { Provider } from "teleportal/providers";
-import { WebSocketConnection } from "teleportal/providers/websocket";
+import {
+  Provider,
+  DirectConnection,
+  websocketTransport,
+  httpTransport,
+} from "teleportal/providers";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
-// Create a custom connection
-const connection = new WebSocketConnection({
+// Create a custom connection with specific transports
+const connection = new DirectConnection({
   url: "wss://example.com",
+  transports: [websocketTransport({ timeout: 3000 }), httpTransport()],
   connect: false, // Don't auto-connect
 });
 
@@ -375,86 +467,56 @@ await connection.connect();
 await provider.synced;
 ```
 
+### Custom Transports
+
+```typescript
+import { Provider, DirectConnection, websocketTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
+// WebSocket-only (no HTTP fallback)
+const connection = new DirectConnection({
+  url: "wss://example.com",
+  transports: [websocketTransport()],
+});
+
+// HTTP-only
+import { httpTransport } from "teleportal/providers";
+const httpOnlyConnection = new DirectConnection({
+  url: "https://example.com",
+  transports: [httpTransport()],
+});
+
+// Custom transport order or options
+const provider = await Provider.create({
+  url: "wss://example.com",
+  document: "my-document-id",
+  encryptionKey: await createEncryptionKey(),
+  transports: [websocketTransport({ timeout: 3000 }), httpTransport({ timeout: 15000 })],
+});
+```
+
 ### Document Switching
 
 ```typescript
 // Switch to a new document (reuses connection)
 const newProvider = provider.switchDocument({
   document: "new-document-id",
+  encryptionKey: await createEncryptionKey(),
 });
 
 // Old provider is destroyed, new provider is ready
 await newProvider.synced;
 ```
 
-### Milestone Operations
+### Transport Switching
 
 ```typescript
-// List milestones (optionally include deleted ones)
-const milestones = await provider.listMilestones({ includeDeleted: true });
+// Check available and active transports
+console.log(provider.connection.availableTransports); // ["websocket", "http"]
+console.log(provider.connection.activeTransport); // "websocket"
 
-// Create a milestone
-const milestone = await provider.createMilestone("Checkpoint 1");
-
-// Get milestone snapshot
-const snapshot = await milestone.fetchSnapshot();
-
-// Update milestone name
-await provider.updateMilestoneName(milestone.id, "Updated Name");
-
-// Soft delete milestone
-await provider.deleteMilestone(milestone.id);
-
-// Restore milestone
-await provider.restoreMilestone(milestone.id);
-```
-
-### Attribution
-
-The `Provider` exposes attribution (authorship tracking) via two primary methods and
-a few lower-level helpers. See [`teleportal/attribution`](../lib/attribution/README.md) for
-the data model and [`teleportal/protocols/attribution`](../protocols/attribution/README.md)
-for the RPC protocol.
-
-#### `getActivity` — who did what, when?
-
-Single composable entrypoint for activity timelines. All filters combine with AND:
-
-```typescript
-provider.getActivity(); // all activity
-provider.getActivity({ userId: "alice" }); // by user
-provider.getActivity({ from: hourAgo, to: now }); // time range
-provider.getActivity({ milestone: milestoneId }); // scoped to milestone
-provider.getActivity({ changeset: [fromId, toId] }); // between milestones
-provider.getActivity({ milestone: id, userId: "alice" }); // combine filters
-provider.getActivity({ attributes: { "insert:source": "ai" } }); // custom attrs
-// → [{ from, to, userId, attributes }, ...]
-```
-
-#### `getAttributionForRange` — who wrote this content?
-
-Positional attribution — maps content offsets to authors:
-
-```typescript
-const text = provider.doc.getText("body");
-const segments = await provider.getAttributionForRange(text, 0, 100);
-// → [{ from, to, userId, timestamp, attributes }, ...]
-```
-
-#### Lower-level methods
-
-```typescript
-// Raw ContentMap access (fetched once, cached)
-const map = await provider.getAttributionMap();
-const filtered = await provider.getAttributionMap({ userId: "alice" });
-provider.invalidateAttributionCache();
-
-// Point lookup by CRDT ID
-const author = await provider.resolveAttribution(clientID, clock);
-
-// Milestone-scoped ContentMaps (for advanced use)
-const milestoneMap = await provider.getMilestoneContentMap(milestoneId);
-const changesetMap = await provider.getChangesetContentMap(fromId, toId);
+// Manually switch to HTTP transport
+await provider.connection.switchTransport("http");
 ```
 
 ### Subdocuments
@@ -510,13 +572,16 @@ const provider = new Provider({
 
 ```typescript
 // Monitor connection state
-const connection = provider.state;
+const state = provider.state;
 
-if (connection.type === "connected") {
-  console.log("Connected!");
-} else if (connection.type === "errored") {
-  console.error("Connection error:", connection.error);
+if (state.type === "connected") {
+  console.log("Connected via:", state.transport);
+} else if (state.type === "errored") {
+  console.error("Connection error:", state.error);
 }
+
+// Check active transport
+console.log("Active transport:", provider.connection.activeTransport);
 
 // Wait for connection
 try {
@@ -530,58 +595,149 @@ try {
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         Provider                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Y.Doc      │  │  Awareness   │  │  Transport   │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
-│         │                 │                 │               │
-│         └─────────────────┴─────────────────┘               │
-│                            │                                │
-│                            ▼                               │
-│                   ┌─────────────────┐                       │
-│                   │  Message Stream │                       │
-│                   └────────┬────────┘                       │
-└────────────────────────────┼────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Connection                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   State      │  │    Buffer    │  │  Reconnect   │       │
-│  │  Management  │  │   Messages   │  │   Logic      │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│                            │                                │
-│                            ▼                               │
-│              ┌───────────────────────────┐                  │
-│              │  WebSocket/HTTP/SSE       │                  │
-│              └───────────────────────────┘                  │
-└─────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
++-----------------------------------------------------------------+
+|                           Provider                              |
+|  +--------------+  +--------------+  +--------------+           |
+|  |   Y.Doc      |  |  Awareness   |  |  Transport   |           |
+|  +------+-------+  +------+-------+  +------+-------+           |
+|         |                 |                 |                    |
+|         +-----------------+-----------------+                    |
+|                           |                                     |
+|                           v                                     |
+|                  +-----------------+                             |
+|                  |  Message Stream |                             |
+|                  +--------+--------+                             |
++---------------------------+-------------------------------------+
+                            |
+                            v
++-----------------------------------------------------------------+
+|                   DirectConnection                              |
+|  +--------------+  +--------------+  +--------------+           |
+|  |   State      |  |    Buffer    |  |  Reconnect   |           |
+|  |  Management  |  |  & Batching  |  |   Logic      |           |
+|  +--------------+  +--------------+  +--------------+           |
+|                           |                                     |
+|              +------------+------------+                        |
+|              |                         |                        |
+|       +------+-------+         +------+-------+                 |
+|       | websocket    |         |    http      |                 |
+|       | Transport    |         |  Transport   |                 |
+|       +--------------+         +--------------+                 |
++-----------------------------------------------------------------+
+                            |
+                            v
                         Server
 ```
 
 ## Key Design Decisions
 
 1. **Separation of Concerns:**
-   - `Connection` handles network concerns (reconnection, buffering, state)
-   - `Provider` handles document concerns (Yjs sync, awareness, persistence)
+   - `Connection` handles network concerns (reconnection, buffering, state, transport selection)
+   - `Provider` handles document concerns (Yjs sync, awareness, persistence, RPC)
 
-2. **Connection Reuse:**
+2. **Pluggable Transports:**
+   - Transports are passed as an ordered array to `DirectConnection`
+   - Fallback behavior is built into `DirectConnection` -- no separate fallback class needed
+   - Custom transports implement `ConnectionTransport` and can be mixed with built-in ones
+
+3. **Connection Reuse:**
    - Connections can be shared across multiple providers
    - Enables efficient document switching without connection overhead
 
-3. **Promise Caching:**
+4. **Automatic Upgrade:**
+   - When running on a fallback transport, `DirectConnection` probes the preferred transport
+   - Transparent upgrade when the preferred transport becomes available
+   - Exponential backoff on probe failures to avoid hammering
+
+5. **Promise Caching:**
    - `connected` and `synced` promises are cached and invalidated appropriately
    - Prevents memory leaks from accumulating listeners
    - Ensures fresh promises for new connection attempts
 
-4. **Event-Driven Architecture:**
+6. **Event-Driven Architecture:**
    - Both classes extend `Observable` for event-driven communication
    - Loose coupling between components
 
-5. **Dependency Injection:**
+7. **Dependency Injection:**
    - Timer abstraction allows mocking in tests
-   - Transport factory allows custom transport implementations
+   - Transport factories allow custom transport implementations
    - Connection can be injected for testing or custom implementations
+
+## SharedWorker Architecture
+
+When running in a browser that supports `SharedWorker`, Teleportal can offload the network connection to a shared worker so that all tabs share a single underlying transport. This is opt-in: pass a `workerUrl` to `createConnection()` (or use `WorkerProvider.create()`). When `SharedWorker` is unavailable or construction fails (CSP, `file://` origin, etc.), the system transparently falls back to a `DirectConnection` in the current thread.
+
+### Connection Sharing Model
+
+The `ConnectionWorkerManager` lives inside the SharedWorker and manages a pool of `ManagedConnection` instances. Each browser tab communicates with the worker over a dedicated `MessagePort`.
+
+When a tab sends an `init` message, the manager computes a **pooling key** from the serialized connection options. By default the key is `url + "::" + token`, so:
+
+- Tabs connecting to the same server with the same token share one underlying `DirectConnection`.
+- Different tokens (different users / identities) get separate connections, keeping attribution isolated.
+
+The pooling key function is configurable via `ConnectionWorkerManagerOptions.getConnectionKey`.
+
+### MessagePort Protocol
+
+All communication between the main thread (`WorkerConnection`) and the worker (`ConnectionWorkerManager`) flows through a typed `MessagePort` protocol defined in `protocol.ts`. Messages are split into **upstream** (main thread to worker) and **downstream** (worker to main thread).
+
+#### Generic / transport-level messages
+
+These messages handle connection lifecycle and data transport. They are feature-agnostic and would exist for any sync protocol:
+
+| Direction  | Type               | Purpose                                                           |
+| ---------- | ------------------ | ----------------------------------------------------------------- |
+| upstream   | `init`             | Initialize connection with serialized options and tab ID          |
+| upstream   | `send`             | Send an encoded message (reliable, with ACK tracking)             |
+| upstream   | `send-stream`      | Send an encoded message (fire-and-forget stream)                  |
+| upstream   | `connect`          | Request connection (RPC with request ID)                          |
+| upstream   | `disconnect`       | Request disconnection (RPC with request ID)                       |
+| upstream   | `switch-transport` | Switch active transport (RPC with request ID)                     |
+| upstream   | `destroy`          | Tear down this tab's port                                         |
+| upstream   | `network-status`   | Forward browser online/offline state                              |
+| upstream   | `heartbeat`        | Liveness probe                                                    |
+| downstream | `ready`            | Initial state snapshot on connection                              |
+| downstream | `state-update`     | Connection state change                                           |
+| downstream | `event`            | Generic event forwarding (ping, messages-in-flight, sent-message) |
+| downstream | `message`          | Incoming message from server                                      |
+| downstream | `property`         | Property snapshot (inFlightMessageCount, destroyed, transports)   |
+| downstream | `response`         | RPC response (success or error, keyed by request ID)              |
+| downstream | `heartbeat-ack`    | Heartbeat response                                                |
+
+#### Feature-specific messages (file operations)
+
+These messages are specific to the file upload/download protocol. They carry domain-specific payloads (`File`, `CryptoKey`, `fileId`, `document`) and have dedicated result/error message types:
+
+| Direction  | Type                   | Purpose                                      |
+| ---------- | ---------------------- | -------------------------------------------- |
+| upstream   | `file-upload`          | Upload a file (with optional encryption key) |
+| upstream   | `file-download`        | Download a file by ID                        |
+| downstream | `file-upload-result`   | Upload succeeded, returns file ID            |
+| downstream | `file-upload-error`    | Upload failed                                |
+| downstream | `file-download-result` | Download succeeded, returns `File`           |
+| downstream | `file-download-error`  | Download failed                              |
+
+### Grace Period on Last-Tab Disconnect
+
+When the last tab disconnects (sends a `destroy` message), the `ManagedConnection` is not torn down immediately. Instead, a configurable grace period (default 5 seconds) is scheduled. If a new tab connects with the same pooling key before the timer fires, the existing connection is reused and the timer is cancelled. This avoids unnecessary reconnection churn during page reloads or tab switches.
+
+### Event Forwarding
+
+The worker selectively forwards connection events to all attached ports:
+
+- **State events** (`update`) are sent as `state-update` messages. The client-side `WorkerConnection` derives `connected` and `disconnected` events from state transitions rather than forwarding them as generic events, preventing double-firing.
+- **Non-state events** (`ping`, `messages-in-flight`) use the generic `event` message type.
+- **`sent-message`** requires special handling: `Message` objects cannot survive structured clone, so the worker forwards raw encoded bytes and the client reconstructs the message.
+
+### Network Status Reconciliation
+
+Each port independently forwards browser `online`/`offline` events. The `ManagedConnection` reconciles across all ports: the underlying connection is considered online if **any** attached tab reports online, and offline only when **all** tabs report offline. This prevents a single backgrounded tab from taking the shared connection offline.
+
+### Known Limitation: Hardcoded File Operations
+
+The project has a well-designed extensibility system for RPC operations: `RpcExtension` (for extending the provider's `.rpc` namespace) and `ClientRpcHandler` (a handler registry that the `Provider` routes incoming RPC responses and streams through). File operations use `ClientRpcHandler` when running in a `DirectConnection` on the main thread.
+
+However, the SharedWorker protocol currently hardcodes file upload and download as first-class message types rather than routing them through a generic RPC invocation mechanism. The `ConnectionWorkerManager` directly imports `getFileClientHandlers` from `teleportal/protocols/file` and instantiates a `FileClientHandler` internally. The `WorkerConnection` maintains a separate `#pendingFileOps` map alongside the generic `#pendingRequests` map, with four dedicated message handlers for file results and errors.
+
+This means the worker must know about file transfer internals (chunking, encryption, merkle proofs) that are otherwise encapsulated in the file protocol module. Any new heavy operation that should run in the worker (e.g., a future export or import protocol) would require adding new message types to `UpstreamMessage` and `DownstreamMessage`, new handler branches in `ConnectionWorkerManager.#handleUpstream`, and new result handlers in `WorkerConnection.#handleMessage`.

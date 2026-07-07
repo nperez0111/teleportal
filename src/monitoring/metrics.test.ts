@@ -32,12 +32,29 @@ describe("Counter", () => {
     expect(output).toContain("test_counter 1");
   });
 
+  test("increments by custom amount", () => {
+    const counter = new Counter("test_counter", "A test counter", ["method"]);
+    counter.inc({ method: "GET" }, 5);
+    counter.inc({ method: "GET" }, 3);
+
+    expect(counter.getValue({ method: "GET" })).toBe(8);
+    expect(counter.getTotalValue()).toBe(8);
+  });
+
   test("formats correctly with labels", () => {
     const counter = new Counter("test_counter", "A test counter", ["method"]);
     counter.inc({ method: "GET" });
 
     const output = counter.toString();
     expect(output).toContain('test_counter{method="GET"} 1');
+  });
+
+  test("escapes special characters in label values", () => {
+    const counter = new Counter("test_counter", "A test counter", ["path"]);
+    counter.inc({ path: 'a"b\\c\nd' });
+
+    const output = counter.toString();
+    expect(output).toContain('test_counter{path="a\\"b\\\\c\\nd"} 1');
   });
 });
 
@@ -60,6 +77,17 @@ describe("Gauge", () => {
     const gauge = new Gauge("test_gauge", "A test gauge");
     gauge.set(42);
     expect(gauge.getValue()).toBe(42);
+  });
+
+  test("getValues returns all label-value pairs", () => {
+    const gauge = new Gauge("test_gauge", "A test gauge", ["region"]);
+    gauge.set(10, { region: "us" });
+    gauge.set(20, { region: "eu" });
+
+    const values = gauge.getValues();
+    expect(values).toHaveLength(2);
+    expect(values.find((v) => v.labels.region === "us")?.value).toBe(10);
+    expect(values.find((v) => v.labels.region === "eu")?.value).toBe(20);
   });
 
   test("formats correctly", () => {
@@ -98,8 +126,8 @@ describe("Histogram", () => {
     histogram.observe({ status: "success" }, 3);
 
     const output = histogram.toString();
-    expect(output).toContain('test_histogram_bucket{status="success"}{le="1"} 1');
-    expect(output).toContain('test_histogram_bucket{status="success"}{le="5"} 2');
+    expect(output).toContain('test_histogram_bucket{status="success",le="1"} 1');
+    expect(output).toContain('test_histogram_bucket{status="success",le="5"} 2');
   });
 
   test("formats correctly", () => {
@@ -111,6 +139,18 @@ describe("Histogram", () => {
     expect(output).toContain("_bucket");
     expect(output).toContain("_count");
     expect(output).toContain("_sum");
+  });
+
+  test("merges labels and le into a single label set (valid Prometheus format)", () => {
+    const histogram = new Histogram("http_duration", "HTTP duration", [0.1, 1], ["method"]);
+
+    histogram.observe({ method: "GET" }, 0.05);
+
+    const output = histogram.toString();
+    expect(output).toContain('http_duration_bucket{method="GET",le="0.1"} 1');
+    expect(output).toContain('http_duration_bucket{method="GET",le="1"} 1');
+    expect(output).toContain('http_duration_bucket{method="GET",le="+Inf"} 1');
+    expect(output).not.toContain("}{");
   });
 });
 

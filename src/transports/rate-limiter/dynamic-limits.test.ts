@@ -50,6 +50,25 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
     mockStorage = new MockRateLimitStorage();
   });
 
+  /**
+   * Push messages through the rate-limited INBOUND source (the only side
+   * that is limited) and return the ones that survived.
+   */
+  async function pumpSource(
+    rateLimited: { source: AsyncIterable<any[]> },
+    channel: ReturnType<typeof createChannel<Message<ClientContext>>>,
+    messages: any[],
+  ): Promise<any[]> {
+    const received: any[] = [];
+    const readLoop = (async () => {
+      for await (const batch of rateLimited.source) received.push(...batch);
+    })();
+    for (const msg of messages) channel.send(msg);
+    channel.close();
+    await readLoop;
+    return received;
+  }
+
   it("should support dynamic maxMessages based on user", async () => {
     const onRateLimitExceeded = mock();
     const rateLimited = new RateLimitedTransport<any, any>(transport as any, {
@@ -64,17 +83,24 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
         },
       ],
       rateLimitStorage: mockStorage,
+      maxDelayMs: 0,
       onRateLimitExceeded,
     });
 
-    // Normal user: limit 2. Write 2 messages.
-    await rateLimited.write({ type: "ping", context: { userId: "normal" } } as any);
-    await rateLimited.write({ type: "ping", context: { userId: "normal" } } as any);
+    // Normal user: limit 2, sends 3 (last dropped). VIP: limit 10, sends 5.
+    const received = await pumpSource(rateLimited, transport.channel, [
+      { type: "ping", context: { userId: "normal" } },
+      { type: "ping", context: { userId: "normal" } },
+      { type: "ping", context: { userId: "vip" } },
+      { type: "ping", context: { userId: "vip" } },
+      { type: "ping", context: { userId: "vip" } },
+      { type: "ping", context: { userId: "vip" } },
+      { type: "ping", context: { userId: "vip" } },
+      { type: "ping", context: { userId: "normal" } },
+    ]);
 
-    // VIP user: limit 10. Write 5 messages.
-    for (let i = 0; i < 5; i++) {
-      await rateLimited.write({ type: "ping", context: { userId: "vip" } } as any);
-    }
+    expect(received.length).toBe(7);
+    expect(onRateLimitExceeded).toHaveBeenCalled();
 
     // Check storage for VIP - key includes rule ID
     const stateVip = await mockStorage.getState("rate-limit:user-limit:user:vip");
@@ -89,13 +115,6 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
     expect(stateNormal?.maxMessages).toBe(2);
     // Due to token bucket refill, tokens might be slightly > 0, but should be < 1
     expect(stateNormal?.tokens).toBeLessThan(1); // 2 - 2 = 0 (with possible tiny refill)
-
-    // Now send 3rd message for Normal - should be silently dropped
-    await rateLimited.write({
-      type: "ping",
-      context: { userId: "normal" },
-    } as any);
-    expect(onRateLimitExceeded).toHaveBeenCalled();
   });
 
   it("should support dynamic windowMs", async () => {
@@ -113,12 +132,13 @@ describe("RateLimitedTransport - Dynamic Limits", () => {
       rateLimitStorage: mockStorage,
     });
 
-    await rateLimited.write({ type: "ping", context: { userId: "slow" } } as any);
+    await pumpSource(rateLimited, transport.channel, [
+      { type: "ping", context: { userId: "slow" } },
+      { type: "ping", context: { userId: "fast" } },
+    ]);
 
     const stateSlow = await mockStorage.getState("rate-limit:user-limit:user:slow");
     expect(stateSlow?.windowMs).toBe(10000);
-
-    await rateLimited.write({ type: "ping", context: { userId: "fast" } } as any);
 
     const stateFast = await mockStorage.getState("rate-limit:user-limit:user:fast");
     expect(stateFast?.windowMs).toBe(1000);

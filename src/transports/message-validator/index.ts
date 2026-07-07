@@ -16,11 +16,14 @@ export function withMessageValidatorSink<
   return {
     ...sink,
     async write(message: Message<Context>) {
-      if (!(await options?.isAuthorized?.(message, "write"))) {
+      if (options?.isAuthorized && !(await options.isAuthorized(message, "write"))) {
         return;
       }
       return sink.write(message);
     },
+    // Explicit delegation: spreading a class-based sink would lose its
+    // prototype `close` method.
+    close: () => sink.close(),
   };
 }
 

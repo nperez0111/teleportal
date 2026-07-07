@@ -11,7 +11,7 @@ const manager = new ConnectionWorkerManager((options: SerializedConnectionOption
         case "http":
           return httpTransport(desc.options);
         default:
-          throw new Error(`Unknown transport type: ${desc.type}`);
+          throw new Error(`Unknown transport type: ${(desc as any).type}`);
       }
     });
   }

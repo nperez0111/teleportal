@@ -1,10 +1,14 @@
-import { toBase64, fromBase64 } from "lib0/buffer";
-import { uuidv4 } from "lib0/random";
-import { CHUNK_SIZE, processFileStreaming, verifyMerkleProof } from "teleportal/merkle-tree";
+import { toBase64, fromBase64 } from "teleportal/utils";
+import { CHUNK_SIZE, processFileStreaming, verifyMerkleProofAsync } from "teleportal/merkle-tree";
 import { AckMessage, type Message } from "teleportal/protocol";
-import { decryptUpdate, encryptUpdate } from "teleportal/encryption-key";
+import {
+  createDeterministicEncryptor,
+  decryptUpdate,
+  encryptUpdate,
+} from "teleportal/encryption-key";
 import { RpcMessage } from "teleportal/protocol";
-import type { FilePartStream } from "./methods";
+import type { FilePartStream, FileUploadResponse } from "./methods";
+import { emitFileTransferProgress } from "./progress";
 import type { ClientRpcHandler } from "../../providers/rpc-handlers";
 import type { Provider } from "../../providers/provider";
 import type { RpcClient } from "../../providers/rpc-client";
@@ -13,12 +17,23 @@ import type { FileCache } from "../../storage/idb/file-cache";
 /** Max retransmission rounds per upload before giving up. */
 const MAX_RETRANSMIT_ROUNDS = 8;
 
+/**
+ * Client-side upper bound on upload size, mirroring the server's limit. Checked
+ * before computing chunks so an oversized file fails fast instead of paying a
+ * full encrypt+hash pass only to be rejected.
+ */
+const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
+
 interface UploadState {
   resolve: (fileId: string) => void;
   reject: (error: Error) => void;
+  /** The upload session id, which equals the content-addressed `contentId`. */
   uploadId: string;
   file: File;
-  fileId: string | null;
+  /** The content-addressed id (base64 merkle root); resolved value of the upload. */
+  fileId: string;
+  /** The full set of encrypted chunks, computed before the request, by index. */
+  preparedChunks: Map<number, Uint8Array>;
   /** Maps messageId → chunkIndex for outstanding ACKs. */
   sentChunks: Map<string, number>;
   /** Chunk data kept for retransmission, keyed by chunkIndex. */
@@ -34,6 +49,12 @@ interface UploadState {
   retransmitting: boolean;
   /** Wire chunk size negotiated by the server. */
   chunkSize?: number;
+  /** Total chunk count. */
+  totalChunks: number;
+  /** Distinct chunks acknowledged by the server (incl. server-resumed ones). */
+  ackedChunks: number;
+  /** The in-flight upload promise, shared when the same content is re-requested. */
+  promise: Promise<string>;
 }
 
 interface DownloadState {
@@ -42,6 +63,7 @@ interface DownloadState {
   fileMetadata: { filename: string; size: number; mimeType: string; totalChunks?: number } | null;
   chunks: Map<number, Uint8Array>;
   fileId: string;
+  document: string;
   timeoutId: ReturnType<typeof setTimeout> | null;
   encryptionKey?: CryptoKey;
   skipCache?: boolean;
@@ -73,10 +95,50 @@ class FileClientHandler implements ClientRpcHandler {
   #sendStreamMessage: ((message: Message<any>) => Promise<void>) | null = null;
   #encryptionKey?: CryptoKey;
   #cache?: FileCache;
+  /** Wire chunk size learned from a prior server response, reused to avoid a
+   * renegotiation round-trip on subsequent uploads to the same server. */
+  #negotiatedChunkSize?: number;
 
   constructor(options?: FileClientHandlerOptions) {
     this.#encryptionKey = options?.encryptionKey;
     this.#cache = options?.cache;
+  }
+
+  #emitUploadProgress(state: UploadState, status: "active" | "complete" | "error", error?: string) {
+    emitFileTransferProgress({
+      fileId: state.uploadId,
+      document: state.document,
+      direction: "upload",
+      chunksTransferred: state.ackedChunks,
+      totalChunks: state.totalChunks,
+      bytesTransferred: Math.min(
+        state.file.size,
+        state.ackedChunks * (state.chunkSize ?? CHUNK_SIZE),
+      ),
+      status,
+      error,
+    });
+  }
+
+  #emitDownloadProgress(
+    state: DownloadState,
+    status: "active" | "complete" | "error",
+    error?: string,
+  ) {
+    const size = state.fileMetadata?.size;
+    emitFileTransferProgress({
+      fileId: state.fileId,
+      document: state.document,
+      direction: "download",
+      chunksTransferred: state.chunks.size,
+      totalChunks: state.fileMetadata?.totalChunks,
+      bytesTransferred:
+        size !== undefined
+          ? Math.min(size, state.chunks.size * CHUNK_SIZE)
+          : state.chunks.size * CHUNK_SIZE,
+      status,
+      error,
+    });
   }
 
   init(_provider: Provider<any>): void {
@@ -99,11 +161,18 @@ class FileClientHandler implements ClientRpcHandler {
 
   /**
    * Upload a file.
+   *
+   * Content-addressed and resumable: the client encrypts the whole file and
+   * folds the merkle root (the `contentId`) BEFORE the request, so the server
+   * can answer "already have it" (dedup) or "here are the chunks I'm missing"
+   * (resume, including across reloads) in a single round-trip. The `_fileId`
+   * parameter is accepted for API compatibility but ignored — the returned id is
+   * always the content-addressed id.
    */
   async uploadFile(
     file: File,
     document: string,
-    fileId: string = uuidv4(),
+    _fileId?: string,
     encryptionKey?: CryptoKey,
     skipCache?: boolean,
   ): Promise<string> {
@@ -113,51 +182,167 @@ class FileClientHandler implements ClientRpcHandler {
     if (!this.#sendStreamMessage) {
       throw new Error("File handler not initialized: stream sender not set");
     }
+    if (file.size > MAX_FILE_SIZE) {
+      throw new Error(`File size ${file.size} exceeds maximum ${MAX_FILE_SIZE} bytes`);
+    }
 
     const key = encryptionKey ?? this.#encryptionKey;
 
-    const uploadPromise = new Promise<string>((resolve, reject) => {
-      this.#activeUploads.set(fileId, {
+    // Deterministic encryption makes the merkle root stable across attempts,
+    // which is what enables dedup and reload-resume. If the key is
+    // non-extractable, fall back to random IVs (each attempt gets a fresh
+    // contentId, so dedup/resume won't hit, but the upload still works).
+    const encryptChunk = key
+      ? ((await createDeterministicEncryptor(key)) ?? ((c: Uint8Array) => encryptUpdate(key, c)))
+      : undefined;
+
+    // Try with the assumed chunk size; if the server uses a different one it
+    // replies with a mismatch and we recompute once with the server's size.
+    let chunkSize = this.#negotiatedChunkSize ?? CHUNK_SIZE;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { preparedChunks, totalChunks, contentId } = await this.#prepareUpload(
+        file,
+        encryptChunk,
+        chunkSize,
+      );
+
+      // Collapse concurrent uploads of identical content into one operation.
+      const inflight = this.#activeUploads.get(contentId);
+      if (inflight) {
+        return inflight.promise;
+      }
+
+      let resolve!: (id: string) => void;
+      let reject!: (err: Error) => void;
+      const promise = new Promise<string>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+
+      const state: UploadState = {
         resolve,
         reject,
-        uploadId: fileId,
-        fileId: null,
+        uploadId: contentId,
+        fileId: contentId,
         file,
+        preparedChunks,
         sentChunks: new Map(),
         unackedChunks: new Map(),
         document,
         encryptionKey: key,
+        context: { documentId: document },
+        originalRequestId: contentId,
         allChunksSent: false,
         skipCache,
         retransmitting: false,
-      });
-    });
+        chunkSize,
+        totalChunks,
+        ackedChunks: 0,
+        promise,
+      };
+      this.#activeUploads.set(contentId, state);
 
-    const requestPayload: Record<string, unknown> = {
-      fileId,
-      filename: file.name,
-      size: file.size,
-      mimeType: file.type || "application/octet-stream",
-      lastModified: file.lastModified,
-      encrypted: !!key,
-    };
+      let response: FileUploadResponse;
+      try {
+        response = await this.#rpcClient.sendRequest<FileUploadResponse>(
+          document,
+          "fileUpload",
+          {
+            fileId: contentId,
+            filename: file.name,
+            size: file.size,
+            mimeType: file.type || "application/octet-stream",
+            lastModified: file.lastModified,
+            encrypted: !!key,
+            chunkSize,
+          },
+          { encrypted: !!key, context: { documentId: document } },
+        );
+      } catch (error) {
+        this.#activeUploads.delete(contentId);
+        this.#emitUploadProgress(state, "error", (error as Error).message);
+        throw error;
+      }
 
-    // Send the upload request - the response will trigger file upload via handleResponse
-    // We don't await this - the promise will resolve when upload completes
-    this.#rpcClient
-      .sendRequest(document, "fileUpload", requestPayload, {
-        encrypted: !!key,
-        context: { documentId: document },
-      })
-      .catch((error) => {
-        const uploadState = this.#activeUploads.get(fileId);
-        if (uploadState) {
-          uploadState.reject(error as Error);
-          this.#activeUploads.delete(fileId);
-        }
-      });
+      if (!response.allowed) {
+        this.#activeUploads.delete(contentId);
+        const reason = response.reason || "Upload permission denied";
+        this.#emitUploadProgress(state, "error", reason);
+        throw new Error(reason);
+      }
 
-    return uploadPromise;
+      if (response.chunkSizeMismatch && response.chunkSize && attempt === 0) {
+        // Recompute with the server's chunk size (changes the contentId).
+        this.#activeUploads.delete(contentId);
+        this.#negotiatedChunkSize = response.chunkSize;
+        chunkSize = response.chunkSize;
+        continue;
+      }
+
+      if (response.chunkSize) {
+        this.#negotiatedChunkSize = response.chunkSize;
+      }
+
+      // Optimistically cache the content locally (keyed by contentId).
+      this.#cacheUploadedFile(state);
+
+      if (response.alreadyExists) {
+        this.#activeUploads.delete(contentId);
+        this.#emitUploadProgress(state, "complete");
+        return contentId;
+      }
+
+      this.#streamBufferedChunks(state, response.existingChunks);
+      return promise;
+    }
+
+    throw new Error("Upload failed: server chunk size renegotiation did not converge");
+  }
+
+  /**
+   * Encrypt the whole file and fold the merkle root, returning every chunk by
+   * index plus the content-addressed id. This is the compute-before-request step
+   * that makes uploads resumable and deduplicated.
+   */
+  async #prepareUpload(
+    file: File,
+    encryptChunk: ((chunk: Uint8Array) => Promise<Uint8Array> | Uint8Array) | undefined,
+    chunkSize: number,
+  ): Promise<{ preparedChunks: Map<number, Uint8Array>; totalChunks: number; contentId: string }> {
+    const preparedChunks = new Map<number, Uint8Array>();
+    const { totalChunks, rootHash } = await processFileStreaming(
+      file.stream(),
+      file.size,
+      encryptChunk,
+      (part) => {
+        preparedChunks.set(part.chunkIndex, part.chunkData);
+      },
+      chunkSize,
+    );
+    return { preparedChunks, totalChunks, contentId: toBase64(rootHash) };
+  }
+
+  /**
+   * Optimistically persist an uploaded file's chunks + metadata to the local
+   * cache (keyed by contentId), before server ACKs arrive.
+   */
+  #cacheUploadedFile(state: UploadState): void {
+    const cache = this.#cache && !state.skipCache ? this.#cache : undefined;
+    if (!cache) {
+      return;
+    }
+    const fileId = state.fileId;
+    Promise.all([
+      ...[...state.preparedChunks].map(([index, data]) => cache.putChunk(fileId, index, data)),
+      cache.putMetadata(fileId, {
+        filename: state.file.name,
+        size: state.file.size,
+        mimeType: state.file.type || "application/octet-stream",
+        encrypted: !!state.encryptionKey,
+        totalChunks: state.totalChunks,
+        lastModified: state.file.lastModified,
+      }),
+    ]).catch(() => {});
   }
 
   /**
@@ -215,7 +400,8 @@ class FileClientHandler implements ClientRpcHandler {
         const handler = this.#activeDownloads.get(fileId);
         if (handler) {
           handler.reject(new Error(`Download timeout after ${timeout}ms`));
-          this.#activeDownloads.delete(fileId);
+          this.#clearDownload(fileId);
+          this.#emitDownloadProgress(handler, "error", `Download timeout after ${timeout}ms`);
         }
         reject(new Error(`Download timeout after ${timeout}ms`));
       }, timeout);
@@ -228,6 +414,7 @@ class FileClientHandler implements ClientRpcHandler {
         fileMetadata: null,
         chunks: new Map(),
         fileId,
+        document,
         timeoutId,
         encryptionKey: key,
         skipCache,
@@ -251,8 +438,7 @@ class FileClientHandler implements ClientRpcHandler {
         },
       });
     } catch (error) {
-      this.#activeDownloads.delete(fileId);
-      this.#downloadCache.delete(fileId);
+      this.#clearDownload(fileId);
       throw error;
     }
 
@@ -265,8 +451,26 @@ class FileClientHandler implements ClientRpcHandler {
     }
   }
 
+  /**
+   * Clear all state for a failed/aborted download. Both the active-download
+   * handler and the in-memory dedup entry must be dropped so a subsequent
+   * `downloadFile(fileId)` starts fresh instead of returning the stale rejected
+   * promise. Never call this on the success path — successful dedup keeps the
+   * resolved promise in `#downloadCache` intentionally.
+   */
+  #clearDownload(fileId: string): void {
+    this.#activeDownloads.delete(fileId);
+    this.#downloadCache.delete(fileId);
+  }
+
   handleResponse(message: RpcMessage<any>): boolean {
     if (message.requestType !== "response") {
+      return false;
+    }
+
+    // Upload responses are consumed directly by the awaited sendRequest promise
+    // in uploadFile(); only download responses are dispatched here.
+    if (message.rpcMethod !== "fileDownload") {
       return false;
     }
 
@@ -277,64 +481,34 @@ class FileClientHandler implements ClientRpcHandler {
         filename?: string;
         size?: number;
         mimeType?: string;
-        existingChunks?: number[];
-        chunkSize?: number;
         totalChunks?: number;
       };
       details?: string;
     };
 
     if (payload.type === "success" && payload.payload) {
-      // Check if this is a download response (has metadata)
-      if (payload.payload.filename !== undefined) {
-        const downloadHandler = this.#activeDownloads.get(payload.payload.fileId);
-        if (downloadHandler) {
-          downloadHandler.fileMetadata = {
-            filename: payload.payload.filename!,
-            size: payload.payload.size!,
-            mimeType: payload.payload.mimeType!,
-            totalChunks: payload.payload.totalChunks,
-          };
-          // Check if download is complete (file parts may have arrived before this response)
-          this.#checkDownloadCompletion(downloadHandler);
-          return true;
-        }
-      }
-
-      // Check if this is an upload response (just has fileId)
-      const uploadHandler = this.#activeUploads.get(payload.payload.fileId);
-      if (uploadHandler) {
-        uploadHandler.chunkSize = payload.payload.chunkSize;
-        // Start processing the file upload
-        // We don't await this - it runs in the background and the upload promise
-        // resolves when all ACKs are received. Errors are caught and the upload is rejected.
-        this.#processFileUpload(
-          uploadHandler,
-          message.context,
-          undefined,
-          payload.payload.existingChunks,
-        ).catch((error) => {
-          uploadHandler.reject(error);
-          this.#activeUploads.delete(uploadHandler.uploadId);
-        });
+      const downloadHandler = this.#activeDownloads.get(payload.payload.fileId);
+      if (downloadHandler) {
+        downloadHandler.fileMetadata = {
+          filename: payload.payload.filename!,
+          size: payload.payload.size!,
+          mimeType: payload.payload.mimeType!,
+          totalChunks: payload.payload.totalChunks,
+        };
+        // Check if download is complete (file parts may have arrived before this response)
+        this.#checkDownloadCompletion(downloadHandler);
         return true;
       }
     } else if (payload.type === "error") {
-      // Handle error responses - check by original request ID first
-      const uploadHandler = this.#activeUploads.get(message.originalRequestId!);
-      if (uploadHandler) {
-        uploadHandler.reject(new Error(payload.details || "Upload permission denied"));
-        this.#activeUploads.delete(uploadHandler.uploadId);
-        return true;
-      }
-
       const downloadHandler = this.#activeDownloads.get(message.originalRequestId!);
       if (downloadHandler) {
-        downloadHandler.reject(new Error(payload.details || "Download permission denied"));
-        this.#activeDownloads.delete(downloadHandler.fileId);
+        const details = payload.details || "Download permission denied";
+        downloadHandler.reject(new Error(details));
+        this.#clearDownload(downloadHandler.fileId);
         if (downloadHandler.timeoutId) {
           clearTimeout(downloadHandler.timeoutId);
         }
+        this.#emitDownloadProgress(downloadHandler, "error", details);
         return true;
       }
     }
@@ -376,10 +550,15 @@ class FileClientHandler implements ClientRpcHandler {
           this.#startRetransmitLoop(handler, ackMessage.payload.retryAfter);
         } else {
           // Positive ACK — chunk accepted.
-          handler.unackedChunks.delete(chunkIndex);
+          if (handler.unackedChunks.delete(chunkIndex)) {
+            handler.ackedChunks++;
+          }
           if (handler.allChunksSent && handler.unackedChunks.size === 0) {
-            handler.resolve(handler.fileId!);
+            handler.resolve(handler.fileId);
             this.#activeUploads.delete(handler.uploadId);
+            this.#emitUploadProgress(handler, "complete");
+          } else {
+            this.#emitUploadProgress(handler, "active");
           }
         }
       }
@@ -388,101 +567,76 @@ class FileClientHandler implements ClientRpcHandler {
     return handled;
   }
 
-  async #processFileUpload(
-    uploadState: UploadState,
-    context?: any,
-    originalRequestId?: string,
-    existingChunks?: number[],
-  ) {
+  /**
+   * Stream the pre-computed chunks the server is missing. The chunks were
+   * encrypted and hashed before the request (see {@link uploadFile}); here we
+   * just send those the server hasn't already stored, and resolve once every
+   * sent chunk is ACKed (see {@link handleAck}).
+   */
+  #streamBufferedChunks(uploadState: UploadState, existingChunks?: number[]): void {
     if (!this.#sendStreamMessage) {
-      throw new Error("File handler not initialized");
+      uploadState.reject(new Error("File handler not initialized"));
+      this.#activeUploads.delete(uploadState.uploadId);
+      return;
     }
 
     const sendStreamMessage = this.#sendStreamMessage;
     const skipChunks = new Set(existingChunks);
-    const cache = this.#cache && !uploadState.skipCache ? this.#cache : undefined;
-    const cachedChunks: { index: number; data: Uint8Array }[] = [];
 
-    // Set up routing context before streaming — the onPart callback fires
-    // during processing and builds messages from these.
-    uploadState.context = context ?? { documentId: uploadState.document };
-    uploadState.originalRequestId = originalRequestId ?? uploadState.uploadId;
+    // Server-resumed chunks count as already transferred.
+    uploadState.ackedChunks += skipChunks.size;
 
-    // Pipelined: each chunk is sent the instant its encryption resolves, while
-    // later chunks are still encrypting. Per-chunk merkle proofs are omitted —
-    // the server ignores them on upload and rebuilds the tree from the stored
-    // chunks (the chunks are the content, so its tree always matches). The root
-    // is returned at the end for the resolved fileId.
-    const { rootHash } = await processFileStreaming(
-      uploadState.file.stream(),
-      uploadState.file.size,
-      uploadState.encryptionKey
-        ? (chunk: Uint8Array) => encryptUpdate(uploadState.encryptionKey!, chunk)
-        : undefined,
-      (chunk) => {
-        if (cache) {
-          cachedChunks.push({ index: chunk.chunkIndex, data: chunk.chunkData });
-        }
+    for (let chunkIndex = 0; chunkIndex < uploadState.totalChunks; chunkIndex++) {
+      if (skipChunks.has(chunkIndex)) {
+        continue;
+      }
+      const chunkData = uploadState.preparedChunks.get(chunkIndex)!;
 
-        if (skipChunks.has(chunk.chunkIndex)) {
-          return;
-        }
+      const filePart: FilePartStream = {
+        fileId: uploadState.uploadId,
+        chunkIndex,
+        chunkData,
+        merkleProof: [],
+        totalChunks: uploadState.totalChunks,
+        bytesUploaded: 0,
+        encrypted: !!uploadState.encryptionKey,
+      };
 
-        const filePart: FilePartStream = {
-          fileId: uploadState.uploadId,
-          chunkIndex: chunk.chunkIndex,
-          chunkData: chunk.chunkData,
-          merkleProof: [],
-          totalChunks: chunk.totalChunks,
-          bytesUploaded: chunk.bytesProcessed,
-          encrypted: chunk.encrypted,
-        };
+      uploadState.unackedChunks.set(chunkIndex, filePart);
 
-        uploadState.unackedChunks.set(chunk.chunkIndex, filePart);
-
-        const message = new RpcMessage<any>(
-          uploadState.document,
-          { type: "success", payload: filePart },
-          "fileUpload",
-          "stream",
-          uploadState.originalRequestId!,
-          uploadState.context,
-          chunk.encrypted,
-        );
-        sendStreamMessage(message).catch(() => {
-          // Transport failures are recovered by the retransmit loop
-        });
-        uploadState.sentChunks.set(message.id, chunk.chunkIndex);
-      },
-      uploadState.chunkSize,
-    );
-
-    uploadState.fileId = toBase64(rootHash);
-
-    // Optimistic cache write — before ACKs arrive
-    if (cache && uploadState.fileId) {
-      const fileId = uploadState.fileId;
-      const totalChunks = cachedChunks.length;
-      Promise.all([
-        ...cachedChunks.map((c) => cache.putChunk(fileId, c.index, c.data)),
-        cache.putMetadata(fileId, {
-          filename: uploadState.file.name,
-          size: uploadState.file.size,
-          mimeType: uploadState.file.type || "application/octet-stream",
-          encrypted: !!uploadState.encryptionKey,
-          totalChunks,
-          lastModified: uploadState.file.lastModified,
-        }),
-      ]).catch(() => {});
+      const message = new RpcMessage<any>(
+        uploadState.document,
+        { type: "success", payload: filePart },
+        "fileUpload",
+        "stream",
+        uploadState.originalRequestId!,
+        uploadState.context,
+        filePart.encrypted,
+      );
+      sendStreamMessage(message).catch(() => {
+        // Transport failures are recovered by the retransmit loop
+      });
+      uploadState.sentChunks.set(message.id, chunkIndex);
     }
 
     // Mark all chunks as sent - upload can now resolve when all ACKs received
     uploadState.allChunksSent = true;
 
-    // If all ACKs have already been received, resolve now
+    // Every chunk's data now lives in `unackedChunks` (the FilePartStream holds
+    // the same Uint8Array reference), which shrinks as ACKs arrive and drives
+    // retransmission. `preparedChunks` is a second full-file map that is never
+    // read again after this point, so release it: peak retained upload memory
+    // drops from ~2× file to ~1×, and toward 0 as chunks get ACKed, instead of
+    // pinning a whole extra copy until the upload resolves.
+    uploadState.preparedChunks.clear();
+
+    // If all ACKs have already been received (or there was nothing to send), resolve now.
     if (uploadState.unackedChunks.size === 0) {
-      uploadState.resolve(uploadState.fileId!);
+      uploadState.resolve(uploadState.fileId);
       this.#activeUploads.delete(uploadState.uploadId);
+      this.#emitUploadProgress(uploadState, "complete");
+    } else {
+      this.#emitUploadProgress(uploadState, "active");
     }
   }
 
@@ -540,16 +694,15 @@ class FileClientHandler implements ClientRpcHandler {
 
       if (handler.unackedChunks.size === 0) {
         if (handler.allChunksSent) {
-          handler.resolve(handler.fileId!);
+          handler.resolve(handler.fileId);
           this.#activeUploads.delete(handler.uploadId);
+          this.#emitUploadProgress(handler, "complete");
         }
       } else {
-        handler.reject(
-          new Error(
-            `Upload failed: ${handler.unackedChunks.size} chunks unacknowledged after ${MAX_RETRANSMIT_ROUNDS} retransmission rounds`,
-          ),
-        );
+        const reason = `Upload failed: ${handler.unackedChunks.size} chunks unacknowledged after ${MAX_RETRANSMIT_ROUNDS} retransmission rounds`;
+        handler.reject(new Error(reason));
         this.#activeUploads.delete(handler.uploadId);
+        this.#emitUploadProgress(handler, "error", reason);
       }
     };
 
@@ -558,12 +711,13 @@ class FileClientHandler implements ClientRpcHandler {
     });
   }
 
-  #verifyChunk(chunk: FilePartStream, fileId: string): boolean {
-    return verifyMerkleProof(
+  #verifyChunk(chunk: FilePartStream, fileId: string): Promise<boolean> {
+    return verifyMerkleProofAsync(
       chunk.chunkData,
       chunk.merkleProof,
       fromBase64(fileId),
       chunk.chunkIndex,
+      chunk.totalChunks,
     );
   }
 
@@ -575,19 +729,29 @@ class FileClientHandler implements ClientRpcHandler {
 
     if (handler.chunks.has(payload.chunkIndex)) return;
 
-    // Kick off async decrypt before sync verify — Web Crypto runs in native
-    // code so the decrypt progresses while we SHA-256 the chunk on the main thread.
-    const decryptPromise = handler.encryptionKey
-      ? decryptUpdate(handler.encryptionKey, payload.chunkData)
-      : null;
+    // Verify and decrypt concurrently — both run in native Web Crypto, so a
+    // 1MB chunk costs ~1ms of main-thread time instead of ~50ms of synchronous
+    // pure-JS SHA-256 that would serialize part processing and jank the UI.
+    const [isValid, decrypted] = await Promise.all([
+      this.#verifyChunk(payload, handler.fileId),
+      handler.encryptionKey
+        ? decryptUpdate(handler.encryptionKey, payload.chunkData)
+        : payload.chunkData,
+    ]);
 
-    const isValid = this.#verifyChunk(payload, handler.fileId);
+    // Re-check after the await: a concurrently-verifying part may have failed
+    // the download (handler removed) or already delivered this chunk index.
+    if (!this.#activeDownloads.has(payload.fileId)) return;
+    if (handler.chunks.has(payload.chunkIndex)) return;
+
     if (!isValid) {
-      handler.reject(new Error(`Chunk ${payload.chunkIndex} failed merkle proof verification`));
-      this.#activeDownloads.delete(payload.fileId);
+      const reason = `Chunk ${payload.chunkIndex} failed merkle proof verification`;
+      handler.reject(new Error(reason));
+      this.#clearDownload(payload.fileId);
       if (handler.timeoutId) {
         clearTimeout(handler.timeoutId);
       }
+      this.#emitDownloadProgress(handler, "error", reason);
       return;
     }
 
@@ -596,10 +760,11 @@ class FileClientHandler implements ClientRpcHandler {
       this.#cache.putChunk(payload.fileId, payload.chunkIndex, payload.chunkData).catch(() => {});
     }
 
-    handler.chunks.set(
-      payload.chunkIndex,
-      decryptPromise ? await decryptPromise : payload.chunkData,
-    );
+    handler.chunks.set(payload.chunkIndex, decrypted);
+    if (handler.fileMetadata && handler.fileMetadata.totalChunks === undefined) {
+      handler.fileMetadata.totalChunks = payload.totalChunks;
+    }
+    this.#emitDownloadProgress(handler, "active");
     this.#checkDownloadCompletion(handler);
   }
 
@@ -639,8 +804,13 @@ class FileClientHandler implements ClientRpcHandler {
         }
 
         handler.resolve(file);
+        this.#emitDownloadProgress(handler, "complete");
       } catch (err) {
         handler.reject(err as Error);
+        // Drop the poisoned dedup entry so a retry starts fresh. The success
+        // path deliberately leaves #downloadCache populated for dedup.
+        this.#downloadCache.delete(handler.fileId);
+        this.#emitDownloadProgress(handler, "error", (err as Error).message);
       } finally {
         this.#activeDownloads.delete(handler.fileId);
         if (handler.timeoutId) {

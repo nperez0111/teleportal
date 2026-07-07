@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach } from "bun:test";
-import { createTokenManager, type TokenPayload, DocumentAccessBuilder } from "./index";
+import {
+  createTokenManager,
+  type TokenPayload,
+  DocumentAccessBuilder,
+  isTokenExpired,
+  extractContextFromToken,
+} from "./index";
 
 describe("TokenManager", () => {
   let tokenManager: ReturnType<typeof createTokenManager>;
@@ -354,6 +360,123 @@ describe("TokenManager", () => {
       expect(result.payload?.iss).toBe("custom-issuer");
       expect(result.payload?.aud).toBe("teleportal");
     });
+
+    it("should verify a token minted with a custom audience", async () => {
+      const customTokenManager = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+        audience: "custom-audience",
+      });
+
+      const token = await customTokenManager.generateToken("user-123", "org-456", [
+        { pattern: "*", permissions: ["read"] },
+      ]);
+
+      const result = await customTokenManager.verifyToken(token);
+      expect(result.valid).toBe(true);
+      expect(result.payload?.aud).toBe("custom-audience");
+    });
+
+    it("should reject a token whose audience does not match the manager", async () => {
+      const issuer = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+      });
+      const verifier = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+        audience: "other-service",
+      });
+
+      const token = await issuer.generateToken("user-123", "org-456", [
+        { pattern: "*", permissions: ["read"] },
+      ]);
+
+      const result = await verifier.verifyToken(token);
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe("getDocumentPermissions aggregation", () => {
+    it("should aggregate permissions across multiple matching patterns", async () => {
+      const token = await tokenManager.createToken("user-101", "org-456", [
+        { pattern: "shared/*", permissions: ["read"] },
+        { pattern: "*", permissions: ["comment"] },
+      ]);
+
+      const result = await tokenManager.verifyToken(token);
+      const permissions = tokenManager.getDocumentPermissions(result.payload!, "shared/doc1");
+      expect(permissions).toContain("read");
+      expect(permissions).toContain("comment");
+    });
+
+    it("should return empty array for excluded documents", async () => {
+      const token = await tokenManager.createToken("user-101", "org-456", [
+        { pattern: "*", permissions: ["read", "write"] },
+        { pattern: "!secret/*", permissions: ["read", "write"] },
+      ]);
+
+      const result = await tokenManager.verifyToken(token);
+      expect(tokenManager.getDocumentPermissions(result.payload!, "secret/doc1")).toEqual([]);
+      expect(tokenManager.getDocumentPermissions(result.payload!, "public/doc1")).toEqual([
+        "read",
+        "write",
+      ]);
+    });
+
+    it("should deduplicate permissions from overlapping patterns", async () => {
+      const token = await tokenManager.createToken("user-101", "org-456", [
+        { pattern: "user-101/*", permissions: ["read", "write"] },
+        { pattern: "*", permissions: ["read"] },
+      ]);
+
+      const result = await tokenManager.verifyToken(token);
+      const permissions = tokenManager.getDocumentPermissions(result.payload!, "user-101/doc1");
+      const readCount = permissions.filter((p) => p === "read").length;
+      expect(readCount).toBe(1);
+    });
+  });
+
+  describe("audience parameter", () => {
+    it("should use the default 'teleportal' audience", async () => {
+      const token = await tokenManager.generateToken("user-123", "org-456", [
+        { pattern: "*", permissions: ["read"] },
+      ]);
+
+      const result = await tokenManager.verifyToken(token);
+      expect(result.valid).toBe(true);
+      expect(result.payload?.aud).toBe("teleportal");
+    });
+
+    it("should embed a custom audience in the token payload", async () => {
+      const token = await tokenManager.generateToken(
+        "user-123",
+        "org-456",
+        [{ pattern: "*", permissions: ["read"] }],
+        { audience: "custom-audience" },
+      );
+
+      // Token has the custom audience but this verifier expects "teleportal",
+      // so verification should fail (audience mismatch).
+      const result = await tokenManager.verifyToken(token);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("aud");
+    });
+  });
+
+  describe("no documentAccess", () => {
+    it("hasDocumentPermission returns true when documentAccess is undefined", () => {
+      const payload: TokenPayload = {
+        userId: "user-1",
+        room: "room-1",
+      };
+      expect(tokenManager.hasDocumentPermission(payload, "any-doc", "read")).toBe(true);
+    });
+
+    it("getDocumentPermissions returns empty when documentAccess is undefined", () => {
+      const payload: TokenPayload = {
+        userId: "user-1",
+        room: "room-1",
+      };
+      expect(tokenManager.getDocumentPermissions(payload, "any-doc")).toEqual([]);
+    });
   });
 
   describe("DocumentAccessBuilder", () => {
@@ -447,6 +570,51 @@ describe("TokenManager", () => {
       expect(access[0].pattern).toBe("*");
       expect(access[1].pattern).toBe("user-456/*");
       expect(access[2].pattern).toBe("system/*");
+    });
+  });
+
+  describe("utility functions", () => {
+    it("isTokenExpired returns false when no exp is set", () => {
+      expect(isTokenExpired({ userId: "u", room: "r" })).toBe(false);
+    });
+
+    it("isTokenExpired returns false for a future exp", () => {
+      const future = Math.floor(Date.now() / 1000) + 3600;
+      expect(isTokenExpired({ userId: "u", room: "r", exp: future })).toBe(false);
+    });
+
+    it("isTokenExpired returns true for a past exp", () => {
+      const past = Math.floor(Date.now() / 1000) - 10;
+      expect(isTokenExpired({ userId: "u", room: "r", exp: past })).toBe(true);
+    });
+
+    it("extractContextFromToken extracts userId and room", () => {
+      const ctx = extractContextFromToken({ userId: "alice", room: "room-1" });
+      expect(ctx).toEqual({ userId: "alice", room: "room-1" });
+    });
+  });
+
+  describe("token signing security", () => {
+    it("should reject a token signed with a different secret", async () => {
+      const other = createTokenManager({
+        secret: "totally-different-secret-key",
+        issuer: "test-issuer",
+      });
+      const token = await other.createAdminToken("user-1", "room-1");
+      const result = await tokenManager.verifyToken(token);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it("should reject a tampered token", async () => {
+      const token = await tokenManager.createAdminToken("user-1", "room-1");
+      const parts = token.split(".");
+      const payload = JSON.parse(atob(parts[1]));
+      payload.userId = "evil-user";
+      parts[1] = btoa(JSON.stringify(payload));
+      const tampered = parts.join(".");
+      const result = await tokenManager.verifyToken(tampered);
+      expect(result.valid).toBe(false);
     });
   });
 });

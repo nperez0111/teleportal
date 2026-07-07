@@ -139,6 +139,13 @@ export type DecodedAckMessage = {
    * before retransmitting.
    */
   retryAfter?: number;
+  /**
+   * When set, indicates the message was permanently rejected (retransmitting
+   * the same message would fail again — e.g. it exceeded the size limit or
+   * failed to apply). The value is a human-readable reason. Mutually
+   * exclusive with {@link retryAfter}.
+   */
+  error?: string;
 };
 
 /**
@@ -155,6 +162,18 @@ export type PresenceMessageBinary = Tag<Uint8Array, "presence">;
 export type DecodedPresenceAnnounce = {
   type: "presence-announce";
   /** The y-awareness clientID (equals the client's Y.Doc clientID). */
+  awarenessId: number;
+};
+
+/**
+ * Sent by a client to retract a previously announced awareness clientID.
+ * The server removes that awarenessId from its roster and broadcasts a
+ * presence-leave to peers. Used when a Provider is destroyed (e.g. switching
+ * documents) so stale awareness entries are cleaned up eagerly.
+ */
+export type DecodedPresenceUnannounce = {
+  type: "presence-unannounce";
+  /** The y-awareness clientID to retract. */
   awarenessId: number;
 };
 
@@ -208,6 +227,7 @@ export type DecodedPresenceHeartbeat = {
  */
 export type PresenceStep =
   | DecodedPresenceAnnounce
+  | DecodedPresenceUnannounce
   | DecodedPresenceJoin
   | DecodedPresenceLeave
   | DecodedPresenceHeartbeat;

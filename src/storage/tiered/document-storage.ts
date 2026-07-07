@@ -4,6 +4,7 @@ import {
   type DocumentState,
   type PendingUpdate,
 } from "../document-storage";
+import { decodeContentMap, encodeContentMap, mergeContentMaps } from "teleportal/attribution";
 import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "../types";
 import type { StateVector, VersionedSyncStep2Update, VersionedUpdate } from "teleportal";
 
@@ -25,6 +26,12 @@ const defaults = {
   maxDirtyAgeMs: 30_000,
   persistBatchSize: 50,
 } satisfies Partial<TieredDocumentStorageOptions>;
+
+function compactAttributionMaps(maps: EncodedContentMap[]): EncodedContentMap {
+  if (maps.length === 1) return maps[0];
+  const merged = mergeContentMaps(maps.map((m) => decodeContentMap(m)));
+  return encodeContentMap(merged);
+}
 
 /**
  * Composes two {@link AbstractDocumentStorage} instances into a two-tier
@@ -325,9 +332,8 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
 
     const attributions = this.#pendingAttributions.get(key);
     if (attributions?.length) {
-      for (const attr of attributions) {
-        await this.#slow.storeAttribution(key, attr);
-      }
+      const compacted = compactAttributionMaps(attributions);
+      await this.#slow.storeAttribution(key, compacted);
       this.#pendingAttributions.delete(key);
     }
 

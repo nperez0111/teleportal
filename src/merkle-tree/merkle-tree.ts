@@ -52,22 +52,50 @@ export interface MerkleTree {
 }
 
 /**
- * Hash two hashes together to create a parent hash (sync, using lib0 digest).
- * Used in verifyMerkleProof and StableIncrementalMerkleTree where async overhead
- * would outweigh the crypto speedup.
+ * Domain-separation prefixes (RFC 6962 style). A leaf hashes `0x00 ‖ chunk`
+ * and an internal node hashes `0x01 ‖ left ‖ right`, so a chunk can never hash
+ * to the same value as an internal node (a 64-byte chunk equal to two
+ * concatenated child hashes would otherwise collide with their parent).
+ */
+const LEAF_PREFIX = 0x00;
+const INTERNAL_PREFIX = 0x01;
+
+/**
+ * Hash two child hashes together to create a parent hash (sync, using lib0
+ * digest). Prefixed with {@link INTERNAL_PREFIX} for domain separation.
+ * Used in verifyMerkleProof and buildMerkleTree's internal levels where async
+ * overhead would outweigh the crypto speedup.
  */
 function hashPair(left: Uint8Array, right: Uint8Array): Uint8Array {
-  const combined = new Uint8Array(64);
-  combined.set(left, 0);
-  combined.set(right, 32);
+  const combined = new Uint8Array(1 + 32 + 32);
+  combined[0] = INTERNAL_PREFIX;
+  combined.set(left, 1);
+  combined.set(right, 33);
   return digest(combined);
 }
 
 /**
- * Hardware-accelerated SHA-256 digest via Web Crypto API.
+ * Hash a chunk into a leaf hash (sync), prefixed with {@link LEAF_PREFIX}.
  */
-async function digestAsync(data: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
+function leafHash(chunk: Uint8Array): Uint8Array {
+  const prefixed = new Uint8Array(chunk.length + 1);
+  prefixed[0] = LEAF_PREFIX;
+  prefixed.set(chunk, 1);
+  return digest(prefixed);
+}
+
+/**
+ * Hardware-accelerated SHA-256 leaf digest via Web Crypto API, prefixed with
+ * {@link LEAF_PREFIX} for domain separation. Exported so storage adapters can
+ * precompute leaf hashes at chunk-write time (e.g. stored as object metadata)
+ * and later build the tree via {@link buildMerkleTreeFromLeafHashes} without
+ * re-reading chunk bytes. A plain unprefixed SHA-256 will NOT match.
+ */
+export async function computeLeafHash(chunk: Uint8Array): Promise<Uint8Array> {
+  const prefixed = new Uint8Array(chunk.length + 1);
+  prefixed[0] = LEAF_PREFIX;
+  prefixed.set(chunk, 1);
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", prefixed as BufferSource));
 }
 
 /**
@@ -76,7 +104,7 @@ async function digestAsync(data: Uint8Array): Promise<Uint8Array> {
  * binary tree structure. Leaf hashing and each level of internal node hashing
  * are parallelized via Promise.all.
  *
- * @param chunks - Array of 64KB chunks
+ * @param chunks - Array of file chunks
  * @returns The merkle tree
  */
 export async function buildMerkleTree(chunks: Uint8Array[]): Promise<MerkleTree> {
@@ -84,50 +112,59 @@ export async function buildMerkleTree(chunks: Uint8Array[]): Promise<MerkleTree>
     throw new Error("Cannot build merkle tree from empty chunks array");
   }
 
-  const nodes: MerkleNode[] = [];
-  const leafCount = chunks.length;
-
   // Hash all leaves in parallel using hardware-accelerated SHA-256
-  const leafHashes = await Promise.all(chunks.map((chunk) => digestAsync(chunk)));
+  const leafHashes = await Promise.all(chunks.map((chunk) => computeLeafHash(chunk)));
+  return buildMerkleTreeFromLeafHashes(leafHashes);
+}
+
+/**
+ * Build a merkle tree from precomputed leaf hashes (see
+ * {@link computeLeafHash} — hashes must be domain-separated leaf digests).
+ * Identical tree shape and root as {@link buildMerkleTree} over the raw
+ * chunks.
+ */
+export function buildMerkleTreeFromLeafHashes(leafHashes: Uint8Array[]): MerkleTree {
+  if (leafHashes.length === 0) {
+    throw new Error("Cannot build merkle tree from empty leaf hash array");
+  }
+
+  const nodes: MerkleNode[] = [];
+  const leafCount = leafHashes.length;
 
   // Create leaf nodes
   for (const hash of leafHashes) {
     nodes.push({ hash });
   }
 
-  // Build internal nodes bottom-up using sync hashing. Internal nodes hash
-  // only 64 bytes (two concatenated SHA-256 digests), where the async overhead
-  // of crypto.subtle.digest would far exceed the computation cost.
-  let currentLevelStart = 0;
-  let currentLevelEnd = nodes.length;
-
-  while (currentLevelEnd - currentLevelStart > 1) {
-    const nextLevelStart = currentLevelEnd;
-
-    for (let i = currentLevelStart; i < currentLevelEnd; i += 2) {
-      const leftNode = nodes[i];
-      const rightIdx = i + 1 < currentLevelEnd ? i + 1 : i;
-      const rightNode = nodes[rightIdx];
-
-      const parentHash = hashPair(leftNode.hash!, rightNode.hash!);
-      const parentIndex = nodes.length;
-
-      const parentNode: MerkleNode = {
-        hash: parentHash,
-        left: i,
-        right: rightIdx,
-      };
-
-      nodes.push(parentNode);
-
-      leftNode.parent = parentIndex;
-      if (rightIdx !== i) {
-        rightNode.parent = parentIndex;
+  // Build internal nodes bottom-up using sync hashing (each internal node hashes
+  // only 65 bytes, where async crypto.subtle overhead would dwarf the work).
+  //
+  // Pairs are hashed left-to-right; an odd trailing node is carried up to the
+  // next level UNCHANGED rather than self-paired. Self-pairing would make
+  // `[A, B, C]` and `[A, B, C, C]` share a root (a duplication attack), which is
+  // unacceptable now that the root is a content-addressed identity.
+  let level: number[] = nodes.map((_, i) => i);
+  while (level.length > 1) {
+    const next: number[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 < level.length) {
+        const leftIdx = level[i];
+        const rightIdx = level[i + 1];
+        const parentIndex = nodes.length;
+        nodes.push({
+          hash: hashPair(nodes[leftIdx].hash!, nodes[rightIdx].hash!),
+          left: leftIdx,
+          right: rightIdx,
+        });
+        nodes[leftIdx].parent = parentIndex;
+        nodes[rightIdx].parent = parentIndex;
+        next.push(parentIndex);
+      } else {
+        // Odd trailing node — carry it up unchanged (no self-pair).
+        next.push(level[i]);
       }
     }
-
-    currentLevelStart = nextLevelStart;
-    currentLevelEnd = nodes.length;
+    level = next;
   }
 
   return {
@@ -176,10 +213,15 @@ export function generateMerkleProof(tree: MerkleTree, chunkIndex: number): Uint8
 /**
  * Verify a chunk against a merkle root using a proof.
  *
+ * `leafCount` (the total number of chunks in the file) is required because the
+ * tree carries odd trailing nodes up unpaired: without it the verifier cannot
+ * tell which levels contribute a sibling and would desync from the proof.
+ *
  * @param chunk - The chunk data to verify
- * @param proof - Array of sibling hashes from the proof path
+ * @param proof - Array of sibling hashes from the proof path (bottom-up)
  * @param root - The expected merkle root hash
  * @param index - Zero-based index of the chunk
+ * @param leafCount - Total number of leaves (chunks) in the tree
  * @returns True if the chunk is valid, false otherwise
  */
 export function verifyMerkleProof(
@@ -187,23 +229,70 @@ export function verifyMerkleProof(
   proof: Uint8Array[],
   root: Uint8Array,
   index: number,
+  leafCount: number,
 ): boolean {
-  // Hash the chunk to get the leaf hash
-  let currentHash = digest(chunk) as Uint8Array;
+  if (!Number.isInteger(index) || index < 0 || index >= leafCount) {
+    return false;
+  }
+  return verifyProofFromLeafHash(leafHash(chunk), proof, root, index, leafCount);
+}
 
-  // Traverse up the tree using the proof
-  let currentIndex = index;
-  for (const siblingHash of proof) {
-    // Determine if current node is left or right child
-    if (currentIndex % 2 === 0) {
-      // Current is left child, hash with right sibling
-      currentHash = hashPair(currentHash, siblingHash);
-    } else {
-      // Current is right child, hash with left sibling
-      currentHash = hashPair(siblingHash, currentHash);
+/**
+ * Like {@link verifyMerkleProof} but hashes the leaf with hardware-accelerated
+ * `crypto.subtle` instead of the synchronous pure-JS digest. In browsers the
+ * sync digest runs at ~20MB/s on the main thread (~50ms per 1MB chunk), so the
+ * download path uses this variant to keep per-chunk verification off the main
+ * thread; the proof walk itself only hashes 65-byte pairs and stays sync.
+ */
+export async function verifyMerkleProofAsync(
+  chunk: Uint8Array,
+  proof: Uint8Array[],
+  root: Uint8Array,
+  index: number,
+  leafCount: number,
+): Promise<boolean> {
+  if (!Number.isInteger(index) || index < 0 || index >= leafCount) {
+    return false;
+  }
+  return verifyProofFromLeafHash(await computeLeafHash(chunk), proof, root, index, leafCount);
+}
+
+/**
+ * Walk a proof up from a (domain-separated) leaf hash and compare against the
+ * root. Shared by {@link verifyMerkleProof} and {@link verifyMerkleProofAsync}
+ * so both verify identically.
+ */
+function verifyProofFromLeafHash(
+  leaf: Uint8Array,
+  proof: Uint8Array[],
+  root: Uint8Array,
+  index: number,
+  leafCount: number,
+): boolean {
+  let currentHash = leaf;
+
+  // Walk up, mirroring buildMerkleTree's carry-up: a node that is the last of an
+  // odd-sized level has no sibling — it is carried up, consuming no proof
+  // element — so only paired levels pull a sibling from the proof.
+  let pos = index;
+  let levelSize = leafCount;
+  let proofIndex = 0;
+  while (levelSize > 1) {
+    const isCarried = pos === levelSize - 1 && levelSize % 2 === 1;
+    if (!isCarried) {
+      const sibling = proof[proofIndex++];
+      if (sibling === undefined) {
+        return false;
+      }
+      currentHash = pos % 2 === 0 ? hashPair(currentHash, sibling) : hashPair(sibling, currentHash);
     }
-    // Move to parent level
-    currentIndex = Math.floor(currentIndex / 2);
+    pos = Math.floor(pos / 2);
+    levelSize = Math.ceil(levelSize / 2);
+  }
+
+  // A well-formed proof is consumed exactly; leftover elements mean it is malformed.
+  if (proofIndex !== proof.length) {
+    return false;
   }
 
   // Compare final hash with root
@@ -218,9 +307,13 @@ export function verifyMerkleProof(
  * @returns Serialized tree data
  */
 export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
-  // Each node: 32 bytes (SHA-256 hash) + 4 bytes (parent index, -1 if none)
-  // Format: [leafCount (4 bytes)] [node1_hash (32 bytes)] [node1_parent (4 bytes)] ...
-  const nodeSize = 32 + 4; // hash + parent index
+  // Each node: 32 bytes (SHA-256 hash) + 4 bytes (left child) + 4 bytes (right
+  // child), each child index 0xFFFFFFFF if absent. Left/right are stored
+  // explicitly (rather than reconstructed from parent pointers by node index)
+  // because carry-up can pair a node with a LOWER-indexed sibling, so index
+  // order does not determine child side. Parent pointers are rebuilt on load.
+  // Format: [leafCount (4 bytes)] [node_hash (32)] [node_left (4)] [node_right (4)] ...
+  const nodeSize = 32 + 4 + 4;
   const totalSize = 4 + tree.nodes.length * nodeSize;
   const buffer = new Uint8Array(totalSize);
 
@@ -239,9 +332,9 @@ export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
     buffer.set(hash, offset);
     offset += 32;
 
-    // Write parent index (4 bytes, -1 if none)
-    const parentIndex = node.parent === undefined ? 0xff_ff_ff_ff : node.parent;
-    view.setUint32(offset, parentIndex, true);
+    view.setUint32(offset, node.left === undefined ? 0xff_ff_ff_ff : node.left, true);
+    offset += 4;
+    view.setUint32(offset, node.right === undefined ? 0xff_ff_ff_ff : node.right, true);
     offset += 4;
   }
 
@@ -257,8 +350,7 @@ export function serializeMerkleTree(tree: MerkleTree): Uint8Array {
  * @returns The reconstructed merkle tree
  */
 export function deserializeMerkleTree(data: Uint8Array, chunkCount: number): MerkleTree {
-  const view = new DataView(data.buffer);
-  const _nodeSize = 32 + 4; // hash + parent index
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
   // Read leaf count (should match chunkCount)
   const storedLeafCount = view.getUint32(0, true);
@@ -271,43 +363,34 @@ export function deserializeMerkleTree(data: Uint8Array, chunkCount: number): Mer
   const nodes: MerkleNode[] = [];
   let offset = 4;
 
-  // Read all nodes
+  // Read all nodes (hash + left child + right child)
   while (offset < data.length) {
-    // Read hash (32 bytes)
     const hash = data.slice(offset, offset + 32);
     offset += 32;
-
-    // Read parent index (4 bytes)
-    const parentIndex = view.getUint32(offset, true);
+    const left = view.getUint32(offset, true);
+    offset += 4;
+    const right = view.getUint32(offset, true);
     offset += 4;
 
-    const node: MerkleNode = {
-      hash,
-    };
-
-    if (parentIndex !== 0xff_ff_ff_ff) {
-      node.parent = parentIndex;
+    const node: MerkleNode = { hash };
+    if (left !== 0xff_ff_ff_ff) {
+      node.left = left;
+    }
+    if (right !== 0xff_ff_ff_ff) {
+      node.right = right;
     }
 
     nodes.push(node);
   }
 
-  // Reconstruct parent-child relationships
+  // Rebuild parent pointers from the explicit left/right children.
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    if (node.parent !== undefined) {
-      const parent = nodes[node.parent];
-      if (parent.left === undefined) {
-        parent.left = i;
-      } else {
-        parent.right = i;
-      }
+    if (node.left !== undefined) {
+      nodes[node.left].parent = i;
     }
-  }
-  // Odd-level nodes duplicate left as right in buildMerkleTree
-  for (const node of nodes) {
-    if (node.left !== undefined && node.right === undefined) {
-      node.right = node.left;
+    if (node.right !== undefined) {
+      nodes[node.right].parent = i;
     }
   }
 
@@ -352,6 +435,45 @@ export interface FilePart {
 }
 
 /**
+ * Read a whole {@link ReadableStream} into a single contiguous buffer.
+ *
+ * Uses the reader API (`getReader().read()`) rather than `for await ... of`
+ * because async iteration of a `ReadableStream` is not supported in Safari (and
+ * older Chrome) — only Firefox, Node, and Bun implement it. The reader API works
+ * everywhere.
+ *
+ * @param source - The byte stream to drain
+ * @param fileSize - Expected size (used to pre-size the buffer); may be 0/unknown
+ * @param fallbackSize - Initial buffer size when `fileSize` is not positive
+ */
+async function readStreamFully(
+  source: ReadableStream<Uint8Array>,
+  fileSize: number,
+  fallbackSize: number,
+): Promise<{ buf: Uint8Array; writePos: number }> {
+  let buf = new Uint8Array(fileSize > 0 ? fileSize : fallbackSize);
+  let writePos = 0;
+  const reader = source.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.length === 0) continue;
+      if (writePos + value.length > buf.length) {
+        const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + value.length));
+        newBuf.set(buf.subarray(0, writePos), 0);
+        buf = newBuf;
+      }
+      buf.set(value, writePos);
+      writePos += value.length;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { buf, writePos };
+}
+
+/**
  * Process a file into {@link FilePart} objects with merkle proofs, returning
  * all parts as an array. Encrypts and hashes all chunks in parallel using
  * `Promise.all` and builds the merkle tree in one pass.
@@ -375,17 +497,7 @@ export async function processFile(
   const encrypted = !!encryptChunk;
 
   // Read entire stream into a single buffer
-  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
-  let writePos = 0;
-  for await (const incoming of source) {
-    if (writePos + incoming.length > buf.length) {
-      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
-      newBuf.set(buf.subarray(0, writePos), 0);
-      buf = newBuf;
-    }
-    buf.set(incoming, writePos);
-    writePos += incoming.length;
-  }
+  const { buf, writePos } = await readStreamFully(source, fileSize, chunkSize);
 
   const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
   const rawChunks: Uint8Array[] = [];
@@ -483,17 +595,7 @@ export async function processFileStreaming(
   const encrypted = !!encryptChunk;
 
   // Read entire stream into a single buffer (same as processFile).
-  let buf = new Uint8Array(fileSize > 0 ? fileSize : chunkSize);
-  let writePos = 0;
-  for await (const incoming of source) {
-    if (writePos + incoming.length > buf.length) {
-      const newBuf = new Uint8Array(Math.max(buf.length * 2, writePos + incoming.length));
-      newBuf.set(buf.subarray(0, writePos), 0);
-      buf = newBuf;
-    }
-    buf.set(incoming, writePos);
-    writePos += incoming.length;
-  }
+  const { buf, writePos } = await readStreamFully(source, fileSize, chunkSize);
 
   const totalChunks = writePos === 0 ? 1 : Math.ceil(writePos / chunkSize);
   const encoded: Uint8Array[] = Array.from({ length: totalChunks });

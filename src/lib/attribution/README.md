@@ -232,15 +232,17 @@ const activity = getActivity(contentMap, {
   from: startTimestamp, // optional, ms
   to: endTimestamp, // optional, ms
   userId: "user-123", // optional
-  attributes: { "insert:source": "ai" }, // optional, equality match
+  attributes: { source: "ai" }, // optional, equality match
+  groupingWindowMs: 1000, // optional, default 1000
 });
-// → [{ from, to, userId, attributes: { insert, insertAt, "insert:source", ... } }, ...]
+// → [{ from, to, userId, attributes: { insert, insertAt, source, ... } }, ...]
 ```
 
 Each entry includes an `attributes` record containing all attributes (standard and custom)
-on the underlying operations. Adjacent entries from the same user within 1 second are
-grouped into a single entry, but only when their `attributes` records are identical —
-entries from the same user but different custom attributes stay separate.
+on the underlying operations. Adjacent entries from the same user within `groupingWindowMs`
+(default 1000ms) are grouped into a single entry, but only when their custom attributes
+are equal -- entries from the same user but different custom attributes stay separate.
+Set `groupingWindowMs: 0` to disable grouping entirely.
 
 ### Point Lookup
 
@@ -280,7 +282,7 @@ All public API is exported from `teleportal/attribution`:
 
 ```typescript
 // Data structures
-(ContentAttribute, createContentAttribute);
+(ContentAttribute, createContentAttribute, attrsToRecord, recordToAttrs);
 (IdSet, IdRange, IdRanges, MaybeIdRange, ContentIds, createContentIds);
 (IdMap, AttrRange, MaybeAttrRange, AttrRanges, ContentMap, createContentMap);
 

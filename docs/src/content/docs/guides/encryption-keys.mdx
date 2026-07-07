@@ -1,0 +1,180 @@
+---
+title: Encryption Keys
+description: Create, share, and manage encryption keys for end-to-end encrypted documents
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Content-level end-to-end encryption is on by default in Teleportal. Every `Provider` requires an `encryptionKey` -- a `CryptoKey` produced by `createEncryptionKey()` or `importEncryptionKey()`. The key never reaches the server; all encryption and decryption happens client-side using AES-256-GCM via the Web Crypto API.
+
+This guide covers creating, sharing, storing, and distributing encryption keys.
+
+## What it demonstrates
+
+- Creating and exporting encryption keys
+- Sharing keys via URL fragments
+- Importing keys from strings
+- Key wrapping for secure storage
+- Three tiers of key distribution (direct, password, registry)
+
+## Creating an Encryption Key
+
+Generate a new 256-bit AES-GCM key with `createEncryptionKey()`:
+
+```typescript
+import { createEncryptionKey } from "teleportal/encryption-key";
+import { Provider } from "teleportal/providers";
+
+const encryptionKey = await createEncryptionKey();
+
+const provider = await Provider.create({
+  url: "wss://example.com/sync",
+  document: "my-doc",
+  encryptionKey,
+});
+```
+
+<Aside type="note">
+  To deliberately run a plaintext document without encryption, pass `encryptionKey: false`. Omitting
+  the key entirely throws an error.
+</Aside>
+
+## Exporting and Importing Keys
+
+Keys can be exported to a JWK string for storage or transfer, then imported back:
+
+```typescript
+import {
+  createEncryptionKey,
+  exportEncryptionKey,
+  importEncryptionKey,
+} from "teleportal/encryption-key";
+
+// Export to a storable string
+const key = await createEncryptionKey();
+const keyString = await exportEncryptionKey(key);
+
+// Store the keyString in localStorage, a database, etc.
+localStorage.setItem("doc-key", keyString);
+
+// Import it back later
+const stored = localStorage.getItem("doc-key");
+const importedKey = await importEncryptionKey(stored);
+```
+
+## Sharing Keys via URL Fragments
+
+The safest way to share a key in a browser is via the URL fragment (the part after `#`). Browsers never send the fragment to the server, so the key stays client-side:
+
+```typescript
+import {
+  createEncryptionKey,
+  exportEncryptionKey,
+  importEncryptionKey,
+  keyToUrlFragment,
+  keyFromUrlFragment,
+} from "teleportal/encryption-key";
+
+// Sharer: create a shareable link
+const key = await createEncryptionKey();
+const shareUrl = `https://app.example.com/doc/abc123#${keyToUrlFragment(await exportEncryptionKey(key))}`;
+// e.g. https://app.example.com/doc/abc123#token=<key>
+
+// Recipient: extract the key from the URL
+const keyString = keyFromUrlFragment(location.hash); // string | null
+if (keyString) {
+  const sharedKey = await importEncryptionKey(keyString);
+  // Use sharedKey with Provider.create
+}
+```
+
+`keyFromUrlFragment` accepts the raw `location.hash` (with or without a leading `#`) and returns `null` when no `token` parameter is present.
+
+## Password-Derived Keys
+
+For simple multi-user scenarios, derive a per-document key from a shared passphrase. No server involvement is needed -- anyone with the passphrase can decrypt:
+
+```typescript
+import { passwordKey } from "teleportal/encryption-key";
+
+const provider = await Provider.create({
+  url: "wss://example.com/sync",
+  document: "my-doc",
+  encryptionKey: passwordKey("shared-passphrase"),
+});
+```
+
+The `passwordKey` resolver uses PBKDF2 internally to derive a unique AES-256-GCM key for each document from the passphrase.
+
+## Key Registry (Server-Managed Distribution)
+
+For multi-user applications that need per-user access control and key revocation, use the key registry protocol. The server stores wrapped (encrypted) copies of the document key for each user. Clients unwrap their copy locally -- the server never sees the plaintext key.
+
+### Server Setup
+
+```typescript
+import { Server } from "teleportal/server";
+import {
+  getKeyRegistryRpcHandlers,
+  getKeyRegistryHandlers,
+} from "teleportal/protocols/key-registry";
+
+const keyRegistryStorage = new InMemoryKeyRegistryStorage();
+const MASTER_SECRET = new TextEncoder().encode(process.env.MASTER_SECRET!);
+
+const server = new Server({
+  storage: async (ctx) => new MemoryDocumentStorage(ctx.encrypted),
+  rpcHandlers: {
+    ...getKeyRegistryRpcHandlers(keyRegistryStorage),
+  },
+});
+
+// HTTP handlers for key management (called by your app server, not clients)
+const keyHandlers = getKeyRegistryHandlers({
+  storage: keyRegistryStorage,
+  masterSecret: MASTER_SECRET,
+});
+```
+
+### Client Setup
+
+The `registryKey` resolver fetches the wrapped key via RPC and unwraps it locally using the wrapping key embedded in the user's JWT:
+
+```typescript
+import { Provider } from "teleportal/providers";
+import { registryKey, importWrappingKey } from "teleportal/encryption-key";
+import { createKeyRegistryRpc } from "teleportal/protocols/key-registry";
+
+// wrappingKey comes from the JWT issued by your app server
+const wrappingKey = await importWrappingKey(tokenPayload.wrappingKey);
+
+const provider = await Provider.create({
+  url: "wss://example.com/sync",
+  document: "my-doc",
+  encryptionKey: registryKey({ wrappingKey }),
+  rpc: { keys: createKeyRegistryRpc },
+});
+```
+
+## Choosing a Key Distribution Tier
+
+| Tier           | Mechanism                                     | Per-User Revocation | Server Involvement | Best For                            |
+| -------------- | --------------------------------------------- | ------------------- | ------------------ | ----------------------------------- |
+| **Direct key** | `encryptionKey: key` or URL fragment          | No                  | None               | Quick sharing, demos                |
+| **Password**   | `encryptionKey: passwordKey("...")`           | No                  | None               | Shared workspaces, simple apps      |
+| **Registry**   | `encryptionKey: registryKey({ wrappingKey })` | Yes                 | Full               | Multi-user apps with access control |
+
+All three tiers use the same `encryptionKey` option on `Provider.create`. You can start with direct keys and migrate to the registry later without changing the rest of your code.
+
+## Best Practices
+
+- **Never send keys to your server.** Use URL fragments, out-of-band channels, or the key registry for distribution.
+- **Store exported keys securely.** If you persist a key string in localStorage or a database, treat it as a secret.
+- **Use the key registry for production multi-user apps.** It provides per-user revocation, key rotation, and audit via generation counters.
+- **Rotate keys when revoking access.** Removing a user's wrapped key prevents future access, but rotating the document key ensures they cannot decrypt new content even if they cached the old key.
+
+## Next Steps
+
+- [File Transfers](/docs/guides/file-transfers/) - Upload and download encrypted files
+- [Authentication](/docs/guides/authentication/) - Token-based authentication setup
+- [Custom RPC Methods](/docs/guides/rpc-extensions/) - Extend the protocol with custom operations

@@ -1,4 +1,4 @@
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import type { MerkleTree } from "teleportal/merkle-tree";
 import { buildMerkleTree, serializeMerkleTree } from "teleportal/merkle-tree";
 import type { Storage } from "unstorage";
@@ -9,6 +9,7 @@ import type {
   TemporaryUploadStorage,
   UploadProgress,
 } from "../types";
+import { bytesEqual } from "../utils";
 
 /**
  * Default upload timeout in milliseconds (24 hours)
@@ -58,10 +59,24 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
   async beginUpload(uploadId: string, metadata: FileMetadata): Promise<void> {
     const sessionKey = this.#getUploadSessionKey(uploadId);
-    const existing = await this.#storage.getItem(sessionKey);
+    const existing = await this.#storage.getItem<{
+      metadata: FileMetadata;
+      documentIds?: string[];
+    }>(sessionKey);
     if (existing) {
+      // Content-addressed sessions may be shared across documents; the content
+      // must match, only the referencing document may differ.
+      if (
+        existing.metadata.size !== metadata.size ||
+        existing.metadata.encrypted !== metadata.encrypted
+      ) {
+        throw new Error(`Upload session ${uploadId} already exists with conflicting metadata`);
+      }
+      const documentIds = new Set(existing.documentIds ?? [existing.metadata.documentId]);
+      documentIds.add(metadata.documentId);
       await this.#storage.setItem(sessionKey, {
         ...(existing as Record<string, unknown>),
+        documentIds: [...documentIds],
         lastActivity: Date.now(),
       });
       return;
@@ -74,6 +89,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       },
       bytesUploaded: 0,
       chunkCount: 0,
+      documentIds: [metadata.documentId],
       lastActivity: Date.now(),
     });
   }
@@ -99,6 +115,20 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     const chunkKey = this.#getChunkKey(uploadId, chunkIndex);
     const existing = await this.#storage.getItemRaw<Uint8Array>(chunkKey);
 
+    if (existing) {
+      // Refuse to overwrite an already-stored chunk with different bytes — a
+      // content-addressed session id is guessable, so this guards against a
+      // third party poisoning an in-flight upload. Identical bytes are a
+      // harmless retransmit; leave storage untouched.
+      if (!bytesEqual(existing, chunkData)) {
+        throw new Error(
+          `Chunk ${chunkIndex} for upload ${uploadId} conflicts with already-stored data`,
+        );
+      }
+      const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
+      return { storedChunks: chunkKeys.length };
+    }
+
     await this.#storage.setItemRaw(chunkKey, chunkData);
 
     // Derive the count from actual persisted keys to avoid stale read-modify-write races
@@ -106,11 +136,10 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
     const chunkKeys = await this.#storage.getKeys(chunkPrefix);
     const storedChunks = chunkKeys.length;
 
-    const prevBytes = existing ? existing.length : 0;
     await this.#storage.setItem(sessionKey, {
       ...sessionData,
       lastActivity: Date.now(),
-      bytesUploaded: sessionData.bytesUploaded - prevBytes + chunkData.length,
+      bytesUploaded: sessionData.bytesUploaded + chunkData.length,
       chunkCount: storedChunks,
     });
 
@@ -157,6 +186,12 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       throw new Error(`Upload session ${uploadId} not found`);
     }
 
+    const sessionData = await this.#storage.getItem<{
+      metadata: FileMetadata;
+      documentIds?: string[];
+    }>(this.#getUploadSessionKey(uploadId));
+    const documentIds = sessionData?.documentIds ?? [progress.metadata.documentId];
+
     for (let i = 0; i < totalChunks; i++) {
       if (!progress.chunks.get(i)) {
         throw new Error(`Missing chunk ${i} for upload ${uploadId}`);
@@ -188,46 +223,30 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
 
     const finalFileId = fileId ?? computedFileId;
 
-    // Track which chunks have been fetched via getChunk
-    const fetchedChunks = new Set<number>();
-
-    // Release chunksInOrder array to allow GC (we've computed the merkle tree)
-    // Chunks remain in storage and will be retrieved via getChunk
-
+    // Chunks are NOT deleted here; they remain until deleteUpload so a failed
+    // durable store leaves the session intact and retriable.
     return {
       progress,
       fileId: finalFileId,
       contentId: rootHash,
       totalChunks,
+      documentIds,
       serializedMerkleTree: serializeMerkleTree(merkleTree),
       getChunk: async (chunkIndex: number) => {
-        // Check if chunk was already fetched (one-time use)
-        if (fetchedChunks.has(chunkIndex)) {
-          throw new Error(
-            `Chunk ${chunkIndex} has already been fetched for upload ${uploadId}. Chunks can only be fetched once.`,
-          );
-        }
-
         const chunkKey = this.#getChunkKey(uploadId, chunkIndex);
         const stored = await this.#storage.getItemRaw<Uint8Array>(chunkKey);
         if (!stored) {
           throw new Error(`Chunk ${chunkIndex} not found for upload ${uploadId}`);
         }
-
-        // Mark as fetched and delete from temporary storage
-        fetchedChunks.add(chunkIndex);
-        await this.#storage.removeItem(chunkKey);
-
-        // Check if all chunks have been fetched and clean up session
-        const remainingChunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
-        if (remainingChunkKeys.length === 0) {
-          // All chunks have been fetched, clean up the session
-          await this.#storage.removeItem(this.#getUploadSessionKey(uploadId));
-        }
-
         return stored;
       },
     };
+  }
+
+  async deleteUpload(uploadId: string): Promise<void> {
+    const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
+    await Promise.all(chunkKeys.map((k) => this.#storage.removeItem(k)));
+    await this.#storage.removeItem(this.#getUploadSessionKey(uploadId));
   }
 
   async cleanupExpiredUploads(): Promise<void> {
@@ -248,11 +267,7 @@ export class UnstorageTemporaryUploadStorage implements TemporaryUploadStorage {
       if (!progress) continue;
 
       if (now - progress.lastActivity > this.#uploadTimeoutMs) {
-        // Delete chunks
-        const chunkKeys = await this.#storage.getKeys(this.#getChunkKeyPrefix(uploadId));
-        await Promise.all(chunkKeys.map((k) => this.#storage.removeItem(k)));
-        // Delete session metadata
-        await this.#storage.removeItem(this.#getUploadSessionKey(uploadId));
+        await this.deleteUpload(uploadId);
       }
     }
   }

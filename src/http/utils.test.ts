@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getDocumentsFromQueryParams } from "./utils";
+import { decodeHTTPRequest, getDocumentsFromQueryParams } from "./utils";
 
 describe("getDocumentsFromQueryParams", () => {
   it("should extract single document from query parameter (encrypted by default)", () => {
@@ -188,5 +188,32 @@ describe("getDocumentsFromQueryParams", () => {
       { document: "doc-1", encrypted: true },
       { document: "doc-2", encrypted: false },
     ]);
+  });
+});
+
+describe("decodeHTTPRequest", () => {
+  it("should throw if x-teleportal-client-id header is missing", () => {
+    const response = new Response(new ReadableStream(), {
+      headers: {},
+    });
+    expect(() => decodeHTTPRequest(response)).toThrow(
+      "Response is missing the x-teleportal-client-id header",
+    );
+  });
+
+  it("should throw if response has no body", () => {
+    const response = new Response(null, {
+      headers: { "x-teleportal-client-id": "test-client" },
+    });
+    expect(() => decodeHTTPRequest(response)).toThrow("Response has no body");
+  });
+
+  it("should return an async iterable for a valid response", () => {
+    const response = new Response(new ReadableStream(), {
+      headers: { "x-teleportal-client-id": "test-client" },
+    });
+    const result = decodeHTTPRequest(response);
+    expect(result).toBeDefined();
+    expect(result[Symbol.asyncIterator]).toBeDefined();
   });
 });

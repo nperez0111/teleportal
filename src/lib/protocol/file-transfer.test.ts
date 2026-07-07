@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fromBase64, toBase64 } from "lib0/buffer";
+import { fromBase64, toBase64 } from "teleportal/utils";
 import { buildMerkleTree, generateMerkleProof, verifyMerkleProof } from "teleportal/merkle-tree";
 import { RpcMessage } from "teleportal/protocol";
 import type { FilePartStream } from "../../protocols/file/methods";
@@ -31,6 +31,7 @@ describe("FileTransferProtocol.Client - file-part only", () => {
           chunk.merkleProof,
           fromBase64(fileId),
           chunk.chunkIndex,
+          chunk.totalChunks,
         );
       }
     }
@@ -115,6 +116,7 @@ describe("FileTransferProtocol.Client - file-part only", () => {
           chunk.merkleProof,
           fromBase64(fileId),
           chunk.chunkIndex,
+          chunk.totalChunks,
         );
       }
     }

@@ -1,7 +1,7 @@
 import { Observable, type BinaryMessage, type Message, type RawReceivedMessage } from "teleportal";
 import { decodeMessage } from "teleportal/protocol";
 import { createFanOutWriter, type FanOutReader } from "teleportal/transports";
-import type { ConnectionState, ConnectionEvents } from "../types";
+import type { ConnectionDiagnostics, ConnectionState, ConnectionEvents } from "../types";
 import type { DownstreamMessage, UpstreamMessage } from "./protocol";
 
 const RPC_TIMEOUT_MS = 30_000;
@@ -17,6 +17,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   #availableTransports: string[] = [];
   #destroyed = false;
   #inFlightMessageCount = 0;
+  #diagnostics: ConnectionDiagnostics | null = null;
 
   #connectedPromise: Promise<void> | null = null;
   #connectedResolve: (() => void) | null = null;
@@ -42,9 +43,16 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
 
   #heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   #missedHeartbeats = 0;
+  #heartbeatIntervalMs = 5000;
+  #heartbeatMaxMisses = 2;
+  /** True after the heartbeat declared the worker dead (see startHeartbeat). */
+  #heartbeatDead = false;
+  /** State to restore if the worker turns out to be alive after all. */
+  #stateBeforeHeartbeatTimeout: ConnectionState | null = null;
   #onWorkerDeath?: () => void;
   #onlineHandler: (() => void) | null = null;
   #offlineHandler: (() => void) | null = null;
+  #pagehideHandler: ((event: Event) => void) | null = null;
 
   constructor(port: MessagePort, options?: { onWorkerDeath?: () => void }) {
     super();
@@ -59,6 +67,14 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   }
 
   #handleMessage(msg: DownstreamMessage): void {
+    // Any downstream traffic proves the worker is alive — count it as a
+    // heartbeat ack. When the main thread is congested (e.g. heartbeat-acks
+    // queued behind megabyte file-download parts), the acks alone can arrive
+    // too late even though the worker is healthy and delivering data.
+    this.#missedHeartbeats = 0;
+    if (this.#heartbeatDead) {
+      this.#reviveFromHeartbeatTimeout();
+    }
     switch (msg.type) {
       case "ready":
       case "state-update":
@@ -99,6 +115,10 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
 
       case "heartbeat-ack":
         this.#missedHeartbeats = 0;
+        break;
+
+      case "diagnostics":
+        this.#diagnostics = msg.diagnostics;
         break;
 
       case "file-upload-result": {
@@ -153,10 +173,13 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   // `disconnected` events on the client side. The worker forwards state via
   // `ready`/`state-update` messages (not as generic events) precisely so these
   // aren't dispatched twice — see ConnectionWorkerManager.#setupEventForwarding.
-  // The transition conditions mirror DirectConnection.#setState.
+  // The transition conditions and emission order mirror DirectConnection.#setState:
+  // `update` fires first, then `connected`/`disconnected`.
   #updateState(newState: ConnectionState): void {
     const prev = this.#state;
     this.#state = newState;
+
+    this.call("update", newState);
 
     if (newState.type === "connected") {
       if (this.#connectedResolve) {
@@ -169,10 +192,6 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
         this.call("connected");
       }
     } else if (newState.type === "disconnected") {
-      // Matches DirectConnection: emit on any transition into `disconnected`
-      // (e.g. `connecting` → `disconnected`), not just from `connected`. The
-      // `connected` promise is left pending so it resolves on a later reconnect
-      // rather than hanging its awaiters.
       if (prev.type !== "disconnected") {
         this.call("disconnected");
       }
@@ -184,8 +203,6 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
         this.#connectedReject = null;
       }
     }
-
-    this.call("update", newState);
   }
 
   #postUpstream(msg: UpstreamMessage, transfer?: Transferable[]): void {
@@ -229,6 +246,31 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
 
   get inFlightMessageCount(): number {
     return this.#inFlightMessageCount;
+  }
+
+  /** Consecutive tab↔worker heartbeats without an ack (resets on each ack). */
+  get missedHeartbeats(): number {
+    return this.#missedHeartbeats;
+  }
+
+  /**
+   * Last diagnostics snapshot received from the worker. Reading it requests a
+   * fresh snapshot, so pollers (e.g. devtools) see at-most-one-read-stale data.
+   */
+  get diagnostics(): ConnectionDiagnostics {
+    if (!this.#destroyed) {
+      this.#postUpstream({ type: "get-diagnostics" });
+    }
+    return (
+      this.#diagnostics ?? {
+        batchIntervalMs: 0,
+        maxBatchIntervalMs: 0,
+        bufferedMessageCount: 0,
+        reconnectAttempt: 0,
+        maxReconnectAttempts: 0,
+        online: true,
+      }
+    );
   }
 
   get connected(): Promise<void> {
@@ -281,6 +323,7 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
     this.#destroyed = true;
     this.#stopHeartbeat();
     this.#stopListeningForNetworkStatus();
+    this.#stopListeningForPageHide();
     this.#postUpstream({ type: "destroy", tabId: "" });
     this.#fanOutWriter.close();
     this.#port.close();
@@ -369,21 +412,74 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
     }
   }
 
+  // --- Page lifecycle ---
+
+  /**
+   * Destroy the connection when the page is being discarded, so the worker
+   * releases this tab's port (and retracts its presence) immediately instead
+   * of waiting for the port `close` event or the stale sweep. Skipped when the
+   * page enters the back/forward cache (`persisted`), since it may come back
+   * with this connection still live.
+   */
+  listenForPageHide(): void {
+    this.#stopListeningForPageHide();
+    if (typeof globalThis.addEventListener !== "function") return;
+    this.#pagehideHandler = (event: Event) => {
+      if ((event as PageTransitionEvent).persisted) return;
+      void this.destroy();
+    };
+    globalThis.addEventListener("pagehide", this.#pagehideHandler);
+  }
+
+  #stopListeningForPageHide(): void {
+    if (this.#pagehideHandler) {
+      globalThis.removeEventListener("pagehide", this.#pagehideHandler);
+      this.#pagehideHandler = null;
+    }
+  }
+
   // --- Heartbeat ---
 
   startHeartbeat(intervalMs = 5000, maxMisses = 2): void {
     this.#stopHeartbeat();
+    this.#heartbeatIntervalMs = intervalMs;
+    this.#heartbeatMaxMisses = maxMisses;
     this.#missedHeartbeats = 0;
+    this.#heartbeatDead = false;
     this.#heartbeatInterval = setInterval(() => {
       this.#missedHeartbeats++;
       if (this.#missedHeartbeats > maxMisses) {
+        // Presumed dead — but not terminal: if any downstream message arrives
+        // later (the worker was alive and merely starved of event-loop time),
+        // #handleMessage revives the connection. Without that path a single
+        // false positive bricked the tab until a full page reload.
         this.#stopHeartbeat();
+        this.#heartbeatDead = true;
+        this.#stateBeforeHeartbeatTimeout = this.#state;
         this.#updateState({ type: "errored", error: new Error("Worker heartbeat timeout") });
         this.#onWorkerDeath?.();
         return;
       }
       this.#postUpstream({ type: "heartbeat" });
     }, intervalMs);
+  }
+
+  /**
+   * The heartbeat declared the worker dead, yet a message just arrived from
+   * it — the timeout was a false positive (typically a congested main thread
+   * delaying ack delivery, not an actual worker crash). Restore the last live
+   * state and restart the heartbeat. If the underlying connection state
+   * really changed meanwhile, the worker's next `state-update` corrects it.
+   */
+  #reviveFromHeartbeatTimeout(): void {
+    if (this.#destroyed) return;
+    this.#heartbeatDead = false;
+    const prior = this.#stateBeforeHeartbeatTimeout;
+    this.#stateBeforeHeartbeatTimeout = null;
+    if (prior && this.#state.type === "errored") {
+      this.#updateState(prior);
+    }
+    this.startHeartbeat(this.#heartbeatIntervalMs, this.#heartbeatMaxMisses);
   }
 
   #stopHeartbeat(): void {

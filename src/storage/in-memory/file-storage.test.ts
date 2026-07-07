@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { toBase64 } from "lib0/buffer";
+import { toBase64 } from "teleportal/utils";
 import { buildMerkleTree, CHUNK_SIZE } from "teleportal/merkle-tree";
 import { InMemoryFileStorage } from "./file-storage";
 import { InMemoryTemporaryUploadStorage } from "./temporary-upload-storage";
@@ -94,7 +94,7 @@ describe("InMemoryFileStorage", () => {
       documentId: "test-doc",
     });
 
-    // Wait for expiration
+    // Wait for TTL (1ms) to expire — strict > check requires at least 2ms
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     await temp.cleanupExpiredUploads();
@@ -103,7 +103,7 @@ describe("InMemoryFileStorage", () => {
     expect(progress).toBeNull();
   });
 
-  it("should cleanup upload session after all chunks are fetched via getChunk", async () => {
+  it("keeps chunks fetchable via getChunk and cleans up only on deleteUpload", async () => {
     const storage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage();
     storage.temporaryUploadStorage = temp;
@@ -137,23 +137,23 @@ describe("InMemoryFileStorage", () => {
     let progress = await temp.getUploadProgress(uploadId);
     expect(progress).not.toBeNull();
 
-    // Fetch all chunks via getChunk
+    // Fetch all chunks via getChunk — this no longer mutates the session.
     const chunk0 = await result.getChunk(0);
     expect(chunk0).toEqual(chunks[0]);
-
-    // Session should still exist (not all chunks fetched yet)
-    progress = await temp.getUploadProgress(uploadId);
-    expect(progress).not.toBeNull();
 
     const chunk1 = await result.getChunk(1);
     expect(chunk1).toEqual(chunks[1]);
 
-    // Session should be cleaned up after all chunks are fetched
+    // Session persists until explicitly deleted (so a failed durable store is retriable).
+    progress = await temp.getUploadProgress(uploadId);
+    expect(progress).not.toBeNull();
+
+    await temp.deleteUpload(uploadId);
     progress = await temp.getUploadProgress(uploadId);
     expect(progress).toBeNull();
   });
 
-  it("should prevent double fetching of chunks via getChunk", async () => {
+  it("allows re-fetching a chunk via getChunk (idempotent, not one-time)", async () => {
     const storage = new InMemoryFileStorage();
     const temp = new InMemoryTemporaryUploadStorage();
     storage.temporaryUploadStorage = temp;
@@ -179,12 +179,11 @@ describe("InMemoryFileStorage", () => {
     await temp.storeChunk(uploadId, 0, chunks[0], []);
     const result = await temp.completeUpload(uploadId, chunks.length, fileId);
 
-    // First fetch should succeed
+    // Fetching the same chunk twice returns the same bytes (retriable store).
     const chunk = await result.getChunk(0);
     expect(chunk).toEqual(chunks[0]);
-
-    // Second fetch should fail
-    await expect(result.getChunk(0)).rejects.toThrow("Chunk 0 has already been fetched");
+    const again = await result.getChunk(0);
+    expect(again).toEqual(chunks[0]);
   });
 
   it("should allow moving chunks from in-memory temp storage to unstorage file storage", async () => {
@@ -231,9 +230,10 @@ describe("InMemoryFileStorage", () => {
     expect(file).not.toBeNull();
     expect(file!.chunks).toEqual(chunks);
 
-    // Verify temp storage session is cleaned up after fetching chunks
-    const progress = await temp.getUploadProgress(uploadId);
-    expect(progress).toBeNull();
+    // The temp session survives the store (retriable); clean it up explicitly.
+    expect(await temp.getUploadProgress(uploadId)).not.toBeNull();
+    await temp.deleteUpload(uploadId);
+    expect(await temp.getUploadProgress(uploadId)).toBeNull();
   });
 
   describe("deleteFile", () => {

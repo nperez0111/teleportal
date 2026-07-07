@@ -1,4 +1,4 @@
-import * as Y from "yjs";
+import type * as Y from "yjs";
 import { type MilestoneSnapshot } from "teleportal";
 import {
   decodeContentEncryptedPayload,
@@ -7,18 +7,22 @@ import {
 } from "teleportal/protocol/encryption";
 import {
   changesetContentMap,
+  createContentIdsFromContentMap,
   createContentIdsFromUpdate,
   decodeContentMap,
+  encodeContentIds,
   getActivity as getActivityFromMap,
+  mergeContentMaps,
   milestoneContentMap,
   resolveItemAttribution,
   type ActivityEntry,
   type ContentIds,
   type ContentMap,
 } from "teleportal/attribution";
-import { createClientExtension } from "teleportal/rpc";
+import type { EncodedContentMap } from "teleportal/storage";
+import { createClientExtension, type RpcExtension } from "teleportal/rpc";
 import type { MilestoneGetResponse } from "../milestone/methods";
-import { resolveRangeAttribution } from "./resolve";
+import { resolveDeletedRangeAttribution, resolveRangeAttribution } from "./resolve";
 import {
   attributionProtocol,
   type ActivityOptions,
@@ -42,6 +46,14 @@ export type AttributionRpc = {
     index: number,
     length: number,
   ): Promise<AttributedSegment[]>;
+  /** Resolve who deleted content within a range. */
+  getDeletedForRange(
+    type: Y.AbstractType<any>,
+    index: number,
+    length: number,
+  ): Promise<AttributedSegment[]>;
+  /** Merge an incremental ContentMap into the local cache (e.g. from a push). */
+  mergeIncremental(contentMap: ContentMap): void;
   invalidateCache(): void;
   getMilestoneContentMap(milestoneId: string): Promise<ContentMap | null>;
   getChangesetContentMap(
@@ -50,14 +62,15 @@ export type AttributionRpc = {
   ): Promise<ContentMap | null>;
 };
 
-export const createAttributionRpc = createClientExtension(attributionProtocol, {
-  destroy() {
-    // Handled by the extension instance lifecycle — cachedMap is scoped
-    // per-build closure, so nothing to do here.
-  },
-
+const attributionExtension = createClientExtension(attributionProtocol, {
   build(methods, ctx): AttributionRpc {
     let cachedMap: ContentMap | null | undefined;
+    let cachedIds: ContentIds | undefined;
+
+    function setCachedMap(map: ContentMap | null) {
+      cachedMap = map;
+      cachedIds = map ? createContentIdsFromContentMap(map) : undefined;
+    }
 
     /**
      * Fetch and decode the attribution ContentMap, caching when unfiltered.
@@ -66,19 +79,39 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
       const response = await methods.get(filter ? { filter } : {});
       const decoded = response.contentMap ? decodeContentMap(response.contentMap) : null;
       if (!filter) {
-        cachedMap = decoded;
+        setCachedMap(decoded);
       }
       return decoded;
     }
 
     /**
-     * Ensure the cached ContentMap is loaded, fetching once if needed.
+     * Ensure the cached ContentMap is loaded, fetching incrementally when
+     * possible (only the ranges the client doesn't already have).
      */
     async function ensureMap(): Promise<ContentMap | null> {
       if (cachedMap === undefined) {
         await getMap();
+        return cachedMap ?? null;
+      }
+      if (cachedMap && cachedIds) {
+        const response = await methods.getIncremental({
+          knownIds: encodeContentIds(cachedIds),
+        });
+        if (response.contentMap) {
+          const diff = decodeContentMap(response.contentMap);
+          const merged = mergeContentMaps([cachedMap, diff]);
+          setCachedMap(merged);
+        }
       }
       return cachedMap ?? null;
+    }
+
+    function mergeIncremental(incoming: ContentMap) {
+      if (cachedMap) {
+        setCachedMap(mergeContentMaps([cachedMap, incoming]));
+      } else {
+        setCachedMap(incoming);
+      }
     }
 
     /**
@@ -142,7 +175,7 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
       return changesetContentMap(map, fromIds, toIds);
     }
 
-    return {
+    const api: AttributionRpc = {
       /**
        * Attribution activity timeline — who did what, when?
        *
@@ -200,6 +233,18 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
         return resolveRangeAttribution(type, index, length, map);
       },
 
+      async getDeletedForRange(
+        type: Y.AbstractType<any>,
+        index: number,
+        length: number,
+      ): Promise<AttributedSegment[]> {
+        const map = await ensureMap();
+        if (!map) return [];
+        return resolveDeletedRangeAttribution(type, index, length, map);
+      },
+
+      mergeIncremental,
+
       /**
        * Invalidate the cached attribution ContentMap. The next call to
        * resolveItem, getForRange, or any milestone method will re-fetch
@@ -207,11 +252,62 @@ export const createAttributionRpc = createClientExtension(attributionProtocol, {
        */
       invalidateCache(): void {
         cachedMap = undefined;
+        cachedIds = undefined;
       },
 
       getMilestoneContentMap,
 
       getChangesetContentMap,
     };
+
+    return api;
   },
 });
+
+/**
+ * Per-provider attribution extension factory.
+ *
+ * Each Provider (i.e. each document) gets its own extension instance with its
+ * own cache, captured in `create()`. `attributionPush` responses are merged
+ * only into the instance whose document matches the message, so having several
+ * documents open in the same context never cross-contaminates their attribution
+ * caches and destroying one provider never disables pushes for the others.
+ */
+export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
+  const base = attributionExtension();
+  let instance: AttributionRpc | undefined;
+  let document: string | undefined;
+
+  return {
+    create(ctx) {
+      document = ctx.document;
+      instance = base.create(ctx) as AttributionRpc;
+      return instance;
+    },
+
+    handleMessage(message) {
+      if (
+        message.rpcMethod === "attributionPush" &&
+        message.requestType === "response" &&
+        message.payload?.type === "success"
+      ) {
+        // Only merge pushes addressed to this instance's document; a shared
+        // connection can carry pushes belonging to other documents' extensions.
+        if (message.document !== document) return false;
+        const pushPayload = message.payload.payload as Record<string, unknown> | undefined;
+        const encoded = pushPayload?.contentMap as EncodedContentMap | undefined;
+        if (encoded && instance) {
+          instance.mergeIncremental(decodeContentMap(encoded));
+        }
+        return true;
+      }
+      return false;
+    },
+
+    destroy() {
+      base.destroy?.();
+      instance = undefined;
+      document = undefined;
+    },
+  };
+};

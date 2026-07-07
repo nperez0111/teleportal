@@ -1,0 +1,25 @@
+name = "teleportal-cloudflare-example"
+main = "src/worker.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+# Makes wrangler's bundler honor the teleportal/* -> ../../src paths, so the
+# server bundles straight from TypeScript source (no repo build needed).
+tsconfig = "./tsconfig.json"
+
+# The browser client (public/index.html + bundled client.js) is served as
+# static assets; requests that match no asset (everything under /api) fall
+# through to the Worker.
+[assets]
+directory = "./public"
+
+[[durable_objects.bindings]]
+name = "TELEPORTAL_DO"
+class_name = "TeleportalDurableObject"
+
+[[migrations]]
+tag = "v1"
+# SQLite-backed: available on the free plan, 2 MiB per stored value.
+new_sqlite_classes = ["TeleportalDurableObject"]
+
+[observability]
+enabled = true

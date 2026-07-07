@@ -243,6 +243,42 @@ describe("can encode and decode", () => {
     expect(decoded).toBeInstanceOf(AckMessage);
     if (decoded instanceof AckMessage) {
       expect(decoded.payload.messageId).toBe(originalMessageId);
+      expect(decoded.payload.retryAfter).toBeUndefined();
+      expect(decoded.payload.error).toBeUndefined();
+    }
+  });
+
+  it("nack (ack with retryAfter) preserves retryAfter through encode/decode", () => {
+    // Regression: retryAfter used to be stripped by the wire encoding, so a
+    // rate-limit NACK arrived as a clean ack over websocket — the client
+    // deleted the in-flight message instead of retransmitting it, silently
+    // losing the update.
+    const nack = new AckMessage({
+      type: "ack",
+      messageId: "dGVzdA==",
+      retryAfter: 1234,
+    });
+    const decoded = decodeMessage(nack.encoded);
+    expect(decoded).toBeInstanceOf(AckMessage);
+    if (decoded instanceof AckMessage) {
+      expect(decoded.payload.messageId).toBe("dGVzdA==");
+      expect(decoded.payload.retryAfter).toBe(1234);
+      expect(decoded.payload.error).toBeUndefined();
+    }
+  });
+
+  it("nack with error reason preserves the reason through encode/decode", () => {
+    const nack = new AckMessage({
+      type: "ack",
+      messageId: "dGVzdA==",
+      error: "message-too-large: 123 > 100 bytes",
+    });
+    const decoded = decodeMessage(nack.encoded);
+    expect(decoded).toBeInstanceOf(AckMessage);
+    if (decoded instanceof AckMessage) {
+      expect(decoded.payload.messageId).toBe("dGVzdA==");
+      expect(decoded.payload.retryAfter).toBeUndefined();
+      expect(decoded.payload.error).toBe("message-too-large: 123 > 100 bytes");
     }
   });
 
@@ -856,5 +892,146 @@ describe("empty state vector", () => {
 
   it("can detect a non-empty state vector", () => {
     expect(isEmptyStateVector(new Uint8Array([0x00, 0x01, 0x02, 0x03]) as StateVector)).toBe(false);
+  });
+});
+
+describe("edge cases", () => {
+  it("can encode and decode an awareness request message", () => {
+    const decoded = decodeMessage(
+      new AwarenessMessage("test-doc", {
+        type: "awareness-request",
+      }).encoded,
+    );
+    expect(decoded.type).toBe("awareness");
+    expect(decoded.payload).toEqual({ type: "awareness-request" });
+    expect(decoded.document).toBe("test-doc");
+  });
+
+  it("can encode and decode a V1 doc update", () => {
+    const decoded = decodeMessage(
+      new DocMessage("test", {
+        type: "update",
+        update: {
+          version: 1,
+          data: new Uint8Array([0x00, 0x01]) as any,
+        } as VersionedUpdate,
+      }).encoded,
+    );
+    expect(decoded.type).toBe("doc");
+    expect((decoded as any).payload.update.version).toBe(1);
+    expect((decoded as any).payload.update.data).toEqual(new Uint8Array([0x00, 0x01]));
+  });
+
+  it("can encode and decode an RPC error response without payload", () => {
+    const original = new RpcMessage(
+      "test-doc",
+      {
+        type: "error",
+        statusCode: 404,
+        details: "Not found",
+      },
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+    );
+
+    const encoded = original.encoded;
+    const decoded = decodeMessage(encoded);
+    expect(decoded.type).toBe("rpc");
+    expect((decoded as RpcMessage<any>).payload).toEqual({
+      type: "error",
+      statusCode: 404,
+      details: "Not found",
+      payload: undefined,
+    });
+  });
+
+  it("can encode and decode an RPC error response with payload", () => {
+    const original = new RpcMessage(
+      "test-doc",
+      {
+        type: "error",
+        statusCode: 500,
+        details: "Server error",
+        payload: { trace: "abc" },
+      },
+      "testMethod",
+      "response",
+      "request-123",
+      {},
+      false,
+    );
+
+    const encoded = original.encoded;
+    const decoded = decodeMessage(encoded);
+    expect((decoded as RpcMessage<any>).payload).toEqual({
+      type: "error",
+      statusCode: 500,
+      details: "Server error",
+      payload: { trace: "abc" },
+    });
+  });
+
+  it("rejects messages with invalid magic number", () => {
+    const bad = new Uint8Array([0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]);
+    expect(() => decodeMessage(bad as any)).toThrow("Invalid magic number");
+  });
+
+  it("rejects messages with invalid version", () => {
+    const bad = new Uint8Array([0x59, 0x4a, 0x53, 0x99, 0x00, 0x00, 0x00]);
+    expect(() => decodeMessage(bad as any)).toThrow("Invalid version");
+  });
+
+  it("message id is deterministic", () => {
+    const msg1 = new DocMessage("test", {
+      type: "update",
+      update: {
+        version: 2,
+        data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+      } as VersionedUpdate,
+    });
+    const msg2 = new DocMessage("test", {
+      type: "update",
+      update: {
+        version: 2,
+        data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
+      } as VersionedUpdate,
+    });
+    expect(msg1.id).toBe(msg2.id);
+  });
+
+  it("different messages produce different ids", () => {
+    const msg1 = new DocMessage("test", {
+      type: "update",
+      update: {
+        version: 2,
+        data: new Uint8Array([0x00, 0x01]) as Update,
+      } as VersionedUpdate,
+    });
+    const msg2 = new DocMessage("test", {
+      type: "update",
+      update: {
+        version: 2,
+        data: new Uint8Array([0x00, 0x02]) as Update,
+      } as VersionedUpdate,
+    });
+    expect(msg1.id).not.toBe(msg2.id);
+  });
+
+  it("encrypted flag round-trips for doc messages", () => {
+    const decoded = decodeMessage(
+      new DocMessage(
+        "test",
+        {
+          type: "sync-step-1",
+          sv: new Uint8Array([0x00]) as StateVector,
+        },
+        undefined,
+        true,
+      ).encoded,
+    );
+    expect(decoded.encrypted).toBe(true);
   });
 });

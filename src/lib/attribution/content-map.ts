@@ -80,45 +80,40 @@ export class AttrRanges {
       return this._ids;
     }
 
-    // Flatten the (possibly overlapping) input ranges into a sorted,
-    // non-overlapping sequence. Where ranges overlap with differing attrs the
-    // most-recently-added range (highest input index) wins the contested span;
-    // every non-contested span keeps its own attrs. Spans of every covering
-    // range — including the tail of a range that fully contains a later one —
-    // are preserved, then adjacent equal-attr spans are coalesced.
     const input = this._ids;
-    const boundaries = new Set<number>();
-    for (const range of input) {
-      boundaries.add(range.clock);
-      boundaries.add(range.clock + range.len);
+
+    // Tag with original insertion order before sorting, so the overlap
+    // resolver can determine last-writer-wins correctly.
+    const tagged = input.map((r, i) => ({ range: r, origIdx: i }));
+    tagged.sort((a, b) => a.range.clock - b.range.clock);
+
+    // Fast path: check if any ranges overlap. In the common case (merging
+    // attribution from different Y.js updates), ranges never overlap because
+    // each update produces unique operation IDs.
+    let hasOverlap = false;
+    for (let i = 1; i < tagged.length; i++) {
+      const prev = tagged[i - 1].range;
+      if (tagged[i].range.clock < prev.clock + prev.len) {
+        hasOverlap = true;
+        break;
+      }
     }
-    const points = [...boundaries].sort((a, b) => a - b);
 
-    const merged: AttrRange[] = [];
-    for (let i = 0; i + 1 < points.length; i++) {
-      const start = points[i];
-      const end = points[i + 1];
-
-      // Every range boundary is a point, so each range either fully covers this
-      // elementary span or does not intersect it. Pick the latest-added cover.
-      let winner: AttrRange | undefined;
-      let winnerIdx = -1;
-      for (const [j, range] of input.entries()) {
-        if (range.clock <= start && range.clock + range.len >= end && j > winnerIdx) {
-          winner = range;
-          winnerIdx = j;
+    let merged: AttrRange[];
+    if (!hasOverlap) {
+      // No overlaps — just coalesce adjacent ranges with equal attrs.
+      merged = [];
+      for (const { range } of tagged) {
+        const last = merged.length > 0 ? merged[merged.length - 1] : undefined;
+        if (last && last.clock + last.len === range.clock && attrsEqual(last.attrs, range.attrs)) {
+          last.len = range.clock + range.len - last.clock;
+        } else {
+          merged.push(new AttrRange(range.clock, range.len, range.attrs));
         }
       }
-      if (!winner) {
-        continue;
-      }
-
-      const last = merged.at(-1);
-      if (last && last.clock + last.len === start && attrsEqual(last.attrs, winner.attrs)) {
-        last.len = end - last.clock;
-      } else {
-        merged.push(new AttrRange(start, end - start, winner.attrs));
-      }
+    } else {
+      // Slow path: boundary sweep for overlapping ranges. Last-added wins.
+      merged = overlapMerge(tagged);
     }
 
     this._ids = merged;
@@ -126,9 +121,86 @@ export class AttrRanges {
     return this._ids;
   }
 
+  findIndex(clock: number): number {
+    return findIndexInAttrRanges(this.getIds(), clock);
+  }
+
   copy(): AttrRanges {
     return new AttrRanges(this.getIds().map((r) => new AttrRange(r.clock, r.len, [...r.attrs])));
   }
+}
+
+function findIndexInAttrRanges(ids: AttrRange[], clock: number): number {
+  let lo = 0;
+  let hi = ids.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    const range = ids[mid];
+    if (clock < range.clock) {
+      hi = mid - 1;
+    } else if (clock >= range.clock + range.len) {
+      lo = mid + 1;
+    } else {
+      return mid;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Binary search for the first range that could overlap with `clock`.
+ * Returns the index of the first range whose end > clock.
+ */
+function lowerBoundInAttrRanges(ids: AttrRange[], clock: number): number {
+  let lo = 0;
+  let hi = ids.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (ids[mid].clock + ids[mid].len <= clock) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+/**
+ * Boundary sweep for overlapping ranges. Input is sorted by clock, each entry
+ * tagged with its original insertion index (origIdx). Where ranges overlap, the
+ * one with the highest origIdx wins the contested span.
+ */
+function overlapMerge(tagged: Array<{ range: AttrRange; origIdx: number }>): AttrRange[] {
+  const boundaries = new Set<number>();
+  for (const { range } of tagged) {
+    boundaries.add(range.clock);
+    boundaries.add(range.clock + range.len);
+  }
+  const points = [...boundaries].sort((a, b) => a - b);
+
+  const merged: AttrRange[] = [];
+  for (let i = 0; i + 1 < points.length; i++) {
+    const start = points[i];
+    const end = points[i + 1];
+
+    let winner: AttrRange | undefined;
+    let winnerIdx = -1;
+    for (const { range, origIdx } of tagged) {
+      if (range.clock <= start && range.clock + range.len >= end && origIdx > winnerIdx) {
+        winner = range;
+        winnerIdx = origIdx;
+      }
+    }
+    if (!winner) continue;
+
+    const last = merged.length > 0 ? merged[merged.length - 1] : undefined;
+    if (last && last.clock + last.len === start && attrsEqual(last.attrs, winner.attrs)) {
+      last.len = end - last.clock;
+    } else {
+      merged.push(new AttrRange(start, end - start, winner.attrs));
+    }
+  }
+  return merged;
 }
 
 function attrsEqual(a: ContentAttribute[], b: ContentAttribute[]): boolean {
@@ -164,11 +236,7 @@ export class IdMap {
   has(client: number, clock: number): boolean {
     const ranges = this.clients.get(client);
     if (!ranges) return false;
-    const ids = ranges.getIds();
-    for (const range of ids) {
-      if (clock >= range.clock && clock < range.clock + range.len) return true;
-    }
-    return false;
+    return ranges.findIndex(clock) >= 0;
   }
 
   /**
@@ -185,10 +253,11 @@ export class IdMap {
     let pos = clock;
     const end = clock + len;
 
-    for (const range of ids) {
+    const startIdx = lowerBoundInAttrRanges(ids, clock);
+    for (let i = startIdx; i < ids.length; i++) {
+      const range = ids[i];
       if (range.clock >= end) break;
       const rangeEnd = range.clock + range.len;
-      if (rangeEnd <= pos) continue;
 
       if (pos < range.clock) {
         const gapEnd = Math.min(range.clock, end);
@@ -263,13 +332,24 @@ export function mergeContentMaps(maps: ContentMap[]): ContentMap {
 }
 
 function mergeIdMaps(maps: IdMap[]): IdMap {
-  const merged = new IdMap();
+  // Collect all ranges per client, then build AttrRanges in bulk.
+  // This avoids repeated add() calls that each mark _sorted = false.
+  const buckets = new Map<number, AttrRange[]>();
   for (const map of maps) {
     for (const [client, ranges] of map.clients.entries()) {
+      let bucket = buckets.get(client);
+      if (!bucket) {
+        bucket = [];
+        buckets.set(client, bucket);
+      }
       for (const range of ranges.getIds()) {
-        merged.add(client, range.clock, range.len, range.attrs);
+        bucket.push(range);
       }
     }
+  }
+  const merged = new IdMap();
+  for (const [client, ranges] of buckets) {
+    merged.clients.set(client, new AttrRanges(ranges));
   }
   return merged;
 }

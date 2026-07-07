@@ -175,6 +175,18 @@ describe("MetricsCollector Message Tracking", () => {
       expect(offenders[1].count).toBe(3);
     });
 
+    test("recordRateLimitDelayed tracks count and cumulative delay", () => {
+      const registry = new MockRegistry() as any;
+      const collector = new MetricsCollector(registry);
+
+      collector.recordRateLimitDelayed("user1", "doc1", "user", 50);
+      collector.recordRateLimitDelayed("user1", "doc1", "user", 120);
+
+      const labels = { userId: "user1", documentId: "doc1", trackBy: "user" };
+      expect(collector.rateLimitDelayedTotal.getValue(labels)).toBe(2);
+      expect(collector.rateLimitDelayMsTotal.getValue(labels)).toBe(170);
+    });
+
     test("rateLimitRecentEvents is capped", () => {
       const registry = new MockRegistry() as any;
       const collector = new MetricsCollector(registry);

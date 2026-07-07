@@ -1,4 +1,15 @@
 // Simple cross-runtime Prometheus metrics implementation
+
+function escapeLabelValue(v: unknown): string {
+  return String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+}
+
+function formatLabels(labels: Record<string, unknown>): string {
+  const entries = Object.entries(labels);
+  if (entries.length === 0) return "";
+  return `{${entries.map(([k, v]) => `${k}="${escapeLabelValue(v)}"`).join(",")}}`;
+}
+
 export class Counter {
   private values = new Map<string, number>();
 
@@ -8,10 +19,10 @@ export class Counter {
     private labelNames: string[] = [],
   ) {}
 
-  inc(labels?: Record<string, string>): void {
+  inc(labels?: Record<string, string>, amount = 1): void {
     const key = labels ? JSON.stringify(labels) : "";
     const current = this.values.get(key) || 0;
-    this.values.set(key, current + 1);
+    this.values.set(key, current + amount);
   }
 
   getValue(labels?: Record<string, string>): number {
@@ -39,13 +50,7 @@ export class Counter {
     } else {
       for (const [key, value] of this.values) {
         const labels = key ? JSON.parse(key) : {};
-        const labelsStr =
-          Object.keys(labels).length > 0
-            ? `{${Object.entries(labels)
-                .map(([k, v]) => `${k}="${v}"`)
-                .join(",")}}`
-            : "";
-        output += `${this.name}${labelsStr} ${value}\n`;
+        output += `${this.name}${formatLabels(labels)} ${value}\n`;
       }
     }
 
@@ -80,14 +85,7 @@ export class Gauge {
   }
 
   getValue(labels?: Record<string, string>): number {
-    if (!labels) {
-      // Return sum if no labels provided? Or just the value for empty labels?
-      // For Gauge, usually getting a value without labels when it has labels is ambiguous.
-      // But adhering to Counter implementation style:
-      const key = "";
-      return this.values.get(key) || 0;
-    }
-    const key = JSON.stringify(labels);
+    const key = labels ? JSON.stringify(labels) : "";
     return this.values.get(key) || 0;
   }
 
@@ -110,13 +108,7 @@ export class Gauge {
     } else {
       for (const [key, value] of this.values) {
         const labels = key ? JSON.parse(key) : {};
-        const labelsStr =
-          Object.keys(labels).length > 0
-            ? `{${Object.entries(labels)
-                .map(([k, v]) => `${k}="${v}"`)
-                .join(",")}}`
-            : "";
-        output += `${this.name}${labelsStr} ${value}\n`;
+        output += `${this.name}${formatLabels(labels)} ${value}\n`;
       }
     }
 
@@ -190,19 +182,17 @@ export class Histogram {
     } else {
       for (const [key, series] of this.series) {
         const labels = key ? JSON.parse(key) : {};
-        const labelsStr =
-          Object.keys(labels).length > 0
-            ? `{${Object.entries(labels)
-                .map(([k, v]) => `${k}="${v}"`)
-                .join(",")}}`
-            : "";
+        const baseLabelsStr = formatLabels(labels);
+        const baseEntries = Object.entries(labels).map(([k, v]) => `${k}="${escapeLabelValue(v)}"`);
 
         for (let i = 0; i < this.bucketValues.length; i++) {
-          output += `${this.name}_bucket${labelsStr}{le="${this.bucketValues[i]}"} ${series.buckets[i]}\n`;
+          const bucketLabels = [...baseEntries, `le="${this.bucketValues[i]}"`];
+          output += `${this.name}_bucket{${bucketLabels.join(",")}} ${series.buckets[i]}\n`;
         }
-        output += `${this.name}_bucket${labelsStr}{le="+Inf"} ${series.buckets[this.bucketValues.length]}\n`;
-        output += `${this.name}_count${labelsStr} ${series.count}\n`;
-        output += `${this.name}_sum${labelsStr} ${series.sum}\n`;
+        const infLabels = [...baseEntries, `le="+Inf"`];
+        output += `${this.name}_bucket{${infLabels.join(",")}} ${series.buckets[this.bucketValues.length]}\n`;
+        output += `${this.name}_count${baseLabelsStr} ${series.count}\n`;
+        output += `${this.name}_sum${baseLabelsStr} ${series.sum}\n`;
       }
     }
 

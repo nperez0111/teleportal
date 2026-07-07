@@ -22,10 +22,12 @@ export type WideEvent = Record<string, unknown>;
  * Use for one event per logical operation (e.g. per message, per request, per connection).
  * Level is either "info" (normal operations) or "error" (failures that need attention).
  */
-export function emitWideEvent(level: "info" | "error", event: WideEvent): void {
+export function emitWideEvent(level: "debug" | "info" | "error", event: WideEvent): void {
   const payload = { ...envContext, ...event };
   if (level === "error") {
     logger.error(payload);
+  } else if (level === "debug") {
+    logger.debug(payload);
   } else {
     logger.info(payload);
   }

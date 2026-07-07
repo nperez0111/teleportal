@@ -40,13 +40,6 @@ function objectSchema<T extends Record<string, unknown>>(): StandardSchemaV1<unk
   });
 }
 
-function _stringSchema(): StandardSchemaV1<unknown, string> {
-  return schema<string>((input) => {
-    if (typeof input === "string") return { value: input };
-    return { issues: [{ message: "Expected a string" }] };
-  });
-}
-
 // ---------------------------------------------------------------------------
 // ok / err
 // ---------------------------------------------------------------------------

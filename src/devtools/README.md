@@ -4,13 +4,17 @@ A comprehensive debugging and monitoring interface for Teleportal applications. 
 
 ## Overview
 
-The Teleportal Devtools is a developer tool that helps you debug and monitor your Teleportal applications by providing:
+The Teleportal Devtools is a developer tool that helps you debug and monitor your Teleportal applications. The UI is organized into three tabs — **Messages**, **Documents**, and **Presence** — plus an always-visible connection status area with a details popover:
 
 - **Real-time message monitoring**: Track all sent and received messages with detailed metadata
-- **Connection state tracking**: Monitor connection status, transport type, and errors
+- **RPC call grouping**: RPC request/stream/response messages collapse into one call row with status, latency, and error details; file uploads/downloads show live chunk progress
+- **ACK latency**: Acknowledged messages show their round-trip time, color-coded against the in-flight timeout
+- **Update operations decoder**: `update`/`sync-step-2` payloads are decoded into human-readable ops (`insert "hel" @ (client, clock) in body`), including for encrypted documents when the key is available
+- **Documents tab**: Tree of documents and subdocuments with live sync handshake state (sync-step-1 → sync-step-2 → synced), traffic counters, encryption, and last activity; click a document to filter the Messages tab
+- **Presence tab**: Live peer roster from presence-join/leave/heartbeat messages with expandable per-peer data and a recent join/leave feed
+- **Connection popover**: Click the connection status for live internals — in-flight/buffered counts, AIMD batch window, reconnect attempts, SharedWorker pooling details (tabs, key, grace period, heartbeat), and a timeline of state transitions, transport fallbacks/upgrades, and token refreshes
 - **Message filtering**: Filter messages by document, type, direction, and search text
 - **Message inspection**: View detailed payloads, metadata, and acknowledgment status
-- **Statistics**: Track message counts, rates, document counts, and message types
 - **Persistent settings**: Settings are saved to localStorage and persist across sessions
 
 ## Architecture
@@ -75,21 +79,32 @@ Manages persistent settings:
 The main layout component that orchestrates the UI:
 
 - **Layout Structure**:
-  - Top: Filters panel (collapsible)
-  - Left: Message list (scrollable)
-  - Right: Message inspector (fixed width)
+  - Header bar: tab bar (Messages / Documents / Presence) + connection status with popover trigger
+  - Messages tab: collapsible filters row, message list (left), message inspector (right)
+  - Documents tab: document tree panel
+  - Presence tab: peer roster panel
 
 - **State Management**: Coordinates updates between all child components
 
+#### `TabBar` and `ConnectionStatus`
+
+The header bar. `TabBar` switches between the three views and shows count badges (document count, peer count). `ConnectionStatus` shows the live state dot, hosting badge (`[direct]`/`[worker]`), transport selector, error, and relative timestamp; clicking it opens the `ConnectionPopover`.
+
+#### `ConnectionPopover`
+
+Anchored panel with connection internals, refreshed every second while open:
+
+- **Connection stats**: state, transports, uptime, sent/received counts, in-flight and buffered message counts, AIMD batch window, reconnect attempts, online state (via `connection.diagnostics`)
+- **SharedWorker section** (worker hosting only): tabs sharing the connection, pooling key, grace period, tab↔worker heartbeat health
+- **Timeline**: state transitions with durations, transport fallback/upgrade probes, token refreshes (scheduled and reactive), reconnect scheduling — sourced from connection `diagnostic` events and recorded in a ring buffer
+
 #### `FiltersPanel`
 
-Provides filtering controls and status display:
+Provides filtering controls for the Messages tab:
 
 - **Compact Header** (always visible):
   - Filters toggle button with active indicator
   - Clear filters button (when filters are active)
-  - Connection status indicator with color coding
-  - Document count
   - Message limit input
 
 - **Expandable Filter Content**:
@@ -105,12 +120,29 @@ Displays a scrollable list of filtered messages:
 - **Message Items**: Each item shows:
   - Direction icon (sent/received)
   - Message type badge with color coding
-  - ACK indicator (if acknowledged)
+  - ACK latency badge (if acknowledged) — green/amber/red against the 30s in-flight timeout
   - Document name
   - Timestamp
 
-- **Selection**: Clicking a message selects it and updates the inspector
-- **Ordering**: Messages displayed in reverse chronological order (newest first)
+- **RPC grouping**: RPC messages collapse into one call row per `originalRequestId` (`RpcTracker` pairs requests, streamed parts, and responses; file transfer streams are paired via their fileId). The row shows a status pill (pending spinner / streaming / latency / error code) and, for file transfers, a chunk progress bar. Expanding reveals the member messages chronologically. Upload chunks deliberately never appear as messages — they stay off the event pipeline for throughput — so upload progress and completion come from the file protocol's progress events (`onFileTransferProgress`); download parts arrive as received messages and are grouped normally.
+- **Selection**: Clicking a message (or call row) selects it and updates the inspector
+- **Ordering**: Messages displayed in reverse chronological order (newest first); call rows are anchored at the call's start
+
+#### `DocumentsPanel`
+
+Tree of main documents and their subdocuments (from `load-subdoc`/`unload-subdoc` events):
+
+- Sync handshake stepper per document (sync-step-1 → sync-step-2 → synced), derived live from the message stream and reset on disconnect
+- Message count, sent/received bytes, encryption lock, last activity
+- Clicking a document applies it as a Messages-tab filter
+
+#### `PresencePanel`
+
+Live peer roster derived from cleartext presence messages:
+
+- One row per peer: color dot (stable per userId), userId, clientId, awareness id, joined time; click to expand the integrator-supplied `data` blob
+- Heartbeat rosters upsert peers without evicting peers from other nodes
+- Recent join/leave feed below the roster; the roster clears on disconnect
 
 #### `MessageInspector`
 
@@ -125,9 +157,18 @@ Detailed view of a selected message:
   - Encryption status indicator
 
 - **ACK Section** (if applicable):
-  - Expandable section showing ACK details
+  - Expandable section showing ACK details with the round-trip latency
   - ACK message ID (copyable)
   - Acknowledged message ID (copyable)
+
+- **Operations Section** (doc `update`/`sync-step-2` messages):
+  - The Y.js update decoded into readable ops: inserts with content and location (`+ insert "hi" @ (client, clock) in body`), map sets, format changes, shared type creation, and delete-set ranges
+  - Works on encrypted documents too — the payload is decrypted and content-restored first when the provider has the key
+
+- **RPC Call view** (when a call row is selected):
+  - Method, status pill, latency/duration, request id, message counts
+  - File transfer summary with progress bar, chunk/byte counters, and merkle/encryption metadata
+  - Request and response payloads side by side; full error details for failed calls
 
 - **Payload Section**:
   - Formatted message payload
@@ -144,10 +185,22 @@ Detailed view of a selected message:
 
 Tracks document state and activity:
 
-- Maintains document registry with metadata
-- Tracks message counts per document
-- Records last activity timestamp
-- Supports provider-based filtering
+- Maintains document registry with metadata, including parent/subdocument links
+- Derives the sync handshake phase per document from the message stream
+- Tracks message counts and sent/received bytes per document
+- Records encryption and last activity timestamp
+
+#### `RpcTracker` (`rpc-tracker.ts`)
+
+Pure derivation that groups the rpc messages of a message list into logical calls (`buildRpcGroups`): pairs responses/streams to requests by `originalRequestId`, aliases file transfer streams via their fileId, and computes status, latency, and chunk progress. Takes an optional live transfer-progress map (from `onFileTransferProgress` in `teleportal/protocols/file`) that supplies chunk counts and completion state for uploads, whose chunk messages are never visible.
+
+#### `PresenceTracker` (`presence-tracker.ts`)
+
+Stateful roster fed by presence messages: join/leave maintenance, heartbeat upserts, and a bounded join/leave feed.
+
+#### `update-decoder.ts`
+
+Decodes Y.js updates into human-readable operations (`decodeUpdateOps`, `formatUpdateOp`) — inserts with content previews, map keys, origins, and delete-set ranges. Used by the inspector's Operations section.
 
 #### `message-utils.ts`
 
@@ -156,8 +209,9 @@ Utility functions for message formatting:
 - `getMessageTypeLabel()`: Extracts human-readable message type
 - `getMessageTypeColor()`: Returns color class for message type badges
 - `formatMessagePayload()`: Formats message payloads for display
-- `formatTimestamp()`: Formats timestamps for display
-- `formatRelativeTime()`: Formats relative timestamps (e.g., "5s ago")
+- `decryptContentPayload()`: Decrypts a content-encrypted doc payload into a plaintext V2 update
+- `formatTimestamp()` / `formatRelativeTime()` / `formatDuration()` / `formatBytes()`: Display formatting helpers
+- `getAckLatencyLevel()`: Buckets ACK round-trips against the in-flight timeout
 
 ## Usage
 
@@ -210,24 +264,32 @@ export function TeleportalDevtoolsPanel() {
 }
 ```
 
-### Custom State Management
+### State Persistence Across Close/Open
 
-You can provide custom state managers for advanced use cases:
+`getDevtoolsState()` returns a **shared singleton**: it is created on first call and keeps collecting messages, documents, presence, and the connection timeline in the background — even while the panel is closed (memory bounded by the message limit). Reopening the devtools therefore shows history instead of starting empty.
+
+- Closing the panel (`__teleportalDevtoolsCleanup`) detaches the UI only; collection continues.
+- `destroyDevtoolsState()` stops collection entirely and drops history.
+- `createDevtoolsState()` creates a fresh, isolated state for advanced cases where you don't want the shared instance (you then own its lifecycle and must call `eventManager.destroy()` yourself).
 
 ```typescript
-import { createTeleportalDevtools, getDevtoolsState } from "teleportal/devtools";
+import {
+  createTeleportalDevtools,
+  getDevtoolsState,
+  createDevtoolsState,
+  destroyDevtoolsState,
+} from "teleportal/devtools";
 
-// Get default state
-const state = getDevtoolsState();
+// Shared state — survives panel close/open
+const devtoolsElement = createTeleportalDevtools(getDevtoolsState());
 
-// Or create with custom state
-const customState = {
-  settingsManager: new SettingsManager(),
-  eventManager: new EventManager(settingsManager),
-  filterManager: new FilterManager(settingsManager),
-};
+// Isolated state — caller-owned lifecycle
+const isolated = createDevtoolsState();
+const el = createTeleportalDevtools(isolated);
+// ...later: isolated.eventManager.destroy();
 
-const devtoolsElement = createTeleportalDevtools(customState);
+// Stop background collection entirely
+destroyDevtoolsState();
 ```
 
 ## Message Types
@@ -314,11 +376,7 @@ if (cleanup) {
 }
 ```
 
-This will:
-
-- Unsubscribe from all event listeners
-- Clear internal state
-- Remove event subscriptions
+This detaches the UI (unsubscribes the render listeners and destroys the layout). It does **not** stop the shared state from collecting — call `destroyDevtoolsState()` for a full teardown.
 
 ## Styling
 
@@ -365,9 +423,32 @@ type DevtoolsMessage = {
 
 type ConnectionStateInfo = {
   type: "connected" | "connecting" | "disconnected" | "errored";
-  transport: "websocket" | "http" | null;
+  hosting?: "direct" | "worker";
+  transport: string | null;
+  availableTransports: string[];
   error?: string;
   timestamp: number;
+};
+
+type DocumentState = {
+  id: string;
+  name: string;
+  provider: Provider;
+  parentId?: string;
+  isSubdoc: boolean;
+  encrypted: boolean;
+  syncPhase: "idle" | "sync-step-1" | "sync-step-2" | "synced";
+  messageCount: number;
+  bytesSent: number;
+  bytesReceived: number;
+  lastActivity: number;
+};
+
+type ConnectionTimelineEntry = {
+  timestamp: number;
+  kind: "connected" | "connecting" | "disconnected" | "errored" | "info" | "warn";
+  label: string;
+  detail?: string;
 };
 
 type Statistics = {

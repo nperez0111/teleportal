@@ -15,7 +15,7 @@ export interface KeyRegistryRpc {
 
 export const createKeyRegistryRpc = createClientExtension(keyRegistryProtocol, {
   handleMessage(message: any): boolean {
-    if (message.method === "keysRotated") {
+    if (message.rpcMethod === "keysRotated") {
       const generation = message.payload?.payload?.generation;
       rotationCallbacks.forEach((cb) => cb(generation));
       return true;

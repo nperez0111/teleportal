@@ -21,7 +21,7 @@ This example demonstrates how each server instance can coordinate with each othe
 
 ```typescript
 import { Server } from "teleportal/server";
-import { RedisPubSub } from "teleportal/pubsub/redis";
+import { RedisPubSub } from "teleportal/transports/redis";
 import { UnstorageDocumentStorage } from "teleportal/storage";
 
 const server = new Server({
@@ -33,7 +33,7 @@ const server = new Server({
     });
   },
   pubSub: new RedisPubSub({
-    url: "redis://localhost:6379",
+    path: "redis://localhost:6379",
   }),
   nodeId: process.env.NODE_ID || `node-${uuidv4()}`,
 });

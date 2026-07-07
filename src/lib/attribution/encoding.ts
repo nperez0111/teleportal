@@ -116,8 +116,11 @@ export function decodeContentIds(buf: EncodedContentIds): ContentIds {
 function writeIdMap(encoder: encoding.Encoder, idMap: IdMap) {
   const visitedAttrNames: string[] = [];
   const nameIndex = new Map<string, number>();
-  const visitedAttrs: ContentAttribute[] = [];
-  const attrIndex = new Map<string, number>();
+  let nextAttrIdx = 0;
+  // Fast path: identity-based dedup for shared ContentAttribute objects.
+  const attrByRef = new Map<ContentAttribute, number>();
+  // Fallback: string-key dedup for structurally equal but distinct objects.
+  const attrByKey = new Map<string, number>();
 
   const clients = [...idMap.clients.entries()].sort(([a], [b]) => a - b);
   encoding.writeVarUint(encoder, clients.length);
@@ -138,30 +141,40 @@ function writeIdMap(encoder: encoding.Encoder, idMap: IdMap) {
 
       encoding.writeVarUint(encoder, range.attrs.length);
       for (const attr of range.attrs) {
-        const attrKey = `${attr.name}:${JSON.stringify(attr.val)}`;
-        let idx = attrIndex.get(attrKey);
-        if (idx === undefined) {
-          idx = visitedAttrs.length;
-          visitedAttrs.push(attr);
-          attrIndex.set(attrKey, idx);
+        // Try identity-based lookup first (O(1) for shared objects)
+        let idx = attrByRef.get(attr);
+        if (idx !== undefined) {
           encoding.writeVarUint(encoder, idx);
-
-          // Write attribute name (deduplicated)
-          let nIdx = nameIndex.get(attr.name);
-          if (nIdx === undefined) {
-            nIdx = visitedAttrNames.length;
-            visitedAttrNames.push(attr.name);
-            nameIndex.set(attr.name, nIdx);
-            encoding.writeVarUint(encoder, nIdx);
-            encoding.writeVarString(encoder, attr.name);
-          } else {
-            encoding.writeVarUint(encoder, nIdx);
-          }
-
-          encoding.writeAny(encoder, attr.val as encoding.AnyEncodable);
-        } else {
-          encoding.writeVarUint(encoder, idx);
+          continue;
         }
+
+        // Fall back to string key for structurally equal attrs
+        const attrKey = `${attr.name}:${JSON.stringify(attr.val)}`;
+        idx = attrByKey.get(attrKey);
+        if (idx !== undefined) {
+          attrByRef.set(attr, idx);
+          encoding.writeVarUint(encoder, idx);
+          continue;
+        }
+
+        // New attr — write the definition
+        idx = nextAttrIdx++;
+        attrByRef.set(attr, idx);
+        attrByKey.set(attrKey, idx);
+        encoding.writeVarUint(encoder, idx);
+
+        let nIdx = nameIndex.get(attr.name);
+        if (nIdx === undefined) {
+          nIdx = visitedAttrNames.length;
+          visitedAttrNames.push(attr.name);
+          nameIndex.set(attr.name, nIdx);
+          encoding.writeVarUint(encoder, nIdx);
+          encoding.writeVarString(encoder, attr.name);
+        } else {
+          encoding.writeVarUint(encoder, nIdx);
+        }
+
+        encoding.writeAny(encoder, attr.val as encoding.AnyEncodable);
       }
     }
   }

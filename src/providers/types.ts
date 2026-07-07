@@ -11,6 +11,59 @@ export type ConnectionState =
   | { type: "errored"; error: Error };
 
 /**
+ * Notable one-off connection happenings that aren't state transitions —
+ * emitted via the `diagnostic` event so tooling (e.g. devtools) can build a
+ * connection timeline.
+ */
+export type ConnectionDiagnosticEvent =
+  | { type: "token-refresh"; reason: "scheduled" | "reactive" }
+  | { type: "token-refresh-error"; error: string }
+  | { type: "reconnect-scheduled"; attempt: number; maxAttempts: number; delayMs: number }
+  | { type: "upgrade-probe"; result: "upgraded" | "unavailable" }
+  /** The server permanently rejected a message (nack with a reason). */
+  | { type: "message-rejected"; messageId: string; error: string; document?: string }
+  /**
+   * The server rate-limited and dropped a message (retryable nack). The
+   * content is NOT lost: doc updates fold back into the pending batch
+   * (`foldedIntoBatch: true`) or retransmit verbatim after `retryAfterMs`.
+   * Watch these to see backpressure engage — `batchIntervalMs` is the grown
+   * AIMD send interval after this nack.
+   */
+  | {
+      type: "message-nacked";
+      messageId: string;
+      retryAfterMs: number;
+      batchIntervalMs: number;
+      foldedIntoBatch: boolean;
+    };
+
+/** SharedWorker-side view of a pooled connection (see ConnectionWorkerManager). */
+export type WorkerConnectionDiagnostics = {
+  /** Tabs currently sharing this underlying connection. */
+  tabIds: string[];
+  /** The pooling key that groups tabs onto this connection. */
+  connectionKey: string;
+  /** How long the worker keeps the connection alive after the last tab leaves. */
+  gracePeriodMs: number;
+};
+
+/**
+ * Point-in-time internals snapshot for tooling. Values change frequently —
+ * read on demand, don't cache.
+ */
+export type ConnectionDiagnostics = {
+  /** Current AIMD update-batching window (shrinks on ACKs, grows on timeouts). */
+  batchIntervalMs: number;
+  maxBatchIntervalMs: number;
+  /** Messages queued while not connected. */
+  bufferedMessageCount: number;
+  reconnectAttempt: number;
+  maxReconnectAttempts: number;
+  online: boolean;
+  worker?: WorkerConnectionDiagnostics;
+};
+
+/**
  * Event map for connection lifecycle and message events.
  *
  * Used by both {@link Connection} and concrete implementations to type
@@ -24,6 +77,7 @@ export type ConnectionEvents = {
   "messages-in-flight": (hasInFlight: boolean) => void;
   "sent-message": (message: Message) => void;
   "received-message": (message: Message) => void;
+  diagnostic: (event: ConnectionDiagnosticEvent) => void;
 };
 
 /**
@@ -51,6 +105,8 @@ export interface Connection {
   readonly destroyed: boolean;
   /** Number of sent messages awaiting server acknowledgement. */
   readonly inFlightMessageCount: number;
+  /** Point-in-time internals snapshot for tooling (batching, buffering, reconnects). */
+  readonly diagnostics: ConnectionDiagnostics;
   /** Resolves when connected, rejects when errored. Re-created after disconnect. */
   readonly connected: Promise<void>;
   /** Send a message with in-flight tracking and batching. */

@@ -11,7 +11,7 @@
  * same key, and reconstruct the exact document state.
  */
 
-import { beforeEach, afterEach, describe, expect, it } from "bun:test";
+import { beforeEach, afterEach, afterAll, describe, expect, it } from "bun:test";
 import { createStorage, type Storage } from "unstorage";
 import * as Y from "yjs";
 
@@ -38,9 +38,14 @@ import {
   type SidecarCompaction,
 } from "teleportal/protocol/encryption";
 
+import { DurableObjectDocumentStorage } from "../cloudflare/document-storage";
+import { FakeDOStorage } from "../cloudflare/fake-do-storage";
 import type { AbstractDocumentStorage } from "./document-storage";
 import { MemoryDocumentStorage } from "./in-memory/document-storage";
 import { MergeOnWriteStorage } from "./merge-on-write-storage";
+import { PostgresDocumentStorage } from "./postgres/document-storage";
+import { dropSchema, ensureSchema } from "./postgres/schema";
+import { isPostgresAvailable, makeTestSql, randomTablePrefix } from "./postgres/test-utils";
 import { TieredDocumentStorage } from "./tiered/document-storage";
 import { UnstorageDocumentStorage } from "./unstorage/document-storage";
 
@@ -104,6 +109,11 @@ const backends: Backend[] = [
     },
   },
   {
+    name: "DurableObjectDocumentStorage",
+    make: () => new DurableObjectDocumentStorage(new FakeDOStorage(), { encrypted: true }),
+    cleanup: async () => {},
+  },
+  {
     name: "MergeOnWriteStorage",
     make: () => {
       MemoryDocumentStorage.docs.clear();
@@ -118,6 +128,46 @@ const backends: Backend[] = [
     },
   },
 ];
+
+// Postgres backend — registered only when a server is reachable, following
+// the Redis transport tests' availability-check convention.
+const pgPrefix = randomTablePrefix();
+const pgAvailable = await isPostgresAvailable();
+let pgSql: ReturnType<typeof makeTestSql> | undefined;
+const pgStorages: PostgresDocumentStorage[] = [];
+if (pgAvailable) {
+  pgSql = makeTestSql(4);
+  await ensureSchema(pgSql, { tablePrefix: pgPrefix });
+  backends.push({
+    name: "PostgresDocumentStorage",
+    make: () => {
+      const storage = new PostgresDocumentStorage(pgSql!, {
+        tablePrefix: pgPrefix,
+        encrypted: true,
+      });
+      pgStorages.push(storage);
+      return storage;
+    },
+    cleanup: async () => {
+      // Release each instance's dedicated lock connection back to the pool
+      // before truncating, so instances never accumulate reservations.
+      await Promise.all(pgStorages.splice(0).map((s) => s.close()));
+      await pgSql!.unsafe(
+        `TRUNCATE ${pgPrefix}documents, ${pgPrefix}pending_updates, ${pgPrefix}attributions`,
+      );
+    },
+  });
+} else {
+  console.log("Skipping Postgres compliance backend - Postgres not available");
+}
+
+afterAll(async () => {
+  await Promise.all(pgStorages.splice(0).map((s) => s.close()));
+  if (pgSql) {
+    await dropSchema(pgSql, { tablePrefix: pgPrefix });
+    await pgSql.end();
+  }
+});
 
 // ── Encryption helpers (REAL AES-GCM) ─────────────────────────────────────────
 
@@ -308,7 +358,7 @@ describe.each(backends)("AbstractDocumentStorage encrypted sync ($name)", (backe
     const compactedSidecar: IndexedSidecar = {
       encrypted: compactedEncrypted,
       index: buildSidecarIndex(mergedSidecar.entries),
-      hash: hashSidecar(compactedEncrypted),
+      hash: await hashSidecar(compactedEncrypted),
     };
 
     const baseSV = Y.encodeStateVectorFromUpdateV2(state!.update);
@@ -485,7 +535,7 @@ async function buildCompaction(
   return {
     sidecar: encrypted,
     index: buildSidecarIndex(merged.entries),
-    hash: hashSidecar(encrypted),
-    sourceHashes: sidecars.map((s) => hashSidecar(s.encrypted)),
+    hash: await hashSidecar(encrypted),
+    sourceHashes: await Promise.all(sidecars.map((s) => hashSidecar(s.encrypted))),
   };
 }

@@ -37,19 +37,36 @@ const server = new Server({
 });
 ```
 
-## Alternative Storage Backends
+## First-Party Storage Adapters
 
-### PostgreSQL
+Teleportal ships first-party storage adapters for PostgreSQL and S3 that extend `AbstractDocumentStorage` directly, offering better performance and tighter integration than generic unstorage drivers.
+
+### PostgreSQL (first-party)
 
 ```typescript
-import postgresDriver from "unstorage/drivers/postgres";
+import { PostgresDocumentStorage } from "teleportal/storage/postgres";
 
-const storage = createStorage({
-  driver: postgresDriver({
-    connectionString: "postgresql://user:password@localhost/db",
-  }),
+const server = new Server({
+  storage: async (ctx) => {
+    return new PostgresDocumentStorage(pool, ctx.encrypted);
+  },
 });
 ```
+
+### S3 (first-party, for file storage)
+
+```typescript
+import { S3FileStorage, S3TemporaryUploadStorage } from "teleportal/storage/s3";
+
+const fileStorage = new S3FileStorage(s3Client, { bucket: "my-bucket" });
+fileStorage.temporaryUploadStorage = new S3TemporaryUploadStorage(s3Client, {
+  bucket: "my-bucket",
+});
+```
+
+## Alternative Storage Backends (via unstorage)
+
+For other backends, use the unstorage abstraction layer with any of its drivers.
 
 ### SQLite
 
@@ -63,7 +80,7 @@ const storage = createStorage({
 });
 ```
 
-### S3
+### S3 (via unstorage)
 
 ```typescript
 import s3Driver from "unstorage/drivers/s3";

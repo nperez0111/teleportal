@@ -176,7 +176,7 @@ describe("UnstorageKeyRegistryStorage", () => {
 
       const p1 = storage.transaction("doc-1", async () => {
         order.push("start-1");
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         await storage.set("doc-1", [{ userId: "alice", wrappedKey: wrap("v1") }]);
         order.push("end-1");
       });
@@ -203,7 +203,7 @@ describe("UnstorageKeyRegistryStorage", () => {
       const p1 = storage.transaction("doc-1", async () => {
         order.push("start-1");
         await storage.set("doc-1", [{ userId: "alice", wrappedKey: wrap("key-1") }]);
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         order.push("end-1");
       });
 

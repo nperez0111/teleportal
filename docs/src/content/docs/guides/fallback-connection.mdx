@@ -21,7 +21,7 @@ The server supports both WebSocket and HTTP:
 import { serve } from "crossws/server";
 import { Server } from "teleportal/server";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
-import { getHttpHandlers } from "teleportal/http";
+import { getHTTPHandlers } from "teleportal/http";
 
 const server = new Server({
   storage: async (ctx) => {
@@ -41,12 +41,10 @@ const wsHandlers = getWebsocketHandlers({
 });
 
 // HTTP handlers
-const httpHandlers = getHttpHandlers({
+const httpHandlers = getHTTPHandlers({
   server,
-  onConnect: async (request) => {
-    return {
-      context: { userId: "user-123" },
-    };
+  getContext: async (request) => {
+    return { userId: "user-123" };
   },
 });
 
@@ -62,15 +60,14 @@ The `Provider` automatically uses fallback connection:
 
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
 
 // Provider automatically tries WebSocket first, falls back to HTTP
 const provider = await Provider.create({
   url: "wss://example.com", // Tries WebSocket first
   document: "my-document",
+  encryptionKey: await createEncryptionKey(),
 });
-
-// Check which connection type is active
-console.log(provider.connectionType); // "websocket" | "http" | null
 
 await provider.synced;
 ```

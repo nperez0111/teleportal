@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { DocMessage, PresenceMessage, RpcMessage } from "teleportal";
+import { AckMessage, DocMessage, PresenceMessage, RpcMessage } from "teleportal";
 import { createEncryptionKey } from "teleportal/encryption-key";
 import { encodeContentEncryptedPayload } from "teleportal/protocol/encryption";
 import { MemoryDocumentStorage } from "../storage/in-memory/document-storage";
 import { DirectConnection as Connection } from "./connection";
-import { Provider } from "./provider";
+import { Provider, teleportalEventClient } from "./provider";
 import { createMemoryTransportPair } from "./transports/memory";
 import type { RpcExtension, RpcExtensionContext } from "./rpc-extension";
 
@@ -316,6 +316,63 @@ describe("Provider", () => {
       await serverConn.destroy();
     });
 
+    it("keeps received file-chunk stream messages off the devtools event pipeline", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      const devtoolsMessages: any[] = [];
+      const providerMessages: any[] = [];
+      const unsubscribe = teleportalEventClient.on(
+        "teleportal-provider:received-message",
+        (event) => devtoolsMessages.push(event.payload.message),
+      );
+      provider.on("received-message", (msg) => providerMessages.push(msg));
+
+      const streamMsg = new RpcMessage(
+        "test-doc",
+        {
+          type: "success",
+          payload: {
+            fileId: "file-1",
+            chunkIndex: 0,
+            chunkData: new Uint8Array([1, 2, 3]),
+            merkleProof: [],
+            totalChunks: 1,
+            bytesUploaded: 3,
+            encrypted: false,
+          },
+        },
+        "fileDownload",
+        "stream",
+        "req-1",
+      );
+      const responseMsg = new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { fileId: "file-1" } },
+        "fileDownload",
+        "response",
+        "req-1",
+      );
+      await serverConn.send(streamMsg);
+      await serverConn.send(responseMsg);
+      await flush();
+
+      // The provider's own event still carries every message (extensions need
+      // the chunks); only the devtools observation pipeline skips them.
+      expect(providerMessages.some((m) => m.type === "rpc" && m.requestType === "stream")).toBe(
+        true,
+      );
+      expect(devtoolsMessages.some((m) => m.type === "rpc" && m.requestType === "stream")).toBe(
+        false,
+      );
+      expect(devtoolsMessages.some((m) => m.type === "rpc" && m.requestType === "response")).toBe(
+        true,
+      );
+
+      unsubscribe();
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
     it("emits sent-message event", async () => {
       const { provider } = await createTestProvider();
 
@@ -382,6 +439,80 @@ describe("Provider", () => {
   // -----------------------------------------------------------------------
   // 3. Synced Promise
   // -----------------------------------------------------------------------
+  describe("self-healing resync", () => {
+    it("re-runs the sync handshake when the server permanently rejects a doc message", async () => {
+      // Regression: an error-nack (server apply/storage failure) deleted the
+      // in-flight entry and never retransmitted — the server and every peer
+      // permanently missed that update while later updates parked on the
+      // gap. A rejection must trigger a fresh sync-step-1 so the content is
+      // re-uploaded as a diff during the handshake.
+      //
+      // Raw server transport (no server Connection): a Connection auto-acks
+      // every message cleanly on receipt, which would clear the in-flight
+      // entry before our error-nack arrives and defeat the scenario.
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await clientConn.connect();
+      await serverTransport.connect({
+        onMessage: () => {},
+        onClose: () => {},
+        onPing: () => {},
+        timer: {
+          setTimeout: (cb: () => void, ms: number) => setTimeout(cb, ms),
+          clearTimeout: (id: unknown) => clearTimeout(id as number),
+          setInterval: (cb: () => void, ms: number) => setInterval(cb, ms),
+          clearInterval: (id: unknown) => clearInterval(id as number),
+        } as never,
+      });
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: false,
+        rpc: {},
+        encryptionKey: false,
+      });
+      await flush();
+
+      // Make a local edit so there is content the server would be missing.
+      provider.doc.getText("t").insert(0, "hello");
+      await flush();
+
+      const syncStep1CountBefore = clientTransport.sentMessages.filter(
+        (m) => m.type === "doc" && (m.payload as { type?: string }).type === "sync-step-1",
+      ).length;
+
+      // Find the doc update the provider sent and reject it permanently.
+      const update = clientTransport.sentMessages.find(
+        (m) => m.type === "doc" && (m.payload as { type?: string }).type === "update",
+      );
+      expect(update).toBeDefined();
+      await serverTransport.send(
+        new AckMessage(
+          { type: "ack", messageId: update!.id, error: "storage_write_failed" },
+          undefined,
+        ),
+      );
+
+      // The resync send is async (handler.start() builds the message).
+      const countSyncStep1 = () =>
+        clientTransport.sentMessages.filter(
+          (m) => m.type === "doc" && (m.payload as { type?: string }).type === "sync-step-1",
+        ).length;
+      const deadline = Date.now() + 500;
+      while (countSyncStep1() <= syncStep1CountBefore && Date.now() < deadline) {
+        await flush();
+      }
+      expect(countSyncStep1()).toBe(syncStep1CountBefore + 1);
+
+      provider.destroy();
+      await clientConn.destroy();
+    });
+  });
+
   describe("synced promise", () => {
     it("resolves when connected + transport synced + no in-flight messages", async () => {
       const { provider, serverConn } = await createTestProvider();

@@ -1,4 +1,4 @@
-import { fromBase64, toBase64 } from "lib0/buffer";
+import { fromBase64, toBase64 } from "teleportal/utils";
 import {
   BinaryMessage,
   ClientContext,
@@ -31,28 +31,35 @@ export function getSSESink<Context extends ClientContext>({
     sseResponse: Response;
   }
 > {
-  const channel = createChannel<string>();
+  // Frames are sent as UTF-8 bytes rather than strings because some runtimes
+  // (Cloudflare workerd) reject string chunks in Response bodies.
+  const encoder = new TextEncoder();
+  const channel = createChannel<Uint8Array>();
 
   // Send client ID as first event
   if (context.clientId) {
-    channel.send(`event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`);
+    channel.send(encoder.encode(`event:client-id\nid:client-id\ndata: ${context.clientId}\n\n`));
   }
 
   // Send periodic pings; stop once the channel no longer accepts them.
   const interval = setInterval(() => {
-    if (!channel.trySend(`event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`)) {
+    if (
+      !channel.trySend(
+        encoder.encode(`event:ping\nid:ping\ndata: ${toBase64(encodePingMessage())}\n\n`),
+      )
+    ) {
       clearInterval(interval);
     }
   }, 5000);
 
   // Convert channel to ReadableStream for SSE Response
-  const readable = toReadableStream<string>(channel);
+  const readable = toReadableStream<Uint8Array>(channel);
 
   return {
     write(message: Message<Context>) {
       const payload = toBase64(message.encoded);
       const event = `event:message\nid:${message.id}\ndata: ${payload}\n\n`;
-      if (!channel.trySend(event)) clearInterval(interval);
+      if (!channel.trySend(encoder.encode(event))) clearInterval(interval);
     },
     close() {
       clearInterval(interval);

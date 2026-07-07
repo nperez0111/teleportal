@@ -1,21 +1,23 @@
 ---
 title: Observability
-description: Monitoring and health checks with Prometheus metrics
+description: Monitoring, structured logging, and health checks with Prometheus metrics and LogTape
 ---
 
-This guide demonstrates the built-in observability endpoints provided by Teleportal for monitoring and health checks.
+This guide demonstrates the built-in observability capabilities provided by Teleportal, including Prometheus metrics endpoints, structured logging with LogTape, and server event hooks for custom monitoring.
 
 ## What it demonstrates
 
 - Accessing the `/health` endpoint for server health checks
 - Accessing the `/metrics` endpoint for Prometheus-compatible metrics
 - Accessing the `/status` endpoint for server status information
+- Configuring structured logging with LogTape
+- Listening to server events for custom monitoring workflows
 
 ## Server Setup
 
 ```typescript
 import { Server } from "teleportal/server";
-import { getMetricsHandler, getHealthHandler, getStatusHandler } from "teleportal/monitoring";
+import { getMetricsHandler, getHealthHandler, getStatusHandler } from "teleportal/http";
 
 const server = new Server({
   storage: async (ctx) => {
@@ -91,7 +93,87 @@ Response:
 }
 ```
 
+## Structured Logging with LogTape
+
+Teleportal uses [LogTape](https://logtape.org/) for structured logging. Following LogTape's library guidelines, Teleportal does **not** configure any sinks itself -- your application must set up LogTape before starting the server.
+
+### Configuring LogTape
+
+```typescript
+import { configure, getConsoleSink, getFileSink } from "@logtape/logtape";
+
+await configure({
+  sinks: {
+    console: getConsoleSink(),
+    file: getFileSink("teleportal.log"),
+  },
+  filters: {},
+  loggers: [
+    {
+      category: ["teleportal"],
+      sinks: ["console", "file"],
+      lowestLevel: "info",
+    },
+  ],
+});
+```
+
+### Log Categories
+
+Teleportal emits logs under these categories:
+
+- `["teleportal", "server"]` -- Core server operations: connections, errors, message processing, and session lifecycle. All wide events (one structured log line per logical operation) are emitted here.
+- `["teleportal", "http", "*"]` -- HTTP layer: SSE reader/writer endpoints, request handling, and stream errors.
+
+Because LogTape uses hierarchical categories, configuring the `["teleportal"]` category (as shown above) captures logs from all sub-categories.
+
+### What gets logged
+
+The server emits **wide events** -- single structured log lines that capture the full context of an operation. Each wide event includes environment context (service name, node ID) merged with operation-specific fields such as document IDs, client IDs, message types, error details, and timing information.
+
+## Server Events
+
+The `Server` extends `Observable` and emits typed events you can listen to for custom monitoring, alerting, or integration with external systems.
+
+### Listening to Events
+
+```typescript
+import { Server } from "teleportal/server";
+
+const server = new Server({
+  /* ... */
+});
+
+server.on("document-load", (data) => {
+  console.log("Document loaded:", data.documentId);
+  console.log("Encrypted:", data.encrypted);
+});
+
+server.on("client-connect", (data) => {
+  console.log("Client connected:", data.clientId);
+});
+
+server.on("client-disconnect", (data) => {
+  console.log("Client disconnected:", data.clientId);
+  console.log("Reason:", data.reason);
+});
+
+server.on("document-size-warning", (data) => {
+  // Trigger an alert when a document grows too large
+  alerting.warn(`Document ${data.documentId} is ${data.sizeBytes} bytes`);
+});
+```
+
+### Available Events
+
+**Document events:** `document-load`, `document-unload`, `milestone-created`, `milestone-deleted`, `milestone-restored`, `document-delete`, `document-size-warning`, `document-size-limit-exceeded`
+
+**Client events:** `client-connect`, `client-disconnect`, `client-message`
+
+**Lifecycle events:** `before-server-shutdown`, `after-server-shutdown`
+
+See the [Server documentation](/docs/core-concepts/server/) for the full event list and payload types.
+
 ## Next Steps
 
-- [Monitoring](/docs/monitoring/) - Learn more about monitoring
-- [Server](/docs/core-concepts/server/) - Server configuration
+- [Server](/docs/core-concepts/server/) - Server configuration, events, and monitoring details

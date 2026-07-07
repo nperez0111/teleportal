@@ -184,8 +184,8 @@ export type IndexedSidecar = {
   hash: Uint8Array;
 };
 
-export function hashSidecar(encrypted: EncryptedBinary): Uint8Array {
-  return sha256(encrypted);
+export async function hashSidecar(encrypted: EncryptedBinary): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", encrypted as BufferSource));
 }
 
 export function buildSidecarIndex(entries: ContentEntry[]): SidecarIndex {
@@ -1486,19 +1486,24 @@ export type ContentEncryptedUpdate = {
  * Accepts either V1 or V2 updates via the `version` parameter (default V2).
  * The returned structure update is always V2 format.
  */
+const tokenizerCache = new WeakMap<CryptoKey, (str: string) => string>();
+
+async function getOrCreateTokenizer(key: CryptoKey): Promise<(str: string) => string> {
+  let tokenizer = tokenizerCache.get(key);
+  if (tokenizer) return tokenizer;
+  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  tokenizer = createKeyedTokenizer(rawKey);
+  tokenizerCache.set(key, tokenizer);
+  return tokenizer;
+}
+
 export async function encryptUpdateContent(
   key: CryptoKey,
   update: Uint8Array,
   version: 1 | 2 = 2,
 ): Promise<ContentEncryptedUpdate> {
-  // Derive a keyed tokenizer so metadata key names are not guessable from the
-  // plaintext structure update. Reverse mapping travels in the encrypted sidecar.
-  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
-  const { update: structureUpdate, sidecar } = stripContent(
-    update,
-    version,
-    createKeyedTokenizer(rawKey),
-  );
+  const tokenizer = await getOrCreateTokenizer(key);
+  const { update: structureUpdate, sidecar } = stripContent(update, version, tokenizer);
   const sidecarBytes = encodeSidecar(sidecar);
   const encryptedSidecar = await encryptUpdate(key, sidecarBytes);
   return { structureUpdate, encryptedSidecar };
@@ -1581,7 +1586,7 @@ export async function compactSidecars(
   const encrypted = await encryptUpdate(key, compactedBytes);
   const index = buildSidecarIndex(merged);
 
-  return { encrypted, index, hash: hashSidecar(encrypted) };
+  return { encrypted, index, hash: await hashSidecar(encrypted) };
 }
 
 // ── Sidecar garbage collection ─────────────────────────────────────────────

@@ -1,34 +1,27 @@
-import type { FilterState, ConnectionStateInfo, Statistics } from "../types";
+import type { FilterState } from "../types";
 import type { SettingsManager } from "../settings-manager";
-import { formatRelativeTime } from "../utils/message-utils";
 
+/**
+ * The Messages tab's filter row: collapsible search/direction/document/type
+ * filters plus the message limit. Connection status lives in the header bar
+ * (see ConnectionStatus), not here.
+ */
 export class FiltersPanel {
   private element: HTMLElement;
   private settingsManager: SettingsManager;
   private filters: FilterState;
-  private connectionState: ConnectionStateInfo | null = null;
-  private statistics: Statistics | null = null;
   private availableDocuments: string[] = [];
   private availableMessageTypes: string[] = [];
   private isExpanded = false;
   private searchText = "";
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private timestampInterval: ReturnType<typeof setInterval> | null = null;
   private onFiltersChange: (filters: Partial<FilterState>) => void;
   private onClearFilters: () => void;
-  private onTransportSwitch: ((name: string) => void) | null;
 
   // Cached DOM references
   private arrowSpan!: HTMLElement;
   private activeIndicator: HTMLElement | null = null;
   private clearButton: HTMLElement | null = null;
-  private statusDot!: HTMLElement;
-  private statusText!: HTMLElement;
-  private modeContainer!: HTMLElement;
-  private transportContainer!: HTMLElement;
-  private errorContainer!: HTMLElement;
-  private timestampSpan!: HTMLElement;
-  private docCountContainer!: HTMLElement;
   private limitInput!: HTMLInputElement;
   private filterContentContainer!: HTMLElement;
   private headerContainer!: HTMLElement;
@@ -43,14 +36,12 @@ export class FiltersPanel {
     settingsManager: SettingsManager,
     onFiltersChange: (filters: Partial<FilterState>) => void,
     onClearFilters: () => void,
-    onTransportSwitch?: (name: string) => void,
   ) {
     this.settingsManager = settingsManager;
     this.filters = settingsManager.getSettings().filters;
     this.searchText = this.filters.searchText;
     this.onFiltersChange = onFiltersChange;
     this.onClearFilters = onClearFilters;
-    this.onTransportSwitch = onTransportSwitch ?? null;
 
     this.element = document.createElement("div");
     this.element.className = "devtools-bg-gray-50 devtools-border-b devtools-border-gray-200";
@@ -92,47 +83,6 @@ export class FiltersPanel {
     spacer.className = "devtools-flex-1";
     this.headerContainer.append(spacer);
 
-    // Status container
-    const statusContainer = document.createElement("div");
-    statusContainer.className =
-      "devtools-flex devtools-items-center devtools-gap-3 devtools-text-xs";
-
-    // Connection status
-    const connectionStatus = document.createElement("div");
-    connectionStatus.className = "devtools-flex devtools-items-center devtools-gap-1.5";
-
-    this.statusDot = document.createElement("div");
-    this.statusDot.className =
-      "devtools-w-2 devtools-h-2 devtools-rounded-full devtools-bg-gray-400";
-    connectionStatus.append(this.statusDot);
-
-    this.statusText = document.createElement("span");
-    this.statusText.className = "devtools-text-gray-700 devtools-font-medium";
-    this.statusText.textContent = "Disconnected";
-    connectionStatus.append(this.statusText);
-
-    this.modeContainer = document.createElement("span");
-    connectionStatus.append(this.modeContainer);
-
-    this.transportContainer = document.createElement("span");
-    connectionStatus.append(this.transportContainer);
-
-    this.errorContainer = document.createElement("span");
-    connectionStatus.append(this.errorContainer);
-
-    this.timestampSpan = document.createElement("span");
-    this.timestampSpan.className =
-      "devtools-text-gray-500 devtools-ml-1 devtools-font-mono devtools-text-xs";
-    connectionStatus.append(this.timestampSpan);
-
-    statusContainer.append(connectionStatus);
-
-    // Doc count
-    this.docCountContainer = document.createElement("span");
-    statusContainer.append(this.docCountContainer);
-
-    this.headerContainer.append(statusContainer);
-
     // Message limit
     const limitContainer = document.createElement("div");
     limitContainer.className =
@@ -160,25 +110,10 @@ export class FiltersPanel {
     // Expandable content container
     this.filterContentContainer = document.createElement("div");
     this.element.append(this.filterContentContainer);
-
-    // Start timestamp interval once
-    this.timestampInterval = setInterval(() => {
-      if (this.connectionState?.timestamp) {
-        this.timestampSpan.textContent = formatRelativeTime(this.connectionState.timestamp);
-      }
-    }, 1000);
   }
 
-  update(
-    filters: FilterState,
-    connectionState: ConnectionStateInfo | null,
-    statistics: Statistics | null,
-    availableDocuments: string[],
-    availableMessageTypes: string[],
-  ) {
+  update(filters: FilterState, availableDocuments: string[], availableMessageTypes: string[]) {
     this.filters = filters;
-    this.connectionState = connectionState;
-    this.statistics = statistics;
     this.availableDocuments = availableDocuments;
     this.availableMessageTypes = availableMessageTypes;
     this.patchDynamic();
@@ -191,27 +126,6 @@ export class FiltersPanel {
       this.filters.direction !== "all" ||
       this.filters.searchText.length > 0
     );
-  }
-
-  private getConnectionStatusColor(): string {
-    if (!this.connectionState) return "devtools-bg-gray-400";
-    switch (this.connectionState.type) {
-      case "connected":
-        return "devtools-bg-green-500";
-      case "connecting":
-        return "devtools-bg-yellow-500";
-      case "disconnected":
-        return "devtools-bg-gray-400";
-      case "errored":
-        return "devtools-bg-red-500";
-      default:
-        return "devtools-bg-gray-400";
-    }
-  }
-
-  private getConnectionStatusText(): string {
-    if (!this.connectionState) return "Disconnected";
-    return this.connectionState.type.charAt(0).toUpperCase() + this.connectionState.type.slice(1);
   }
 
   private handleDocumentToggle(docId: string) {
@@ -267,90 +181,6 @@ export class FiltersPanel {
     } else if (!hasActive && this.clearButton) {
       this.clearButton.remove();
       this.clearButton = null;
-    }
-
-    // Status dot
-    this.statusDot.className = `devtools-w-2 devtools-h-2 devtools-rounded-full ${this.getConnectionStatusColor()}`;
-    this.statusText.textContent = this.getConnectionStatusText();
-
-    // Hosting badge
-    this.modeContainer.innerHTML = "";
-    if (this.connectionState?.hosting) {
-      const badge = document.createElement("span");
-      badge.className = "devtools-text-gray-500 devtools-ml-1";
-      badge.textContent = this.connectionState.hosting === "worker" ? "[worker]" : "[direct]";
-      badge.title =
-        this.connectionState.hosting === "worker"
-          ? "Connection runs in a SharedWorker (shared across tabs)"
-          : "Connection runs in the main thread";
-      this.modeContainer.append(badge);
-    }
-
-    // Transport
-    this.transportContainer.innerHTML = "";
-    if (this.connectionState?.transport || this.connectionState?.availableTransports?.length) {
-      const availableTransports = this.connectionState.availableTransports ?? [];
-
-      if (availableTransports.length > 1 && this.onTransportSwitch) {
-        const transportSelect = document.createElement("select");
-        transportSelect.className = "devtools-select devtools-transport-select";
-
-        for (const name of availableTransports) {
-          const option = document.createElement("option");
-          option.value = name;
-          option.textContent = name;
-          option.selected = name === this.connectionState.transport;
-          transportSelect.append(option);
-        }
-
-        transportSelect.disabled = this.connectionState.type !== "connected";
-        transportSelect.addEventListener("change", (e) => {
-          const selected = (e.target as HTMLSelectElement).value;
-          this.onTransportSwitch!(selected);
-        });
-        this.transportContainer.append(transportSelect);
-      } else if (this.connectionState.transport) {
-        const transportText = document.createElement("span");
-        transportText.className = "devtools-text-gray-500 devtools-ml-1";
-        transportText.textContent = `(${this.connectionState.transport})`;
-        this.transportContainer.append(transportText);
-      }
-    }
-
-    // Error
-    this.errorContainer.innerHTML = "";
-    if (this.connectionState?.error) {
-      const errorText = document.createElement("span");
-      errorText.className = "devtools-text-red-600 devtools-ml-1";
-      const errorMsg =
-        this.connectionState.error.length > 30
-          ? this.connectionState.error.slice(0, 30) + "..."
-          : this.connectionState.error;
-      errorText.textContent = `⚠ ${errorMsg}`;
-      errorText.title = this.connectionState.error;
-      this.errorContainer.append(errorText);
-    }
-
-    // Timestamp
-    if (this.connectionState?.timestamp) {
-      this.timestampSpan.textContent = formatRelativeTime(this.connectionState.timestamp);
-    } else {
-      this.timestampSpan.textContent = "";
-    }
-
-    // Doc count
-    this.docCountContainer.innerHTML = "";
-    if (this.statistics && this.statistics.documentCount > 0) {
-      const separator = document.createElement("span");
-      separator.className = "devtools-text-gray-400";
-      separator.textContent = "•";
-      this.docCountContainer.append(separator);
-      const docCount = document.createElement("span");
-      docCount.className = "devtools-text-gray-600";
-      docCount.textContent = `${this.statistics.documentCount} doc${
-        this.statistics.documentCount === 1 ? "" : "s"
-      }`;
-      this.docCountContainer.append(docCount);
     }
 
     // Limit input — only update if not focused
@@ -515,9 +345,6 @@ export class FiltersPanel {
   destroy() {
     if (this.searchDebounceTimer) {
       clearTimeout(this.searchDebounceTimer);
-    }
-    if (this.timestampInterval) {
-      clearInterval(this.timestampInterval);
     }
   }
 }

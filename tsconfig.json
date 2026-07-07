@@ -12,6 +12,8 @@
     "paths": {
       "teleportal/encryption-key": ["./src/encryption-key/index.ts"],
       "teleportal/storage": ["./src/storage/index.ts"],
+      "teleportal/storage/postgres": ["./src/storage/postgres/index.ts"],
+      "teleportal/storage/s3": ["./src/storage/s3/index.ts"],
       "teleportal/transports/redis": ["./src/transports/redis/index.ts"],
       "teleportal/transports/nats": ["./src/transports/nats/index.ts"],
       "teleportal/transports/rate-limiter": ["./src/transports/rate-limiter/index.ts"],
@@ -27,6 +29,7 @@
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/providers/worker": ["./src/providers/worker/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
+      "teleportal/cloudflare": ["./src/cloudflare/index.ts"],
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
       "teleportal/merkle-tree": ["./src/merkle-tree/index.ts"],
@@ -34,6 +37,7 @@
       "teleportal/agent": ["./src/agent/index.ts"],
       "teleportal/attribution": ["./src/lib/attribution/index.ts"],
       "teleportal/rpc": ["./src/lib/rpc/index.ts"],
+      "teleportal/utils": ["./src/utils/index.ts"],
       "teleportal": ["./src/lib/index.ts"]
     },
     "jsx": "react-jsx"

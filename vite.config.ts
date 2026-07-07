@@ -25,6 +25,8 @@ export default defineConfig({
     entry: {
       "lib/index": "src/lib/index.ts",
       "storage/index": "src/storage/index.ts",
+      "storage/postgres/index": "src/storage/postgres/index.ts",
+      "storage/s3/index": "src/storage/s3/index.ts",
       "http/index": "src/http/index.ts",
       "lib/protocol/index": "src/lib/protocol/index.ts",
       "protocols/milestone/index": "src/protocols/milestone/index.ts",
@@ -36,6 +38,7 @@ export default defineConfig({
       "transports/rate-limiter/index": "src/transports/rate-limiter/index.ts",
       "transports/index": "src/transports/index.ts",
       "websocket-server/index": "src/websocket-server/index.ts",
+      "cloudflare/index": "src/cloudflare/index.ts",
       "server/index": "src/server/index.ts",
       "monitoring/index": "src/monitoring/index.ts",
       "encryption-key/index": "src/encryption-key/index.ts",

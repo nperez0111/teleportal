@@ -56,8 +56,16 @@ export interface FileUploadResult {
    */
   totalChunks: number;
   /**
-   * Retrieve a chunk for the upload by chunk index.
-   * Chunks can only be fetched once and are deleted after fetching.
+   * All document ids that requested this upload session. When the upload session
+   * is content-addressed (its id is the merkle root), several documents may
+   * reference the same content; the completed file must be attached to all of
+   * them, not just whichever document's chunk happened to finish the upload.
+   */
+  documentIds: string[];
+  /**
+   * Retrieve a chunk for the upload by chunk index. Does not mutate the session;
+   * call {@link TemporaryUploadStorage.deleteUpload} once the file has been
+   * durably stored so a failed store leaves the session intact and retriable.
    */
   getChunk: (chunkIndex: number) => Promise<Uint8Array>;
   /**
@@ -77,10 +85,17 @@ export interface TemporaryUploadStorage {
   readonly type: "temporary-upload-storage";
 
   /**
-   * Initiate a new file upload session.
+   * Initiate a new file upload session, or resume an existing one.
    *
-   * @param uploadId - Client-generated UUID for this upload
-   * @param metadata - File metadata
+   * Idempotent: calling it again for an existing session (e.g. a resumed or
+   * content-addressed upload) keeps the already-stored chunks and records
+   * `metadata.documentId` as another document referencing this content. When the
+   * session id is content-addressed, a conflicting `metadata` (a different
+   * `size`/`encrypted` under the same id) must be rejected rather than silently
+   * accepted, since it would corrupt the shared session.
+   *
+   * @param uploadId - Content-addressed id (merkle root) for this upload
+   * @param metadata - File metadata (including the requesting `documentId`)
    */
   beginUpload(uploadId: string, metadata: FileMetadata): Promise<void>;
 
@@ -121,6 +136,17 @@ export interface TemporaryUploadStorage {
     totalChunks: number,
     fileId?: File["id"],
   ): Promise<FileUploadResult>;
+
+  /**
+   * Delete an upload session and all its chunks.
+   *
+   * Called after the file has been durably stored (so cleanup does not race the
+   * store), and to discard a poisoned session (e.g. a merkle-root mismatch at
+   * completion) so a retry starts from a clean slate.
+   *
+   * @param uploadId - The upload session id
+   */
+  deleteUpload(uploadId: string): Promise<void>;
 
   /**
    * Clean up expired upload sessions.

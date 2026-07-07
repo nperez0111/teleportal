@@ -33,6 +33,8 @@
   "exports": {
     ".": "./dist/lib/index.mjs",
     "./storage": "./dist/storage/index.mjs",
+    "./storage/postgres": "./dist/storage/postgres/index.mjs",
+    "./storage/s3": "./dist/storage/s3/index.mjs",
     "./http": "./dist/http/index.mjs",
     "./protocol": "./dist/lib/protocol/index.mjs",
     "./protocols/milestone": "./dist/protocols/milestone/index.mjs",
@@ -47,6 +49,7 @@
     "./transports/rate-limiter": "./dist/transports/rate-limiter/index.mjs",
     "./transports": "./dist/transports/index.mjs",
     "./websocket-server": "./dist/websocket-server/index.mjs",
+    "./cloudflare": "./dist/cloudflare/index.mjs",
     "./server": "./dist/server/index.mjs",
     "./monitoring": "./dist/monitoring/index.mjs",
     "./encryption-key": "./dist/encryption-key/index.mjs",
@@ -55,7 +58,8 @@
     "./devtools": "./dist/devtools/index.mjs",
     "./agent": "./dist/agent/index.mjs",
     "./attribution": "./dist/lib/attribution/index.mjs",
-    "./rpc": "./dist/lib/rpc/index.mjs"
+    "./rpc": "./dist/lib/rpc/index.mjs",
+    "./utils": "./dist/utils/index.mjs"
   },
   "publishConfig": {
     "access": "public"
@@ -68,6 +72,7 @@
     "prepack": "bun run build",
     "dev": "PORT=1235 bun run --watch ./playground/bun/server.ts",
     "dev:encrypted": "PORT=1234 bun run --watch ./playground/bun/encrypted-server.ts",
+    "dev:postgres": "PORT=1237 bun run --watch ./playground/bun/postgres-server.ts",
     "release": "bun run test && changelogen --release && npm publish && git push --follow-tags",
     "test": "bun run test:types && bun test --dots",
     "test:types": "vp check --no-fmt",
@@ -82,36 +87,41 @@
     "bench:rate-limiter": "bun test ./benchmarks/rate-limiter.bench.ts --timeout 120000",
     "bench:pubsub": "bun test ./benchmarks/pubsub-batching.bench.ts --timeout 120000",
     "bench:integration": "bun test ./benchmarks/server-integration.bench.ts --timeout 120000",
-    "bench:tiered": "bun test ./benchmarks/tiered-storage.bench.ts --timeout 120000"
+    "bench:tiered": "bun test ./benchmarks/tiered-storage.bench.ts --timeout 120000",
+    "bench:postgres": "bun test ./benchmarks/postgres-storage.bench.ts --timeout 120000",
+    "bench:s3": "bun test ./benchmarks/s3-storage.bench.ts --timeout 120000"
   },
   "dependencies": {
-    "@logtape/logtape": "2.2.1",
-    "@tanstack/devtools-event-client": "0.5.0",
-    "hookable": "6.1.1",
-    "jose": "6.2.3",
-    "lib0": "0.2.117",
-    "y-protocols": "1.0.7",
-    "yjs": "13.6.31"
+    "@logtape/logtape": "^2.2.3",
+    "hookable": "^6.1.1",
+    "jose": "^6.2.3",
+    "lib0": "^0.2.117",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.31"
   },
   "devDependencies": {
     "@nats-io/transport-node": "3.4.0",
     "@types/bun": "1.3.14",
+    "aws4fetch": "1.0.20",
     "bun-plugin-tailwind": "0.1.2",
     "changelogen": "0.6.2",
-    "crossws": "0.4.6",
+    "crossws": "0.4.9",
     "eventsource": "4.1.0",
     "ioredis": "5.11.1",
     "msw": "2.14.6",
-    "srvx": "0.11.17",
+    "postgres": "3.4.9",
+    "srvx": "0.11.21",
     "tinybench": "6.0.2",
     "unstorage": "1.17.5",
-    "vite-plus": "0.2.1"
+    "vite-plus": "0.2.2"
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",
-    "@standard-schema/spec": "1.1.0",
+    "@standard-schema/spec": "^1.1.0",
+    "aws4fetch": "^1.0.20",
     "crossws": "^0.4.3",
     "ioredis": "^5.8.2",
+    "postgres": "^3.4.5",
     "unstorage": "^1.17.2"
   },
   "peerDependenciesMeta": {
@@ -121,10 +131,16 @@
     "@standard-schema/spec": {
       "optional": true
     },
+    "aws4fetch": {
+      "optional": true
+    },
     "crossws": {
       "optional": true
     },
     "ioredis": {
+      "optional": true
+    },
+    "postgres": {
       "optional": true
     },
     "unstorage": {

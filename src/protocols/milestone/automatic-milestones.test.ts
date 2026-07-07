@@ -30,6 +30,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     MemoryDocumentStorage.attributionMaps.clear();
+    MemoryDocumentStorage.attributionCache.clear();
 
     storage = new MemoryDocumentStorage();
     milestoneStorage = new InMemoryMilestoneStorage();
@@ -37,7 +38,7 @@ describe("Automatic Milestones via Handler Factory", () => {
   });
 
   afterEach(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => setTimeout(resolve, 1));
     if (server) await server[Symbol.asyncDispose]();
     if (session) await session[Symbol.asyncDispose]();
     await pubSub[Symbol.asyncDispose]();
@@ -98,7 +99,7 @@ describe("Automatic Milestones via Handler Factory", () => {
       id: "trigger-time",
       enabled: true,
       type: "time-based",
-      config: { interval: 10 },
+      config: { interval: 1 },
       autoName: "Time Milestone",
     };
 
@@ -128,7 +129,7 @@ describe("Automatic Milestones via Handler Factory", () => {
     let milestones = await milestoneStorage.getMilestones("test-doc");
     expect(milestones.length).toBe(0);
 
-    await new Promise((resolve) => setTimeout(resolve, 12));
+    await new Promise((resolve) => setTimeout(resolve, 1));
 
     await session.write(createYjsUpdate("time update 2"));
     milestones = await milestoneStorage.getMilestones("test-doc");

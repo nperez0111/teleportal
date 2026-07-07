@@ -52,6 +52,8 @@ export class EncryptionClient
   #encryptUpdate: (key: CryptoKey, update: DecryptedBinary) => Promise<EncryptedBinary>;
   #receivedSidecars: EncryptedBinary[] = [];
   #cachedTokenizer: ((str: string) => string) | null = null;
+  #pendingCompaction: SidecarCompaction | null = null;
+  #compactionInFlight = false;
 
   constructor({
     document,
@@ -95,7 +97,11 @@ export class EncryptionClient
   /**
    * Releases any resources held by this client. Call when the client is no longer used.
    */
-  public destroy(): void {}
+  public destroy(): void {
+    this.#cachedTokenizer = null;
+    this.#pendingCompaction = null;
+    this.#receivedSidecars = [];
+  }
 
   /**
    * Encrypts a {@link DecryptedBinary} using the {@link CryptoKey}.
@@ -149,14 +155,12 @@ export class EncryptionClient
 
   /**
    * Responds to the server's sync-step-1 echo with a diff of local-only state.
-   * Includes a compaction computed lazily if enough sidecars have accumulated.
+   * Includes a background-computed compaction if one is ready.
    */
   public async handleSyncStep1(syncStep1: Uint8Array): Promise<DocMessage<ClientContext>> {
     const diff = Y.encodeStateAsUpdateV2(this.ydoc, syncStep1);
-    const [{ structureUpdate, encryptedSidecar }, compaction] = await Promise.all([
-      this.#encryptContent(diff, 2),
-      this.#takePendingCompaction(),
-    ]);
+    const { structureUpdate, encryptedSidecar } = await this.#encryptContent(diff, 2);
+    const compaction = this.#takeReadyCompaction();
 
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
@@ -187,39 +191,59 @@ export class EncryptionClient
     );
     await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
     this.#accumulate(...decoded.encryptedSidecars);
+    this.#maybeStartCompaction();
   }
 
   /**
    * Records encrypted sidecars (known to be stored on the server) for a future
-   * compaction. The compaction itself is computed lazily in
-   * {@link #takePendingCompaction} so no crypto work is spent on a compaction
-   * that never gets sent. Used by both handleUpdate (incoming) and onUpdate
-   * (outgoing) so single-client edits are compacted too.
+   * compaction. Used by both handleUpdate (incoming) and onUpdate (outgoing)
+   * so single-client edits are compacted too.
    */
   #accumulate(...sidecars: EncryptedBinary[]): void {
     this.#receivedSidecars.push(...sidecars);
   }
 
   /**
-   * Compute a compaction from the accumulated sidecars, but only once enough
-   * have piled up to be worth collapsing. Captures and clears the accumulator
-   * before awaiting so a concurrent send can't compact the same set twice.
-   * Returns null when below threshold or nothing to compact.
+   * If a compaction has been computed in the background, take it for inclusion
+   * in the next outgoing message. Returns null if none is ready — the send
+   * proceeds without one (the protocol treats compaction as optional).
    */
-  async #takePendingCompaction(): Promise<SidecarCompaction | null> {
-    if (this.#receivedSidecars.length < EncryptionClient.COMPACTION_THRESHOLD) {
-      return null;
+  #takeReadyCompaction(): SidecarCompaction | null {
+    const result = this.#pendingCompaction;
+    this.#pendingCompaction = null;
+    return result;
+  }
+
+  /**
+   * Kick off compaction in the background when enough sidecars have
+   * accumulated. The result is stashed in `#pendingCompaction` and picked up
+   * by the next outgoing message via `#takeReadyCompaction`. If a compaction
+   * is already in flight, this is a no-op.
+   */
+  #maybeStartCompaction(): void {
+    if (
+      this.#compactionInFlight ||
+      this.#receivedSidecars.length < EncryptionClient.COMPACTION_THRESHOLD
+    ) {
+      return;
     }
     const sources = this.#receivedSidecars;
     this.#receivedSidecars = [];
-    const compacted = await compactSidecars(this.key, sources);
-    if (!compacted) return null;
-    return {
-      sidecar: compacted.encrypted,
-      index: compacted.index,
-      hash: compacted.hash,
-      sourceHashes: sources.map(hashSidecar),
-    };
+    this.#compactionInFlight = true;
+
+    void Promise.all([
+      compactSidecars(this.key, sources),
+      Promise.all(sources.map(hashSidecar)),
+    ]).then(([compacted, sourceHashes]) => {
+      this.#compactionInFlight = false;
+      if (!compacted) return;
+      this.#pendingCompaction = {
+        sidecar: compacted.encrypted,
+        index: compacted.index,
+        hash: compacted.hash,
+        sourceHashes,
+      };
+    });
   }
 
   /**
@@ -230,6 +254,7 @@ export class EncryptionClient
     const decoded = decodeContentEncryptedPayload(update.data as EncryptedUpdatePayload);
     await this.decryptAndApply(decoded.structureUpdate, decoded.encryptedSidecars);
     this.#accumulate(...decoded.encryptedSidecars);
+    this.#maybeStartCompaction();
   }
 
   /**
@@ -245,16 +270,17 @@ export class EncryptionClient
 
   /**
    * Encrypts a local Y.js update and returns a doc message for sending.
-   * Computes a compaction lazily (only when enough sidecars have accumulated)
-   * and includes it in the outgoing payload. Also accumulates the outgoing
-   * sidecar for future compaction so single-client edits are compacted too.
+   * Attaches a background-computed compaction if one is ready. Also
+   * accumulates the outgoing sidecar and kicks off a new background
+   * compaction when the threshold is crossed.
    */
   public async onUpdate(update: VersionedUpdate): Promise<Message> {
-    const [{ structureUpdate, encryptedSidecar }, compaction] = await Promise.all([
-      this.#encryptContent(update.data, update.version),
-      this.#takePendingCompaction(),
-    ]);
+    const { structureUpdate, encryptedSidecar } = await this.#encryptContent(
+      update.data,
+      update.version,
+    );
 
+    const compaction = this.#takeReadyCompaction();
     const payload = encodeContentEncryptedPayload({
       structureUpdate,
       encryptedSidecars: [encryptedSidecar],
@@ -276,6 +302,7 @@ export class EncryptionClient
     // Accumulate AFTER building the payload — this sidecar will be referenced
     // by a future compaction, by which time the server will have stored it.
     this.#accumulate(encryptedSidecar);
+    this.#maybeStartCompaction();
 
     return message;
   }
