@@ -26,13 +26,13 @@ jobs:
           --health-timeout 5s
           --health-retries 15
       minio:
-        image: minio/minio:latest
+        image: quay.io/minio/minio:latest
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
         ports:
           - 9000:9000
-        options: server /data --console-address :9001
+          - 9001:9001
     env:
       TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
       TEST_S3_ENDPOINT: http://localhost:9000
