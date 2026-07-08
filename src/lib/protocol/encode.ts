@@ -100,6 +100,11 @@ export function encodeMessage(
             encoding.writeVarString(encoder, message.payload.reason);
             break;
           }
+          default: {
+            throw new Error("Invalid doc payload.type", {
+              cause: { update: message },
+            });
+          }
         }
         break;
       }

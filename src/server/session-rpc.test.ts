@@ -280,6 +280,10 @@ describe("Session RPC Integration", () => {
       expect(response).toBeInstanceOf(RpcMessage);
       if (response instanceof RpcMessage) {
         expect(response.requestType).toBe("response");
+        // The response must correlate to the request's id so the client can
+        // resolve the pending call rather than time out.
+        expect(response.originalRequestId).toBe(rpcMessage.id);
+        expect(response.rpcMethod).toBe("unknownMethod");
         expect(response.payload).toEqual({
           type: "error",
           statusCode: 501,
@@ -333,6 +337,7 @@ describe("Session RPC Integration", () => {
       expect(response).toBeInstanceOf(RpcMessage);
       if (response instanceof RpcMessage) {
         expect(response.requestType).toBe("response");
+        expect(response.originalRequestId).toBe(rpcMessage.id);
         expect(response.payload).toEqual({
           type: "error",
           statusCode: 500,

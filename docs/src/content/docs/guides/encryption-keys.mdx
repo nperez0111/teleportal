@@ -5,7 +5,7 @@ description: Create, share, and manage encryption keys for end-to-end encrypted 
 
 import { Aside } from "@astrojs/starlight/components";
 
-Content-level end-to-end encryption is on by default in Teleportal. Every `Provider` requires an `encryptionKey` -- a `CryptoKey` produced by `createEncryptionKey()` or `importEncryptionKey()`. The key never reaches the server; all encryption and decryption happens client-side using AES-256-GCM via the Web Crypto API.
+Content-level end-to-end encryption is on by default in Teleportal. Every `Provider` requires an `encryptionKey` -- a `KeyResolver` produced by `createEncryptionKey()`, `passwordKey()`, or `registryKey()`. A resolver describes _how_ the provider obtains its `CryptoKey`; `Provider.create` resolves it after the connection is ready but before the provider is built. The key never reaches the server; all encryption and decryption happens client-side using AES-256-GCM via the Web Crypto API.
 
 This guide covers creating, sharing, storing, and distributing encryption keys.
 
@@ -19,7 +19,7 @@ This guide covers creating, sharing, storing, and distributing encryption keys.
 
 ## Creating an Encryption Key
 
-Generate a new 256-bit AES-GCM key with `createEncryptionKey()`:
+`createEncryptionKey()` returns a `KeyResolver`. Called with no argument it delegates to `simpleEncryption()`, which derives the document's AES-256-GCM key from the **document ID** via PBKDF2. Passing a password delegates to `passwordKey(password)` instead (see [Password-Derived Keys](#password-derived-keys)):
 
 ```typescript
 import { createEncryptionKey } from "teleportal/encryption-key";
@@ -34,6 +34,13 @@ const provider = await Provider.create({
 });
 ```
 
+<Aside type="caution">
+  Because `createEncryptionKey()` with no password derives the key from the document ID alone,
+  anyone who knows the document ID can decrypt. Only use it when the ID itself is a secret (for
+  example, an unguessable UUID). For an independent random key, use `generateEncryptionKey()` and
+  distribute the exported key out-of-band.
+</Aside>
+
 <Aside type="note">
   To deliberately run a plaintext document without encryption, pass `encryptionKey: false`. Omitting
   the key entirely throws an error.
@@ -41,23 +48,23 @@ const provider = await Provider.create({
 
 ## Exporting and Importing Keys
 
-Keys can be exported to a JWK string for storage or transfer, then imported back:
+`exportEncryptionKey` / `importEncryptionKey` operate on a raw `CryptoKey`, not a resolver. Generate a random extractable key with `generateEncryptionKey()`, export it to a JWK string for storage or transfer, then import it back later. An imported `CryptoKey` can be passed directly as the `encryptionKey`:
 
 ```typescript
 import {
-  createEncryptionKey,
+  generateEncryptionKey,
   exportEncryptionKey,
   importEncryptionKey,
 } from "teleportal/encryption-key";
 
-// Export to a storable string
-const key = createEncryptionKey();
+// Generate a random key and export it to a storable string
+const key = await generateEncryptionKey();
 const keyString = await exportEncryptionKey(key);
 
 // Store the keyString in localStorage, a database, etc.
 localStorage.setItem("doc-key", keyString);
 
-// Import it back later
+// Import it back later (returns a CryptoKey, usable as an encryptionKey)
 const stored = localStorage.getItem("doc-key");
 const importedKey = await importEncryptionKey(stored);
 ```
@@ -68,7 +75,7 @@ The safest way to share a key in a browser is via the URL fragment (the part aft
 
 ```typescript
 import {
-  createEncryptionKey,
+  generateEncryptionKey,
   exportEncryptionKey,
   importEncryptionKey,
   keyToUrlFragment,
@@ -76,7 +83,7 @@ import {
 } from "teleportal/encryption-key";
 
 // Sharer: create a shareable link
-const key = createEncryptionKey();
+const key = await generateEncryptionKey();
 const shareUrl = `https://app.example.com/doc/abc123#${keyToUrlFragment(await exportEncryptionKey(key))}`;
 // e.g. https://app.example.com/doc/abc123#token=<key>
 
@@ -138,7 +145,7 @@ const keyHandlers = getKeyRegistryHandlers({
 
 ### Client Setup
 
-The `registryKey` resolver fetches the wrapped key via RPC and unwraps it locally using the wrapping key embedded in the user's JWT:
+The `registryKey` resolver fetches the wrapped key via RPC and unwraps it locally using the wrapping key embedded in the user's JWT. The unwrapped key is cached **per document** (a failed fetch or unwrap does not poison the cache). On key rotation, the key-registry extension invalidates only that document's cached key, so the next access re-fetches the new wrapped key:
 
 ```typescript
 import { Provider } from "teleportal/providers";

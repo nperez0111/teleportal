@@ -763,11 +763,16 @@ export class Provider<
       this.#waitForApplyQueue(),
     ]).then(() => {});
 
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error(`Flush timeout after ${timeout}ms`)), timeout);
+      timeoutId = setTimeout(() => reject(new Error(`Flush timeout after ${timeout}ms`)), timeout);
     });
 
-    return Promise.race([flushPromise, timeoutPromise]);
+    // Clear the timeout once the race settles so a winning flush doesn't leave
+    // a pending timer alive (up to `timeout` ms) that later rejects into the void.
+    return Promise.race([flushPromise, timeoutPromise]).finally(() => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    });
   }
 
   // --- Document switching ---
@@ -867,6 +872,25 @@ export class Provider<
     }
 
     this.doc.off("subdocs", this.#subdocListener);
+
+    // Tear down subdocument providers. Yjs will cascade `doc.destroy()` to the
+    // child Y.Docs below, but that only destroys the docs — not the Providers
+    // wrapping them, which each hold a message reader on the shared connection,
+    // a pending-structs interval, an offline-storage handle and an abort
+    // controller. Without this they leak. We detach the listener first (above)
+    // so this manual teardown isn't racing the `removed` subdocs event.
+    // `destroyConnection: false` because children share our connection, which
+    // we handle once below; propagate `destroyDoc` so an explicit
+    // `destroyDoc: false` also spares the subdoc Y.Docs.
+    for (const subProvider of this.subdocs.values()) {
+      try {
+        subProvider.destroy({ destroyConnection: false, destroyDoc });
+      } catch {
+        // Best-effort: never let one subdoc's teardown abort the rest.
+      }
+    }
+    this.subdocs.clear();
+
     if (this.#pendingStructsTimer !== null) {
       clearInterval(this.#pendingStructsTimer);
       this.#pendingStructsTimer = null;

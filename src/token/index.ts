@@ -1,5 +1,14 @@
 import { SignJWT, jwtVerify } from "jose";
 
+/**
+ * Escape every regular-expression metacharacter in `str` so it matches
+ * literally when embedded in a `RegExp`. Used by the glob matcher so document
+ * patterns can never inject regex syntax.
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export type Permission = "admin" | "write" | "read" | "comment" | "suggest";
 
 export type DocumentAccess = {
@@ -159,6 +168,11 @@ export class TokenManager {
       const { payload } = await jwtVerify(token, this.secret, {
         issuer: this.issuer,
         audience: this.audience,
+        // Pin the accepted signature algorithm. Tokens are always minted with
+        // HS256 (see generateToken); without this allowlist jose would accept
+        // any HMAC algorithm the symmetric key supports (HS384/HS512), and
+        // pinning is defense-in-depth against algorithm-confusion attacks.
+        algorithms: ["HS256"],
       });
 
       return {
@@ -242,40 +256,44 @@ export class TokenManager {
   }
 
   /**
-   * Check if a pattern matches a document name
-   * Supports wildcards, prefix matching, and exclusion patterns
+   * Check if a pattern matches a document name.
+   *
+   * `*` is the only wildcard and matches any run of characters (including
+   * none). Every other character — including regex metacharacters such as
+   * `.`, `(`, `[`, `+`, `?`, `\` — is matched LITERALLY. This is a security
+   * boundary: patterns and exclusion rules must never be able to inject regex
+   * syntax that would over-match (grant unintended access) or under-match
+   * (fail to exclude a denied document).
    */
   private matchesPattern(pattern: string, documentName: string): boolean {
-    // Exact match
-    if (pattern === documentName) {
-      return true;
+    // Fast paths that avoid compiling a RegExp for the common cases.
+
+    // No wildcard: exact, literal comparison.
+    if (!pattern.includes("*")) {
+      return pattern === documentName;
     }
 
-    // Wildcard match
+    // Match-all.
     if (pattern === "*") {
       return true;
     }
 
-    // Prefix match (ends with /*)
-    if (pattern.endsWith("/*")) {
+    // Prefix match (ends with /*): "user/*" matches "user/<anything>".
+    if (pattern.endsWith("/*") && !pattern.slice(0, -2).includes("*")) {
       const prefix = pattern.slice(0, -2);
       return documentName.startsWith(prefix + "/");
     }
 
-    // Suffix match (starts with *)
-    if (pattern.startsWith("*")) {
-      const suffix = pattern.slice(1);
-      return documentName.endsWith(suffix);
-    }
-
-    // Simple wildcard match (contains *)
-    if (pattern.includes("*")) {
-      const regexPattern = pattern.replace(/\./g, "\\.").replace(/\*/g, ".*");
-      const regex = new RegExp(`^${regexPattern}$`);
-      return regex.test(documentName);
-    }
-
-    return false;
+    // General case: compile the glob to an anchored RegExp, escaping every
+    // literal segment so no source character is interpreted as regex syntax.
+    // `*` becomes `.*` (`s` flag so a run of any character, including newlines,
+    // is covered — the segments themselves are always fully escaped).
+    const source = pattern
+      .split("*")
+      .map((segment) => escapeRegExp(segment))
+      .join(".*");
+    const regex = new RegExp(`^${source}$`, "s");
+    return regex.test(documentName);
   }
 
   /**

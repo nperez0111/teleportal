@@ -129,12 +129,68 @@ describe("Automatic Milestones via Handler Factory", () => {
     let milestones = await milestoneStorage.getMilestones("test-doc");
     expect(milestones.length).toBe(0);
 
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    // Ensure the trigger interval (1ms) has elapsed since the first write set
+    // the baseline, so the next write is eligible to fire the trigger.
+    await new Promise((resolve) => setTimeout(resolve, 2));
 
     await session.write(createYjsUpdate("time update 2"));
-    milestones = await milestoneStorage.getMilestones("test-doc");
+
+    // Poll for the fire-and-forget async milestone creation to settle, rather
+    // than guessing with a fixed sleep (which raced the async storage write
+    // under full-suite load).
+    const deadline = Date.now() + 2000;
+    do {
+      milestones = await milestoneStorage.getMilestones("test-doc");
+      if (milestones.length >= 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    } while (Date.now() < deadline);
+
     expect(milestones.length).toBe(1);
     expect(milestones[0].name).toBe("Time Milestone");
+  });
+
+  it("time-based trigger does not create milestones without document writes", async () => {
+    // Regression: a time-based trigger must fire on the document-write path
+    // only. A background setInterval that also fires on its own double-counts
+    // (one milestone from the timer, one from the next write) and keeps
+    // creating milestones even when the document is idle.
+    const trigger: MilestoneTrigger = {
+      id: "trigger-idle",
+      enabled: true,
+      type: "time-based",
+      config: { interval: 1 },
+      autoName: "Idle Milestone",
+    };
+
+    const handlers = getMilestoneRpcHandlers(milestoneStorage, { triggers: [trigger] });
+
+    await storage.writeDocumentMetadata("test-doc", {
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      encrypted: false,
+      milestoneTriggers: [trigger],
+    });
+
+    server = new Server<ServerContext>({
+      storage: async () => storage,
+      pubSub,
+      rpcHandlers: handlers,
+    });
+
+    session = await server.getOrOpenSession("test-doc", {
+      encrypted: false,
+      context: {} as ServerContext,
+    });
+
+    // A single write establishes the per-document trigger state. The interval
+    // is 1ms, so a background timer would fire many times during this wait.
+    await session.write(createYjsUpdate("only write"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // With no further writes, exactly zero milestones should exist: the first
+    // write did not meet the interval, and there is no self-firing timer.
+    const milestones = await milestoneStorage.getMilestones("test-doc");
+    expect(milestones.length).toBe(0);
   });
 
   it("should respect enabled flag", async () => {

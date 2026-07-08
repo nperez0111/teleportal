@@ -119,5 +119,18 @@ describe("UnstorageMilestoneStorage", () => {
     expect(restored?.lifecycleState).toBe("active");
   });
 
+  it("getMilestones with lifecycleState 'active' includes never-deleted milestones (Bug 2)", async () => {
+    const id = await storage.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    const active = await storage.getMilestones("doc-1", { lifecycleState: "active" });
+    expect(active.map((m) => m.id)).toContain(id);
+  });
+
   it.todo("gets expired milestones", () => {});
 });

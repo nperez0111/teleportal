@@ -112,6 +112,53 @@ describe("VirtualStorage", () => {
     expect(mockStorage.handledUpdates[1]).toBe(update2);
   });
 
+  it("applies each buffered update exactly once when the batch timer flushes", async () => {
+    // Regression: the batch processor and the read-path flush must not both
+    // apply the same buffered updates. With a tiny batch window, the timer
+    // flush drains the buffer; a subsequent read must not re-apply anything.
+    const vs = new VirtualStorage(mockStorage, { batchMaxSize: 100, batchWaitMs: 1 });
+    const u1 = versionedUpdate(new Uint8Array([1]));
+    const u2 = versionedUpdate(new Uint8Array([2]));
+
+    await vs.handleUpdate("doc1", u1);
+    await vs.handleUpdate("doc1", u2);
+
+    // Wait for the batch timer to fire (batchWaitMs = 1).
+    {
+      const deadline = Date.now() + 1000;
+      while (mockStorage.handledUpdates.length < 2) {
+        if (Date.now() > deadline) throw new Error("timed out waiting for batch flush");
+        await new Promise((r) => setTimeout(r, 1));
+      }
+    }
+
+    // A read afterwards must not re-apply the already-flushed updates.
+    await vs.getDocument("doc1");
+
+    expect(mockStorage.handledUpdates).toEqual([u1, u2]);
+  });
+
+  it("applies each buffered update exactly once when batchMaxSize is reached", async () => {
+    const vs = new VirtualStorage(mockStorage, { batchMaxSize: 2, batchWaitMs: 100_000 });
+    const u1 = versionedUpdate(new Uint8Array([1]));
+    const u2 = versionedUpdate(new Uint8Array([2]));
+
+    // Two updates hit batchMaxSize and flush synchronously via the processor.
+    await vs.handleUpdate("doc1", u1);
+    await vs.handleUpdate("doc1", u2);
+
+    {
+      const deadline = Date.now() + 1000;
+      while (mockStorage.handledUpdates.length < 2) {
+        if (Date.now() > deadline) throw new Error("timed out waiting for size flush");
+        await new Promise((r) => setTimeout(r, 1));
+      }
+    }
+
+    await vs.getDocument("doc1");
+    expect(mockStorage.handledUpdates).toEqual([u1, u2]);
+  });
+
   it("should buffer metadata and flush on read", async () => {
     const metadata: DocumentMetadata = {
       createdAt: 1000,

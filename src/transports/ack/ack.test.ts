@@ -505,7 +505,7 @@ describe("withAckTrackingSink", () => {
     const _context: TestContext = {
       clientId: "test-client",
       userId: "test-user",
-      room: "test-room",
+      room: "test-user",
     };
     const ackTopic: PubSubTopic = "ack/test-client";
 
@@ -521,6 +521,42 @@ describe("withAckTrackingSink", () => {
     });
 
     expect((trackedSink as any).customProperty).toBe("test-value");
+  });
+
+  it("clears timed-out messages so a later waitForAcks resolves", async () => {
+    const context: TestContext = {
+      clientId: "test-client",
+      userId: "test-user",
+      room: "test-room",
+    };
+    const ackTopic: PubSubTopic = "ack/test-client";
+
+    const trackedSink = withAckTrackingSink(baseSink, {
+      pubSub,
+      ackTopic,
+      sourceId: "test-source",
+      ackTimeout: 5,
+    });
+
+    // First message times out — waitForAcks rejects.
+    const first = new DocMessage("test-doc", { type: "sync-done" }, context);
+    await trackedSink.write(first);
+    await expect(trackedSink.waitForAcks()).rejects.toThrow("ACK timeout");
+
+    // A fresh message that IS acked must not be poisoned by the earlier
+    // timed-out promise lingering in the pending set.
+    const second = new DocMessage("test-doc", { type: "sync-done" }, context);
+    await trackedSink.write(second);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    await pubSub.publish(
+      ackTopic,
+      new AckMessage({ type: "ack", messageId: second.id }, context).encoded,
+      "other-source",
+    );
+
+    await trackedSink.waitForAcks();
+
+    await trackedSink.unsubscribe();
   });
 
   it("should handle close", async () => {

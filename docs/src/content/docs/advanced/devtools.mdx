@@ -15,15 +15,16 @@ The Teleportal DevTools helps you debug and monitor your Teleportal applications
 - **Message inspection**: View detailed payloads, metadata, and acknowledgment status
 - **Statistics**: Track message counts, rates, document counts, and message types
 
-The UI is organized as a three-panel layout:
+The UI is organized into three tabs -- **Messages**, **Documents**, and **Presence** -- plus an always-visible connection status area with a details popover:
 
-- **Filters panel** (top, collapsible): A compact header is always visible with a filters toggle, clear button, connection status indicator, document count, and message limit input. Expanding it reveals search, direction selector, document checkboxes, and message type checkboxes.
-- **Message list** (left, scrollable): Messages displayed in reverse chronological order (newest first). Each item shows a direction icon, a color-coded message type badge, an ACK indicator (if acknowledged), the document name, and a timestamp.
-- **Message inspector** (right, fixed width): When a message is selected, displays its full metadata (ID, direction, type, document, timestamp, encryption status), ACK details if applicable, and the formatted payload with a copy button.
+- **Header bar**: a tab bar (Messages / Documents / Presence) with count badges (document count, peer count), and a connection status indicator. Clicking the connection status opens a popover with live internals (in-flight/buffered counts, AIMD batch window, reconnect attempts, SharedWorker pooling details, and a timeline of state transitions).
+- **Messages tab**: a collapsible filters row (search, direction selector, document checkboxes, message type checkboxes, message limit input), a scrollable message list (left, newest first), and a message inspector (right). RPC request/stream/response messages collapse into a single call row with status, latency, and error details.
+- **Documents tab**: a tree of documents and subdocuments with live sync handshake state (sync-step-1 → sync-step-2 → synced), traffic counters, encryption, and last activity. Clicking a document filters the Messages tab.
+- **Presence tab**: a live peer roster derived from presence-join/leave/heartbeat messages, with expandable per-peer data and a recent join/leave feed.
 
-A connection status indicator is shown in the filters header with color coding: green for connected, yellow for connecting, gray for disconnected, and red for errored.
+The connection status indicator uses color coding: green for connected, yellow for connecting, gray for disconnected, and red for errored.
 
-Real-time statistics are displayed alongside the filters: total message count, messages per second, and document count. All settings -- including filters, message limit, and panel state -- persist in localStorage across sessions.
+All settings -- including filters, message limit, and panel state -- persist in localStorage across sessions.
 
 ## Basic Integration
 
@@ -171,9 +172,9 @@ Key behaviors:
 
 ## Message Types and Color Coding
 
-The DevTools recognize and color-code messages by category and type.
+The DevTools recognize and color-code messages by the wire protocol's message kinds -- `doc`, `awareness`, `presence`, `rpc`, and `ack`. `getMessageTypeLabel()` derives the row label and `getMessageTypeColor()` its badge color.
 
-### Document Messages
+### Document (`doc`) Messages
 
 | Type           | Color        |
 | -------------- | ------------ |
@@ -182,7 +183,6 @@ The DevTools recognize and color-code messages by category and type.
 | `update`       | Green        |
 | `sync-done`    | Darker green |
 | `auth-message` | Red          |
-| `milestone-*`  | Purple       |
 
 ### Awareness Messages
 
@@ -191,14 +191,25 @@ The DevTools recognize and color-code messages by category and type.
 | `awareness-update`  | Yellow        |
 | `awareness-request` | Darker yellow |
 
-### File Messages
+### Presence Messages
 
-| Type                | Color          |
-| ------------------- | -------------- |
-| `file-upload`       | Indigo         |
-| `file-download`     | Darker indigo  |
-| `file-part`         | Lighter indigo |
-| `file-auth-message` | Red            |
+| Type                                                                            | Color  |
+| ------------------------------------------------------------------------------- | ------ |
+| `presence-join` / `presence-leave` / `presence-heartbeat` / `presence-announce` | Purple |
+
+The row label is the payload's `type`; presence messages also feed the roster in the Presence tab.
+
+### RPC (`rpc`) Messages
+
+RPC is the transport for milestones (`listMilestones`, …), the key registry, and file transfers (`fileUpload` / `fileDownload`). There is **no** standalone `milestone-*` or `file-*` message type -- those are RPC methods carried over `rpc` messages. The badge is indigo, shaded by `requestType`:
+
+| Request type  | Label                | Color                   |
+| ------------- | -------------------- | ----------------------- |
+| request       | `<rpcMethod>`        | Darkest indigo (`600`)  |
+| response      | `<rpcMethod>`        | Medium indigo (`500`)   |
+| stream / part | `<rpcMethod> (part)` | Lightest indigo (`400`) |
+
+RPC messages sharing an `originalRequestId` are grouped into a single call row. File-transfer upload chunks never appear as messages -- upload progress comes from the file protocol's progress events instead.
 
 ### ACK Messages
 
@@ -252,7 +263,7 @@ Filter to awareness messages only using the message type filter. Verify that `aw
 
 ### File upload failures
 
-Filter to file messages. Check for `file-auth-message` responses and inspect their payloads for HTTP status codes. Common codes: 401 (unauthorized), 403 (forbidden), 404 (document not found), 500 (server error). A `file-upload` sent without any `file-part` responses indicates the upload was rejected before chunked transfer began.
+File transfers run over RPC. Filter to `rpc` messages and look for the `fileUpload` / `fileDownload` call rows. A failed call shows its error code and details in the call row and inspector. Note that upload chunks never appear as messages -- they stay off the event pipeline for throughput, so upload progress and completion come from the file protocol's progress events rather than visible `stream` parts. Download parts, by contrast, arrive as received messages and are grouped under their call row.
 
 ## Troubleshooting Tips
 

@@ -431,8 +431,13 @@ describe("WorkerConnection", () => {
 
     await conn.destroy();
 
-    // Wait for grace period to expire
-    await new Promise<void>((r) => setTimeout(r, SHORT_GRACE_MS + 1));
+    // Poll until the grace-period cleanup fires. Event-driven instead of a
+    // fixed sleep+assert, which raced the manager's cleanup timer under load.
+    const deadline = Date.now() + 2000;
+    while (manager.connectionCount !== 0) {
+      if (Date.now() > deadline) break;
+      await new Promise<void>((r) => setTimeout(r, 1));
+    }
 
     expect(manager.connectionCount).toBe(0);
   });
@@ -815,18 +820,31 @@ describe("WorkerConnection", () => {
     await tick();
     sentMessages.length = 0;
 
-    // Wait past the stale threshold so the sweep fires.
-    await tick(20);
+    const unannounces = () =>
+      sentMessages.filter(
+        (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+      );
 
+    // The stale-port sweep is a wall-clock setInterval, so poll for its effect
+    // rather than guessing a fixed delay (which flakes under load): wait until
+    // port A's presence has been retracted exactly once.
+    {
+      const deadline = Date.now() + 2000;
+      while (unannounces().length < 1) {
+        if (Date.now() > deadline) throw new Error("sweep did not retract port A in time");
+        await tick(1);
+      }
+    }
+    // Give any erroneous extra sweeps a chance to (incorrectly) fire, then stop
+    // listening — this catches a double-sweep of A or a spurious sweep of B.
+    await tick(SHORT_GRACE_MS * 3);
     unsub();
 
-    const unannounces = sentMessages.filter(
-      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
-    );
+    const retracted = unannounces();
     // Only port A's presence is retracted; the never-heartbeating port B is
     // left alone (it may be a custom WorkerConnection without startHeartbeat).
-    expect(unannounces).toHaveLength(1);
-    expect(unannounces[0].payload.awarenessId).toBe(1);
+    expect(retracted).toHaveLength(1);
+    expect(retracted[0].payload.awarenessId).toBe(1);
     // The connection survives because port B is still attached.
     expect(manager.connectionCount).toBe(1);
 

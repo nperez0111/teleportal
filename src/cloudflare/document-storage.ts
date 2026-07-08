@@ -52,6 +52,14 @@ export class DurableObjectDocumentStorage extends AbstractDocumentStorage {
    * (seeded from the log tail on first touch) stays authoritative.
    */
   readonly #nextSeq = new Map<string, number>();
+  /**
+   * In-flight seeding of {@link #nextSeq} per document. Seeding requires an
+   * async `list()`; without sharing it, two concurrent first appends would
+   * both read an empty log, both compute seq 0, and one would overwrite the
+   * other. Concurrent first-touches await the same promise, then allocation
+   * proceeds synchronously (no await gap) so each caller gets a distinct seq.
+   */
+  readonly #seeding = new Map<string, Promise<number>>();
 
   constructor(
     storage: DurableObjectStorageLike,
@@ -92,16 +100,38 @@ export class DurableObjectDocumentStorage extends AbstractDocumentStorage {
   // ── Pending log ────────────────────────────────────────────────────────
 
   async #allocateSeq(key: string): Promise<number> {
-    let next = this.#nextSeq.get(key);
-    if (next === undefined) {
-      const tail = await this.#storage.list({
-        prefix: this.#getPendingKeyPrefix(key),
-        reverse: true,
-        limit: 1,
-      });
-      const lastKey = tail.keys().next().value as string | undefined;
-      next = lastKey === undefined ? 0 : Number(lastKey.slice(-SEQ_PAD)) + 1;
+    // Seed the counter once from the persisted log tail. Concurrent
+    // first-touches share this promise so they don't each read an empty log.
+    if (!this.#nextSeq.has(key)) {
+      let seeding = this.#seeding.get(key);
+      if (seeding === undefined) {
+        seeding = this.#storage
+          .list({ prefix: this.#getPendingKeyPrefix(key), reverse: true, limit: 1 })
+          .then((tail) => {
+            const lastKey = tail.keys().next().value as string | undefined;
+            return lastKey === undefined ? 0 : Number(lastKey.slice(-SEQ_PAD)) + 1;
+          });
+        // Drop a failed seed so a later append can retry instead of being stuck
+        // on a permanently-rejected cached promise. On success, the counter is
+        // installed below and the entry is cleared.
+        seeding.catch(() => {
+          if (this.#seeding.get(key) === seeding) {
+            this.#seeding.delete(key);
+          }
+        });
+        this.#seeding.set(key, seeding);
+      }
+      const seeded = await seeding;
+      this.#seeding.delete(key);
+      // The first waiter to resume installs the seed; later waiters keep the
+      // already-advanced counter rather than resetting it.
+      if (!this.#nextSeq.has(key)) {
+        this.#nextSeq.set(key, seeded);
+      }
     }
+    // No await between reading and advancing the counter: allocation is atomic
+    // with respect to other concurrent callers.
+    const next = this.#nextSeq.get(key)!;
     this.#nextSeq.set(key, next + 1);
     return next;
   }
@@ -188,5 +218,6 @@ export class DurableObjectDocumentStorage extends AbstractDocumentStorage {
     ];
     await deleteKeys(this.#storage, keys);
     this.#nextSeq.delete(key);
+    this.#seeding.delete(key);
   }
 }

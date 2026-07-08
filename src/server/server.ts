@@ -208,6 +208,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    */
   #sessions = new Map<string, Session<Context>>();
   /**
+   * IDs of clients currently connected to this node. A connection wires up both
+   * an abort listener and a stream-ended finally, either of which can call
+   * {@link disconnectClient}; membership here makes disconnect idempotent so the
+   * active-client gauge and `client-disconnect` event fire exactly once per
+   * client.
+   */
+  #connectedClientIds = new Set<string>();
+  /**
    * Pending session creation promises to prevent race conditions.
    * Maps composite document ID to the promise that will resolve to the session.
    */
@@ -935,6 +943,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     })();
 
     // Record client connect metric
+    this.#connectedClientIds.add(id);
     this.#metrics.clientsActive.inc();
 
     this.call("client-connect", { clientId: id });
@@ -980,6 +989,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    */
   disconnectClient(client: string | Client<Context>, reason: ClientDisconnectReason = "manual") {
     const clientId = typeof client === "string" ? client : client.id;
+
+    // Idempotent: a client that was never connected here, or was already
+    // disconnected, must not remove sessions, decrement the gauge, or re-emit
+    // the event. Both the abort listener and the stream-ended finally target
+    // the same client; only the first call does work.
+    if (!this.#connectedClientIds.delete(clientId)) {
+      return;
+    }
 
     for (const s of this.#sessions.values()) {
       s.removeClient(client);
@@ -1159,11 +1176,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * Get current operational status.
    */
   async getStatus(): Promise<StatusData> {
-    // Count total clients across all sessions
-    const activeClients = [...this.#sessions.values()].reduce(
-      (total, session) => total + [...session.clients].length,
-      0,
-    );
+    // Count distinct clients connected to this node. A single client may be
+    // joined to several sessions; the connected-id registry counts it once,
+    // whereas summing per-session client counts would double-count it.
+    const activeClients = this.#connectedClientIds.size;
 
     // Get total messages processed from metrics
     const totalMessagesProcessed = this.#metrics.totalMessagesProcessed.getValue();

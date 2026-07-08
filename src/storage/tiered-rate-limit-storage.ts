@@ -23,10 +23,15 @@ export class TieredRateLimitStorage implements RateLimitStorage {
   #cache = new Map<string, { state: RateLimitState; expiresAt: number }>();
   #backing: RateLimitStorage;
   #maxCacheSize: number;
+  #onBackingError?: (error: unknown) => void;
 
-  constructor(backing: RateLimitStorage, opts?: { maxCacheSize?: number }) {
+  constructor(
+    backing: RateLimitStorage,
+    opts?: { maxCacheSize?: number; onBackingError?: (error: unknown) => void },
+  ) {
     this.#backing = backing;
     this.#maxCacheSize = opts?.maxCacheSize ?? 10_000;
+    this.#onBackingError = opts?.onBackingError;
   }
 
   async getState(key: string): Promise<RateLimitState | null> {
@@ -45,8 +50,13 @@ export class TieredRateLimitStorage implements RateLimitStorage {
       if (firstKey !== undefined) this.#cache.delete(firstKey);
     }
     this.#cache.set(key, { state, expiresAt: Date.now() + ttl });
-    // Fire-and-forget write to backing storage
-    this.#backing.setState(key, state, ttl);
+    // Fire-and-forget write to backing storage. The cache is authoritative for
+    // reads, so a backing failure must not reject this call — but the rejection
+    // must be caught, or it surfaces as an unhandledRejection that can crash
+    // the process. Surface it via the optional callback instead.
+    void Promise.resolve(this.#backing.setState(key, state, ttl)).catch((error) => {
+      this.#onBackingError?.(error);
+    });
   }
 
   async deleteState(key: string): Promise<void> {

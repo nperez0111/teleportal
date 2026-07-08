@@ -58,10 +58,12 @@ export async function withTransaction<T>(
       continue;
     }
 
-    // Try to acquire the lock
+    // Try to acquire the lock. Spread the existing meta first so our fresh
+    // `ttl`/`lockId` win — otherwise a stale ttl/lockId from a previous cycle
+    // would clobber them, making the new lock born already-expired.
     const ttl = Date.now() + options.ttl;
     const lockId = Math.random().toString(36).substring(2);
-    await storage.setMeta(key, { ttl, lockId, ...meta });
+    await storage.setMeta(key, { ...meta, ttl, lockId });
 
     // Verify we acquired the lock (fix for race conditions)
     const currentMeta = await storage.getMeta(key);
@@ -80,14 +82,14 @@ export async function withTransaction<T>(
       // Release the lock only if we still hold it (check lockId to prevent releasing another transaction's lock)
       const currentMeta = await storage.getMeta(key);
       if (currentMeta?.lockId === lockId) {
-        await storage.setMeta(key, { ttl: Date.now(), ...meta });
+        await releaseLock(storage, key, meta);
       }
       return result;
     } catch (error) {
       // Release the lock on error, but only if we still hold it
       const currentMeta = await storage.getMeta(key);
       if (currentMeta?.lockId === lockId) {
-        await storage.setMeta(key, { ttl: Date.now(), ...meta });
+        await releaseLock(storage, key, meta);
       }
       throw error;
     }
@@ -96,4 +98,17 @@ export async function withTransaction<T>(
   throw new Error(
     `Transaction lock acquisition failed after ${maxRetries} retries for key: ${key}`,
   );
+}
+
+/**
+ * Mark the lock as released by writing an already-elapsed `ttl` and clearing
+ * the `lockId`. Preserves any unrelated meta fields but must not let the stale
+ * pre-acquisition `ttl`/`lockId` win, so those two keys are written last.
+ */
+async function releaseLock(
+  storage: Storage,
+  key: string,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  await storage.setMeta(key, { ...meta, ttl: Date.now(), lockId: undefined });
 }

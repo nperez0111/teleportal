@@ -1,14 +1,20 @@
-# Encryption Key Module
+# `teleportal/encryption-key`
 
-AES-GCM encryption for Y.js updates using the Web Crypto API.
+End-to-end encryption of Y.js updates (and file chunks) with AES-256-GCM over
+the Web Crypto API, plus the key-management pieces around it: key derivation,
+key **resolvers** (how a `Provider` obtains its key), and key **wrapping** (how a
+server stores per-document keys wrapped per-user).
 
-## Overview
+## Why it exists
 
-This module provides secure encryption and decryption of Y.js document updates using AES-256-GCM. It handles key generation, import/export, URL-fragment key sharing, and the encryption/decryption pipeline for binary update data.
+Content-level E2EE is the **default** in Teleportal: the server relays and
+stores only ciphertext and never sees plaintext or keys. This package is the
+single place that owns the crypto primitives and the "where does the key come
+from" abstraction (`KeyResolver`) used by `Provider.create`.
 
-## Required by default
-
-Content-level end-to-end encryption is the **default** in Teleportal. Every `Provider` requires an `encryptionKey` (a `CryptoKey` produced by `createEncryptionKey()` or `importEncryptionKey()`); omitting it throws. To deliberately run a plaintext document, pass `encryptionKey: false`.
+Because encryption is on by default, every `Provider` needs an `encryptionKey`.
+Omitting it throws; to deliberately run a plaintext document pass
+`encryptionKey: false`.
 
 ```ts
 import { Provider } from "teleportal/providers";
@@ -17,133 +23,67 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-doc",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(), // a KeyResolver (see below)
 });
 ```
 
-The key never reaches the server. To collaborate, share the exported key with other clients out-of-band — the URL fragment (hash) is a convenient channel because browsers never send it in requests (see [Sharing a Key via the URL Fragment](#sharing-a-key-via-the-url-fragment)).
+## The two layers
 
-## Usage
+### 1. Raw crypto (`index.ts`)
 
-### Create an Encryption Key
+Operates on `CryptoKey`s directly.
 
-```ts
-import { createEncryptionKey } from "./index";
+- **`encryptUpdate(key, data)`** → `Uint8Array`. AES-256-GCM with a **fresh
+  random 12-byte IV per call**. Output is `[12-byte IV][ciphertext+16-byte tag]`.
+  Always use this for Y.js updates.
+- **`decryptUpdate(key, blob)`** → `Uint8Array`. Rejects inputs shorter than 28
+  bytes (12 IV + 16 tag) before touching the crypto, then AES-GCM decrypts;
+  a bad tag/IV throws `"Decryption failed"`.
+- **`generateEncryptionKey()`** → a fresh random extractable AES-GCM `CryptoKey`.
+  Not derived from anything — different every call. Export & persist it yourself.
+- **`importEncryptionKey(str)` / `exportEncryptionKey(key)`** — JWK `k` (base64url
+  raw key) string ⇄ `CryptoKey`.
+- **`keyToUrlFragment(str)` / `keyFromUrlFragment(hash)`** — serialize an exported
+  key to/from a `token=<key>` URL-fragment value. The fragment (after `#`) is
+  never sent to the server, making it the canonical out-of-band key channel.
+  `keyFromUrlFragment` tolerates a leading `#` and returns `null` if absent.
+- **`createDeterministicEncryptor(key)`** → an encrypt fn, or `null` if `key` is
+  non-extractable. See [Deterministic encryption](#deterministic-encryption).
 
-const key = await createEncryptionKey();
-```
+### 2. Key resolution (`key-resolver.ts`)
 
-### Encrypt an Update
+A `KeyResolver` is `{ resolve(ctx) → Promise<CryptoKey> }` (optionally
+`onInvalidate`). `Provider.create` accepts one as `encryptionKey` and resolves it
+after the connection is ready but before the provider is built. A single resolver
+instance is reused across every document opened on the same connection, so
+resolvers cache **per document**.
 
-```ts
-import { encryptUpdate } from "./index";
+| Resolver                         | Key source                                                                           | Server involved |
+| -------------------------------- | ------------------------------------------------------------------------------------ | --------------- |
+| `simpleEncryption()`             | PBKDF2 over the **document ID** (salt `teleportal-simple-encryption-v1`, 100k iters) | no              |
+| `passwordKey(passphrase)`        | PBKDF2 over the **passphrase** (salt `teleportal-pwd:<doc>`, 600k iters)             | no              |
+| `createEncryptionKey(password?)` | Convenience wrapper: `password ? passwordKey(password) : simpleEncryption()`         | no              |
+| `registryKey({ wrappingKey })`   | Fetches a wrapped key from the server via `keysGet` RPC, unwraps locally             | yes             |
 
-const encrypted = await encryptUpdate(key, update);
-```
+`createEncryptionKey` is a **thin wrapper** — it delegates to `passwordKey` /
+`simpleEncryption`, which are the single source of truth for the derivation
+parameters. (Older docs described it as generating a random `CryptoKey`; it does
+not — it returns a `KeyResolver`.)
 
-### Decrypt an Update
+#### `registryKey`
 
-```ts
-import { decryptUpdate } from "./index";
-
-const decrypted = await decryptUpdate(key, encrypted);
-```
-
-### Deterministic Encryption (content-addressed file chunks)
-
-```ts
-import { createDeterministicEncryptor, decryptUpdate } from "./index";
-
-const encrypt = await createDeterministicEncryptor(key);
-// null if `key` is non-extractable — caller falls back to encryptUpdate.
-const a = await encrypt!(chunk);
-const b = await encrypt!(chunk); // byte-identical to `a`
-await decryptUpdate(key, a); // unchanged; reads the IV from the first 12 bytes
-```
-
-`encryptUpdate` uses a fresh random IV per call — **always** use it for Y.js
-updates. `createDeterministicEncryptor` derives the IV from the chunk content
-via a keyed HMAC (`IV = HMAC-SHA-256(K_iv, chunk)[:12]`, `K_iv` = HKDF of the
-key), so the same key + same chunk produces identical ciphertext. This is what
-lets the file protocol content-address (and thus dedup and resume) encrypted
-uploads by their Merkle root.
-
-- **Keyed, not a plaintext hash.** Only key-holders can compute or confirm an
-  IV. A naive `IV = SHA-256(chunk)` would let anyone holding the ciphertext
-  confirm guessed plaintext without the key.
-- **Nonce reuse here is safe.** A (key, IV) pair only ever recurs for identical
-  plaintext, which yields identical ciphertext — no two-time-pad exposure.
-- **Equality leak.** By construction, identical plaintext chunks are visibly
-  identical ciphertext. Only acceptable for content-addressed file chunks, never
-  for Y.js updates. See the [file protocol](../../protocols/file/README.md) for
-  the full trade-off.
-- **Cost.** The extra HMAC pass makes per-chunk encryption ~2–3× a random-IV
-  encrypt single-threaded, but file chunks are encrypted in parallel so
-  wall-clock impact is small.
-
-### Export/Import Keys
-
-Keys can be exported to a storable string format and imported later:
-
-```ts
-import { exportEncryptionKey, importEncryptionKey } from "./index";
-
-// Export for storage
-const keyString = await exportEncryptionKey(key);
-
-// Import from storage
-const importedKey = await importEncryptionKey(keyString);
-```
-
-### Sharing a Key via the URL Fragment
-
-The canonical way to share an encryption key without it ever reaching the server is to keep it in the URL fragment (the part after `#`), which browsers never send in requests. `keyToUrlFragment` / `keyFromUrlFragment` serialize an exported key string to and from a fragment value.
-
-```ts
-import {
-  createEncryptionKey,
-  exportEncryptionKey,
-  importEncryptionKey,
-  keyToUrlFragment,
-  keyFromUrlFragment,
-} from "./index";
-
-// --- Sharer: put the key in the link's fragment ---
-const key = await createEncryptionKey();
-location.hash = keyToUrlFragment(await exportEncryptionKey(key));
-// → e.g. https://app.example.com/doc/123#token=<key>
-
-// --- Recipient: read the key back from the fragment ---
-const keyString = keyFromUrlFragment(location.hash); // string | null
-const sharedKey = keyString ? await importEncryptionKey(keyString) : await createEncryptionKey();
-```
-
-`keyFromUrlFragment` accepts the raw `location.hash` (with or without a leading `#`) and returns `null` when no `token` is present.
-
-### Key Resolvers
-
-For multi-user key distribution, the `encryptionKey` option on `Provider.create` accepts a `KeyResolver` — an object that asynchronously resolves the key after the connection is ready. Two built-in resolvers are provided:
-
-**Password-based** — derives a per-document key from a shared passphrase. No server involvement:
-
-```ts
-import { passwordKey } from "teleportal/encryption-key";
-
-const provider = await Provider.create({
-  url: "wss://...",
-  document: "my-doc",
-  encryptionKey: passwordKey("shared-passphrase"),
-});
-```
-
-**Registry-based** — fetches a wrapped key from the server's key registry and unwraps it locally. See the [Key Registry Protocol](../protocols/key-registry/README.md) for the full setup:
+On first `resolve` for a document it sends an (encrypted) `keysGet` RPC, receives
+`{ wrappedKey, generation }`, and unwraps `wrappedKey` with the supplied
+`wrappingKey` (a `CryptoKey` or an async factory). The unwrapped key is cached
+**per document**; a failed RPC/unwrap does **not** poison the cache. On key
+rotation the key-registry extension calls the internal `_invalidate(document)`,
+which drops only that document's cached key so the next `resolve` re-fetches.
 
 ```ts
 import { registryKey, importWrappingKey } from "teleportal/encryption-key";
 import { createKeyRegistryRpc } from "teleportal/protocols/key-registry";
 
 const wrappingKey = await importWrappingKey(wrappingKeyFromJwt);
-
 const provider = await Provider.create({
   url: "wss://...",
   document: "my-doc",
@@ -152,76 +92,101 @@ const provider = await Provider.create({
 });
 ```
 
-### Key Wrapping
+### 3. Key wrapping (`key-wrapping.ts`)
 
-For server-side key management, utilities are provided for deriving per-user wrapping keys and wrapping/unwrapping document keys. These are used internally by the [Key Registry HTTP handlers](../protocols/key-registry/README.md) — you only need them for lower-level control.
+Server-side helpers for the registry flow. Document keys are wrapped per-user so
+storage only ever holds ciphertext of keys.
+
+- **`deriveWrappingKey(masterSecret, userId)`** → an AES-KW `CryptoKey` via
+  HKDF-SHA-256. `info` is domain-separated as `teleportal-kwk:<userId>`, so a
+  leaked wrapping key for one user cannot derive another's. (Salt is empty by
+  design — HKDF's `info` provides the separation.)
+- **`wrapDocumentKey(wrappingKey, documentKey)`** → `Uint8Array` (AES-KW / RFC 3394).
+- **`unwrapDocumentKey(wrappingKey, blob)`** → the AES-GCM `CryptoKey`. Throws if
+  the wrapping key is wrong (AES-KW is authenticated).
+- **`exportWrappingKey(key)` / `importWrappingKey(str)`** — JWK `k` string ⇄ key,
+  suitable for embedding the wrapping key in a JWT claim delivered to the client.
+
+## Deterministic encryption
+
+`createDeterministicEncryptor(key)` builds an encryptor whose IV is
+`HMAC-SHA-256(K_iv, chunk)[:12]`, where `K_iv` is HKDF-derived from `key`
+(`info = "teleportal-file-iv"`). Consequences:
+
+- **Same key + same chunk → byte-identical ciphertext**, so a Merkle tree over
+  encrypted chunks is a stable content-addressed id (enables dedup and resume).
+  Output framing is identical to `encryptUpdate`, so `decryptUpdate` reads it
+  unchanged.
+- **Keyed, not a plaintext hash.** Only key-holders can compute/confirm an IV. A
+  naive `IV = SHA-256(chunk)` would let anyone holding the ciphertext confirm
+  guessed plaintext.
+- **Nonce reuse is safe here.** A `(key, IV)` pair only ever recurs for identical
+  plaintext (⇒ identical ciphertext), so there is no two-time-pad exposure.
+- **Equality leak — intended, scoped.** Identical plaintext chunks are visibly
+  identical ciphertext. Acceptable **only** for content-addressed file chunks;
+  never for Y.js updates. Use `encryptUpdate` (random IV) for updates.
+- **Non-extractable keys.** The IV-derivation reads the raw key bytes, so a
+  non-extractable `key` yields `null` — the caller falls back to `encryptUpdate`.
+  The derived `K_iv` is cached per source key in a `WeakMap` (as a Promise, so
+  concurrent callers share one derivation).
 
 ```ts
-import {
-  deriveWrappingKey,
-  wrapDocumentKey,
-  unwrapDocumentKey,
-  exportWrappingKey,
-  importWrappingKey,
-} from "teleportal/encryption-key";
-
-// Derive a per-user wrapping key from the app's master secret
-const wrappingKey = await deriveWrappingKey(masterSecret, userId);
-
-// Wrap a document key for storage
-const wrapped = await wrapDocumentKey(wrappingKey, documentKey);
-
-// Unwrap it back
-const unwrapped = await unwrapDocumentKey(wrappingKey, wrapped);
-
-// Export/import for embedding in JWT claims
-const keyString = await exportWrappingKey(wrappingKey);
-const imported = await importWrappingKey(keyString);
+const encrypt = await createDeterministicEncryptor(key);
+if (encrypt) {
+  const a = await encrypt(chunk);
+  const b = await encrypt(chunk); // byte-identical to `a`
+  await decryptUpdate(key, a); // round-trips
+}
 ```
 
-## API
+## Sharing a key via the URL fragment
 
-### Types
+```ts
+// Sharer
+location.hash = keyToUrlFragment(await exportEncryptionKey(key));
+// → https://app.example.com/doc/123#token=<key>
 
-- `DecryptedBinary` - A Y.js update as a `Uint8Array`
-- `EncryptedBinary` - An encrypted Y.js update as a `Uint8Array`
-- `KeyResolver` - Async key resolution interface for `Provider.create`
-
-### Functions
-
-| Function                               | Description                                                                     |
-| -------------------------------------- | ------------------------------------------------------------------------------- |
-| `createEncryptionKey()`                | Generates a new 256-bit AES-GCM `CryptoKey`                                     |
-| `importEncryptionKey(keyString)`       | Imports a key from a JWK string                                                 |
-| `exportEncryptionKey(key)`             | Exports a key to a JWK string                                                   |
-| `keyToUrlFragment(keyString)`          | Serializes an exported key into a URL fragment value (`token=<key>`)            |
-| `keyFromUrlFragment(hash)`             | Parses a key string out of a URL fragment (`string \| null`)                    |
-| `encryptUpdate(key, data)`             | Encrypts a Y.js update (random IV)                                              |
-| `decryptUpdate(key, encryptedBinary)`  | Decrypts an encrypted update                                                    |
-| `createDeterministicEncryptor(key)`    | Keyed-IV encryptor for content-addressed chunks (`null` if key non-extractable) |
-| `passwordKey(passphrase)`              | Returns a `KeyResolver` that derives per-document keys via PBKDF2               |
-| `registryKey({ wrappingKey })`         | Returns a `KeyResolver` that fetches + unwraps from the key registry            |
-| `deriveWrappingKey(secret, userId)`    | HKDF-SHA256 → AES-KW wrapping key, domain-separated per user                    |
-| `wrapDocumentKey(wrappingKey, key)`    | AES-KW wrap → `Uint8Array` blob for storage                                     |
-| `unwrapDocumentKey(wrappingKey, blob)` | AES-KW unwrap → usable `CryptoKey`                                              |
-| `exportWrappingKey(key)`               | Export wrapping key to JWK string                                               |
-| `importWrappingKey(keyString)`         | Import wrapping key from JWK string                                             |
-
-## Security
-
-- **Algorithm**: AES-256-GCM (authenticated encryption)
-- **IV**: 12-byte random IV generated for each encryption
-- **Authentication**: GCM mode includes built-in authentication tag
-- **Ciphertext validation**: `decryptUpdate` rejects inputs shorter than 28 bytes (12-byte IV + 16-byte GCM auth tag) before attempting decryption
-
-Each encryption operation uses a unique random IV, ensuring that encrypting the same data produces different ciphertexts each time.
-
-## Data Format
-
-The encrypted output combines the IV and ciphertext:
-
-```
-[12-byte IV][...encrypted data with auth tag]
+// Recipient
+const s = keyFromUrlFragment(location.hash); // string | null
+const key = s ? await importEncryptionKey(s) : createEncryptionKey();
 ```
 
-On decryption, the first 12 bytes are extracted as the IV, and the remainder is decrypted.
+## Security model
+
+- **Cipher**: AES-256-GCM (authenticated). Key wrapping: AES-KW (RFC 3394).
+- **IV**: random per call for `encryptUpdate`; keyed-deterministic for
+  `createDeterministicEncryptor` (see above). 12 bytes, prepended to the output.
+- **Key derivation**: PBKDF2-SHA-256 for the password/simple resolvers,
+  HKDF-SHA-256 for wrapping keys and the deterministic IV key.
+- **Server never sees keys or plaintext.** Keys reach clients out-of-band
+  (URL fragment, passphrase) or wrapped-per-user (registry).
+- **Ciphertext validation**: `decryptUpdate` rejects `< 28`-byte inputs up front.
+
+### Gotchas
+
+- `simpleEncryption()` / `createEncryptionKey()` (no password) derive the key
+  from the **document ID alone** — anyone who knows the ID can decrypt. Only use
+  when the ID itself is a secret (e.g. an unguessable UUID).
+- `generateEncryptionKey()` returns a **new random key each call**; it is not
+  derived and not shared. Persist/export it yourself or clients won't agree on a
+  key.
+- Deterministic encryption's equality leak makes it unsuitable for Y.js updates.
+
+## Data format
+
+```
+[12-byte IV][AES-GCM ciphertext + 16-byte auth tag]
+```
+
+## Exports
+
+Types: `DecryptedBinary`, `EncryptedBinary`, `KeyResolver`, `KeyResolverContext`.
+
+Raw crypto: `encryptUpdate`, `decryptUpdate`, `createDeterministicEncryptor`,
+`generateEncryptionKey`, `importEncryptionKey`, `exportEncryptionKey`,
+`keyToUrlFragment`, `keyFromUrlFragment`.
+
+Resolvers: `createEncryptionKey`, `simpleEncryption`, `passwordKey`, `registryKey`.
+
+Wrapping: `deriveWrappingKey`, `wrapDocumentKey`, `unwrapDocumentKey`,
+`exportWrappingKey`, `importWrappingKey`.

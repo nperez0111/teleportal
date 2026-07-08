@@ -257,8 +257,12 @@ describe("getHTTPHandler", () => {
       const response = await handler(request);
 
       expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("application/json");
       const body = await response.json();
-      expect(body).toBeDefined();
+      // The real server status exposes live counters — assert the shape rather
+      // than merely that a body exists.
+      expect(typeof body.activeClients).toBe("number");
+      expect(typeof body.activeSessions).toBe("number");
     });
 
     it("should use fallback fetch for unmatched routes", async () => {

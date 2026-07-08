@@ -94,8 +94,21 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
         abortSignal: req.signal,
       });
 
-      req.signal.addEventListener("abort", async () => {
-        await sseTransport.unsubscribe();
+      req.signal.addEventListener("abort", () => {
+        // Tear down both halves of the SSE connection:
+        // - `unsubscribe()` drops the pubSub subscriptions feeding the source.
+        // - `close()` closes the SSE sink channel, which clears the ping
+        //   interval and ends the response `ReadableStream`. Without this the
+        //   ping `setInterval` and the reader's stream leak for the lifetime
+        //   of the process on every disconnect.
+        // Errors are swallowed: teardown is best-effort and an async listener
+        // that rejected would surface as an unhandled rejection.
+        void Promise.resolve(sseTransport.unsubscribe()).catch(() => {});
+        try {
+          sseTransport.close();
+        } catch {
+          // ignore — already closed
+        }
       });
 
       await sseTransport.subscribe(`client/${context.clientId}`);
@@ -128,7 +141,7 @@ export function getSSEReaderEndpoint<Context extends ServerContext>({
       throw error;
     } finally {
       wideEvent.duration_ms = Date.now() - startTime;
-      emitWideEvent((wideEvent.outcome as string) === "error" ? "error" : "info", wideEvent);
+      emitWideEvent(wideEvent.outcome === "error" ? "error" : "info", wideEvent);
     }
   }
   return handleSSEReader;

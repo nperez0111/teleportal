@@ -112,6 +112,37 @@ describe("Encryption Functions", () => {
     expect(decrypted2).toEqual(testUpdate);
   });
 
+  it("never reuses the random IV across many encryptions of the same data", async () => {
+    // Nonce reuse is catastrophic for AES-GCM. Assert the 12-byte IV prefix is
+    // unique across a batch of encryptions of identical plaintext.
+    const key = await generateEncryptionKey();
+    const data = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
+    const N = 200;
+    const ivs = new Set<string>();
+    for (let i = 0; i < N; i++) {
+      const enc = await encryptUpdate(key, data);
+      ivs.add(Buffer.from(enc.subarray(0, 12)).toString("hex"));
+    }
+    expect(ivs.size).toBe(N);
+  });
+
+  it("decryptUpdate error message does not leak key material", async () => {
+    const key = await generateEncryptionKey();
+    const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+    const keyHex = Buffer.from(rawKey).toString("hex");
+
+    const enc = await encryptUpdate(key, new Uint8Array([1, 2, 3]));
+    enc[enc.length - 1] ^= 0xff; // corrupt the auth tag
+    let message = "";
+    try {
+      await decryptUpdate(key, enc);
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    expect(message).toContain("Decryption failed");
+    expect(message).not.toContain(keyHex);
+  });
+
   it("should handle multiple keys independently", async () => {
     const key1 = await generateEncryptionKey();
     const key2 = await generateEncryptionKey();
@@ -397,5 +428,27 @@ describe("createEncryptionKey", () => {
     const encrypted = await encryptUpdate(key, plaintext);
     const decrypted = await decryptUpdate(key, encrypted);
     expect(decrypted).toEqual(plaintext);
+  });
+
+  it("derives the SAME key as simpleEncryption() when no password is given", async () => {
+    const { simpleEncryption } = await import("./key-resolver");
+    const a = await createEncryptionKey().resolve({ document: "doc-x", connection: {} as any });
+    const b = await simpleEncryption().resolve({ document: "doc-x", connection: {} as any });
+    const [ea, eb] = await Promise.all([
+      crypto.subtle.exportKey("jwk", a),
+      crypto.subtle.exportKey("jwk", b),
+    ]);
+    expect(ea.k).toBe(eb.k);
+  });
+
+  it("derives the SAME key as passwordKey() when a password is given", async () => {
+    const { passwordKey } = await import("./key-resolver");
+    const a = await createEncryptionKey("pw").resolve({ document: "doc-x", connection: {} as any });
+    const b = await passwordKey("pw").resolve({ document: "doc-x", connection: {} as any });
+    const [ea, eb] = await Promise.all([
+      crypto.subtle.exportKey("jwk", a),
+      crypto.subtle.exportKey("jwk", b),
+    ]);
+    expect(ea.k).toBe(eb.k);
   });
 });

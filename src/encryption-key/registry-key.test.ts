@@ -199,4 +199,155 @@ describe("registryKey", () => {
     resolver._invalidate("doc-42");
     expect(invalidatedDoc).toBe("doc-42");
   });
+
+  it("should resolve DISTINCT keys per document on a shared resolver instance", async () => {
+    // A single resolver instance is reused across documents opened on the same
+    // connection (Provider.openDocumentAsync). The per-document key must not be
+    // cached globally, or document B would be handed document A's key.
+    const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
+
+    const keyA = await generateEncryptionKey();
+    const keyB = await generateEncryptionKey();
+    const wrappedA = await wrapDocumentKey(wrappingKey, keyA);
+    const wrappedB = await wrapDocumentKey(wrappingKey, keyB);
+
+    // Document-aware mock: returns the wrapped key registered for the requested
+    // document, so a resolver that ignores `document` would be caught.
+    const perDoc = new Map<string, Uint8Array>([
+      ["doc-a", wrappedA],
+      ["doc-b", wrappedB],
+    ]);
+    const listeners = new Set<(m: any) => void>();
+    const conn = {
+      on(event: string, cb: (m: any) => void) {
+        if (event === "received-message") listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+      async send(message: any) {
+        if (message.type !== "rpc" || message.requestType !== "request") return;
+        const wrappedKey = perDoc.get(message.document);
+        const response = new RpcMessage(
+          message.document,
+          { type: "success" as const, payload: { wrappedKey, generation: 0 } },
+          message.rpcMethod,
+          "response",
+          message.id,
+          {},
+          false,
+        );
+        setTimeout(() => {
+          for (const l of listeners) l(response);
+        }, 0);
+      },
+      connected: Promise.resolve(),
+    };
+
+    const resolver = registryKey({ wrappingKey });
+    const resolvedA = await resolver.resolve({ document: "doc-a", connection: conn as any });
+    const resolvedB = await resolver.resolve({ document: "doc-b", connection: conn as any });
+
+    const [ea, eb, oa, ob] = await Promise.all([
+      crypto.subtle.exportKey("jwk", resolvedA),
+      crypto.subtle.exportKey("jwk", resolvedB),
+      crypto.subtle.exportKey("jwk", keyA),
+      crypto.subtle.exportKey("jwk", keyB),
+    ]);
+    expect(ea.k).toBe(oa.k);
+    expect(eb.k).toBe(ob.k);
+    expect(ea.k).not.toBe(eb.k);
+  });
+
+  it("should cache per document (repeat resolve of same doc reuses key)", async () => {
+    const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
+    const keyA = await generateEncryptionKey();
+    const wrappedA = await wrapDocumentKey(wrappingKey, keyA);
+
+    let rpcCallCount = 0;
+    const listeners = new Set<(m: any) => void>();
+    const conn = {
+      on(event: string, cb: (m: any) => void) {
+        if (event === "received-message") listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+      async send(message: any) {
+        if (message.type !== "rpc" || message.requestType !== "request") return;
+        rpcCallCount++;
+        const response = new RpcMessage(
+          message.document,
+          { type: "success" as const, payload: { wrappedKey: wrappedA, generation: 0 } },
+          message.rpcMethod,
+          "response",
+          message.id,
+          {},
+          false,
+        );
+        setTimeout(() => {
+          for (const l of listeners) l(response);
+        }, 0);
+      },
+      connected: Promise.resolve(),
+    };
+
+    const resolver = registryKey({ wrappingKey });
+    const k1 = await resolver.resolve({ document: "doc-a", connection: conn as any });
+    const k2 = await resolver.resolve({ document: "doc-a", connection: conn as any });
+    expect(k1).toBe(k2);
+    expect(rpcCallCount).toBe(1);
+  });
+
+  it("_invalidate only clears the named document's cached key", async () => {
+    const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
+    const keyA = await generateEncryptionKey();
+    const keyB = await generateEncryptionKey();
+    const wrappedA = await wrapDocumentKey(wrappingKey, keyA);
+    const wrappedB = await wrapDocumentKey(wrappingKey, keyB);
+
+    const perDoc = new Map<string, Uint8Array>([
+      ["doc-a", wrappedA],
+      ["doc-b", wrappedB],
+    ]);
+    const callsByDoc = new Map<string, number>();
+    const listeners = new Set<(m: any) => void>();
+    const conn = {
+      on(event: string, cb: (m: any) => void) {
+        if (event === "received-message") listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+      async send(message: any) {
+        if (message.type !== "rpc" || message.requestType !== "request") return;
+        callsByDoc.set(message.document, (callsByDoc.get(message.document) ?? 0) + 1);
+        const response = new RpcMessage(
+          message.document,
+          {
+            type: "success" as const,
+            payload: { wrappedKey: perDoc.get(message.document), generation: 0 },
+          },
+          message.rpcMethod,
+          "response",
+          message.id,
+          {},
+          false,
+        );
+        setTimeout(() => {
+          for (const l of listeners) l(response);
+        }, 0);
+      },
+      connected: Promise.resolve(),
+    };
+
+    const resolver = registryKey({ wrappingKey }) as any;
+    await resolver.resolve({ document: "doc-a", connection: conn });
+    await resolver.resolve({ document: "doc-b", connection: conn });
+    expect(callsByDoc.get("doc-a")).toBe(1);
+    expect(callsByDoc.get("doc-b")).toBe(1);
+
+    // Invalidate only doc-a.
+    resolver._invalidate("doc-a");
+
+    await resolver.resolve({ document: "doc-a", connection: conn });
+    await resolver.resolve({ document: "doc-b", connection: conn });
+    // doc-a re-fetched, doc-b still cached.
+    expect(callsByDoc.get("doc-a")).toBe(2);
+    expect(callsByDoc.get("doc-b")).toBe(1);
+  });
 });

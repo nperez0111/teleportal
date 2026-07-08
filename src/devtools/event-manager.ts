@@ -528,21 +528,26 @@ export class EventManager {
       }),
     );
 
-    // Listen to settings changes to update message limit
-    this.settingsManager.subscribe(() => {
-      const limit = this.settingsManager.getSettings().messageLimit;
-      if (this.messages.length > limit) {
-        const removed = this.messages.splice(0, this.messages.length - limit);
-        for (const msg of removed) {
-          this.removeMessageFromStats(msg);
+    // Listen to settings changes to update message limit.
+    // Track the unsubscriber so destroy() detaches it — otherwise the
+    // SettingsManager retains this (destroyed) EventManager forever via the
+    // closure and keeps mutating its orphaned state on every settings change.
+    this.unsubscribers.push(
+      this.settingsManager.subscribe(() => {
+        const limit = this.settingsManager.getSettings().messageLimit;
+        if (this.messages.length > limit) {
+          const removed = this.messages.splice(0, this.messages.length - limit);
+          for (const msg of removed) {
+            this.removeMessageFromStats(msg);
+          }
+          this.rebuildIndex();
+          this.statistics.totalMessages = this.messages.length;
+          this.generation++;
+          this.refreshStatsMeta();
+          this.emitChange();
         }
-        this.rebuildIndex();
-        this.statistics.totalMessages = this.messages.length;
-        this.generation++;
-        this.refreshStatsMeta();
-        this.emitChange();
-      }
-    });
+      }),
+    );
   }
 
   subscribe(listener: () => void): () => void {

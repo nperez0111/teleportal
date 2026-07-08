@@ -21,6 +21,9 @@ export function withPassthroughSink<
       }
       return sink.write(message);
     },
+    // Explicit delegation: spreading a class-based sink would drop its
+    // prototype `close` (it isn't an own enumerable property).
+    close: () => sink.close(),
   };
 }
 

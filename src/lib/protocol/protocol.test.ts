@@ -1034,4 +1034,17 @@ describe("edge cases", () => {
     );
     expect(decoded.encrypted).toBe(true);
   });
+
+  it("encoding an unknown doc payload type throws instead of producing a truncated message", () => {
+    // A doc sub-switch with no default previously emitted a header-only message
+    // (no sub-type byte), which only failed at decode time on the far side.
+    // Encode must fail fast so a corrupt frame never reaches the wire.
+    const msg = new DocMessage("test", { type: "not-a-real-type" } as any);
+    expect(() => msg.encoded).toThrow("Failed to encode message");
+  });
+
+  it("encoding an unknown awareness payload type throws", () => {
+    const msg = new AwarenessMessage("test", { type: "not-a-real-type" } as any);
+    expect(() => msg.encoded).toThrow("Failed to encode message");
+  });
 });

@@ -203,5 +203,100 @@ describe("MetricsCollector Message Tracking", () => {
       // Since we unshift, index 0 is the newest (user104)
       expect(events[0].userId).toBe("user104");
     });
+
+    test("getRateLimitCountsByTrackBy aggregates across users/documents per dimension", () => {
+      const registry = new MockRegistry() as any;
+      const collector = new MetricsCollector(registry);
+
+      // Two distinct users, same trackBy → should aggregate to 3.
+      collector.recordRateLimitExceeded("user1", "doc1", "user");
+      collector.recordRateLimitExceeded("user1", "doc1", "user");
+      collector.recordRateLimitExceeded("user2", "doc2", "user");
+      // A different dimension is tallied separately.
+      collector.recordRateLimitExceeded("user3", "doc3", "ip");
+
+      expect(collector.getRateLimitCountsByTrackBy()).toEqual({ user: 3, ip: 1 });
+    });
+
+    test("getRateLimitTopOffenders defaults to at most 10 entries", () => {
+      const registry = new MockRegistry() as any;
+      const collector = new MetricsCollector(registry);
+      for (let i = 0; i < 15; i++) {
+        collector.recordRateLimitExceeded(`user${i}`, "doc", "user");
+      }
+      expect(collector.getRateLimitTopOffenders().length).toBe(10);
+    });
+
+    test("recordRateLimitStateOperation and updateRateLimitStateSize track state metrics", () => {
+      const registry = new MockRegistry() as any;
+      const collector = new MetricsCollector(registry);
+
+      collector.recordRateLimitStateOperation("get", "user");
+      collector.recordRateLimitStateOperation("get", "user");
+      collector.recordRateLimitStateOperation("set", "user");
+      expect(
+        collector.rateLimitStateOperationsTotal.getValue({ operation: "get", trackBy: "user" }),
+      ).toBe(2);
+      expect(
+        collector.rateLimitStateOperationsTotal.getValue({ operation: "set", trackBy: "user" }),
+      ).toBe(1);
+
+      collector.updateRateLimitStateSize("user", 42);
+      collector.updateRateLimitStateSize("user", 7); // gauge = set, not add
+      expect(collector.rateLimitStateSize.getValue({ trackBy: "user" })).toBe(7);
+    });
+  });
+
+  describe("Milestone Metrics", () => {
+    test("milestone counters and gauge track lifecycle transitions", () => {
+      const registry = new MockRegistry() as any;
+      const collector = new MetricsCollector(registry);
+
+      collector.recordMilestoneCreated("doc1", "manual");
+      collector.recordMilestoneCreated("doc1", "manual");
+      collector.recordMilestoneSoftDeleted("doc1");
+      collector.recordMilestoneRestored("doc1");
+
+      expect(
+        collector.milestonesCreatedTotal.getValue({ documentId: "doc1", triggerType: "manual" }),
+      ).toBe(2);
+      expect(collector.milestonesSoftDeletedTotal.getValue({ documentId: "doc1" })).toBe(1);
+      expect(collector.milestonesRestoredTotal.getValue({ documentId: "doc1" })).toBe(1);
+
+      collector.updateMilestoneCount("doc1", "active", 5);
+      collector.updateMilestoneCount("doc1", "deleted", 2);
+      expect(
+        collector.milestonesTotal.getValue({ documentId: "doc1", lifecycleState: "active" }),
+      ).toBe(5);
+      expect(
+        collector.milestonesTotal.getValue({ documentId: "doc1", lifecycleState: "deleted" }),
+      ).toBe(2);
+    });
+  });
+
+  describe("Prometheus export", () => {
+    test("registered metrics render with their labels via registry.format()", () => {
+      const registry = new MockRegistry() as any;
+      const collector = new MetricsCollector(registry);
+
+      collector.clientsActive.inc();
+      collector.incrementMessage("doc");
+      collector.recordDocumentSize("doc1", 1024, true);
+      collector.recordRateLimitDelayed("user1", "doc1", "user", 50);
+
+      const output = registry.format() as string;
+
+      expect(output).toContain("teleportal_clients_active 1");
+      expect(output).toContain('teleportal_messages_total{type="doc"} 1');
+      expect(output).toContain("teleportal_messages_total_all 1");
+      expect(output).toContain(
+        'teleportal_document_size_bytes{documentId="doc1",encrypted="true"} 1024',
+      );
+      expect(output).toContain(
+        'teleportal_rate_limit_delay_ms_total{userId="user1",documentId="doc1",trackBy="user"} 50',
+      );
+      // Histograms should always be present in the output even with no observations.
+      expect(output).toContain("# TYPE teleportal_message_duration_seconds histogram");
+    });
   });
 });

@@ -279,10 +279,11 @@ export namespace FileTransferProtocol {
 
       handler.totalChunks = payload.totalChunks;
 
-      const decryptPromise = handler.encryptionKey
-        ? decryptUpdate(handler.encryptionKey, payload.chunkData)
-        : null;
-
+      // Verify BEFORE decrypting. The Merkle proof covers the on-the-wire
+      // (encrypted) chunk bytes, so verification never depends on the
+      // decrypted result. Kicking off decryption first meant a rejecting
+      // decrypt of an invalid chunk became an unhandled rejection (the
+      // promise was dropped on the verification-failure path).
       const isValid = this.verifyChunk(payload, handler.fileId);
       if (!isValid) {
         handler.reject(new Error(`Chunk ${payload.chunkIndex} failed merkle proof verification`));
@@ -292,7 +293,9 @@ export namespace FileTransferProtocol {
 
       handler.chunks.set(
         payload.chunkIndex,
-        decryptPromise ? await decryptPromise : payload.chunkData,
+        handler.encryptionKey
+          ? await decryptUpdate(handler.encryptionKey, payload.chunkData)
+          : payload.chunkData,
       );
       await this.checkDownloadCompletion(handler);
     }

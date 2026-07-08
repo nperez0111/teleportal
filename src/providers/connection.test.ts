@@ -190,6 +190,23 @@ describe("Connection", () => {
       expect(conn.destroyed).toBe(false);
     });
 
+    it("does not throw when constructed with initialReconnectDelay: 0", async () => {
+      // initialReconnectDelay: 0 ("reconnect with no base delay") is a plausible
+      // input. The backoff maxExponent was derived via log(maxBackoff/initial),
+      // which is Infinity when initial is 0 — a non-integer that made
+      // ExponentialBackoff's constructor throw. Construction must be robust.
+      const conn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+        initialReconnectDelay: 0,
+      });
+      expect(conn.state.type).toBe("disconnected");
+      await conn.connect();
+      expect(conn.state.type).toBe("connected");
+      await conn.destroy();
+    });
+
     it("connects when connect() is called", async () => {
       const conn = new Connection({
         transports: [clientTransport],
@@ -2618,6 +2635,64 @@ describe("Connection", () => {
 
       expect(refreshCalled).toBe(true);
       expect(oldToken).toBe("expired-jwt");
+
+      await conn.destroy();
+    });
+
+    it("coalesces a burst of auth-denied messages into a single token refresh", async () => {
+      // The server can reject several buffered messages at once, sending an
+      // auth-denied for each. Each one must NOT spawn its own onTokenExpired
+      // call: overlapping refreshes hammer the auth server and race the
+      // reconnect. A refresh already in flight should absorb the burst.
+      const transport = createControllableTransport("auth-burst");
+      let refreshCalls = 0;
+      let releaseRefresh: (() => void) | null = null;
+
+      const conn = new Connection({
+        transports: [transport],
+        connect: false,
+        batchIntervalMs: 0,
+        maxReconnectAttempts: 0,
+        token: {
+          token: "expired-jwt",
+          onTokenExpired: async () => {
+            refreshCalls++;
+            // Hold the refresh open so the whole burst arrives while it runs.
+            await new Promise<void>((resolve) => {
+              releaseRefresh = resolve;
+            });
+            return "fresh-jwt";
+          },
+        },
+      });
+
+      await conn.connect();
+
+      const denied = (id: string) =>
+        transport.ctx?.onMessage({
+          type: "doc",
+          payload: { type: "auth-message", permission: "denied", reason: "Token expired" },
+          document: "test-doc",
+          id,
+          encoded: new Uint8Array(),
+          context: {},
+          encrypted: false,
+        } as any);
+
+      // A burst of five denials arrives before the first refresh resolves.
+      denied("a1");
+      denied("a2");
+      denied("a3");
+      denied("a4");
+      denied("a5");
+      await flushMicrotasks(10);
+
+      // Only one refresh should be in flight for the whole burst.
+      expect(refreshCalls).toBe(1);
+
+      releaseRefresh!();
+      await flushMicrotasks(10);
+      expect(refreshCalls).toBe(1);
 
       await conn.destroy();
     });

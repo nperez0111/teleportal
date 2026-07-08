@@ -39,23 +39,46 @@ Creates a collaborative document session.
 - `message.encrypted` - Whether the document is encrypted
 - `handler` - Optional custom transport handlers (`YDocSinkHandler & YDocSourceHandler`)
 
+Throws `"Document is required"` if `message.document` is empty/falsy.
+
 **Returns:** `Promise<{ ydoc, awareness, client, session, [Symbol.asyncDispose] }>`
 
 ## Architecture
 
 ```
 Agent.createAgent()
-    ├── getYTransportFromYDoc()  → Creates Y.js transport
-    ├── server.createClient()    → Registers client with server
-    └── server.getOrOpenSession()→ Gets/creates document session
+    ├── getYTransportFromYDoc()  → Creates Y.js transport (ydoc + awareness)
+    ├── server.createClient()    → Registers client + spawns its consume loop
+    ├── server.getOrOpenSession()→ Gets/creates the document session
+    ├── transport.handler.start()→ Emits the initial sync message
+    └── await transport.synced   → Resolves once the doc is synced
 ```
+
+## Lifecycle & cleanup
+
+`createClient` has side effects: it registers the client with the server and
+spawns a background loop that consumes the transport's message source. Anything
+created before `synced` resolves therefore holds live resources.
+
+- **Success:** the returned `Symbol.asyncDispose` tears down via
+  `session.removeClient(client)` + `transport.ydoc.destroy()`.
+- **Failure (any step after `createClient` throws):** `createAgent` cleans up
+  before rethrowing — `server.disconnectClient(client)` (idempotent; removes the
+  client from every session it joined and ends its consume loop) plus
+  `transport.ydoc.destroy()`. Without this, a failed setup would leak the client
+  loop and the Y.Doc. See the `index.test.ts` regression test
+  "disconnects the client and destroys the ydoc when setup fails after the
+  client is created".
 
 ## Key Concepts
 
 - **Room-based multi-tenancy** - Documents can be namespaced by room for isolation
 - **Async disposal** - Returns `Symbol.asyncDispose` for proper cleanup via `session.removeClient()` and `ydoc.destroy()`
+- **Error-path teardown** - Partial setups are disposed on failure (see above)
 - **Observable message passing** - Facilitates transport source/sink communication
-- **Wide events** - Emits structured `agent_create` events for observability
+- **Wide events** - Emits a structured `agent_create` wide event (with
+  `outcome`, `duration_ms`, `client_id`) for observability on both success and
+  error paths
 
 ## Files
 

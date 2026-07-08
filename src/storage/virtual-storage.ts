@@ -35,11 +35,14 @@ export class VirtualStorage implements DocumentStorage {
 
   #storage: DocumentStorage;
   #buffer = new Map<string, { updates: BufferedUpdate[]; metadata?: DocumentMetadata }>();
-  #batchProcessor: (item: {
-    key: string;
-    updates: BufferedUpdate[];
-    metadata?: DocumentMetadata;
-  }) => void;
+  /**
+   * In-flight flush per key. Guarantees a key's buffered writes are drained by
+   * exactly one flusher at a time, so a batch-triggered flush and a read-path
+   * flush of the same key never double-apply the buffer.
+   */
+  #flushing = new Map<string, Promise<void>>();
+  /** Enqueue a key for a batched (timer/size-triggered) flush. */
+  #scheduleFlush: (key: string) => void;
 
   constructor(storage: DocumentStorage, options: VirtualStorageOptions = defaultOptions) {
     this.#storage = storage;
@@ -50,22 +53,13 @@ export class VirtualStorage implements DocumentStorage {
         this.#storage.retrieveAttribution!(documentId);
     }
 
-    // Set up batch processor
-    this.#batchProcessor = batch(
-      async (
-        batches: Array<{
-          key: string;
-          updates: BufferedUpdate[];
-          metadata?: DocumentMetadata;
-        }>,
-      ) => {
-        for (const { key, updates, metadata } of batches) {
-          for (const { update, attribution } of updates) {
-            await this.#storage.handleUpdate(key, update, attribution);
-          }
-          if (metadata) {
-            await this.#storage.writeDocumentMetadata(key, metadata);
-          }
+    // The batch collects dirty keys and flushes each once when the batch fires
+    // (by size or wait). Draining is keyed off `#buffer`, not the batch item,
+    // so a key enqueued multiple times is still flushed exactly once.
+    this.#scheduleFlush = batch(
+      (keys: string[]) => {
+        for (const key of new Set(keys)) {
+          void this.#flushPending(key);
         }
       },
       {
@@ -92,13 +86,12 @@ export class VirtualStorage implements DocumentStorage {
     item: { updates?: BufferedUpdate[]; metadata?: DocumentMetadata },
   ) {
     const existing = this.#buffer.get(documentId) ?? { updates: [] };
-    const merged = {
+    this.#buffer.set(documentId, {
       updates: [...existing.updates, ...(item.updates ?? [])],
       metadata: item.metadata ?? existing.metadata,
-    };
-    this.#buffer.set(documentId, merged);
+    });
 
-    this.#batchProcessor({ key: documentId, ...merged });
+    this.#scheduleFlush(documentId);
   }
 
   async getDocument(documentId: string): Promise<Document | null> {
@@ -130,15 +123,32 @@ export class VirtualStorage implements DocumentStorage {
   }
 
   async #flushPending(documentId: string): Promise<void> {
-    const pending = this.#buffer.get(documentId);
-    if (pending) {
-      this.#buffer.delete(documentId);
-      for (const { update, attribution } of pending.updates) {
-        await this.#storage.handleUpdate(documentId, update, attribution);
+    // Serialize flushes of the same key so a batch-triggered flush and a
+    // read-triggered flush can't both drain (and re-apply) the buffer.
+    const inflight = this.#flushing.get(documentId);
+    if (inflight) return inflight;
+
+    const run = (async () => {
+      // Drain in a loop: writes buffered while an earlier flush was awaiting
+      // I/O still get persisted before this flusher resolves, preserving order.
+      for (;;) {
+        const pending = this.#buffer.get(documentId);
+        if (!pending) return;
+        this.#buffer.delete(documentId);
+        for (const { update, attribution } of pending.updates) {
+          await this.#storage.handleUpdate(documentId, update, attribution);
+        }
+        if (pending.metadata) {
+          await this.#storage.writeDocumentMetadata(documentId, pending.metadata);
+        }
       }
-      if (pending.metadata) {
-        await this.#storage.writeDocumentMetadata(documentId, pending.metadata);
-      }
+    })();
+
+    this.#flushing.set(documentId, run);
+    try {
+      await run;
+    } finally {
+      this.#flushing.delete(documentId);
     }
   }
 }

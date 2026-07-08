@@ -12,12 +12,30 @@ Two entry points:
 ### Connection lifecycle
 
 ```text
-1. upgrade    onUpgrade() authenticates, returns context + optional headers
-2. open       BinaryTransport created, server.createClient() called, onConnect() fires
-3. message    Binary validated, pushed to channel, onMessage() fires (observability only)
-4. close      onDisconnect() fires, client disconnected, channel + transport closed
-5. error      Channel error signalled, consumer loop exits
+1. upgrade    onUpgrade() authenticates, returns context + optional headers.
+              On success crossws stashes the context on the peer; teleportal
+              adds `x-powered-by: teleportal` (plus any headers you return).
+2. open       Channel + BinaryTransport created, server.createClient() called,
+              per-peer state (clientId/channel/transport/client) stored on
+              peer.context, onConnect() fires. If createClient() throws, the
+              peer is closed.
+3. message    Stale-peer guard runs first; binary validated, pushed to the
+              channel, onMessage() fires (observability only).
+4. close      onDisconnect() fires, server.disconnectClient() called, channel +
+              transport closed. Every step is wrapped so one failure can't skip
+              the rest.
+5. error      Channel error signalled (if the channel still exists), consumer
+              loop exits.
 ```
+
+### Stale peers (Durable Object hibernation)
+
+The crossws Cloudflare adapter can restore a hibernated Durable Object's
+WebSockets **without** re-running the `open` hook, leaving the per-peer
+channel/client/transport state empty. The `message` hook detects this (missing
+`peer.context.channel?.send` or `peer.context.client`) and closes the peer so
+the client reconnects and resyncs, rather than throwing inside the hook. The
+`error` hook likewise guards the channel with `?.` for the same reason.
 
 ## API
 
@@ -65,7 +83,9 @@ function tokenAuthenticatedWebsocketHandler<T extends ServerContext>(options: {
 }): crossws.Hooks;
 ```
 
-Extracts `?token=` from the upgrade URL, verifies it via `tokenManager.verifyToken()`, and uses the token payload as the connection context.
+Extracts `?token=` from the upgrade URL, verifies it via `tokenManager.verifyToken()`, and uses the token payload as the connection context. A missing or invalid token rejects the upgrade with `401 Unauthorized`.
+
+The `hooks` object forwards `onConnect`/`onDisconnect`/`onMessage` to `getWebsocketHandlers`. It may also supply an `onUpgrade` hook to **augment** the connection: its returned `context` is merged under the verified token payload (so it cannot override authenticated fields — the token payload wins on key conflicts), and its returned `headers` are forwarded to the upgrade response.
 
 ```typescript
 import { crossws } from "crossws";
@@ -93,9 +113,11 @@ Client connects with `wss://host/ws?token=<jwt>`.
 
 Each WebSocket connection gets a `BinaryTransport`:
 
-- **`source`** -- a `Channel<BinaryMessage>` fed by incoming WebSocket frames.
-- **`write()`** -- calls `peer.send()`. Logs backpressure (Bun returns -1/0 on `ws.send` for queued/dropped).
-- **`close()`** -- closes the peer socket so a wedged connection triggers immediate client reconnect.
+- **`source`** -- a `Channel<BinaryMessage>` fed by incoming WebSocket frames. Note the channel is unbounded, so `message` uses the throwing `channel.send()` (it only throws once the channel is closed/errored).
+- **`write()`** -- calls `peer.send()`. A non-positive numeric result (Bun returns `-1` for queued/backpressured and `0` for dropped) is logged as a `websocket_send_backpressure` wide event — a dropped server→client frame is a silent update loss until the next resync. If `peer.send()` **throws**, it logs `websocket_send_threw` and re-throws so the server's consume loop can tear the connection down.
+- **`close()`** -- closes the peer socket (best-effort; swallows errors if already closed) so a wedged connection triggers immediate client reconnect instead of waiting out the client's receive timeout.
+
+Note that `fromBinaryTransport` answers WebSocket `ping` control messages inline (replying with a `pong`) so they never surface as decoded messages.
 
 ## Error handling
 

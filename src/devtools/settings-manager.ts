@@ -5,17 +5,25 @@ const STORAGE_KEY = "teleportal-devtools-settings";
 const LEGACY_LIMIT_KEY = "teleportal-devtools-message-limit";
 const DEFAULT_MESSAGE_LIMIT = 200;
 
-const DEFAULT_FILTERS: FilterState = {
-  documentIds: [],
-  hiddenMessageTypes: [],
-  direction: "all",
-  searchText: "",
-};
+/**
+ * A fresh default filter state. Must return a new object with new arrays on
+ * every call — sharing a single module-level constant lets a mutation of one
+ * SettingsManager's filters (or a consumer mutating `documentIds` in place)
+ * corrupt every other instance's defaults.
+ */
+function defaultFilters(): FilterState {
+  return {
+    documentIds: [],
+    hiddenMessageTypes: [],
+    direction: "all",
+    searchText: "",
+  };
+}
 
 function loadSettings(): DevtoolsSettings {
   const defaults: DevtoolsSettings = {
     messageLimit: DEFAULT_MESSAGE_LIMIT,
-    filters: DEFAULT_FILTERS,
+    filters: defaultFilters(),
   };
 
   try {
@@ -29,7 +37,7 @@ function loadSettings(): DevtoolsSettings {
               ? parsed.messageLimit
               : defaults.messageLimit,
           filters: {
-            ...DEFAULT_FILTERS,
+            ...defaultFilters(),
             ...parsed.filters,
           },
         };
@@ -111,7 +119,7 @@ export class SettingsManager {
   clearFilters() {
     this.settings = {
       ...this.settings,
-      filters: DEFAULT_FILTERS,
+      filters: defaultFilters(),
     };
     saveSettings(this.settings);
     this.emitChange();

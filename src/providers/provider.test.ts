@@ -193,6 +193,40 @@ describe("Provider", () => {
 
       expect(clientConn.destroyed).toBe(true);
     });
+
+    it("destroys subdocument providers when the parent is destroyed", async () => {
+      const { provider } = await createTestProvider();
+
+      // Load a subdocument on the parent doc so the subdocs listener spins up
+      // a child Provider sharing the connection.
+      const subdoc = new Y.Doc({ guid: "child-guid" });
+      provider.doc.getMap("root").set("child", subdoc);
+      subdoc.load();
+      await flush();
+
+      const subProvider = provider.subdocs.get("child-guid");
+      expect(subProvider).toBeDefined();
+
+      // Spy on the child's destroy(): parent teardown must propagate to its
+      // subdoc providers, otherwise each child leaks its message reader,
+      // pending-structs interval, offline storage handle and abort controller.
+      // (Yjs cascades doc.destroy() to subdocs, but that only tears down the
+      // Y.Doc — not the Provider wrapping it.)
+      let subDestroyed = false;
+      const child = subProvider!;
+      const originalDestroy = child.destroy.bind(child);
+      child.destroy = ((opts?: Parameters<typeof child.destroy>[0]) => {
+        subDestroyed = true;
+        return originalDestroy(opts);
+      }) as typeof child.destroy;
+
+      provider.destroy();
+      await flush();
+
+      expect(subDestroyed).toBe(true);
+      // The child map entry should be cleared too.
+      expect(provider.subdocs.size).toBe(0);
+    });
   });
 
   // -----------------------------------------------------------------------

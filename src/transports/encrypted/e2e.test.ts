@@ -526,19 +526,30 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
   it("single client writes and reads back after reconnect", async () => {
     const docId = "doc-ws-roundtrip";
+    // Server namespaces persisted keys by room.
+    const storageKey = `test/${docId}`;
+    // Poll the shared server storage until this document is durably persisted,
+    // replacing a `setTimeout` timing guess that could race teardown under load.
+    // Existence is sufficient here (correctness is asserted via p2 below); the
+    // stored update is a ContentEncryptedPayload envelope, so we don't decode it.
+    const waitForPersisted = async () => {
+      const probeStore = new MemoryDocumentStorage(false);
+      await waitUntil(async () => (await probeStore.getDocument(storageKey)) !== null);
+    };
 
     const { provider: p1, connection: c1 } = await createProvider(docId);
     await waitForSync(p1);
 
     p1.doc.getText("body").insert(0, "persisted text");
-    await new Promise((r) => setTimeout(r, 1));
+    await waitForPersisted();
 
     p1.destroy();
     await c1.disconnect();
 
     const { provider: p2 } = await createProvider(docId);
     await waitForSync(p2);
-    await new Promise((r) => setTimeout(r, 1));
+    // Event-driven wait instead of a fixed sleep: p2 syncs the persisted state.
+    await waitForContent(p2.doc, "body", (t) => t === "persisted text");
 
     expect(p2.doc.getText("body").toString()).toBe("persisted text");
   });
@@ -1215,7 +1226,19 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await waitForSync(p1);
 
     p1.doc.getText("body").insert(0, "persisted secret");
-    await new Promise((r) => setTimeout(r, 1));
+
+    // Wait until the encrypted write has actually reached server storage before
+    // tearing p1 down. A bare `setTimeout` here is a timing guess: under load the
+    // async crypto sidecar + structure update may not be persisted yet, so a
+    // fresh p2 would find nothing and time out. Poll the shared (static-backed)
+    // server MemoryDocumentStorage, decrypting it exactly as p2 would, until the
+    // content is durably restorable. The server namespaces the key by room, so
+    // the persisted key is `test/${docId}` (see the plaintext-opacity test).
+    const probeStore = new MemoryDocumentStorage(true);
+    const storageKey = `test/${docId}`;
+    await waitUntil(
+      async () => (await reconstructBody(probeStore, storageKey, key)) === "persisted secret",
+    );
 
     p1.destroy();
     await c1.disconnect();
@@ -1375,6 +1398,17 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
 
   it("encrypted content survives multiple disconnect/reconnect cycles with new providers", async () => {
     const docId = "doc-ws-enc-multi-lifecycle";
+    // Server namespaces persisted keys by room (see plaintext-opacity test).
+    const storageKey = `test/${docId}`;
+    // Poll the shared server storage, decrypting as a fresh client would, until
+    // the write is durably persisted. Replaces a `setTimeout` timing guess that
+    // flaked under full-suite load when async crypto persistence lagged teardown.
+    const waitForPersisted = async (expected: string) => {
+      const probeStore = new MemoryDocumentStorage(true);
+      await waitUntil(
+        async () => (await reconstructBody(probeStore, storageKey, key)) === expected,
+      );
+    };
 
     // Round 1: write initial content
     const { provider: p1, connection: c1 } = await createProvider(docId, {
@@ -1382,7 +1416,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     });
     await waitForSync(p1);
     p1.doc.getText("body").insert(0, "round1");
-    await new Promise((r) => setTimeout(r, 1));
+    await waitForPersisted("round1");
     p1.destroy();
     await c1.disconnect();
 
@@ -1393,7 +1427,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     await waitForSync(p2);
     await waitForContent(p2.doc, "body", (t) => t === "round1");
     p2.doc.getText("body").insert(6, " round2");
-    await new Promise((r) => setTimeout(r, 1));
+    await waitForPersisted("round1 round2");
     p2.destroy();
     await c2.disconnect();
 

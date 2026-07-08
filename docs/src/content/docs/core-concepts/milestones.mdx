@@ -11,7 +11,9 @@ A **Milestone** is a document snapshot as the client saw the document at a point
 
 - Stored separately from the document as a sort of version history
 - Can be pulled back over the network again
-- An example of the RPC system, which adds custom messages & handlers for custom operations over the transport layer in-protocol
+- An example of the RPC system, which adds custom methods & handlers for custom operations over the transport layer in-protocol
+
+Milestone operations live on the provider's `rpc.milestones` namespace, which you enable by registering the `createMilestoneRpc` extension when creating the provider.
 
 ## Creating Milestones
 
@@ -21,19 +23,23 @@ Create a milestone from the current document state:
 
 ```typescript
 import { Provider } from "teleportal/providers";
+import { createMilestoneRpc } from "teleportal/protocols/milestone";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document",
   encryptionKey: createEncryptionKey(), // encrypted by default
+  rpc: {
+    milestones: createMilestoneRpc,
+  },
 });
 
 // Create a milestone with a name
-const milestone = await provider.createMilestone("v1.0");
+const milestone = await provider.rpc.milestones.create("v1.0");
 
 // Or let the server auto-generate a name
-const milestone2 = await provider.createMilestone();
+const milestone2 = await provider.rpc.milestones.create();
 ```
 
 ### Automatic Creation
@@ -48,17 +54,23 @@ const server = new Server({
   milestoneTriggerConfig: {
     defaultTriggers: [
       {
+        id: "hourly",
         type: "time-based",
-        interval: 3600000, // 1 hour
+        enabled: true,
+        config: { interval: 3600000 }, // every hour
       },
       {
+        id: "every-1000",
         type: "update-count",
-        threshold: 1000, // After 1000 updates
+        enabled: true,
+        config: { updateCount: 1000 }, // after 1000 updates
       },
     ],
   },
 });
 ```
+
+> **Note**: Time-based and update-count triggers are evaluated **on the document-write path only** — there is no background timer. An idle document never accumulates milestones; a time-based trigger fires on the next write after its interval has elapsed. Automatic milestones are attributed to `{ type: "system", id: "auto" }`.
 
 ## Listing Milestones
 
@@ -66,10 +78,11 @@ List all milestones for a document:
 
 ```typescript
 // List all milestones
-const milestones = await provider.listMilestones();
+const milestones = await provider.rpc.milestones.list();
 
-// List with incremental updates (only new milestones)
-const newMilestones = await provider.listMilestones(existingMilestoneIds);
+// Include soft-deleted milestones, or send known ids for incremental updates
+const withDeleted = await provider.rpc.milestones.list({ includeDeleted: true });
+const incremental = await provider.rpc.milestones.list({ snapshotIds: existingMilestoneIds });
 ```
 
 ## Retrieving Milestones
@@ -78,14 +91,14 @@ Get the snapshot content for a specific milestone:
 
 ```typescript
 // Get milestone snapshot
-const snapshot = await provider.getMilestoneSnapshot(milestoneId);
+const snapshot = await provider.rpc.milestones.getSnapshot(milestoneId);
 
-// The snapshot is a Uint8Array containing the Y.js document state
-// You can apply it to a new document:
+// The snapshot is a Uint8Array containing the Y.js document state (decrypted
+// client-side for encrypted documents). You can apply it to a new document:
 import * as Y from "yjs";
 
 const newDoc = new Y.Doc();
-Y.applyUpdate(newDoc, snapshot);
+Y.applyUpdateV2(newDoc, snapshot);
 ```
 
 > **Note**: Milestones work on encrypted documents. Since content E2EE is the default, the client decrypts the snapshot locally — the server stores and serves only the encrypted snapshot and never sees the document content.
@@ -95,7 +108,7 @@ Y.applyUpdate(newDoc, snapshot);
 Update a milestone's name:
 
 ```typescript
-await provider.updateMilestoneName(milestoneId, "v1.0.1");
+await provider.rpc.milestones.updateName(milestoneId, "v1.0.1");
 ```
 
 ## Soft Delete and Restore
@@ -104,10 +117,10 @@ Milestones support soft delete and restore:
 
 ```typescript
 // Soft delete a milestone
-await provider.deleteMilestone(milestoneId);
+await provider.rpc.milestones.delete(milestoneId);
 
 // Restore a deleted milestone
-await provider.restoreMilestone(milestoneId);
+await provider.rpc.milestones.restore(milestoneId);
 ```
 
 ## Milestone Metadata
@@ -132,8 +145,10 @@ interface Milestone {
 
 The `createdBy` field indicates who or what created the milestone:
 
-- `{ type: "user", id: userId }` - Created by a user via `milestone-create-request`
-- `{ type: "system", id: nodeId }` - Created automatically by the system (triggers, API)
+- `{ type: "user", id: userId }` - Created by a user via the `milestoneCreate` RPC method
+- `{ type: "system", id: "auto" }` - Created automatically by a trigger
+
+> **Note**: A freshly-created milestone has `lifecycleState === undefined`, which every `getMilestones` filter and `Milestone.toString()` treats as `"active"`. The string `"active"` is not written to the wire in the common case — a milestone only carries an explicit `lifecycleState` once it has been deleted, archived, or expired.
 
 ## Server Configuration
 
@@ -162,25 +177,35 @@ const server = new Server({
 Milestones are stored separately from documents using `MilestoneStorage`:
 
 ```typescript
-import { MilestoneStorage } from "teleportal/storage";
+import type { MilestoneStorage } from "teleportal/storage";
 
-// MilestoneStorage interface
+// MilestoneStorage interface (abridged)
 interface MilestoneStorage {
-  listMilestones(
+  readonly type: "milestone-storage";
+
+  createMilestone(ctx: {
+    name: string;
+    documentId: string;
+    createdAt: number;
+    snapshot: MilestoneSnapshot;
+    createdBy: { type: "user" | "system"; id: string };
+  }): Promise<string>; // returns the created milestone id
+
+  getMilestone(documentId: string, id: string): Promise<Milestone | null>;
+
+  getMilestones(
     documentId: string,
-    options?: { snapshotIds?: string[]; includeDeleted?: boolean },
+    options?: { includeDeleted?: boolean; lifecycleState?: Milestone["lifecycleState"] },
   ): Promise<Milestone[]>;
 
-  getMilestoneSnapshot(documentId: string, milestoneId: string): Promise<Uint8Array | null>;
-
-  createMilestone(
+  deleteMilestone(documentId: string, id: string | string[], deletedBy?: string): Promise<void>;
+  restoreMilestone(documentId: string, id: string | string[]): Promise<void>;
+  updateMilestoneName(
     documentId: string,
-    snapshot: Uint8Array,
-    name?: string,
-    userId?: string,
-  ): Promise<Milestone>;
-
-  // ... other methods
+    id: string,
+    name: string,
+    createdBy?: { type: "user" | "system"; id: string },
+  ): Promise<void>;
 }
 ```
 
@@ -192,10 +217,10 @@ Create milestones at important points in the document lifecycle:
 
 ```typescript
 // Create milestone when user clicks "Save"
-await provider.createMilestone("Save point 1");
+await provider.rpc.milestones.create("Save point 1");
 
 // Create milestone when document is published
-await provider.createMilestone("Published v1.0");
+await provider.rpc.milestones.create("Published v1.0");
 ```
 
 ### Document Restoration
@@ -204,11 +229,11 @@ Restore a document to a previous milestone:
 
 ```typescript
 // Get milestone snapshot
-const snapshot = await provider.getMilestoneSnapshot(milestoneId);
+const snapshot = await provider.rpc.milestones.getSnapshot(milestoneId);
 
 // Apply to current document
 import * as Y from "yjs";
-Y.applyUpdate(provider.doc, snapshot);
+Y.applyUpdateV2(provider.doc, snapshot);
 ```
 
 ### Automatic Backups
@@ -220,8 +245,10 @@ const server = new Server({
   milestoneTriggerConfig: {
     defaultTriggers: [
       {
+        id: "hourly-backup",
         type: "time-based",
-        interval: 3600000, // Every hour
+        enabled: true,
+        config: { interval: 3600000 }, // every hour (fires on the next write after the interval)
       },
     ],
   },

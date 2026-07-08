@@ -1,3 +1,6 @@
+import type { KeyResolver } from "./key-resolver";
+import { passwordKey, simpleEncryption } from "./key-resolver";
+
 /**
  * The Y.js update, decrypted with AES-GCM
  */
@@ -42,63 +45,13 @@ export type EncryptedBinary = Uint8Array;
  * });
  * ```
  */
-export function createEncryptionKey(password?: string): import("./key-resolver").KeyResolver {
-  const encoder = new TextEncoder();
-  const cache = new Map<string, CryptoKey>();
-
-  return {
-    async resolve({ document }): Promise<CryptoKey> {
-      let key = cache.get(document);
-      if (key) return key;
-
-      if (password) {
-        // Password-based key derivation
-        const keyMaterial = await crypto.subtle.importKey(
-          "raw",
-          encoder.encode(password),
-          "PBKDF2",
-          false,
-          ["deriveKey"],
-        );
-        key = await crypto.subtle.deriveKey(
-          {
-            name: "PBKDF2",
-            salt: encoder.encode(`teleportal-pwd:${document}`),
-            iterations: 600_000,
-            hash: "SHA-256",
-          },
-          keyMaterial,
-          { name: "AES-GCM", length: 256 },
-          true,
-          ["encrypt", "decrypt"],
-        );
-      } else {
-        // Simple document-ID-based derivation
-        const keyMaterial = await crypto.subtle.importKey(
-          "raw",
-          encoder.encode(document),
-          "PBKDF2",
-          false,
-          ["deriveKey"],
-        );
-        key = await crypto.subtle.deriveKey(
-          {
-            name: "PBKDF2",
-            salt: encoder.encode("teleportal-simple-encryption-v1"),
-            iterations: 100_000,
-            hash: "SHA-256",
-          },
-          keyMaterial,
-          { name: "AES-GCM", length: 256 },
-          true,
-          ["encrypt", "decrypt"],
-        );
-      }
-
-      cache.set(document, key);
-      return key;
-    },
-  };
+export function createEncryptionKey(password?: string): KeyResolver {
+  // Thin convenience wrapper: with a password this is exactly `passwordKey`
+  // (PBKDF2, 600k iters, per-document salt); without one it is exactly
+  // `simpleEncryption` (PBKDF2 over the document ID, 100k iters). Those two are
+  // the single source of truth for the derivation parameters — do not inline a
+  // third copy here.
+  return password ? passwordKey(password) : simpleEncryption();
 }
 
 /**

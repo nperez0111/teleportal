@@ -42,7 +42,21 @@ The `Connection` interface defines the contract for network connections. It is i
   - Automatically invalidated when the connection disconnects or errors
   - Returns a fresh promise for each connection attempt
 
+- **`diagnostics: ConnectionDiagnostics`** (readonly)
+  - Point-in-time internals snapshot for tooling: current AIMD `batchIntervalMs`
+    (and `maxBatchIntervalMs`), `bufferedMessageCount`, `reconnectAttempt` /
+    `maxReconnectAttempts`, and `online`. Values change frequently — read on demand
+
 #### Methods
+
+- **`flushSync(): number`**
+  - Synchronously flushes pending batched updates to the send queue
+  - Returns the number of messages queued (0 if batching is disabled or nothing pending)
+  - Does NOT wait for messages to be sent or acknowledged
+
+- **`async flushAsync(): Promise<void>`**
+  - Flushes pending batched updates and waits for them to be sent and acknowledged
+  - Useful before `destroy()` or when you need to ensure updates are persisted
 
 - **`async send(message: Message): Promise<void>`**
   - Sends a message to the server with in-flight tracking and batching
@@ -273,7 +287,10 @@ The `Provider` class manages Yjs document synchronization, awareness, offline pe
   - Options:
     - `destroyConnection` (default: `true`): Whether to destroy the underlying connection
     - `destroyDoc` (default: `true`): Whether to destroy the Y.Doc
-  - Cleans up listeners, persistence, and cached promises
+  - Cleans up listeners, persistence, cached promises, and the pending-structs poller
+  - Recursively destroys all subdocument providers in `subdocs` (with
+    `destroyConnection: false`, since they share this connection; `destroyDoc`
+    is propagated), so no child provider leaks its reader/timers/storage handle
 
 - **`async clearOfflineData(): Promise<void>`**
   - Clears persisted offline data for the current document
@@ -405,7 +422,10 @@ type ProviderOptions<T, R> = {
 - **Token Refresh:**
   - `DirectConnection` schedules automatic token refresh before expiry
   - On token refresh, the connection disconnects and reconnects with the new token
-  - Reactive refresh triggers on server `permission denied` responses
+  - Reactive refresh triggers on server `permission denied` (`auth-message`) responses
+  - Concurrent refreshes are coalesced: a burst of `permission denied` messages
+    (or a scheduled refresh overlapping a reactive one) triggers `onTokenExpired`
+    exactly once while a refresh is already in flight
 
 ## Usage Examples
 
@@ -686,24 +706,29 @@ All communication between the main thread (`WorkerConnection`) and the worker (`
 
 These messages handle connection lifecycle and data transport. They are feature-agnostic and would exist for any sync protocol:
 
-| Direction  | Type               | Purpose                                                           |
-| ---------- | ------------------ | ----------------------------------------------------------------- |
-| upstream   | `init`             | Initialize connection with serialized options and tab ID          |
-| upstream   | `send`             | Send an encoded message (reliable, with ACK tracking)             |
-| upstream   | `send-stream`      | Send an encoded message (fire-and-forget stream)                  |
-| upstream   | `connect`          | Request connection (RPC with request ID)                          |
-| upstream   | `disconnect`       | Request disconnection (RPC with request ID)                       |
-| upstream   | `switch-transport` | Switch active transport (RPC with request ID)                     |
-| upstream   | `destroy`          | Tear down this tab's port                                         |
-| upstream   | `network-status`   | Forward browser online/offline state                              |
-| upstream   | `heartbeat`        | Liveness probe                                                    |
-| downstream | `ready`            | Initial state snapshot on connection                              |
-| downstream | `state-update`     | Connection state change                                           |
-| downstream | `event`            | Generic event forwarding (ping, messages-in-flight, sent-message) |
-| downstream | `message`          | Incoming message from server                                      |
-| downstream | `property`         | Property snapshot (inFlightMessageCount, destroyed, transports)   |
-| downstream | `response`         | RPC response (success or error, keyed by request ID)              |
-| downstream | `heartbeat-ack`    | Heartbeat response                                                |
+| Direction  | Type                | Purpose                                                           |
+| ---------- | ------------------- | ----------------------------------------------------------------- |
+| upstream   | `init`              | Initialize connection with serialized options and tab ID          |
+| upstream   | `send`              | Send an encoded message (reliable, with ACK tracking)             |
+| upstream   | `send-stream`       | Send an encoded message (fire-and-forget stream)                  |
+| upstream   | `connect`           | Request connection (RPC with request ID)                          |
+| upstream   | `disconnect`        | Request disconnection (RPC with request ID)                       |
+| upstream   | `switch-transport`  | Switch active transport (RPC with request ID)                     |
+| upstream   | `flush-sync`        | Flush pending batched updates (fire-and-forget; count returned)   |
+| upstream   | `flush-async`       | Flush and wait for acknowledgement (RPC with request ID)          |
+| upstream   | `destroy`           | Tear down this tab's port                                         |
+| upstream   | `network-status`    | Forward browser online/offline state                              |
+| upstream   | `heartbeat`         | Liveness probe                                                    |
+| upstream   | `get-diagnostics`   | Request a fresh diagnostics snapshot                              |
+| downstream | `ready`             | Initial state snapshot on connection                              |
+| downstream | `state-update`      | Connection state change                                           |
+| downstream | `event`             | Generic event forwarding (ping, messages-in-flight, sent-message) |
+| downstream | `message`           | Incoming message from server                                      |
+| downstream | `property`          | Property snapshot (inFlightMessageCount, destroyed, transports)   |
+| downstream | `response`          | RPC response (success or error, keyed by request ID)              |
+| downstream | `flush-sync-result` | Result of a `flush-sync` request (count of flushed messages)      |
+| downstream | `heartbeat-ack`     | Heartbeat response                                                |
+| downstream | `diagnostics`       | Diagnostics snapshot (answers `get-diagnostics`)                  |
 
 #### Feature-specific messages (file operations)
 

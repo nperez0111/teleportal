@@ -191,6 +191,95 @@ describe("FileTransferProtocol.Client - file-part only", () => {
     const downloadedFile = await downloadPromise;
     expect(downloadedFile.size).toBe(chunk0.length + chunk1.length);
   });
+
+  it("does not attempt decryption when an encrypted chunk fails verification", async () => {
+    // Regression: decryption used to be kicked off *before* merkle verification.
+    // On a failed verification the decrypt promise was neither awaited nor
+    // caught, so a rejecting decrypt (corrupt ciphertext) surfaced as an
+    // unhandled rejection. Verification must gate decryption.
+    const sentMessages: Message[] = [];
+    let decryptAttempts = 0;
+
+    class TestClient extends FileTransferProtocol.Client<TestContext> {
+      sendMessage(message: Message<TestContext>): void {
+        sentMessages.push(message);
+      }
+      async onDownloadComplete(): Promise<void> {}
+      protected verifyChunk(): boolean {
+        return false; // force verification failure
+      }
+    }
+
+    const client = new TestClient();
+    // A decryption key whose decryptUpdate would reject on this bogus data;
+    // count invocations via a spy key object is overkill — instead assert the
+    // download rejects with the verification error and no decrypt ran by
+    // wrapping decrypt through the range check below.
+    const contentId = toBase64(new Uint8Array([9, 9, 9]));
+
+    // Use a real key so the encryptionKey branch is taken.
+    const { generateEncryptionKey } = await import("teleportal/encryption-key");
+    const key = await generateEncryptionKey();
+    // Wrap crypto.subtle.decrypt to count attempts.
+    const origDecrypt = crypto.subtle.decrypt.bind(crypto.subtle);
+    crypto.subtle.decrypt = ((...args: Parameters<typeof origDecrypt>) => {
+      decryptAttempts++;
+      return origDecrypt(...args);
+    }) as typeof crypto.subtle.decrypt;
+
+    try {
+      const downloadPromise = client.requestDownload(contentId, "test-doc", key);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      const downloadRequest = sentMessages.shift() as any;
+
+      await client.handleMessage(
+        new RpcMessage<TestContext>(
+          "test-doc",
+          {
+            type: "success",
+            payload: {
+              fileId: contentId,
+              filename: "f.bin",
+              size: 3,
+              mimeType: "application/octet-stream",
+            },
+          },
+          "fileDownload",
+          "response",
+          downloadRequest.id,
+          {},
+          false,
+        ),
+      );
+
+      const badPart: FilePartStream = {
+        fileId: contentId,
+        chunkIndex: 0,
+        chunkData: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
+        merkleProof: [],
+        totalChunks: 1,
+        bytesUploaded: 3,
+        encrypted: true,
+      };
+
+      await client.handleMessage(
+        new RpcMessage<TestContext>(
+          "test-doc",
+          { type: "success", payload: badPart },
+          "fileDownload",
+          "stream",
+          downloadRequest.id,
+          {},
+          false,
+        ),
+      );
+
+      await expect(downloadPromise).rejects.toThrow("failed merkle proof verification");
+      expect(decryptAttempts).toBe(0);
+    } finally {
+      crypto.subtle.decrypt = origDecrypt;
+    }
+  });
 });
 
 describe("FileTransferProtocol.Server - file-part only", () => {

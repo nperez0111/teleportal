@@ -20,48 +20,62 @@ export class Agent {
       client_id: message.context.clientId,
       encrypted: message.encrypted,
     };
+    // Resources created before sync completes. If any step after
+    // createClient throws, these must be torn down or we leak the client's
+    // background consume loop and the transport's Y.Doc.
+    let client: ReturnType<Server<ServerContext>["createClient"]> | undefined;
+    let transport: ReturnType<typeof getYTransportFromYDoc<ServerContext>> | undefined;
     try {
       const observer = new Observable<{
         message: (message: Message) => void;
       }>();
-      const transport = getYTransportFromYDoc<ServerContext>({
+      transport = getYTransportFromYDoc<ServerContext>({
         document: message.document,
         context: message.context,
         handler,
         observer,
       });
 
-      const client = this.server.createClient({
+      const boundTransport = transport;
+      const boundClient = this.server.createClient({
         transport,
         id: message.context.clientId,
       });
+      client = boundClient;
 
-      wideEvent.client_id = client.id;
+      wideEvent.client_id = boundClient.id;
 
       const session = await this.server.getOrOpenSession(message.document, {
         encrypted: message.encrypted,
-        client,
+        client: boundClient,
         context: message.context,
       });
 
-      await observer.call("message", await transport.handler.start());
+      await observer.call("message", await boundTransport.handler.start());
 
-      await transport.synced;
+      await boundTransport.synced;
 
       wideEvent.outcome = "success";
       return {
-        ydoc: transport.ydoc,
-        awareness: transport.awareness,
-        client,
+        ydoc: boundTransport.ydoc,
+        awareness: boundTransport.awareness,
+        client: boundClient,
         session,
         [Symbol.asyncDispose]: async (): Promise<void> => {
-          session.removeClient(client);
-          transport.ydoc.destroy();
+          session.removeClient(boundClient);
+          boundTransport.ydoc.destroy();
         },
       };
     } catch (error) {
       wideEvent.outcome = "error";
       wideEvent.error = error;
+      // Tear down the partially-created agent so we don't leak the client's
+      // background consume loop or the transport's Y.Doc. disconnectClient is
+      // idempotent and removes the client from every session it joined.
+      if (client) {
+        this.server.disconnectClient(client, "manual");
+      }
+      transport?.ydoc.destroy();
       throw error;
     } finally {
       wideEvent.duration_ms = Date.now() - startTime;

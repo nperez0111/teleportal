@@ -3,7 +3,7 @@ title: Protocol
 description: Why the Teleportal synchronization protocol is designed the way it is
 ---
 
-The Teleportal protocol is a binary protocol built on top of Y.js that handles document synchronization, awareness updates, file transfers, and custom RPC operations. This document explains the design decisions and rationale behind the protocol's architecture.
+The Teleportal protocol is a binary protocol built on top of Y.js. It defines five wire message types — document sync, awareness, ack, presence, and RPC — where higher-level features like file transfers and milestones ride on top of RPC. This document explains the design decisions and rationale behind the protocol's architecture.
 
 ## Multiplexing Multiple Documents
 
@@ -129,9 +129,11 @@ Rather than creating separate protocols or connections for these features, RPC m
 **Built-in RPC methods** demonstrate this pattern:
 
 - **Milestones**: `milestoneList`, `milestoneCreate`, `milestoneGet`, etc.
-- **Files**: `fileUpload`, `fileDownload`, etc.
+- **Files**: `fileUpload`, `fileDownload`
+- **Attribution**: `attributionActivity`, `attributionGet`, etc.
+- **Key registry**: key distribution methods
 
-These are all built on the RPC concept, showing how the protocol can be extended for domain-specific needs.
+None of these are dedicated wire message types — they are all RPC methods (wire type `0x04`), showing how the protocol can be extended for domain-specific needs without changing the core wire format.
 
 > **Note**: The RPC API is still in development, and more work will be done on improving the ergonomics of the API for custom RPC handlers.
 
@@ -153,8 +155,8 @@ Binary encoding provides:
 
 The protocol uses a structured binary format with:
 
-- **Header**: Message type, document ID, encryption flag, and context
-- **Payload**: Type-specific binary data (Y.js updates, awareness states, RPC data, etc.)
+- **Header**: magic (`YJS`), version, document name, encryption flag, and the 1-byte message type
+- **Payload**: Type-specific binary data (Y.js updates, awareness states, presence, RPC data, etc.)
 
 This binary format is optimized for the specific needs of document synchronization, where you're frequently sending Y.js updates that are already in binary format.
 

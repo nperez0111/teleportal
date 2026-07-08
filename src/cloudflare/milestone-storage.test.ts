@@ -147,4 +147,112 @@ describe("DurableObjectMilestoneStorage", () => {
     expect(renamed?.name).toBe("v1-renamed");
     expect(await renamed!.fetchSnapshot()).toEqual(createTestSnapshot());
   });
+
+  it("scopes getMilestone and snapshots by documentId (no cross-document leakage)", async () => {
+    const id = await storage.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "test-node" },
+    });
+
+    // The same milestone id must not resolve under a different document.
+    expect(await storage.getMilestone("doc-2", id)).toBeNull();
+    // And hydrating its snapshot under the wrong document must fail rather than
+    // silently return another document's content.
+    await expect(storage.getMilestoneSnapshot("doc-2", id)).rejects.toThrow();
+    // The correct document still resolves and hydrates.
+    expect(await (await storage.getMilestone("doc-1", id))!.fetchSnapshot()).toEqual(
+      createTestSnapshot(),
+    );
+  });
+
+  it("hydrates the correct snapshot when documents share a milestone id space", async () => {
+    // Distinct snapshots under two documents; hydration must not cross wires.
+    const snap1 = new Uint8Array([1, 1, 1]) as MilestoneSnapshot;
+    const snap2 = new Uint8Array([2, 2, 2]) as MilestoneSnapshot;
+    const id1 = await storage.createMilestone({
+      name: "a",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: snap1,
+      createdBy: { type: "system", id: "n" },
+    });
+    const id2 = await storage.createMilestone({
+      name: "b",
+      documentId: "doc-2",
+      createdAt: 2,
+      snapshot: snap2,
+      createdBy: { type: "system", id: "n" },
+    });
+
+    expect(await storage.getMilestoneSnapshot("doc-1", id1)).toEqual(snap1);
+    expect(await storage.getMilestoneSnapshot("doc-2", id2)).toEqual(snap2);
+    expect(await (await storage.getMilestones("doc-1"))[0].fetchSnapshot()).toEqual(snap1);
+  });
+
+  it("filters milestones by lifecycleState", async () => {
+    const active = await storage.createMilestone({
+      name: "active",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "n" },
+    });
+    const gone = await storage.createMilestone({
+      name: "gone",
+      documentId: "doc-1",
+      createdAt: 2,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "n" },
+    });
+    await storage.deleteMilestone("doc-1", gone); // soft delete
+
+    const deleted = await storage.getMilestones("doc-1", {
+      includeDeleted: true,
+      lifecycleState: "deleted",
+    });
+    expect(deleted.map((m) => m.id)).toEqual([gone]);
+
+    // By default (no includeDeleted) the soft-deleted milestone is hidden and
+    // only the surviving one is returned.
+    const visible = await storage.getMilestones("doc-1");
+    expect(visible.map((m) => m.id)).toEqual([active]);
+
+    // Bug 2: a never-deleted milestone has an undefined lifecycleState on the
+    // wire, but must still be returned when filtering for "active".
+    const onlyActive = await storage.getMilestones("doc-1", {
+      lifecycleState: "active",
+    });
+    expect(onlyActive.map((m) => m.id)).toEqual([active]);
+  });
+
+  it("throws when renaming a milestone that does not exist", async () => {
+    await expect(storage.updateMilestoneName("doc-1", "nope", "x")).rejects.toThrow(
+      "Milestone not found",
+    );
+  });
+
+  it("hard-deletes the content blob, not just the metadata entry", async () => {
+    const fake = new FakeDOStorage();
+    const s = new DurableObjectMilestoneStorage(fake);
+    const id = await s.createMilestone({
+      name: "v1",
+      documentId: "doc-1",
+      createdAt: 1,
+      snapshot: createTestSnapshot(),
+      createdBy: { type: "system", id: "n" },
+    });
+    // meta + content = 2 keys.
+    expect(fake.size).toBe(2);
+
+    await s.deleteMilestone("doc-1", id); // soft
+    expect(fake.size).toBe(2);
+    await s.deleteMilestone("doc-1", id); // hard
+
+    // Content blob is gone; only the (now-empty) meta doc remains.
+    await expect(s.getMilestoneSnapshot("doc-1", id)).rejects.toThrow();
+    expect(fake.size).toBe(1);
+  });
 });

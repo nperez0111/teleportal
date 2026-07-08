@@ -294,41 +294,55 @@ destroyDevtoolsState();
 
 ## Message Types
 
-The devtools recognizes and color-codes various message types:
+`getMessageTypeLabel()` derives the label shown on a row and `getMessageTypeColor()`
+its badge color (`message-utils.ts`). The recognized types map to the wire
+protocol's message kinds — `doc`, `awareness`, `presence`, `rpc`, `ack`:
 
-### Document Messages
+### Document (`doc`) messages
 
 - `sync-step-1`: Initial sync step (blue)
 - `sync-step-2`: Second sync step (darker blue)
 - `update`: Document update (green)
 - `sync-done`: Sync completion (darker green)
 - `auth-message`: Authentication message (red)
-- `milestone-*`: Milestone-related messages (purple)
 
-### Awareness Messages
+### Awareness messages
 
 - `awareness-update`: Awareness state update (yellow)
 - `awareness-request`: Awareness state request (darker yellow)
 
-### File Messages
+### Presence messages
 
-- `file-upload`: File upload (indigo)
-- `file-download`: File download (darker indigo)
-- `file-part`: File chunk (lighter indigo)
-- `file-auth-message`: File authentication (red)
+- `presence-join` / `presence-leave` / `presence-heartbeat` / `presence-announce`
+  (purple). The label is the payload's `type`; feed the roster in the Presence tab.
 
-### ACK Messages
+### RPC messages (`rpc`)
 
-- `ack`: Acknowledgment messages (gray, hidden from list but tracked)
+RPC is the transport for milestones (`listMilestones`, …), key registry, file
+transfers (`fileUpload` / `fileDownload`), and other request/response methods.
+There is **no** standalone `milestone-*` or `file-*` message type. The badge is
+indigo, shaded by `requestType`:
+
+- request (darker indigo) — the label is the `rpcMethod`
+- stream / part (lighter indigo) — label `<method> (part)`; file chunks
+- response (indigo) — label is the `rpcMethod`
+
+File transfers are grouped into a single call row by `RpcTracker`; upload chunks
+never appear as messages (see below).
+
+### ACK messages
+
+- `ack`: Acknowledgment messages (gray). Excluded from the list (`FilterManager`
+  drops them) but tracked and linked to the message they acknowledge.
 
 ## Connection States
 
 The devtools tracks connection states with visual indicators:
 
-- **Connected** (green): Active WebSocket connection
+- **Connected** (green): Active connection (transport shown alongside — WebSocket, SSE, etc.)
 - **Connecting** (yellow): Connection in progress
 - **Disconnected** (gray): No active connection
-- **Errored** (red): Connection error occurred
+- **Errored** (red): Connection error occurred (error text shown)
 
 ## Filtering
 

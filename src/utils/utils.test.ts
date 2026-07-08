@@ -90,6 +90,25 @@ describe("toBase64UrlEncoded / fromBase64UrlEncoded", () => {
     for (let i = 0; i < 32; i++) hash[i] = i * 8;
     expect(fromBase64UrlEncoded(toBase64UrlEncoded(hash))).toEqual(hash);
   });
+
+  it("actually emits url-safe - and _ and decodes them back", () => {
+    // 0xFB,0xEF,0xBE => standard base64 "++++"-ish with both + and /.
+    const bytes = new Uint8Array([0xfb, 0xff, 0xbf]);
+    const encoded = toBase64UrlEncoded(bytes);
+    // The url-safe alphabet must appear where standard would use + or /.
+    expect(encoded).toMatch(/[-_]/);
+    expect(fromBase64UrlEncoded(encoded)).toEqual(bytes);
+  });
+
+  it("decodes url-safe input that a standard decoder would reject", () => {
+    // Hand-built url-safe string containing - and _ (no padding).
+    const bytes = new Uint8Array([0xfb, 0xff, 0xbf]);
+    const urlEncoded = toBase64UrlEncoded(bytes);
+    expect(urlEncoded).not.toContain("+");
+    expect(urlEncoded).not.toContain("/");
+    // Round-trips through fromBase64UrlEncoded which restores +/ and padding.
+    expect(fromBase64UrlEncoded(urlEncoded)).toEqual(bytes);
+  });
 });
 
 describe("toHexString", () => {

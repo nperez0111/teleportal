@@ -1,7 +1,9 @@
 ---
 title: Observability
-description: Monitoring, structured logging, and health checks with Prometheus metrics and LogTape
+description: Monitoring, structured logging, and status endpoints with Prometheus metrics and LogTape
 ---
+
+import { Aside } from "@astrojs/starlight/components";
 
 This guide demonstrates the built-in observability capabilities provided by Teleportal, including Prometheus metrics endpoints, structured logging with LogTape, and server event hooks for custom monitoring.
 
@@ -42,11 +44,25 @@ curl http://localhost:3000/metrics
 
 Metrics include:
 
-- `teleportal_sessions_active`: Current number of active sessions
-- `teleportal_clients_active`: Current number of active clients
-- `teleportal_documents_opened_total`: Total documents opened
-- `teleportal_messages_processed_total`: Total messages processed
-- `teleportal_message_duration_seconds`: Message processing duration
+- `teleportal_sessions_active`: Current number of active document sessions (gauge)
+- `teleportal_clients_active`: Current number of active clients (gauge)
+- `teleportal_documents_opened_total`: Total documents opened (counter)
+- `teleportal_messages_total`: Total messages processed, labeled by `type` (counter)
+- `teleportal_messages_total_all`: Total messages processed across all types, single series (counter)
+- `teleportal_message_duration_seconds`: Message processing duration, labeled by `type` (histogram)
+
+<Aside type="note">
+  `clients_active` and `sessions_active` are **signed gauges** -- they reflect live inc/dec state
+  and are not clamped, so a transient negative value is a genuine diagnostic signal of an inc/dec
+  imbalance rather than an error to hide.
+</Aside>
+
+<Aside type="caution" title="Metric cardinality">
+  Several metrics are labeled by `documentId` and/or `userId` (for example
+  `teleportal_document_size_bytes` and the `rate_limit_*` counters) and are never evicted. Over a
+  long-lived process with many distinct documents or users, the series set grows unboundedly. Keep
+  an eye on cardinality; there is currently no automatic eviction of per-document/per-user series.
+</Aside>
 
 ## Health Endpoint
 
@@ -62,10 +78,12 @@ Response:
 {
   "status": "healthy",
   "timestamp": "2024-01-01T00:00:00.000Z",
-  "checks": { ... },
+  "checks": {},
   "uptime": 3600
 }
 ```
+
+The endpoint always returns `status: "healthy"` with an empty `checks` object and the process uptime in seconds. The `monitoring` module defines only the `HealthStatus` and `StatusData` **types** -- it does not implement any dependency health probes. `checks` is a placeholder you can populate by extending the server if you need liveness signals for downstream dependencies (storage, PubSub, etc.).
 
 ## Status Endpoint
 
@@ -82,16 +100,27 @@ Response:
   "nodeId": "node-123",
   "activeClients": 10,
   "activeSessions": 5,
+  "pendingSessions": 0,
   "totalMessagesProcessed": 1000,
   "totalDocumentsOpened": 50,
   "messageTypeBreakdown": {
     "doc": 500,
     "awareness": 300,
-    "file": 200
+    "rpc": 200
   },
-  "uptime": 3600
+  "rateLimitExceededTotal": 0,
+  "rateLimitBreakdown": {},
+  "rateLimitTopOffenders": [],
+  "rateLimitRecentEvents": [],
+  "totalDocumentSizeBytes": 1048576,
+  "documentsOverWarningThreshold": 0,
+  "documentsOverLimit": 0,
+  "uptime": 3600,
+  "timestamp": "2024-01-01T00:00:00.000Z"
 }
 ```
+
+The `messageTypeBreakdown` is keyed by wire message type (`doc`, `awareness`, `presence`, `rpc`, `ack`) -- milestone and file operations are carried over `rpc`, not distinct message types.
 
 ## Structured Logging with LogTape
 
@@ -120,12 +149,11 @@ await configure({
 
 ### Log Categories
 
-Teleportal emits logs under these categories:
+Teleportal emits all of its logs under a single category:
 
-- `["teleportal", "server"]` -- Core server operations: connections, errors, message processing, and session lifecycle. All wide events (one structured log line per logical operation) are emitted here.
-- `["teleportal", "http", "*"]` -- HTTP layer: SSE reader/writer endpoints, request handling, and stream errors.
+- `["teleportal", "server"]` -- every wide event (one structured log line per logical operation): connections, errors, message processing, and session lifecycle. Each wide event carries the environment context `{ service: "teleportal" }` merged in.
 
-Because LogTape uses hierarchical categories, configuring the `["teleportal"]` category (as shown above) captures logs from all sub-categories.
+Because LogTape uses hierarchical categories, configuring the `["teleportal"]` category (as shown above) captures these logs. Per LogTape's library guidelines, Teleportal configures no sinks of its own -- your application owns sink and level configuration.
 
 ### What gets logged
 

@@ -10,7 +10,7 @@ import {
 import type { EncodedContentMap } from "../types";
 import { MemoryDocumentStorage } from "../in-memory/document-storage";
 import { UnstorageDocumentStorage } from "../unstorage/document-storage";
-import { TieredDocumentStorage } from "./document-storage";
+import { TieredDocumentStorage, selectDocumentsToPersist } from "./document-storage";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,63 @@ function docFromStorageUpdate(update: Uint8Array): Y.Doc {
   if (structureUpdate.length > 0) Y.applyUpdateV2(doc, structureUpdate);
   return doc;
 }
+
+// ── Persist-sweep selection policy ───────────────────────────────────────────
+
+describe("selectDocumentsToPersist", () => {
+  const now = 1_000_000;
+
+  it("selects all dirty docs when they fit in the batch", () => {
+    const dirty: Array<[string, number]> = [
+      ["a", now - 10],
+      ["b", now - 20],
+    ];
+    expect(selectDocumentsToPersist(dirty, now, 30_000, 50).sort()).toEqual(["a", "b"]);
+  });
+
+  it("caps young (not-yet-aged) docs at persistBatchSize", () => {
+    const dirty: Array<[string, number]> = [
+      ["a", now],
+      ["b", now],
+      ["c", now],
+    ];
+    // maxDirtyAgeMs huge → none aged → only persistBatchSize young docs selected.
+    const selected = selectDocumentsToPersist(dirty, now, 1_000_000, 2);
+    expect(selected).toHaveLength(2);
+  });
+
+  it("force-persists ALL aged docs even beyond persistBatchSize", () => {
+    // Regression: the previous `||` condition broke out of the loop at the
+    // batch size, so aged docs past that limit were silently left dirty,
+    // violating the maxDirtyAgeMs durability guarantee.
+    const dirty: Array<[string, number]> = [
+      ["a", now - 60_000],
+      ["b", now - 60_000],
+      ["c", now - 60_000],
+      ["d", now - 60_000],
+      ["e", now - 60_000],
+    ];
+    const selected = selectDocumentsToPersist(dirty, now, 30_000, 1);
+    expect(selected.sort()).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("prioritizes aged docs and fills remaining budget with young ones", () => {
+    const dirty: Array<[string, number]> = [
+      ["aged1", now - 60_000],
+      ["aged2", now - 60_000],
+      ["young1", now],
+      ["young2", now],
+      ["young3", now],
+    ];
+    // Two aged (always in), batch size 3 → budget 1 remaining young.
+    const selected = selectDocumentsToPersist(dirty, now, 30_000, 3);
+    expect(selected).toContain("aged1");
+    expect(selected).toContain("aged2");
+    expect(selected).toHaveLength(3);
+    // The third slot is one of the young docs.
+    expect(selected.filter((k) => k.startsWith("young"))).toHaveLength(1);
+  });
+});
 
 // ── Test setup ───────────────────────────────────────────────────────────────
 

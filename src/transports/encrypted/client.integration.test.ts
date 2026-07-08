@@ -509,8 +509,8 @@ describe("encrypted client integration", () => {
         await client.handleUpdate(update);
       }
 
-      // Background compaction starts in handleUpdate; let it settle.
-      await new Promise((r) => setTimeout(r, 0));
+      // Background compaction starts in handleUpdate; await it deterministically.
+      await client.whenCompactionSettled();
 
       // The next onUpdate should carry the compaction
       const ydoc = client.ydoc;
@@ -573,8 +573,8 @@ describe("encrypted client integration", () => {
         await client.handleUpdate(update);
       }
 
-      // Background compaction starts in handleUpdate; let it settle.
-      await new Promise((r) => setTimeout(r, 0));
+      // Background compaction starts in handleUpdate; await it deterministically.
+      await client.whenCompactionSettled();
 
       // Consume the first compaction via onUpdate
       const ydoc = client.ydoc;
@@ -597,7 +597,7 @@ describe("encrypted client integration", () => {
         await client.handleUpdate(update);
       }
 
-      await new Promise((r) => setTimeout(r, 0));
+      await client.whenCompactionSettled();
 
       ydoc.getText("notes").insert(0, "second send");
       const msg2 = await client.onUpdate({
@@ -635,8 +635,8 @@ describe("encrypted client integration", () => {
       }
 
       // Compaction was triggered on the THRESHOLDth onUpdate but computed in the
-      // background. Let it settle before the next call picks it up.
-      await new Promise((r) => setTimeout(r, 0));
+      // background. Await it deterministically before the next call picks it up.
+      await client.whenCompactionSettled();
 
       ydoc.getText("body").insert(0, "trigger ");
       const msg = await client.onUpdate({

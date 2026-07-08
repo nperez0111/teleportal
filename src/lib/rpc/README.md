@@ -1,6 +1,6 @@
 # RPC Framework
 
-Thin authoring layer for defining type-safe RPC protocols. Eliminates boilerplate while preserving full backward compatibility with the existing wire protocol and session dispatch.
+Thin authoring layer for defining type-safe RPC protocols. Eliminates boilerplate while producing handlers and client methods that plug directly into the existing `rpc` wire message (type `0x04`) and session dispatch — see [`protocol/README.md`](../protocol/README.md#rpc-message-type-0x04) for the on-the-wire framing.
 
 ## Overview
 

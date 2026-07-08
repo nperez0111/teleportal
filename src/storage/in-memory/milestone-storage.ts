@@ -26,7 +26,11 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
     }
 
     if (options?.lifecycleState) {
-      milestones = milestones.filter((m) => m.lifecycleState === options.lifecycleState);
+      // A never-deleted milestone leaves `lifecycleState` undefined on the wire
+      // (see Milestone encoding); treat that as the concrete "active" state.
+      milestones = milestones.filter(
+        (m) => (m.lifecycleState ?? "active") === options.lifecycleState,
+      );
     }
 
     return milestones;
@@ -44,23 +48,26 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
     return id;
   }
 
-  async getMilestone(_documentId: Document["id"], id: Milestone["id"]): Promise<Milestone | null> {
+  async getMilestone(documentId: Document["id"], id: Milestone["id"]): Promise<Milestone | null> {
     const milestone = this.milestones.get(id);
-    if (milestone && milestone.lifecycleState === "deleted") {
+    if (!milestone || milestone.documentId !== documentId) {
       return null;
     }
-    return milestone || null;
+    if (milestone.lifecycleState === "deleted") {
+      return null;
+    }
+    return milestone;
   }
 
   async deleteMilestone(
-    _documentId: Document["id"],
+    documentId: Document["id"],
     id: Milestone["id"] | Milestone["id"][],
     deletedBy?: string,
   ): Promise<void> {
     const ids = ([] as string[]).concat(id as any);
     for (const i of ids) {
       const milestone = this.milestones.get(i);
-      if (!milestone) continue;
+      if (!milestone || milestone.documentId !== documentId) continue;
 
       if (milestone.lifecycleState !== "deleted") {
         // Soft delete
@@ -75,13 +82,17 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
   }
 
   async restoreMilestone(
-    _documentId: Document["id"],
+    documentId: Document["id"],
     id: Milestone["id"] | Milestone["id"][],
   ): Promise<void> {
     const ids = ([] as string[]).concat(id as any);
     for (const i of ids) {
       const milestone = this.milestones.get(i);
-      if (milestone && milestone.lifecycleState === "deleted") {
+      if (
+        milestone &&
+        milestone.documentId === documentId &&
+        milestone.lifecycleState === "deleted"
+      ) {
         milestone.lifecycleState = "active";
         milestone.deletedAt = undefined;
         milestone.deletedBy = undefined;
@@ -90,14 +101,14 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
   }
 
   async updateMilestoneName(
-    _documentId: Document["id"],
+    documentId: Document["id"],
     id: Milestone["id"],
     name: string,
     createdBy?: { type: "user" | "system"; id: string },
   ): Promise<void> {
     const milestone = this.milestones.get(id);
-    if (!milestone) {
-      throw new Error("Milestone not found", { cause: { id } });
+    if (!milestone || milestone.documentId !== documentId) {
+      throw new Error("Milestone not found", { cause: { documentId, id } });
     }
     if (milestone.loaded) {
       const snapshot = await milestone.fetchSnapshot();
@@ -120,7 +131,7 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
   }
 
   async updateMilestoneRetention(
-    _documentId: Document["id"],
+    documentId: Document["id"],
     id: Milestone["id"],
     updates: {
       expiresAt?: number;
@@ -129,8 +140,8 @@ export class InMemoryMilestoneStorage implements MilestoneStorage {
     },
   ): Promise<void> {
     const milestone = this.milestones.get(id);
-    if (!milestone) {
-      throw new Error("Milestone not found", { cause: { id } });
+    if (!milestone || milestone.documentId !== documentId) {
+      throw new Error("Milestone not found", { cause: { documentId, id } });
     }
 
     if (updates.expiresAt !== undefined) {

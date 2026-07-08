@@ -54,6 +54,12 @@ export class EncryptionClient
   #cachedTokenizer: ((str: string) => string) | null = null;
   #pendingCompaction: SidecarCompaction | null = null;
   #compactionInFlight = false;
+  /**
+   * Resolves when the current background compaction settles. `null` when no
+   * compaction is in flight. Lets callers (and tests) await the fire-and-forget
+   * compaction deterministically instead of racing a timer.
+   */
+  #compactionSettled: Promise<void> | null = null;
 
   constructor({
     document,
@@ -242,11 +248,12 @@ export class EncryptionClient
     this.#receivedSidecars = [];
     this.#compactionInFlight = true;
 
-    void Promise.all([
+    this.#compactionSettled = Promise.all([
       compactSidecars(this.key, sources),
       Promise.all(sources.map(hashSidecar)),
     ]).then(([compacted, sourceHashes]) => {
       this.#compactionInFlight = false;
+      this.#compactionSettled = null;
       if (!compacted) return;
       this.#pendingCompaction = {
         sidecar: compacted.encrypted,
@@ -255,6 +262,17 @@ export class EncryptionClient
         sourceHashes,
       };
     });
+  }
+
+  /**
+   * Resolves once any in-flight background compaction has settled (its result
+   * stashed in `#pendingCompaction`), or immediately when none is running.
+   * Compaction is otherwise fire-and-forget and unobservable; awaiting this
+   * lets callers deterministically send the next message with the compaction
+   * attached instead of racing a timer.
+   */
+  public async whenCompactionSettled(): Promise<void> {
+    await this.#compactionSettled;
   }
 
   /**

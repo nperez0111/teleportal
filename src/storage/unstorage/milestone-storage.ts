@@ -75,7 +75,11 @@ export class UnstorageMilestoneStorage implements MilestoneStorage {
       }
 
       if (options?.lifecycleState) {
-        milestones = milestones.filter((m) => m.lifecycleState === options.lifecycleState);
+        // A never-deleted milestone leaves `lifecycleState` undefined on the wire
+        // (see Milestone encoding); treat that as the concrete "active" state.
+        milestones = milestones.filter(
+          (m) => (m.lifecycleState ?? "active") === options.lifecycleState,
+        );
       }
 
       return milestones;

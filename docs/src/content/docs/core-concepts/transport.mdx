@@ -66,7 +66,7 @@ const rateLimitedTransport = withRateLimit(transport, {
 Wraps a transport with content-level end-to-end encryption:
 
 ```typescript
-import { getEncryptedTransport } from "teleportal/transports/encrypted";
+import { getEncryptedTransport } from "teleportal/transports";
 
 const encryptedTransport = getEncryptedTransport(handler);
 ```
@@ -78,11 +78,13 @@ You rarely call this directly — the `Provider` applies it automatically becaus
 Adds authorization checks to message reading and writing:
 
 ```typescript
-import { withMessageValidator } from "teleportal/transports/message-validator";
+import { withMessageValidator } from "teleportal/transports";
 
 const validatedTransport = withMessageValidator(transport, {
   isAuthorized: async (message, type) => {
-    // Your authorization logic
+    // Your authorization logic. Note: for server-side transports the framework
+    // always passes type "write" (both directions are checked with "write"),
+    // so derive read/write from the message payload, not the `type` argument.
     return true;
   },
 });
@@ -93,7 +95,7 @@ const validatedTransport = withMessageValidator(transport, {
 Logs all messages for debugging:
 
 ```typescript
-import { withLogger } from "teleportal/transports/logger";
+import { withLogger } from "teleportal/transports";
 
 const loggedTransport = withLogger(transport);
 ```
@@ -103,7 +105,7 @@ const loggedTransport = withLogger(transport);
 Adds acknowledgment message support for reliable message delivery:
 
 ```typescript
-import { withAckSink, withAckTrackingSink } from "teleportal/transports/ack";
+import { withAckSink, withAckTrackingSink } from "teleportal/transports";
 
 // Server: Send ACKs automatically
 const ackSink = withAckSink(sink, {
@@ -152,7 +154,7 @@ transport = withMessageValidator(transport, {
 The YDoc transport integrates Y.js documents with the Teleportal transport system:
 
 ```typescript
-import { getYTransportFromYDoc } from "teleportal/transports/ydoc";
+import { getYTransportFromYDoc } from "teleportal/transports";
 
 const transport = getYTransportFromYDoc({
   ydoc,
@@ -199,19 +201,21 @@ await sync(transportA, transportB);
 
 ### Transform Helpers
 
-Transform messages flowing through a source:
+Transform messages flowing through a source. Each helper takes the per-item
+function and returns a transform `(source) => source` that operates over the
+batched `AsyncIterable` (a fully-filtered batch is skipped, never yielded empty):
 
 ```typescript
 import { mapMessages, filterMessages, flatMapMessages } from "teleportal/transports";
 
-// Transform each message
-const mapped = mapMessages(source, (msg) => transform(msg));
+// Transform each message (return null/undefined to drop it)
+const mapped = mapMessages((msg) => transform(msg))(source);
 
 // Drop messages that don't match a predicate
-const filtered = filterMessages(source, (msg) => msg.type === "doc");
+const filtered = filterMessages((msg) => msg.type === "doc")(source);
 
-// Expand or collapse messages
-const expanded = flatMapMessages(source, (msg) => [msg, derivedMsg]);
+// Expand each message into zero or more outputs
+const expanded = flatMapMessages((msg) => [msg, derivedMsg])(source);
 ```
 
 ### Binary Conversion

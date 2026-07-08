@@ -221,14 +221,21 @@ Each shard can be an independent cluster with its own PubSub backend and storage
 Storage is independent of the server topology. You can use different backends for different storage types to optimize cost and performance:
 
 ```typescript
+import { UnstorageMilestoneStorage } from "teleportal/storage";
+import { PostgresDocumentStorage } from "teleportal/storage/postgres";
+import { S3FileStorage } from "teleportal/storage/s3";
+import { createStorage } from "unstorage";
+import redisDriver from "unstorage/drivers/redis";
+
 // PostgreSQL for document state (strong consistency, querying)
-const documentStorage = new PostgresDocumentStorage(db);
+const documentStorage = new PostgresDocumentStorage(sql);
 
 // S3 for file uploads (cheap, durable, high throughput)
-const fileStorage = new S3FileStorage(s3Client);
+const fileStorage = new S3FileStorage(s3Config);
 
-// Redis for milestones (fast reads, TTL support)
-const milestoneStorage = new RedisMilestoneStorage(redisClient);
+// Redis (via unstorage) for milestones (fast reads, TTL support)
+const redisStore = createStorage({ driver: redisDriver({ base: "milestone:" }) });
+const milestoneStorage = new UnstorageMilestoneStorage(redisStore, { keyPrefix: "milestone" });
 ```
 
 When scaling storage, consider:
@@ -247,7 +254,7 @@ Each Teleportal server exposes Prometheus-compatible metrics:
 
 - `teleportal_clients_active` -- current number of connected clients on this node
 - `teleportal_sessions_active` -- current number of active document sessions on this node
-- `teleportal_messages_processed_total` -- total messages processed by this node
+- `teleportal_messages_total_all` -- total messages processed by this node (all types); `teleportal_messages_total` is the same count labeled by `type`
 
 ### Cross-Node Aggregation
 
@@ -261,7 +268,7 @@ Aggregate metrics across all nodes to understand total system load. Use Promethe
 
 ### Health Check Endpoints
 
-Use the `/health` and `/status` endpoints for load balancer health checks. Configure your load balancer to remove unhealthy instances from the pool automatically.
+Use the `/health` and `/status` endpoints for load balancer health checks. Configure your load balancer to remove unhealthy instances from the pool automatically. Note that the built-in `/health` handler is a liveness stub -- it returns `status: "healthy"` with an empty `checks` object whenever the process is up. For deeper readiness signals (storage or PubSub reachability), derive them from `/status` fields or extend the server's health logic.
 
 See [Observability](/docs/guides/observability/) for full setup details on metrics, health endpoints, and structured logging.
 

@@ -42,12 +42,16 @@ export type KeyResolver = {
 export function registryKey(opts: {
   wrappingKey: CryptoKey | (() => Promise<CryptoKey>);
 }): KeyResolver {
-  let cachedKey: CryptoKey | undefined;
+  // Keyed by document: a single resolver instance is reused across every
+  // document opened on the same connection (Provider.openDocumentAsync), so a
+  // global cache would hand document B document A's key.
+  const cache = new Map<string, CryptoKey>();
   let invalidateCallback: ((document: string) => void) | undefined;
 
   return {
     async resolve({ document, connection }) {
-      if (cachedKey) return cachedKey;
+      const cached = cache.get(document);
+      if (cached) return cached;
 
       const rpc = new RpcClient(connection);
       try {
@@ -64,8 +68,12 @@ export function registryKey(opts: {
             ? response.wrappedKey
             : new Uint8Array(response.wrappedKey as any);
 
-        cachedKey = await unwrapDocumentKey(wk, wrappedKey);
-        return cachedKey;
+        const key = await unwrapDocumentKey(wk, wrappedKey);
+        // Only cache after a successful unwrap — a failed RPC/unwrap must not
+        // poison the cache, and concurrent resolves for the same document
+        // simply re-fetch rather than sharing a rejected promise.
+        cache.set(document, key);
+        return key;
       } finally {
         rpc.destroy();
       }
@@ -77,7 +85,7 @@ export function registryKey(opts: {
 
     /** @internal Called by the key-registry RPC extension on rotation */
     _invalidate(document: string) {
-      cachedKey = undefined;
+      cache.delete(document);
       invalidateCallback?.(document);
     },
   } as KeyResolver & { _invalidate(document: string): void };

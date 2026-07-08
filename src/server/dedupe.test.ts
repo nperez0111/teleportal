@@ -81,6 +81,21 @@ describe("TtlDedupe", () => {
       const oldestResult = smallMaxDedupe.shouldAccept("doc-1", "msg-1");
       expect(oldestResult).toBe(true);
     });
+
+    it("should evict the oldest entry once the cap is exceeded, keeping newer ids seen", () => {
+      const smallMaxDedupe = new TtlDedupe({ maxPerDoc: 2 });
+
+      smallMaxDedupe.shouldAccept("doc-1", "a"); // oldest
+      smallMaxDedupe.shouldAccept("doc-1", "b");
+      smallMaxDedupe.shouldAccept("doc-1", "c");
+      smallMaxDedupe.shouldAccept("doc-1", "d");
+
+      // Newest ids stay deduped...
+      expect(smallMaxDedupe.shouldAccept("doc-1", "d")).toBe(false);
+      // ...while the oldest ("a") has aged out under the size cap and would be
+      // accepted (not deduped) if it arrived again.
+      expect(smallMaxDedupe.shouldAccept("doc-1", "a")).toBe(true);
+    });
   });
 
   describe("clearDocument", () => {

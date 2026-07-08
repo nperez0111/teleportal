@@ -69,6 +69,19 @@ Stores document milestones (snapshots at specific points in time).
 - Restore soft-deleted milestones
 - `createdBy` field distinguishes user vs system milestones
 
+All per-milestone reads and mutations (`getMilestone`, `deleteMilestone`,
+`restoreMilestone`, `updateMilestoneName`, `updateMilestoneRetention`) are
+scoped by `documentId`: a milestone id that belongs to a different document is
+treated as "not found" (returns `null`, throws `Milestone not found`, or is
+skipped — matching each method's normal not-found behavior). Ids are never
+resolved from a global namespace.
+
+A never-deleted milestone leaves `lifecycleState` `undefined` on the wire (the
+common case is encoded as absence to keep milestone frames minimal). It is
+treated as `"active"` semantically, so `getMilestones(documentId, {
+lifecycleState: "active" })` returns freshly-created milestones. `toString()`
+renders `undefined` as `"active"` for the same reason.
+
 ### KeyRegistryStorage
 
 Per-document, per-user wrapped encryption key storage for end-to-end
@@ -147,9 +160,18 @@ via db0, etc.).
 
 All classes take an unstorage `Storage` instance plus options with a per-type
 `keyPrefix`. Transactions use TTL-based locking via
-[`withTransaction`](./unstorage/transaction.ts) (exponential backoff, default
-5s TTL). An optional [`createEncryptedDriver`](./unstorage/encrypted-driver.ts)
-wraps any unstorage driver with AES-GCM encryption at rest.
+[`withTransaction`](./unstorage/transaction.ts): a per-key `lockId` + `ttl`
+meta record, acquired with exponential backoff + jitter (default 5s TTL, 50
+retries). The lock is only released by the transaction that still holds the
+matching `lockId`, so a TTL-expired lock re-acquired by another transaction is
+never released out from under it.
+
+**Encryption at rest** is a driver-level concern:
+[`createEncryptedDriver`](./unstorage/encrypted-driver.ts) wraps any unstorage
+driver with AES-GCM encryption, built on the generic
+[`TransformDriver`](./unstorage/transform-driver.ts) (an
+`onRead`/`onWrite`-transform driver that passes `*$` meta keys through
+untransformed). Values are lib0-encoded, encrypted, then base64-stored.
 
 ```typescript
 import { createStorage } from "unstorage";
@@ -256,6 +278,21 @@ unstorage) for durable persistence. Documents are loaded from the slow tier on
 first access; all subsequent reads/writes operate on the fast tier. Dirty
 documents are periodically flushed to the slow tier in the background.
 
+Each background sweep (`persistIntervalMs`) selects documents to persist with a
+two-tier priority (see `selectDocumentsToPersist`):
+
+1. **Aged docs** — dirty for at least `maxDirtyAgeMs` — are always persisted,
+   even beyond `persistBatchSize`. This is the durability guarantee: a document
+   can never stay unpersisted past its max dirty age just because the dirty
+   queue is long.
+2. **Young docs** fill whatever budget remains up to `persistBatchSize`, so
+   steady-state churn drains without unbounded per-sweep work.
+
+Concurrent loads of the same document are deduplicated (`#loading`), a persist
+failure leaves the document dirty and invokes `onPersistError`, and
+`evictAfterMs` drops clean, idle documents from the fast tier (they reload from
+the slow tier on next access).
+
 ```typescript
 import { TieredDocumentStorage, MemoryDocumentStorage } from "teleportal/storage";
 
@@ -292,30 +329,46 @@ const storage = new MergeOnWriteStorage(new MemoryDocumentStorage(true));
 ### VirtualStorage
 
 Configurable wrapper that adds batching and buffering to any `DocumentStorage`.
-Buffers writes in memory and flushes them in configurable batches (by size or
-time). Reads flush pending writes first to ensure consistency.
+Buffers writes per document in memory and flushes them in configurable batches
+(by size or time). Reads (`getDocument`, `getDocumentMetadata`,
+`handleSyncStep1`) and `deleteDocument` flush that document's pending writes
+first to ensure consistency.
+
+Buffered writes are applied to the underlying storage **exactly once**: the
+batch primitive collects dirty keys and each key is drained from the buffer by a
+single in-flight flusher (`#flushing`), so a batch-timer flush and a read-path
+flush of the same key can never double-apply the buffer. The drain loops until
+the buffer is empty, so writes that land while an earlier flush is awaiting I/O
+are still persisted in order before the flusher resolves.
 
 ```typescript
 import { VirtualStorage } from "teleportal/storage";
 
 const batched = new VirtualStorage(existingDocumentStorage, {
-  batchMaxSize: 100, // flush every 100 updates
+  batchMaxSize: 100, // flush every 100 buffered writes
   batchWaitMs: 2000, // or every 2 seconds
 });
 ```
+
+`retrieveAttribution` is only advertised (defined) when the wrapped storage
+supports it, since the server uses its presence to decide whether to compute
+attribution at all.
 
 ### TieredRateLimitStorage
 
 Wraps any `RateLimitStorage` with an in-memory LRU cache. Reads hit the cache
 first; writes are write-through (cache updated synchronously, backing store
 fire-and-forget). Since rate limit state is ephemeral and TTL-based, slight
-cache staleness is acceptable.
+cache staleness is acceptable. The fire-and-forget backing write is guarded so a
+backing failure never surfaces as an unhandled promise rejection — pass
+`onBackingError` to observe such failures.
 
 ```typescript
 import { TieredRateLimitStorage } from "teleportal/storage";
 
 const tiered = new TieredRateLimitStorage(backingStorage, {
   maxCacheSize: 10_000, // default
+  onBackingError: (err) => console.error("rate-limit backing write failed", err),
 });
 ```
 

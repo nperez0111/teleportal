@@ -148,6 +148,59 @@ describe("Merkle Tree", () => {
     expect(isValid).toBe(false);
   });
 
+  it("rejects a tampered proof element (sync)", async () => {
+    const chunks = [
+      new Uint8Array([1, 2, 3]),
+      new Uint8Array([4, 5, 6]),
+      new Uint8Array([7, 8, 9]),
+    ];
+    const tree = await buildMerkleTree(chunks);
+    const root = tree.nodes.at(-1)!.hash!;
+    const proof = generateMerkleProof(tree, 1).map((h) => h.slice());
+    // Flip a bit in the first sibling hash.
+    proof[0][0] ^= 0xff;
+    expect(verifyMerkleProof(chunks[1], proof, root, 1, chunks.length)).toBe(false);
+  });
+
+  it("rejects a valid chunk+proof presented at the wrong (in-range) index", async () => {
+    // A proof is bound to its leaf position. Replaying chunk 0's proof for
+    // chunk 0 but claiming index 1 must fail, and vice versa.
+    const chunks = [new Uint8Array([10]), new Uint8Array([20]), new Uint8Array([30])];
+    const tree = await buildMerkleTree(chunks);
+    const root = tree.nodes.at(-1)!.hash!;
+    const proof0 = generateMerkleProof(tree, 0);
+
+    expect(verifyMerkleProof(chunks[0], proof0, root, 0, 3)).toBe(true);
+    // Same chunk + proof, wrong index.
+    expect(verifyMerkleProof(chunks[0], proof0, root, 1, 3)).toBe(false);
+    // Different chunk at an index its proof does not belong to.
+    expect(verifyMerkleProof(chunks[1], proof0, root, 1, 3)).toBe(false);
+  });
+
+  it("rejects a proof generated for a different tree/root", async () => {
+    const treeA = await buildMerkleTree([new Uint8Array([1]), new Uint8Array([2])]);
+    const treeB = await buildMerkleTree([new Uint8Array([3]), new Uint8Array([4])]);
+    const rootA = treeA.nodes.at(-1)!.hash!;
+    const proofB = generateMerkleProof(treeB, 0);
+    // treeB's proof for chunk [3] must not verify against treeA's root.
+    expect(verifyMerkleProof(new Uint8Array([3]), proofB, rootA, 0, 2)).toBe(false);
+  });
+
+  it("rejects a truncated proof (missing sibling)", async () => {
+    const chunks = [
+      new Uint8Array([1]),
+      new Uint8Array([2]),
+      new Uint8Array([3]),
+      new Uint8Array([4]),
+    ];
+    const tree = await buildMerkleTree(chunks);
+    const root = tree.nodes.at(-1)!.hash!;
+    const proof = generateMerkleProof(tree, 0);
+    expect(proof.length).toBeGreaterThan(1);
+    // Drop the last sibling: the walk under-consumes and must reject.
+    expect(verifyMerkleProof(chunks[0], proof.slice(0, -1), root, 0, chunks.length)).toBe(false);
+  });
+
   it("should serialize and deserialize merkle tree", async () => {
     const chunks = [
       new Uint8Array([1, 2, 3]),

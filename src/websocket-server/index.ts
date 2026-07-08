@@ -355,9 +355,14 @@ export function tokenAuthenticatedWebsocketHandler<T extends ServerContext>({
         throw new Response("Unauthorized", { status: 401 });
       }
 
-      await hooks.onUpgrade?.(request);
+      // A caller-supplied `onUpgrade` can augment the connection context and
+      // add response headers. Merge its result rather than discarding it; the
+      // verified token payload takes precedence for any overlapping context
+      // keys so a hook cannot spoof authenticated fields.
+      const extra = await hooks.onUpgrade?.(request);
       return {
-        context: result.payload as T,
+        context: { ...extra?.context, ...(result.payload as object) } as Omit<T, "clientId">,
+        headers: extra?.headers,
       };
     },
     onConnect: hooks.onConnect,

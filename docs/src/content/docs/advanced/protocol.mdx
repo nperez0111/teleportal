@@ -7,15 +7,14 @@ This document provides a comprehensive specification of the Teleportal protocol,
 
 ## Protocol Overview
 
-The Teleportal protocol is designed for efficient transmission of Y.js collaborative editing messages over various transport layers. It supports document synchronization, awareness updates, file transfers, milestone management, and extensible RPC operations—all with optional encryption and robust error handling.
+The Teleportal protocol is designed for efficient transmission of Y.js collaborative editing messages over various transport layers. It defines five wire message types — document sync, awareness, ack, presence, and RPC — all with optional encryption and robust error handling. Higher-level features (file transfers, milestones, attribution, key distribution) are all built **on top of the RPC message type**, not as dedicated wire types.
 
 The protocol is built around a flexible message structure that enables:
 
 - **Document Synchronization**: Bidirectional sync of Y.js documents between clients and server
-- **Awareness Updates**: Real-time user presence and cursor information
-- **File Transfers**: Chunked file uploads/downloads with Merkle tree integrity verification
-- **Milestone Management**: Snapshot-based versioning and document history
-- **RPC Operations**: Extensible custom operations for application-specific needs
+- **Awareness Updates**: Real-time user cursor/selection information
+- **Presence**: Client join/leave/heartbeat tracking
+- **RPC Operations**: Extensible custom operations (file transfer, milestones, attribution, key registry, and your own methods)
 - **Message Acknowledgment**: Delivery confirmation for reliable message handling
 
 ## Message Format
@@ -57,8 +56,9 @@ graph LR
 | Doc Name Length | varint  | length                    |
 | Doc Name        | string  | UTF-8 string              |
 | Encrypted Flag  | 1 byte  | `0x00`=false, `0x01`=true |
+| Message Type    | 1 byte  | `0x00`–`0x04`             |
 
-**Note**: For file messages, the document name may be an empty string. ACK messages do not have a document name (it is `undefined`).
+**Note**: The document name is an empty string for ack messages (they are not tied to a specific document).
 
 ### Message Type Hierarchy
 
@@ -77,19 +77,11 @@ graph TD
     B --> B3[Update]
     B --> B4[Sync Done]
     B --> B5[Auth]
-    B --> B6[Milestone Operations]
-
-    B6 --> B6a[List Request/Response]
-    B6 --> B6b[Snapshot Request/Response]
-    B6 --> B6c[Create Request/Response]
-    B6 --> B6d[Update Name Request/Response]
-    B6 --> B6e[Soft Delete Request/Response]
-    B6 --> B6f[Restore Request/Response]
 
     C --> C1[Awareness Update]
     C --> C2[Awareness Request]
 
-    D --> D1[ACK]
+    D --> D1[ACK / NACK]
 
     P --> P1[Presence Announce/Unannounce]
     P --> P2[Presence Join/Leave]
@@ -100,34 +92,23 @@ graph TD
     F --> F3[RPC Stream]
 ```
 
-**Note**: File transfers (upload, download, file parts, file auth) are implemented as RPC messages (type 0x04) using the `fileUpload` and `fileDownload` RPC methods with streaming support.
+**Note**: Milestones, file transfers, attribution, and key distribution are **not** dedicated wire message types. They are all RPC methods carried by the RPC message (type `0x04`) — e.g. `milestoneList`/`milestoneCreate`, `fileUpload`/`fileDownload`, `attributionActivity`/`attributionGet`. Only the five wire types above (`0x00`–`0x04`) exist at the protocol level.
 
 ## Document Messages (Type 0x00)
 
-Document messages handle Y.js document synchronization, updates, and milestone management. They form the core of the collaborative editing system.
+Document messages handle Y.js document synchronization and updates. They form the core of the collaborative editing system.
 
 ### Document Message Structure
 
-| Msg Type           | Code   | Payload                                                                                                       |
-| ------------------ | ------ | ------------------------------------------------------------------------------------------------------------- |
-| Sync Step 1        | `0x00` | State Vector (varint array)                                                                                   |
-| Sync Step 2        | `0x01` | Y.js Update (varint array)                                                                                    |
-| Doc Update         | `0x02` | Y.js Update (varint array)                                                                                    |
-| Sync Done          | `0x03` | (no payload)                                                                                                  |
-| Auth Message       | `0x04` | Permission (1 byte: `0x00`=denied, `0x01`=allowed) + Reason (varint string)                                   |
-| Mile List Req      | `0x05` | SnapshotIds count (varint) + SnapshotIds array (varint strings)                                               |
-| Mile List Resp     | `0x06` | Count (varint) + [Id + Name + DocId + CreatedAt + DeletedAt? + LifecycleState? + ExpiresAt? + CreatedBy] \* N |
-| Mile Snapshot Req  | `0x07` | MilestoneId (varint string)                                                                                   |
-| Mile Snapshot Resp | `0x08` | MilestoneId (varint string) + Snapshot (varint array)                                                         |
-| Mile Create Req    | `0x09` | HasName (1 byte) + Name (varint string, optional) + Snapshot (varint array)                                   |
-| Mile Create Resp   | `0x0A` | Id + Name + DocId + CreatedAt + CreatedBy (Type + Id)                                                         |
-| Mile Update Name   | `0x0B` | MilestoneId (varint string) + Name (varint string)                                                            |
-| Mile Update Resp   | `0x0C` | Id + Name + DocId + CreatedAt + CreatedBy (Type + Id)                                                         |
-| Mile Auth Msg      | `0x0D` | Permission (1 byte: `0x00`=denied, `0x01`=allowed) + Reason (varint string)                                   |
-| Mile SoftDel Req   | `0x0E` | MilestoneId (varint string)                                                                                   |
-| Mile SoftDel Resp  | `0x0F` | MilestoneId (varint string)                                                                                   |
-| Mile Restore Req   | `0x10` | MilestoneId (varint string)                                                                                   |
-| Mile Restore Resp  | `0x11` | MilestoneId (varint string)                                                                                   |
+| Sub-type     | Code   | Payload                                                   |
+| ------------ | ------ | --------------------------------------------------------- |
+| Sync Step 1  | `0x00` | State Vector (`varUint8Array`)                            |
+| Sync Step 2  | `0x01` | Version byte (1=V1, 2=V2) + Y.js Update (`varUint8Array`) |
+| Doc Update   | `0x02` | Version byte (1=V1, 2=V2) + Y.js Update (`varUint8Array`) |
+| Sync Done    | `0x03` | (no payload)                                              |
+| Auth Message | `0x04` | Permission (1 byte) + Reason (`varString`)                |
+
+Updates (sync-step-2 and update) carry a leading version byte (`1` = V1, `2` = V2) so the receiver knows how to apply them.
 
 ### Document Synchronization Messages
 
@@ -180,141 +161,31 @@ graph TD
 #### Auth Message (0x04)
 
 **Purpose**: Handles authentication and authorization  
-**Payload**: Permission flag (1 byte) + reason string (variable length)  
+**Payload**: Permission flag (1 byte) + reason string (`varString`)  
 **Usage**: Server sends to grant/deny access with explanation. Used when a client attempts to access a document they don't have permission for.
-
-### Milestone Management Messages
-
-Milestones provide snapshot-based versioning for documents, allowing users to save and restore specific document states.
-
-```mermaid
-graph TD
-    A[Client] --> B[List Request]
-    B --> C[Server: List Response<br/>Metadata only]
-    C --> D[Client: Lazy Load]
-    D --> E[Snapshot Request]
-    E --> F[Server: Snapshot Response]
-
-    G[Client] --> H[Create Request<br/>with Snapshot]
-    H --> I[Server: Create Response]
-
-    J[Client] --> K[Update Name Request]
-    K --> L[Server: Update Name Response]
-
-    M[Client] --> N[Soft Delete Request]
-    N --> O[Server: Soft Delete Response]
-
-    P[Client] --> Q[Restore Request]
-    Q --> R[Server: Restore Response]
-
-    style C fill:#e1f5ff
-    style F fill:#e1f5ff
-    style I fill:#c8e6c9
-    style L fill:#c8e6c9
-```
-
-#### Milestone List Request (0x05)
-
-**Purpose**: Requests a list of all milestones for a document  
-**Payload**: SnapshotIds count (varint) + SnapshotIds array (varint strings)  
-**Usage**: Client requests milestone metadata (without snapshot content). The client can provide a list of snapshot IDs so the server can send only milestones that are not already known, enabling efficient incremental updates.
-
-#### Milestone List Response (0x06)
-
-**Purpose**: Returns list of milestone metadata  
-**Payload**: Count (varint) + array of milestone metadata  
-**Usage**: Server responds with milestone list. Each milestone includes:
-
-- Required fields: id, name, documentId, createdAt, createdBy
-- Optional fields: deletedAt, lifecycleState, expiresAt
-- `createdBy`: Indicates who/what created the milestone (`{ type: "user" | "system", id: string }`)
-
-#### Milestone Snapshot Request (0x07)
-
-**Purpose**: Requests the snapshot content for a specific milestone  
-**Payload**: MilestoneId (varint string)  
-**Usage**: Client requests full snapshot data to fulfill lazy loading. This enables efficient initial loading by fetching metadata first, then snapshots on demand.
-
-#### Milestone Snapshot Response (0x08)
-
-**Purpose**: Returns the snapshot content for a milestone  
-**Payload**: MilestoneId (varint string) + Snapshot (varint array - binary encoded)  
-**Usage**: Server responds with milestone snapshot data, which is a Y.js document snapshot that can be applied to restore the document state.
-
-#### Milestone Create Request (0x09)
-
-**Purpose**: Requests creation of a new milestone from current document state  
-**Payload**: HasName (1 byte) + Name (varint string, optional) + Snapshot (varint array)  
-**Usage**: Client requests milestone creation with the document snapshot; server auto-generates name if not provided.
-
-#### Milestone Create Response (0x0A)
-
-**Purpose**: Confirms milestone creation and returns metadata  
-**Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)  
-**Usage**: Server responds with created milestone information. The `createdBy` field indicates who created the milestone:
-
-- `{ type: "user", id: userId }` for user-created milestones
-- `{ type: "system", id: nodeId }` for system-created milestones
-
-#### Milestone Update Name Request (0x0B)
-
-**Purpose**: Requests updating a milestone's name  
-**Payload**: MilestoneId (varint string) + Name (varint string)  
-**Usage**: Client requests name change for an existing milestone.
-
-#### Milestone Update Name Response (0x0C)
-
-**Purpose**: Confirms milestone name update  
-**Payload**: Milestone metadata (id, name, documentId, createdAt, createdBy)  
-**Usage**: Server responds with updated milestone information. When a user renames a milestone, the `createdBy` field is updated to mark it as user-created (`{ type: "user", id: userId }`).
-
-#### Milestone Auth Message (0x0D)
-
-**Purpose**: Error response for milestone operations  
-**Payload**: Permission flag (1 byte) + reason string (variable length)  
-**Usage**: Server sends when milestone operation fails (not found, permission denied, etc.).
-
-#### Milestone Soft Delete Request (0x0E)
-
-**Purpose**: Requests soft deletion of a milestone  
-**Payload**: MilestoneId (varint string)  
-**Usage**: Client requests soft deletion of a milestone, which marks it as deleted but preserves the data.
-
-#### Milestone Soft Delete Response (0x0F)
-
-**Purpose**: Confirms soft deletion of a milestone  
-**Payload**: MilestoneId (varint string)  
-**Usage**: Server responds with ID of the soft deleted milestone.
-
-#### Milestone Restore Request (0x10)
-
-**Purpose**: Requests restoration of a soft-deleted milestone  
-**Payload**: MilestoneId (varint string)  
-**Usage**: Client requests restoration of a deleted milestone.
-
-#### Milestone Restore Response (0x11)
-
-**Purpose**: Confirms restoration of a milestone  
-**Payload**: MilestoneId (varint string)  
-**Usage**: Server responds with ID of the restored milestone.
 
 ## ACK Messages (Type 0x02)
 
-ACK messages provide message delivery confirmation, allowing senders to know when their messages have been successfully received and processed.
+ACK messages provide message delivery confirmation (and negative acknowledgement / NACK), allowing senders to know when their messages have been received and processed — or that they should retry later.
 
 ### ACK Message Structure
 
-| Msg Type | Code   | Payload                                              |
-| -------- | ------ | ---------------------------------------------------- |
-| ACK      | `0x02` | MessageId (varint array) - Base64-decoded message ID |
+The ACK payload is:
 
-**Purpose**: Acknowledges receipt of a specific message  
-**Payload**: MessageId (varint array) - The base64-decoded message ID of the message being acknowledged  
+```
+[varString: messageId]
+[uint8: flags]               bit 0 = has retryAfter, bit 1 = has error
+[varUint: retryAfter]?       present if bit 0 set (ms to wait before retrying)
+[varString: error]?          present if bit 1 set
+```
+
+**Purpose**: Acknowledges (or negatively acknowledges) receipt of a specific message  
+**Payload**: The `messageId` of the message being acknowledged, encoded as a `varString`, followed by a flags byte and the optional `retryAfter` / `error` fields  
 **Usage**:
 
-- Used to confirm delivery of file chunks during uploads
-- Allows senders to track which messages have been successfully received
-- The messageId is the SHA-256 hash (base64-encoded) of the original message's encoded bytes
+- Confirms delivery of file chunks during uploads (a NACK with `retryAfter` sheds load and drives client retransmission)
+- Allows senders to track which messages have been received
+- The `messageId` is the message's content fingerprint — a 64-bit FNV-1a hash of the encoded bytes rendered as 16 lowercase hex characters (see [Message IDs](#message-ids))
 
 **Note**: ACK messages do not have a document name and are not tied to a specific document context.
 
@@ -343,115 +214,33 @@ Awareness messages handle user presence and cursor information in collaborative 
 **Payload**: None  
 **Usage**: Client requests current user presence information when joining a document or when awareness state is needed.
 
-## File Messages (via RPC)
+## Presence Messages (Type 0x03)
 
-File messages handle file uploads and downloads with chunking and Merkle tree verification for integrity. Files are transferred as RPC messages (type 0x04) using the `fileUpload` and `fileDownload` RPC methods with streaming support. Files are transferred in chunks with cryptographic proofs to ensure data integrity.
+Presence messages track which clients are in a document (join/leave/heartbeat), distinct from Y.js awareness (cursor/selection state). Presence is a **dedicated wire type** (`0x03`).
 
-### File Message Structure
+| Sub-type            | Code   | Payload                                                                                                            |
+| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
+| Presence Announce   | `0x00` | `[varUint: awarenessId]`                                                                                           |
+| Presence Join       | `0x01` | `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]`                                     |
+| Presence Leave      | `0x02` | (same shape as join)                                                                                               |
+| Presence Heartbeat  | `0x03` | `[varUint: count]` then per client: `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]` |
+| Presence Unannounce | `0x04` | `[varUint: awarenessId]`                                                                                           |
 
-| Msg Type          | Code   | Payload                                                                                                                                                                                         |
-| ----------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| File Download     | `0x00` | FileId (varint string)                                                                                                                                                                          |
-| File Upload       | `0x01` | Encrypted (1 byte) + FileId (varint string) + Filename (string) + Size (varint) + MimeType (string) + LastModified (varint)                                                                     |
-| File Part         | `0x02` | FileId (varint string) + ChunkIndex (varint) + ChunkData (varint array) + MerkleProofLength (varint) + MerkleProof (array) + TotalChunks (varint) + BytesUploaded (varint) + Encrypted (1 byte) |
-| File Auth Message | `0x03` | Permission (1 byte) + FileId (varint string) + StatusCode (varint) + HasReason (1 byte) + Reason (varint string, optional)                                                                      |
+## File Transfer (RPC methods)
 
-### File Message Types
+File transfer is **not** a dedicated wire message type. It is implemented entirely as RPC (type `0x04`) using two methods — `fileUpload` and `fileDownload` — with streamed chunks. `fileUpload` uses the RPC "multipart" method kind (an initiation request plus a chunk stream); `fileDownload` is a request-response whose response streams the file parts back. Files are chunked and verified with a Merkle tree so transfers are content-addressed, resumable, and deduplicated.
 
-#### File Download (0x00)
+### RPC method shapes
 
-**Purpose**: Initiates file download by requesting a file using its content ID
+The request/response/stream payloads (encoded inside the RPC envelope, see [RPC Messages](#rpc-messages-type-0x04)) are:
 
-**Payload Structure**:
+- **`fileUpload` request** — `{ fileId, filename, size, mimeType, lastModified, encrypted, chunkSize? }`. Here `fileId` is the **content-addressed Merkle root** (the `contentId`), which the client computes by encrypting the whole file and folding its Merkle tree _before_ sending the request. This makes the id stable across retries — the basis for resume and dedup.
+- **`fileUpload` response** — `{ fileId, allowed, reason?, statusCode?, chunkSize?, existingChunks?, alreadyExists?, chunkSizeMismatch? }`. `alreadyExists: true` means the content already exists durably (dedup hit — the client streams nothing); `existingChunks` lists chunks the server already has (resume). `chunkSizeMismatch` asks the client to re-chunk at the server's size.
+- **`fileUpload` stream** (per chunk) — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }`. On **upload** the stream omits per-chunk proofs (`merkleProof: []`) — the server recomputes the tree from stored chunks and verifies it equals the client-claimed `contentId`. On **download** the server populates `merkleProof` and the client verifies each chunk.
+- **`fileDownload` request** — `{ fileId }` (the Merkle root / `contentId`).
+- **`fileDownload` response** — `{ fileId, filename, size, mimeType, lastModified, encrypted, allowed, reason?, statusCode?, totalChunks? }`, followed by a stream of file parts.
 
-- FileId (varint string): Merkle root hash (base64 string) identifying the file to download
-
-**Usage**: Client requests file by providing the merkle root hash as the fileId. The server responds with file-part messages containing the file chunks.
-
-#### File Upload (0x01)
-
-**Purpose**: Initiates file upload by sending file metadata
-
-**Payload Structure**:
-
-- Encrypted (1 byte): `0x00` = false, `0x01` = true
-- FileId (varint string): Client-generated UUID for this transfer session
-- Filename (varint string): Original filename
-- Size (varint): File size in bytes (includes encryption overhead if encrypted)
-- MimeType (varint string): MIME type of the file
-- LastModified (varint): Last modified timestamp of the file
-
-**Usage**:
-
-- Client sends file metadata with a client-generated UUID as `fileId` to initiate upload session
-- During upload, chunks are sent with this same `fileId` (UUID) to identify the transfer session
-- After all chunks are uploaded and verified, the server computes the Merkle root hash
-- The client receives this Merkle root hash (base64-encoded) as the final `fileId`, which should be used for future downloads
-- **Note**: The `fileId` changes from the temporary UUID to the permanent Merkle root hash after upload completion
-
-#### File ID Lifecycle
-
-```mermaid
-flowchart LR
-    A[Client generates UUID] --> B[File Upload Message<br/>fileId: UUID]
-    B --> C[File Part Messages<br/>fileId: UUID]
-    C --> D[All chunks received]
-    D --> E[Server verifies & builds<br/>Merkle tree]
-    E --> F[File Auth Message<br/>fileId: Merkle Root Hash]
-    F --> G[File stored with<br/>contentId]
-    G --> H[File Download Message<br/>fileId: Merkle Root Hash]
-
-    style B fill:#fff9c4
-    style C fill:#fff9c4
-    style F fill:#c8e6c9
-    style H fill:#c8e6c9
-
-    B -.->|Temporary| B
-    F -.->|Permanent| F
-```
-
-#### File Part (0x02)
-
-**Purpose**: Sends file chunk data with Merkle proof for verification
-
-**Payload Structure**:
-
-- FileId (varint string):
-  - **Upload**: Client-generated UUID matching the file upload session
-  - **Download**: Merkle root hash (base64 string) identifying the file
-- ChunkIndex (varint): Zero-based index of this chunk
-- ChunkData (varint array): Chunk data (typically 1MB, or smaller for encrypted chunks)
-- MerkleProofLength (varint): Number of proof hashes in the Merkle proof path
-- MerkleProof (array of varint arrays): Merkle proof path hashes (sibling hashes from leaf to root)
-- TotalChunks (varint): Total number of chunks in the file
-- BytesUploaded (varint): Cumulative bytes uploaded/downloaded so far
-- Encrypted (1 byte): `0x00` = false, `0x01` = true
-
-**Usage**:
-
-- **Upload**: Client sends chunks sequentially with Merkle proofs for server verification. Each chunk is acknowledged with an ACK message containing the chunk's message ID.
-- **Download**: Server sends chunks sequentially with Merkle proofs for client verification. The client verifies each chunk before assembling the complete file.
-
-**Chunk Verification**: The receiver verifies each chunk by:
-
-1. Computing the SHA-256 hash of the chunk data
-2. Reconstructing the Merkle tree path using the provided proof hashes
-3. Comparing the computed root hash with the expected fileId
-4. Rejecting the chunk if verification fails
-
-#### File Auth Message (0x03)
-
-**Purpose**: Server response indicating permission denied or authorization status
-
-**Payload Structure**:
-
-- Permission (1 byte): `0x00` = denied, `0x01` = allowed (currently only denied is supported)
-- FileId (varint string): The fileId of the file that was denied authorization
-- StatusCode (varint): HTTP status code (404, 403, 401, 500, or 501)
-- HasReason (1 byte): `0x00` = no reason, `0x01` = reason follows
-- Reason (varint string, optional): Explanation for denial (only present if HasReason is 1)
-
-**Usage**: Server sends when file request is rejected (e.g., size limit exceeded, unauthorized, file not found)
+Errors (permission denied, not found, size limit) surface through the normal RPC error channel (status code + details), not through a dedicated wire message.
 
 ### File Chunking and Merkle Trees
 
@@ -525,9 +314,9 @@ sequenceDiagram
     C->>C: Build Merkle proof path
 
     Note over C,S: Send Chunk
-    C->>S: File Part Message<br/>(Chunk + Merkle Proof)
+    C->>S: fileUpload stream chunk<br/>(download: chunk + Merkle proof)
 
-    Note over S: Verify Chunk
+    Note over S: Verify (download path)
     S->>S: Hash received chunk data
     S->>S: Reconstruct path using proof
     S->>S: Compute root hash
@@ -537,41 +326,59 @@ sequenceDiagram
         S->>S: Store chunk
         S->>C: ACK Message
     else Verification Fails
-        S->>C: File Auth Message<br/>(Error)
+        S->>C: RPC error / NACK
     end
 ```
 
-**Verification Steps**:
+> **Note**: On **upload** the client omits per-chunk proofs (`merkleProof: []`) and the server recomputes the whole tree at completion, verifying it equals the client-claimed `contentId`. On **download** the server generates the proofs and the client verifies each chunk against the root. Download is the integrity boundary.
 
-1. **Client sends**: Chunk data (up to 1MB) + Merkle proof (sibling hashes) + Chunk index
-2. **Server receives**: Hashes the chunk data to get leaf hash
-3. **Server reconstructs**: Uses proof hashes to build path from leaf to root
-4. **Server verifies**: Compares computed root hash with expected fileId
-5. **Server responds**: ACK on success, File Auth Message (error) on failure
+**Verification Steps (download)**:
+
+1. **Server sends**: Chunk data + Merkle proof (sibling hashes) + Chunk index
+2. **Client receives**: Hashes the chunk data to get leaf hash
+3. **Client reconstructs**: Uses proof hashes to build path from leaf to root
+4. **Client verifies**: Compares computed root hash with expected fileId
+5. **Client rejects** the chunk if verification fails
 
 ## RPC Messages (Type 0x04)
 
-RPC messages provide extensible custom operations for application-specific needs. They enable the protocol to be extended without modifying the core message types.
+RPC messages provide extensible custom operations for application-specific needs. They enable the protocol to be extended without modifying the core message types. Built-in features (milestones, file transfer, attribution, key registry) are all RPC methods.
 
-### RPC Message Types
+### RPC Message Structure
 
-#### RPC Request (0x00)
+The RPC payload is:
+
+```
+[varString: method]
+[uint8: requestType]              0=request, 1=stream, 2=response
+[varString: originalRequestId]?   present for stream/response only
+[uint8: isError]                  0=success, 1=error
+```
+
+Success payload: `[varUint8Array: serialized payload]`.  
+Error payload: `[varUint: statusCode] [varString: details] [uint8: hasPayload] [any: payload]?`.
+
+### Request Types
+
+#### RPC Request (requestType 0)
 
 **Purpose**: Client requests a custom operation  
-**Payload**: Method name + Request data  
+**Payload**: Method name + serialized request data  
 **Usage**: Enables custom operations beyond the standard protocol messages.
 
-#### RPC Response (0x01)
+#### RPC Stream (requestType 1)
 
-**Purpose**: Server responds to RPC request  
-**Payload**: Request ID + Response data (success or error)  
+**Purpose**: Streaming data for an in-flight RPC operation  
+**Payload**: Method name + `originalRequestId` + serialized stream chunk  
+**Usage**: Carries streamed chunks (e.g. file parts) tied back to the originating request.
+
+#### RPC Response (requestType 2)
+
+**Purpose**: Server responds to an RPC request  
+**Payload**: Method name + `originalRequestId` + success or error payload  
 **Usage**: Returns the result of an RPC operation.
 
-#### RPC Stream (0x02)
-
-**Purpose**: Streaming data for RPC operations  
-**Payload**: Request ID + Stream data  
-**Usage**: Enables streaming responses for operations that produce large amounts of data incrementally.
+A custom serializer/deserializer can override the default `writeAny`/`readAny` encoding for RPC payloads.
 
 ## Special Message Types
 
@@ -637,8 +444,8 @@ graph LR
     B --> C[Encode Type]
     C --> D[Encode Payload]
     D --> E[Binary Message]
-    E --> F[Compute SHA-256]
-    F --> G[Base64 Message ID]
+    E --> F[FNV-1a hash<br/>of encoded bytes]
+    F --> G[16-hex-char Message ID]
 
     H[Binary Message] --> I[Decode Header]
     I --> J[Decode Type]
@@ -657,8 +464,8 @@ Every message has a unique identifier computed from its encoded bytes:
 ```mermaid
 graph TD
     A[Message Object] --> B[Encode to Binary]
-    B --> C[SHA-256 Hash]
-    C --> D[Base64 Encode]
+    B --> C[64-bit FNV-1a hash]
+    C --> D[Render as 16 hex chars]
     D --> E[Message ID]
     E --> F[Used in ACK Messages]
     E --> G[Message Deduplication]
@@ -668,10 +475,10 @@ graph TD
     style E fill:#c8e6c9
 ```
 
-- **Computation**: SHA-256 hash of the message's encoded binary representation
-- **Encoding**: Base64-encoded for use in ACK messages and other contexts
+- **Computation**: a fast 64-bit **FNV-1a-style hash** of the message's encoded bytes — a content fingerprint, **not** SHA-256 and **not** base64
+- **Encoding**: rendered as 16 lowercase hex characters; carried as a `varString` in ACK messages
 - **Purpose**: Enables message deduplication, acknowledgment tracking, and idempotency
-- **Lazy Computation**: Message IDs are computed on-demand and cached for performance
+- **Lazy Computation**: Message IDs are computed on first access and cached; `valueOf()` returns the id
 
 ### Variable-Length Encoding
 
@@ -746,16 +553,16 @@ sequenceDiagram
     participant Client
     participant Server
 
-    Client->>Server: File Upload (metadata: uploadId, filename, size, etc.)
-    Note over Server: Creates upload session
-    Client->>Server: File Part (chunk 0 + merkle proof)
-    Note over Server: Verifies chunk, stores
-    Client->>Server: File Part (chunk 1 + merkle proof)
-    Note over Server: Verifies chunk, stores
-    Note over Client,Server: ... (more chunks)
-    Client->>Server: File Part (final chunk + merkle proof)
-    Note over Server: Verifies all chunks,<br/>reconstructs merkle tree,<br/>stores file, removes session
-    Server->>Client: File Auth Message (optional: returns contentId/fileId)
+    Client->>Client: Encrypt file, fold Merkle root → contentId
+    Client->>Server: fileUpload request (fileId=contentId, metadata, chunkSize)
+    Note over Server: Permission check; dedup/resume via contentId
+    Server->>Client: fileUpload response (allowed, existingChunks?, alreadyExists?)
+    Client->>Server: fileUpload stream (chunk 0)
+    Server->>Client: ACK
+    Note over Client,Server: ... (missing chunks only)
+    Client->>Server: fileUpload stream (final chunk)
+    Note over Server: Recompute Merkle tree,<br/>verify == contentId,<br/>move to durable storage
+    Server->>Client: ACK (upload complete)
 ```
 
 ### File Download Flow
@@ -765,16 +572,16 @@ sequenceDiagram
     participant Client
     participant Server
 
-    Client->>Server: File Download (fileId: merkle root hash)
+    Client->>Server: fileDownload request (fileId: merkle root hash)
     Note over Server: Looks up file by fileId/contentId
-    Server->>Client: File Part (chunk 0 + merkle proof)
+    Server->>Client: fileDownload stream (chunk 0 + merkle proof)
     Note over Client: Verifies chunk
-    Server->>Client: File Part (chunk 1 + merkle proof)
+    Server->>Client: fileDownload stream (chunk 1 + merkle proof)
     Note over Client: Verifies chunk
     Note over Client,Server: ... (more chunks)
-    Server->>Client: File Part (final chunk + merkle proof)
+    Server->>Client: fileDownload stream (final chunk + merkle proof)
     Note over Client: Verifies all chunks,<br/>reconstructs file
-    Server->>Client: File Auth Message (optional: error if file not found)
+    Server->>Client: fileDownload response (metadata; or RPC error if not found)
 ```
 
 ### Milestone Operations Flow
@@ -804,8 +611,7 @@ The protocol includes robust error handling:
 - **Type Validation**: Validates message and payload types
 - **Length Validation**: Ensures proper message boundaries using varint encoding
 - **Decoding Errors**: Invalid messages throw descriptive errors with context about the failure
-- **File Transfer Errors**: File operations can fail with auth messages containing status codes (401, 403, 404, 500, 501) and optional reason strings
-- **Milestone Errors**: Milestone operations can fail with milestone auth messages containing denial reasons
+- **RPC Errors**: File, milestone, attribution, and other RPC operations fail through the RPC error payload (status code + details), which the client surfaces as an `RpcOperationError`
 
 ## Security Considerations
 
@@ -813,7 +619,7 @@ The protocol includes robust error handling:
 - **Authentication**: Auth messages provide access control for documents and operations
 - **Validation**: All inputs are validated before processing
 - **Merkle Tree Verification**: File transfers use cryptographic proofs to ensure data integrity
-- **Message IDs**: Enable deduplication and prevent replay attacks when combined with proper server-side validation
+- **Message IDs**: A non-cryptographic content fingerprint (64-bit FNV-1a) used for deduplication and ack correlation. It is _not_ a security primitive — do not rely on it for authenticity or anti-replay
 
 ## How It All Fits Together
 
@@ -828,16 +634,18 @@ graph TB
     end
 
     subgraph Protocol["Teleportal Protocol"]
-        subgraph Core["Core Messages"]
-            DOC[Document Messages]
-            AWARE[Awareness Messages]
-            ACK[ACK Messages]
+        subgraph Core["Wire Message Types (0x00–0x04)"]
+            DOC[Document 0x00]
+            AWARE[Awareness 0x01]
+            ACK[ACK 0x02]
+            PRESENCE[Presence 0x03]
+            RPC[RPC 0x04]
         end
 
-        subgraph Extended["Extended Features"]
-            FILE[File Messages]
-            MILESTONE[Milestone Messages]
-            RPC[RPC Messages]
+        subgraph Extended["RPC Methods (carried by 0x04)"]
+            FILE[File Transfer]
+            MILESTONE[Milestones]
+            ATTR[Attribution]
         end
 
         ENCODE[Message Encoding]
@@ -846,7 +654,7 @@ graph TB
 
     subgraph Features["Protocol Features"]
         SYNC[Document Sync]
-        PRESENCE[User Presence]
+        USERPRESENCE[User Presence]
         TRANSFER[File Transfer]
         VERSIONING[Milestone Versioning]
         EXTENSIBILITY[RPC Extensibility]
@@ -863,7 +671,8 @@ graph TB
     Features --> Storage
 
     DOC --> SYNC
-    AWARE --> PRESENCE
+    AWARE --> USERPRESENCE
+    PRESENCE --> USERPRESENCE
     FILE --> TRANSFER
     MILESTONE --> VERSIONING
     RPC --> EXTENSIBILITY
@@ -886,11 +695,11 @@ graph TB
 
 2. **Awareness System**: Runs in parallel with document sync, providing real-time presence information. This enables collaborative features like showing cursors and selections without affecting document state.
 
-3. **File Transfer**: Uses the same message infrastructure but with chunked transfer and Merkle tree verification. Files are content-addressable (identified by Merkle root hash), enabling deduplication and integrity verification.
+3. **File Transfer**: An RPC method (`fileUpload`/`fileDownload`) with chunked streaming and Merkle tree verification. Files are content-addressable (identified by Merkle root hash), enabling deduplication and integrity verification.
 
-4. **Milestone Management**: Built on top of document sync, milestones capture document snapshots at specific points. The lazy loading design (metadata first, snapshots on demand) enables efficient browsing of document history.
+4. **Milestone Management**: An RPC method group (`milestoneList`/`milestoneCreate`/…) that captures document snapshots at specific points. The lazy loading design (metadata first, snapshots on demand) enables efficient browsing of document history.
 
-5. **RPC System**: Provides extensibility for custom operations without modifying core protocol. This allows applications to add domain-specific features while maintaining protocol compatibility.
+5. **RPC System**: The single extension point (wire type `0x04`). File transfer, milestones, attribution, and key registry are all built on it, as are your own custom methods — no core protocol changes required.
 
 6. **Message Acknowledgment**: ACK messages enable reliable delivery tracking, particularly important for file transfers where chunks must be verified and confirmed.
 
@@ -919,16 +728,17 @@ sequenceDiagram
     C1->>S: Document Update
     S->>C2: Document Update
 
-    Note over C1,S: File Transfer
-    C1->>S: File Upload
-    C1->>S: File Part (with Merkle proof)
+    Note over C1,S: File Transfer (RPC)
+    C1->>S: fileUpload request
+    S->>C1: fileUpload response
+    C1->>S: fileUpload stream (chunk)
     S->>C1: ACK
-    C1->>S: File Part (final)
-    S->>C1: File Auth (success)
+    C1->>S: fileUpload stream (final)
+    S->>C1: ACK (complete)
 
-    Note over C1,S: Milestone Management
-    C1->>S: Milestone Create Request
-    S->>C1: Milestone Create Response
+    Note over C1,S: Milestones (RPC)
+    C1->>S: milestoneCreate request
+    S->>C1: milestoneCreate response
 ```
 
 All these systems work together through the unified message format, enabling efficient, type-safe, and extensible collaborative editing while maintaining compatibility with the Y.js ecosystem.

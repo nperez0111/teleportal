@@ -365,4 +365,84 @@ describe("Key Registry — client rotation notifications", () => {
     const handled = ext.handleMessage!(notification);
     expect(handled).toBe(false);
   });
+
+  function mockCtx(document: string) {
+    return {
+      rpcClient: {
+        sendRequest: mock(async () => ({})),
+        sendStream: mock(async () => {}),
+        onMessage: mock(() => () => {}),
+        destroy: mock(() => {}),
+      } as any,
+      document,
+      doc: {} as any,
+      awareness: {} as any,
+      connection: {
+        state: { type: "connected" },
+        send: mock(async () => {}),
+        connected: Promise.resolve(),
+        on: mock(() => () => {}),
+      },
+      synced: Promise.resolve(),
+    };
+  }
+
+  function rotatedMessage(document: string, generation: number) {
+    return new RpcMessage(
+      document,
+      { type: "success" as const, payload: { generation } },
+      "keysRotated",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+  }
+
+  it("routes each rotation notification only to the instance whose document matches", () => {
+    const extA = createKeyRegistryRpc();
+    const extB = createKeyRegistryRpc();
+    const apiA = extA.create(mockCtx("doc-a"));
+    const apiB = extB.create(mockCtx("doc-b"));
+
+    const aGens: number[] = [];
+    const bGens: number[] = [];
+    apiA.onKeysRotated((g) => aGens.push(g));
+    apiB.onKeysRotated((g) => bGens.push(g));
+
+    // A rotation for doc-b must only reach B's callback.
+    expect(extB.handleMessage!(rotatedMessage("doc-b", 7))).toBe(true);
+    expect(bGens).toEqual([7]);
+    expect(aGens).toEqual([]);
+
+    // A rotation for doc-a must only reach A's callback.
+    expect(extA.handleMessage!(rotatedMessage("doc-a", 3))).toBe(true);
+    expect(aGens).toEqual([3]);
+    expect(bGens).toEqual([7]);
+  });
+
+  it("ignores a rotation notification addressed to a different document", () => {
+    const ext = createKeyRegistryRpc();
+    const api = ext.create(mockCtx("doc-a"));
+    let calls = 0;
+    api.onKeysRotated(() => calls++);
+
+    expect(ext.handleMessage!(rotatedMessage("doc-b", 1))).toBe(false);
+    expect(calls).toBe(0);
+  });
+
+  it("destroying one instance does not disable notifications for another", () => {
+    const extA = createKeyRegistryRpc();
+    const extB = createKeyRegistryRpc();
+    const apiA = extA.create(mockCtx("doc-a"));
+    extB.create(mockCtx("doc-b"));
+
+    let aCalls = 0;
+    apiA.onKeysRotated(() => aCalls++);
+
+    extB.destroy!();
+
+    expect(extA.handleMessage!(rotatedMessage("doc-a", 1))).toBe(true);
+    expect(aCalls).toBe(1);
+  });
 });

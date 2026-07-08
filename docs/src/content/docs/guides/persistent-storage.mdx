@@ -44,24 +44,36 @@ Teleportal ships first-party storage adapters for PostgreSQL and S3 that extend 
 ### PostgreSQL (first-party)
 
 ```typescript
-import { PostgresDocumentStorage } from "teleportal/storage/postgres";
+import postgres from "postgres";
+import { PostgresDocumentStorage, ensureSchema } from "teleportal/storage/postgres";
+
+const sql = postgres("postgres://localhost/mydb", { max: 10 });
+await ensureSchema(sql); // create tables once at startup
 
 const server = new Server({
   storage: async (ctx) => {
-    return new PostgresDocumentStorage(pool, ctx.encrypted);
+    return new PostgresDocumentStorage(sql, { encrypted: ctx.encrypted });
   },
 });
 ```
 
 ### S3 (first-party, for file storage)
 
-```typescript
-import { S3FileStorage, S3TemporaryUploadStorage } from "teleportal/storage/s3";
+`S3FileStorage` and `S3TemporaryUploadStorage` each take an `S3Config` (or a shared `S3Http` client) plus options. Pass the temporary upload store to the file store via the `temporaryUploadStorage` option. Works with AWS S3, Cloudflare R2, and MinIO:
 
-const fileStorage = new S3FileStorage(s3Client, { bucket: "my-bucket" });
-fileStorage.temporaryUploadStorage = new S3TemporaryUploadStorage(s3Client, {
+```typescript
+import { S3FileStorage, S3Http, S3TemporaryUploadStorage } from "teleportal/storage/s3";
+
+const s3 = new S3Http({
+  endpoint: "https://<account>.r2.cloudflarestorage.com",
   bucket: "my-bucket",
+  region: "auto",
+  accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+  secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
 });
+
+const temp = new S3TemporaryUploadStorage(s3);
+const fileStorage = new S3FileStorage(s3, { temporaryUploadStorage: temp });
 ```
 
 ## Alternative Storage Backends (via unstorage)

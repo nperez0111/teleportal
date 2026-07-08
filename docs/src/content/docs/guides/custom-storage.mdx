@@ -235,7 +235,8 @@ const server = new Server({
 `createdBy` field: `{ type: "user", id }` or `{ type: "system", id }`.
 
 ```typescript
-import type { MilestoneStorage, Milestone, MilestoneSnapshot } from "teleportal/storage";
+import type { MilestoneStorage } from "teleportal/storage";
+import type { Milestone, MilestoneSnapshot } from "teleportal";
 
 export class PostgresMilestoneStorage implements MilestoneStorage {
   readonly type = "milestone-storage" as const;

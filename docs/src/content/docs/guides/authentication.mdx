@@ -3,7 +3,11 @@ title: Authentication
 description: JWT token-based authentication with permission management
 ---
 
+import { Aside } from "@astrojs/starlight/components";
+
 This guide demonstrates JWT token-based authentication for securing Teleportal connections. Both WebSocket and HTTP handlers verify tokens before allowing access.
+
+Tokens are always signed with **HS256** (symmetric HMAC-SHA-256). `verifyToken` pins `algorithms: ["HS256"]`, so tokens signed with any other algorithm -- including unsecured `alg: "none"` tokens -- are rejected.
 
 ## What it demonstrates
 
@@ -104,6 +108,18 @@ const provider = await Provider.create({
 
 await provider.synced;
 ```
+
+## Document Access Patterns
+
+The `documentAccess` list carried in each token uses **literal glob matching**: `*` is the only wildcard (it matches any run of characters, including none), and every other character -- including regex metacharacters like `.`, `[`, or `(` -- is matched **literally**. A pattern such as `logs[prod]*` matches the literal text `logs[prod]…` and never behaves as a regex character class. A `!`-prefixed pattern is an exclusion: if any exclusion matches the document, access is denied regardless of inclusions.
+
+<Aside type="caution" title="Fail-open when documentAccess is absent">
+  `hasDocumentPermission` returns `true` for **every** document and permission when a token has no
+  `documentAccess` claim. A token minted without an access policy is effectively an admin token for
+  its room. Always attach a `documentAccess` policy (as in the example above) -- or use
+  `createAdminToken` explicitly -- unless you intend room-wide access. Note the asymmetry:
+  `getDocumentPermissions` fails **closed** (returns `[]`) for the same missing claim.
+</Aside>
 
 ## Next Steps
 

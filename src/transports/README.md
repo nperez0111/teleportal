@@ -1,408 +1,472 @@
 # Transports
 
-The `transports` module provides a composable transport layer system for Teleportal. Transports are the abstraction layer that handles how messages are sent and received between clients and servers, allowing Teleportal to work over various communication protocols and patterns.
-
-## Overview
-
-A **Transport** is a combination of a **Source** (for reading messages) and a **Sink** (for writing messages). The transport system is built on async iterables, making it composable and allowing multiple transports to be chained together to add functionality like encryption, rate limiting, logging, and more.
-
-### Core Concepts
-
-- **Source**: An async iterable of batched messages (`AsyncIterable<Message[]>`) with optional additional properties
-- **Sink**: A write/close interface for messages with optional additional properties
-- **Transport**: A combination of Source and Sink that can both read and write messages
-- **BinaryTransport**: A transport that works with raw binary messages instead of decoded Message objects
-
-## Architecture
-
-The transport system follows a composable architecture where:
-
-1. **Base transports** handle the actual communication (HTTP, SSE, PubSub)
-2. **Middleware transports** wrap other transports to add functionality (encryption, rate limiting, logging, validation)
-3. **Utility functions** help compose, pipe, and transform transports
-
-This design allows you to build complex transport stacks by combining simple, focused transports.
-
-## Available Transports
-
-### Communication Transports
-
-#### HTTP (`http/`)
-
-Handles message transmission over HTTP requests. Useful for environments where WebSockets or SSE aren't available.
-
-- **`getHTTPSource`**: Creates a single-use source that receives messages from an HTTP POST request body (decoded as a `MessageArray`)
-- **`getHTTPSink`**: Creates a sink that batches outgoing messages and sends them as HTTP POST requests
-
-**Features:**
-
-- Configurable message batching (`maxBatchSize`, `maxBatchDelay`)
-- Single-use source (closes after request completes)
-- MessageArray encoding/decoding for efficient binary transport
-
-#### SSE (`sse/`)
-
-Server-Sent Events transport for one-way server-to-client communication.
-
-- **`getSSESink`**: Creates a sink that sends messages as SSE events; returns an `sseResponse` for the HTTP handler
-- **`getSSESource`**: Creates a source from an `EventSource` that receives SSE messages
-
-**Features:**
-
-- Automatic keepalive pings every 5 seconds
-- Client ID handshake as the first SSE event
-- Base64-encoded binary messages
-- Periodic close-check interval on the source side
-
-#### PubSub (`pubSub/`)
-
-Generic publish/subscribe transport that works with any `PubSub` backend implementation.
-
-- **`getPubSubSource`**: Subscribes to topics and receives messages
-- **`getPubSubSink`**: Publishes messages to topics
-- **`getPubSubTransport`**: Combines source and sink into a full transport
-
-**Features:**
-
-- Topic-based message routing
-- Source ID filtering to prevent message loops
-- Dynamic topic subscription/unsubscription
-
-#### Redis (`redis/`)
-
-Redis-backed PubSub transport implementation.
-
-- **`RedisPubSub`**: Redis implementation of the `PubSub` interface using separate publisher/subscriber connections
-- **`getRedisTransport`**: Creates a Redis-based transport with automatic connection cleanup
-- **`RedisRateLimitStorage`**: Redis implementation of `RateLimitStorage` for distributed rate limiting with Lua-script-based distributed locks
-
-**Features:**
-
-- Separate publisher/subscriber connections
-- Reference-counted topic subscriptions (multiple subscribers share one Redis subscription)
-- Automatic connection cleanup via `Symbol.asyncDispose`
-- Distributed lock-based transactions for rate limit state
-
-#### NATS (`nats/`)
-
-NATS messaging system PubSub implementation.
-
-- **`NatsPubSub`**: NATS implementation of the `PubSub` interface
-
-**Features:**
-
-- Lazy connection via a factory callback (avoids bundling the NATS client)
-- Automatic connection draining on dispose
-
-### Document Synchronization Transports
-
-#### YDoc (`ydoc/`)
-
-Integrates Y.js documents with the Teleportal transport system.
-
-- **`getYDocSource`**: Creates a source that emits messages when Y.js document updates
-- **`getYDocSink`**: Creates a sink that applies incoming messages to a Y.js document
-- **`getYTransportFromYDoc`**: Creates a complete transport from a Y.js document
-
-**Features:**
-
-- Content-encrypted envelope encoding (structure update + encrypted sidecars)
-- Awareness (presence) synchronization
-- Document sync protocol (sync-step-1, sync-step-2, sync-done)
-- Transaction origin tracking to prevent update loops
-- Configurable update batching (`updateBatchIntervalMs`): rapid Y.Doc updates are merged via `Y.mergeUpdatesV2` before forwarding, reducing message count at the cost of latency
-- Clean shutdown: pending batched updates are flushed on `destroy`
-
-#### Encrypted (`encrypted/`)
-
-End-to-end content-level encryption for document messages. The server stores structure-only updates (which reveal document shape but not content) alongside encrypted sidecars (which contain the actual text/data). Only clients with the correct `CryptoKey` can restore the full document.
-
-- **`getEncryptedTransport`**: Creates a transport wrapping an `EncryptionClient`
-- **`EncryptionClient`**: Manages encryption/decryption, sync handshake, and incremental sidecar compaction
-
-**Features:**
-
-- Content-level encryption: strips text content from Y.js updates into encrypted sidecars, leaving structure-only updates for the server
-- Sync handshake: `start()` sends sync-step-1, `handleSyncStep1()` responds with an encrypted sync-step-2
-- Incremental updates: `onUpdate()` encrypts local edits, `handleUpdate()` decrypts peer edits
-- Background sidecar compaction: after `COMPACTION_THRESHOLD` (default 25) sidecars accumulate, a background task merges them into one; the compaction piggybacks on the next outgoing message
-- Awareness encryption: awareness updates are encrypted/decrypted transparently
-
-### Middleware Transports
-
-#### Passthrough (`passthrough/`)
-
-A utility transport that wraps another transport and allows inspection/interception of messages.
-
-- **`withPassthroughSink`**: Wraps a sink with write callbacks; returning `false` from `onWrite` blocks the message
-- **`withPassthroughSource`**: Wraps a source with read callbacks; returning `false` from `onRead` filters the message
-- **`withPassthrough`**: Wraps a full transport with both read and write callbacks
-- **`noopTransport`**: Creates an empty transport that does nothing (useful for testing)
-
-#### Logger (`logger/`)
-
-Convenience wrapper around passthrough that logs all messages to the console.
-
-- **`withLogger`**: Wraps a transport and logs all read/write operations
-
-#### Rate Limiter (`rate-limiter/`)
-
-Inbound-only rate limiting using the token bucket algorithm with flow-control-by-delay.
-
-- **`withRateLimit`**: Wraps a transport with rate limiting
-- **`RateLimitedTransport`**: The rate-limited transport class
-- **`defaultRateLimitRules`**: Pre-configured rules with separate budgets for sync, awareness/presence, and file transfers
-
-**Design decisions:**
-
-- **Inbound only**: outbound (server-to-client) writes are passed through untouched. Dropping a server-originated doc update permanently diverges the receiving client because Y.js parks every causally-later update on the missing dependency.
-- **Flow control by delay** (default): rate-limited inbound messages are HELD until the bucket refills (up to `maxDelayMs`, default 1s), slowing the sender to the allowed rate without losing messages. Only waits past the budget drop the message and nack the sender. Set `maxDelayMs: 0` for drop-only behavior.
-- **Multi-rule enforcement with token refunds**: a message dropped by one rule hands back the tokens it consumed from rules it already passed, preventing retry amplification.
-- **Separate budgets** (default rules): awareness/presence messages get their own budget so cursor chatter cannot drain the sync budget that doc updates need.
-
-**Features:**
-
-- Configurable message rate (messages per time window) via `rules` array
-- Dynamic limits: `maxMessages` and `windowMs` can be functions of the message
-- Maximum message size enforcement with nack response
-- Per-user, per-document, per-user-document, or per-transport tracking
-- Persistent rate limit storage (Redis, memory, etc.), with an automatic in-memory per-transport fallback when no storage is configured
-- Permission system integration (`checkPermission`, `shouldSkipRateLimit`)
-- Callbacks for rate limit exceeded, delayed, and message size exceeded events
-- Metrics collector and event emitter integration
-
-#### Message Validator (`message-validator/`)
-
-Adds authorization checks to message reading and writing.
-
-- **`withMessageValidator`**: Wraps a transport with authorization checks
-- **`withMessageValidatorSource`**: Validates messages on read
-- **`withMessageValidatorSink`**: Validates messages on write
-
-When no `isAuthorized` function is provided, all messages pass through (no filtering).
-
-#### ACK (`ack/`)
-
-Adds acknowledgment message support for reliable message delivery.
-
-- **`withAckSink`**: Automatically sends ACK messages after writing (via PubSub)
-- **`withAckTrackingSink`**: Tracks sent messages and waits for ACKs with timeout
-
-**Features:**
-
-- Automatic ACK generation for non-ACK messages
-- ACK timeout handling
-- Promise-based ACK waiting via `waitForAcks()`
-- PubSub-based ACK distribution
-- Abort signal support
-- Settled-promise cleanup to avoid memory leaks on long-lived connections
-
-### File Transfer
-
-File transfer functionality has been moved to the Provider level using RPC handlers. See the [File Protocol documentation](../protocols/file/README.md) for details.
-
-## Utility Functions
-
-The `utils.ts` module provides essential utilities for working with transports:
-
-### Composition & Connection
-
-- **`compose(source, sink)`**: Combines a Source and Sink into a Transport
-- **`connect(source, sink)`**: Drains a Source into a Sink (consumes all messages)
-- **`sync(transportA, transportB)`**: Bidirectionally connects two transports
-- **`forEachMessage(source, fn)`**: Drains a batched source one item at a time
+The `transports` module is Teleportal's composable message-plumbing layer. It
+defines a small, uniform interface — a **Source** to read from and a **Sink** to
+write to — and a set of functions that implement that interface over concrete
+protocols (HTTP, SSE, Redis/NATS pub-sub, Y.Doc) and that wrap other transports
+to add behaviour (encryption, rate limiting, validation, acknowledgements,
+logging).
+
+Everything above the transport layer (providers, the server) speaks only in
+`Source`/`Sink`/`Transport`, so swapping protocols or inserting middleware never
+touches sync logic.
+
+## Why it exists
+
+A sync server has to move CRDT messages between many endpoints — browser tabs
+over HTTP/SSE, other server instances over a message bus, an in-process Y.Doc —
+and it has to do cross-cutting things to those messages (authorize them, rate
+limit them, encrypt them, acknowledge them). Rather than bake each concern into
+each protocol, transports factor the two axes apart:
+
+- **Protocol transports** know how bytes get from A to B.
+- **Middleware transports** wrap any transport to add one concern, and compose.
+
+## Core model
+
+```ts
+type Source<Context, Extra> = { source: AsyncIterable<Message<Context>[]> } & Extra;
+type Sink<Context, Extra> = {
+  write(m: Message<Context>): void | Promise<void>;
+  close(): void;
+} & Extra;
+type Transport<Context, Extra> = Source<Context, Extra> & Sink<Context, Extra>;
+```
+
+Key facts that drive every implementation:
+
+- **A Source yields _batches_** (`AsyncIterable<Message[]>`), not single
+  messages. Producers accumulate whatever arrived between pulls and hand it over
+  as one array. This is what makes size/time batching and lazy compaction
+  (dedup awareness, merge doc updates) cheap.
+- **A Source is single-consumer.** The underlying `Channel` throws if iterated
+  twice — fan-out is an explicit opt-in (`createFanOutWriter`).
+- **`write` may be sync or async.** Middleware that needs to await (validation,
+  ack tracking) returns a promise; fire-and-forget sinks don't.
+- **`BinaryTransport`** is the same shape over raw `BinaryMessage`s instead of
+  decoded `Message`s. `toBinaryTransport` / `fromBinaryTransport` convert
+  between the two and answer protocol pings inline.
+
+Most transports are built on the `Channel` primitive from
+[`../lib/iter`](../lib/iter): a compacting inbox that bridges a push-based API
+(`send`/`trySend`) to pull-based async iteration, with optional lazy
+`compact` at drain time.
+
+## Import paths
+
+The barrel `teleportal/transports` re-exports **ack, encrypted, http, logger,
+message-validator, passthrough, pubSub, sse, ydoc, and utils**. Import all of
+those from the barrel:
+
+```ts
+import {
+  compose,
+  connect,
+  sync,
+  getHTTPSource,
+  getHTTPSink,
+  getSSESink,
+  getSSESource,
+  withLogger,
+  withMessageValidator,
+  withPassthrough,
+  getYTransportFromYDoc,
+  getEncryptedTransport,
+} from "teleportal/transports";
+```
+
+The optional-dependency transports have **their own entry points** so their
+third-party clients aren't bundled unless used:
+
+```ts
+import { withRateLimit, defaultRateLimitRules } from "teleportal/transports/rate-limiter";
+import { getRedisTransport, RedisPubSub, RedisRateLimitStorage } from "teleportal/transports/redis";
+import { NatsPubSub } from "teleportal/transports/nats";
+```
+
+## Utility functions (`utils.ts`)
+
+### Composition & connection
+
+- **`compose(source, sink)`** → `Transport`. Merges the two, but always takes
+  `source` from the Source arg and delegates `write`/`close` as method calls to
+  the Sink arg (so passing a Transport as the sink can't shadow the wrapped
+  source, and class-based sinks keep their `this`).
+- **`connect(source, sink)`** — drains a Source (or bare `AsyncIterable<T[]>`)
+  into a Sink, one message at a time, awaiting each `write`.
+- **`sync(a, b)`** — bidirectional `connect`: A→B and B→A concurrently.
+- **`forEachMessage(source, fn)`** — drains a batched source one item at a time,
+  awaiting `fn` per item.
 
 ### Concurrency
 
-- **`createFanOutWriter()`**: Creates a broadcaster with `send()`, `close()`, and `getReader()` methods for fan-out to multiple consumers
-- **`createSerialQueue(process)`**: A serial async queue that processes items one at a time in enqueue order; each `enqueue()` resolves only after its item has been processed
+- **`createFanOutWriter<T>()`** — `{ send, close, getReader }`. Each
+  `getReader()` returns an independent `{ source, unsubscribe }`; one `send`
+  reaches every live reader. Built on the `../lib/iter` broadcast.
+- **`createSerialQueue(process)`** — `{ enqueue, close }`. Processes items
+  strictly in enqueue order, one at a time; each `enqueue()` resolves only after
+  _its_ item finished. A failing item rejects its own `enqueue` but does not
+  poison the queue.
 
-### Message Encoding/Decoding
+### Encoding / conversion
 
-- **`decodeMessages(context)`**: Creates a transform that decodes binary messages into typed messages
-- **`toBinaryTransport(transport, context)`**: Converts a Transport to a BinaryTransport
-- **`fromBinaryTransport(transport, context)`**: Converts a BinaryTransport to a Transport (handles ping/pong inline)
+- **`decodeMessages(context)`** — transform `AsyncIterable<BinaryMessage[]>` →
+  `AsyncIterable<Message[]>`; `context` may be a value or a function of the raw
+  message.
+- **`toBinaryTransport` / `fromBinaryTransport`** — convert between decoded and
+  binary transports. `fromBinaryTransport` answers pings inline (replies with a
+  pong, drops the ping from the decoded stream).
+- **`toMessageArrayTransform` / `fromMessageArrayTransform(context)`** — encode a
+  batch as a single `MessageArray` and back.
 
-### Message Transforms
+### Batch-preserving transforms
 
-Batch-preserving transforms that lift per-item logic into transforms over `AsyncIterable<T[]>`:
+Lift per-item logic to a transform over `AsyncIterable<T[]>`. **None of them ever
+yield an empty batch** (a fully-filtered batch is skipped, which keeps consumers
+from mistaking "nothing passed" for "stream idle"):
 
-- **`mapMessages(fn)`**: Map each item to one output (or drop by returning null)
-- **`filterMessages(predicate)`**: Keep only items passing a predicate
-- **`flatMapMessages(fn)`**: Expand each item into zero or more outputs
-- **`toMessageArrayTransform()`**: Converts messages to MessageArray encoding
-- **`fromMessageArrayTransform(context)`**: Decodes MessageArrays back to messages
+- **`mapMessages(fn)`** — map each item to one output; return `null`/`undefined`
+  to drop it. `fn` may be async.
+- **`filterMessages(predicate)`** — keep items passing a (possibly async)
+  predicate.
+- **`flatMapMessages(fn)`** — expand each item into zero or more outputs.
 
-## Usage Examples
+`batch` (re-exported from `../lib/iter`) does time/size batching and is used by
+the HTTP sink.
 
-### Basic Transport Composition
+## Protocol transports
 
-```typescript
-import { compose } from "teleportal/transports";
-import { getHTTPSource, getHTTPSink } from "teleportal/transports/http";
-import { withLogger } from "teleportal/transports/logger";
-import { withRateLimit } from "teleportal/transports/rate-limiter";
+### HTTP (`http/`)
 
-// Create an HTTP transport
-const source = getHTTPSource({ context });
-const sink = getHTTPSink({ request, context });
-const transport = compose(source, sink);
+Message transport over discrete HTTP requests.
 
-// Add logging
-const loggedTransport = withLogger(transport);
+- **`getHTTPSource({ context })`** → `Source` + `handleHTTPRequest(request)`.
+  Single-use: `handleHTTPRequest` reads the POST body as a `MessageArray`,
+  decodes it, stamps `context` onto each message, sends them into the channel,
+  then **closes** the channel. One request = one drained source.
+- **`getHTTPSink({ request, context, batchingOptions })`** → `Sink`. Buffers
+  writes through the shared time/size `batch` (`maxBatchSize` default 10,
+  `maxBatchDelay` default 100 ms); each flushed batch is `encodeMessageArray`-d
+  and handed to your `request` callback as one `POST`
+  (`Content-Type: application/octet-stream`, `x-teleportal-client-id` header). A
+  failed request drops _that batch only_ and keeps draining.
 
-// Add rate limiting
-const rateLimitedTransport = withRateLimit(loggedTransport, {
-  rules: [{ id: "per-user", maxMessages: 100, windowMs: 1000, trackBy: "user" }],
+### SSE (`sse/`)
+
+Server-Sent Events for server→client streaming, with the client's return channel
+carried separately (usually via the HTTP sink).
+
+- **`getSSESink({ context })`** → `Sink` + `sseResponse: Response`. Emits the
+  `client-id` as the first SSE event, then base64-encoded binary `message`
+  events, plus a `ping` keepalive every **5 s**. Frames are emitted as **UTF-8
+  bytes** (Cloudflare `workerd` rejects string chunks in a `Response` body). The
+  ping interval self-clears once the channel stops accepting frames.
+- **`getSSESource({ source: EventSource, context, onPing? })`** → `Source` +
+  `{ clientId: Promise<string>, eventSource }`. `clientId` resolves from the
+  first `client-id` event. Pings are consumed inline (invoke `onPing`, never
+  surface). A **3 s** interval polls `readyState` and closes the channel once the
+  `EventSource` is `CLOSED`; the source also `.close()`s the `EventSource` when
+  iteration ends.
+
+### PubSub (`pubSub/`)
+
+Backend-agnostic publish/subscribe over any `PubSub` implementation.
+
+- **`getPubSubSource({ getContext, pubSub, sourceId })`** → `Source` +
+  `{ subscribe, unsubscribe, pubSub }`. Subscribing to a topic wires its
+  messages into the channel; messages whose `sourceId` matches this source are
+  dropped to break loops. `subscribe` is idempotent per topic;
+  `unsubscribe()` with no argument removes every subscription.
+- **`getPubSubSink({ pubSub, topicResolver, sourceId })`** → `Sink`. Publishes
+  each write to `topicResolver(message)`. `close()` is a **no-op** — the sink
+  owns no per-topic subscriptions; tear down the _source_ (`unsubscribe`) or the
+  backing `pubSub` to stop consuming.
+- **`getPubSubTransport(...)`** — `compose` of the two.
+
+### Redis (`redis/`) · `teleportal/transports/redis`
+
+- **`RedisPubSub`** — `PubSub` over `ioredis` using **separate publisher and
+  subscriber connections**. Topic subscriptions are **reference-counted**: N
+  subscribers to a topic share one Redis `SUBSCRIBE`; the Redis `UNSUBSCRIBE`
+  only fires when the last local subscriber leaves. Decode failures emit an
+  `error` wide event instead of throwing on the connection. Implements
+  `Symbol.asyncDispose` (`quit`s both connections).
+- **`getRedisTransport(...)`** — a `getPubSubTransport` over a `RedisPubSub`,
+  with an async `close()` that disposes the connections.
+- **`RedisRateLimitStorage`** — `RateLimitStorage` over Redis hashes, with
+  `transaction()` implemented as a Lua-checked distributed lock (SET NX PX +
+  compare-and-delete release), retried up to ~1 s. Enables cross-instance rate
+  limits.
+
+### NATS (`nats/`) · `teleportal/transports/nats`
+
+- **`NatsPubSub`** — `PubSub` over a lazily-provided `NatsConnection` (you pass a
+  `() => Promise<NatsConnection>` factory so the NATS client isn't imported until
+  used). Decode failures emit an `error` wide event; `Symbol.asyncDispose`
+  drains the connection.
+
+### YDoc (`ydoc/`)
+
+Bridges an in-process `Y.Doc` + `Awareness` into a transport. This is the
+building block underneath the encrypted transport and any server-side document
+that participates in sync.
+
+- **`getYDocSource(...)`** → `Source` + `{ ydoc, awareness, handler }`. Listens
+  for local doc/awareness updates and emits sync messages. Updates originating
+  from the sync transaction (`getSyncTransactionOrigin(ydoc)`) are ignored to
+  avoid echo loops. On iteration end it detaches every `ydoc`/`awareness`
+  listener.
+- **`getYDocSink(...)`** → `Sink` + `{ ydoc, awareness, synced }`. Applies
+  incoming messages: `sync-step-1` → reply with `sync-step-2`, `sync-step-2` /
+  `update` → apply, `sync-done` → resolve `synced`, `auth-message` → throw.
+  Messages for other documents, or echoed `local` messages, are ignored. The
+  `synced` promise resolves on `sync-done` and **rejects on `close()`** (e.g.
+  switching documents mid-sync); an internal no-op `.catch` keeps an unconsumed
+  `synced` from surfacing as an unhandled rejection.
+- **`getYTransportFromYDoc(...)`** — `compose` of the two, sharing one `ydoc`,
+  `awareness`, and `observer`.
+
+Both the default source and sink handlers speak the **content-encrypted
+envelope** format (`encodeContentEncryptedPayload`): a structure-only update
+plus (here empty) encrypted sidecars. This keeps the on-the-wire and on-disk
+format identical whether or not content encryption is in use.
+
+**Update batching** (`updateBatchIntervalMs`, default `0` = off): when > 0, rapid
+`Y.Doc` updates are accumulated and merged with `Y.mergeUpdatesV2` before the
+handler sees them, trading a little latency for far fewer, larger messages.
+Pending updates are flushed on `destroy` before the channel closes.
+
+### Encrypted (`encrypted/`)
+
+End-to-end **content** encryption layered on the YDoc transport. The server
+stores structure-only updates (document _shape_ but not text/data) alongside
+opaque encrypted **sidecars**; only a client holding the right `CryptoKey` can
+restore full content.
+
+- **`getEncryptedTransport(handler, { updateBatchIntervalMs? })`** — wraps an
+  `EncryptionClient` as a `Transport` (a YDoc source+sink whose handler is the
+  client), exposing `{ ydoc, awareness, synced, handler }`.
+- **`EncryptionClient`** — implements both YDoc handler interfaces:
+  - `start()` sends `sync-step-1` with the local state vector.
+  - `handleSyncStep1()` replies with an encrypted `sync-step-2` (local diff
+    stripped into structure + encrypted sidecar).
+  - `onUpdate()` / `handleUpdate()` encrypt local edits / decrypt+apply peer
+    edits, accumulating sidecars.
+  - Awareness updates are encrypted/decrypted transparently.
+  - **Sidecar compaction**: once `COMPACTION_THRESHOLD` (25) sidecars
+    accumulate, a background task merges them into one; the result piggybacks on
+    the next outgoing message via `#takeReadyCompaction`. Only one compaction
+    runs at a time.
+  - `destroy()` releases the cached tokenizer, pending compaction, and sidecar
+    buffer.
+
+## Middleware transports
+
+Each takes a transport (or bare source/sink) and returns the same shape, so they
+chain freely. Middleware that only wraps the **source** returns the input
+unchanged when its callback is absent (zero overhead).
+
+### Passthrough (`passthrough/`)
+
+The base inspection/interception middleware.
+
+- **`withPassthroughSink(sink, { onWrite? })`** — `onWrite` returning `false`
+  blocks the write. `close` is delegated explicitly so class-based sinks keep
+  their prototype method.
+- **`withPassthroughSource(source, { onRead? })`** — `onRead` returning `false`
+  filters the message out.
+- **`withPassthrough(transport, { onRead?, onWrite? })`** — both, via `compose`.
+- **`noopTransport()`** — an already-closed, do-nothing transport (testing).
+
+### Logger (`logger/`)
+
+- **`withLogger(transport)`** — a `withPassthrough` that `console.info`s every
+  read and write. A **development convenience only**; it logs unstructured lines
+  and is not intended for production (see the wide-events logging guidance).
+
+### Message Validator (`message-validator/`)
+
+- **`withMessageValidator(transport, { isAuthorized? })`**, plus the
+  `...Source` / `...Sink` halves. `isAuthorized(message, type)` gates each
+  message; with no `isAuthorized`, everything passes.
+- **Both directions check `"write"` permission.** This is deliberate for
+  server-side use: the source carries messages _from_ clients (clients writing
+  _to_ the server), and the sink carries writes _out_. Checking the source with
+  `"read"` would reject legitimate client updates. (Regression-tested in
+  `message-validator-fix.test.ts`.)
+
+### Rate Limiter (`rate-limiter/`) · `teleportal/transports/rate-limiter`
+
+Inbound-only token-bucket rate limiting with **flow-control-by-delay**.
+
+- **`withRateLimit(transport, options)`** / **`RateLimitedTransport`** — wrap a
+  transport; the inbound `source` is rate limited, the outbound `write` is
+  **passed through untouched**.
+- **`defaultRateLimitRules()`** — separate budgets: sync (300/s per user,
+  1500/10s per document), awareness/presence (120/s per user), file-transfer
+  chunks (5000/s per user).
+- Helpers: **`isFileTransferMessage`**, **`isEphemeralMetadataMessage`**.
+
+Design decisions baked into the code:
+
+- **Inbound only.** Silently dropping a server-originated doc update permanently
+  diverges the receiving client — Y.js parks every causally-later update on the
+  missing dependency until a full resync. Egress is already bounded because every
+  broadcast originates from a rate-limited ingress message.
+- **Hold, don't drop (default).** A limited message is _held_ until its bucket
+  refills, up to `maxDelayMs` (default 1000 ms). The per-connection source is
+  consumed sequentially, so holding naturally throttles the sender losslessly.
+  Only a wait that would exceed the budget drops the message (and fires
+  `onRateLimitDrop` so the server can nack). Set `maxDelayMs: 0` for legacy
+  drop-only behaviour.
+- **Never throw from the source.** A throw would tear down the server's
+  per-client consume loop (it stops acking/broadcasting while the socket stays
+  open). Dropped messages are nacked, never thrown.
+- **Multi-rule with token refunds.** All rules must pass. A message dropped by a
+  later rule refunds the tokens it already consumed from earlier rules, so a
+  client's retransmit isn't double-charged.
+- **`resetAt` = time to the _next token_,** not time to a full window — a nacked
+  sender only waits the fractional remainder of one token.
+- **Tracking:** `user` / `document` / `user-document` / `transport`. With no
+  `RateLimitStorage`, an in-memory per-transport bucket map is the fallback
+  (capped at 10 000 entries, oldest-evicted), keyed the same way a storage
+  backend would key it — so limits still apply per tracked entity within the
+  connection. `maxMessages` / `windowMs` may be functions of the message.
+
+### ACK (`ack/`)
+
+Acknowledgement support over a `PubSub` for reliable delivery.
+
+- **`withAckSink(sink, { pubSub, ackTopic, sourceId, context })`** — after each
+  non-ack write, publishes an `AckMessage` (referencing the written message's
+  id) to `ackTopic`.
+- **`withAckTrackingSink(sink, { pubSub, ackTopic, sourceId, ackTimeout?, abortSignal? })`**
+  — tracks each non-ack write and resolves it when a matching ack arrives.
+  Returns `waitForAcks()` and `unsubscribe()`.
+  - `waitForAcks()` resolves once all currently-tracked messages are acked,
+    rejects if any times out (`ackTimeout`, default 10 000 ms).
+  - **Settled promises are removed from the pending set** on _either_ outcome
+    (resolved or rejected). A timed-out message no longer poisons a later
+    `waitForAcks()` and the set can't grow unbounded on a long-lived connection.
+  - **`abort` / `unsubscribe` are terminal**: they reject in-flight waits and
+    every subsequent `waitForAcks()` (with `"Request aborted"` /
+    `"Unsubscribed"`), distinct from a recoverable per-message timeout.
+
+## Composition patterns
+
+### Layered middleware
+
+```ts
+import {
+  compose,
+  getHTTPSource,
+  getHTTPSink,
+  withLogger,
+  withMessageValidator,
+} from "teleportal/transports";
+import { withRateLimit, defaultRateLimitRules } from "teleportal/transports/rate-limiter";
+
+let transport = compose(getHTTPSource({ context }), getHTTPSink({ request, context }));
+
+// Inbound-only rate limiting (server-side ServerContext transports)
+transport = withRateLimit(transport, { rules: defaultRateLimitRules() });
+
+// Authorize both directions with "write" permission
+transport = withMessageValidator(transport, {
+  isAuthorized: async (message, _type) => canWrite(message),
 });
+
+// Dev-only tracing
+transport = withLogger(transport);
 ```
 
-### Y.js Document Transport
+### Y.js document transport
 
-```typescript
-import { getYTransportFromYDoc } from "teleportal/transports/ydoc";
+```ts
+import { getYTransportFromYDoc } from "teleportal/transports";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 
 const ydoc = new Y.Doc();
-const awareness = new Awareness(ydoc);
-const document = "my-document";
-
 const transport = getYTransportFromYDoc({
   ydoc,
-  awareness,
-  document,
+  awareness: new Awareness(ydoc),
+  document: "my-document",
   context: { clientId: "client-1" },
 });
 
-// Start synchronization
-await transport.handler.start();
+await transport.handler.start(); // send sync-step-1
+await transport.synced; // resolves on sync-done
 ```
 
-### PubSub Transport with Redis
+### Encrypted transport
 
-```typescript
+```ts
+import { getEncryptedTransport, EncryptionClient } from "teleportal/transports";
+
+const client = new EncryptionClient({ document: "my-doc", key /* CryptoKey */ });
+const transport = getEncryptedTransport(client);
+
+await transport.handler.start(); // encrypted sync handshake
+```
+
+### Redis pub-sub transport
+
+```ts
 import { getRedisTransport } from "teleportal/transports/redis";
 
 const transport = getRedisTransport({
   getContext: { serverId: "server-1" },
-  redisOptions: {
-    path: "redis://localhost:6379",
-  },
+  redisOptions: { path: "redis://localhost:6379" },
   sourceId: "server-1",
   topicResolver: (message) => `document/${message.document}`,
 });
 
-// Subscribe to a document topic
 await transport.subscribe("document/my-doc");
-
-// Clean up
-await transport.close();
+await transport.close(); // closes and disposes the Redis connections
 ```
 
-### Encrypted Transport
+### ACK-based reliable delivery
 
-```typescript
-import { getEncryptedTransport } from "teleportal/transports/encrypted";
-import { EncryptionClient } from "teleportal/transports/encrypted/client";
+```ts
+import { withAckSink, withAckTrackingSink } from "teleportal/transports";
 
-const handler = new EncryptionClient({
-  document: "my-doc",
-  key: encryptionKey, // CryptoKey
-});
+// Server side: emit acks
+const ackSink = withAckSink(sink, { pubSub, ackTopic: "acks", sourceId: "server-1", context });
 
-const transport = getEncryptedTransport(handler);
-
-// Transport automatically encrypts/decrypts document messages
-// handler.start() initiates the sync handshake
-```
-
-### ACK-Based Reliable Delivery
-
-```typescript
-import { withAckSink, withAckTrackingSink } from "teleportal/transports/ack";
-
-// Server: Send ACKs automatically
-const ackSink = withAckSink(sink, {
-  pubSub,
-  ackTopic: "acks",
-  sourceId: "server-1",
-  context: serverContext,
-});
-
-// Client: Track ACKs
-const trackingSink = withAckTrackingSink(sink, {
+// Client side: await acks
+const tracking = withAckTrackingSink(sink, {
   pubSub,
   ackTopic: "acks",
   sourceId: "client-1",
-  ackTimeout: 10000,
+  ackTimeout: 10_000,
 });
-
-// Write messages and wait for ACKs
-await trackingSink.write(message);
-await trackingSink.waitForAcks();
+await tracking.write(message);
+await tracking.waitForAcks();
 ```
 
-## Transport Composition Patterns
+### Fan-out broadcasting
 
-### Layered Middleware
-
-Transports can be composed in layers, with each layer adding functionality:
-
-```typescript
-// Base transport
-let transport = getBaseTransport();
-
-// Add rate limiting (inbound only)
-transport = withRateLimit(transport, {
-  rules: defaultRateLimitRules(),
-});
-
-// Add logging
-transport = withLogger(transport);
-
-// Add message validation
-transport = withMessageValidator(transport, {
-  isAuthorized: async (message, type) => {
-    // Authorization logic
-    return true;
-  },
-});
-```
-
-### Bidirectional Sync
-
-Bidirectionally connect two transports:
-
-```typescript
-import { sync } from "teleportal/transports";
-
-const transportA = getTransportA();
-const transportB = getTransportB();
-
-// Messages from A go to B, and vice versa
-await sync(transportA, transportB);
-```
-
-### Fan-Out Broadcasting
-
-Broadcast messages to multiple clients:
-
-```typescript
+```ts
 import { createFanOutWriter } from "teleportal/transports";
 
 const fanOut = createFanOutWriter<Message>();
-
-// Create multiple readers (one per client)
-const client1Reader = fanOut.getReader();
-const client2Reader = fanOut.getReader();
-
-// Write once, all clients receive it
-fanOut.send(message);
+const a = fanOut.getReader();
+const b = fanOut.getReader();
+fanOut.send(message); // both a.source and b.source receive it
 ```
 
-## See Also
+## File transfer
 
-- [Protocol Documentation](../lib/protocol/README.md) - Message format and protocol details
-- [Providers Documentation](../providers/README.md) - High-level client API
-- [Storage Documentation](../storage/README.md) - Persistence layer
+File transfer lives at the Provider level as RPC handlers, not in transports.
+See the [File Protocol docs](../protocols/file/README.md). The rate limiter still
+recognizes file chunks (`isFileTransferMessage`) so they get their own budget.
+
+## See also
+
+- [Protocol](../lib/protocol/README.md) — message format and encoding
+- [Encryption protocol](../lib/protocol/encryption/README.md) — sidecars & envelopes
+- [Providers](../providers/README.md) — high-level client/connection API
+- [Storage](../storage/README.md) — persistence and `RateLimitStorage`
+- [`../lib/iter`](../lib/iter) — `Channel`, `batch`, broadcast primitives
+  </content>

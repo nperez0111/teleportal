@@ -79,6 +79,17 @@ describe("Gauge", () => {
     expect(gauge.getValue()).toBe(42);
   });
 
+  test("permits negative values (Prometheus gauges are signed)", () => {
+    // Gauges intentionally do NOT clamp at zero — a negative value is a valid
+    // (and diagnostically useful) signal of an inc/dec imbalance upstream, so
+    // this behavior must not be "fixed" by clamping here.
+    const gauge = new Gauge("test_gauge", "A test gauge");
+    gauge.dec();
+    expect(gauge.getValue()).toBe(-1);
+    gauge.set(-5);
+    expect(gauge.getValue()).toBe(-5);
+  });
+
   test("getValues returns all label-value pairs", () => {
     const gauge = new Gauge("test_gauge", "A test gauge", ["region"]);
     gauge.set(10, { region: "us" });
@@ -111,12 +122,27 @@ describe("Histogram", () => {
     histogram.observe(15);
 
     const output = histogram.toString();
+    // Buckets are cumulative: le="5" counts everything <= 5 (0.5 and 3), etc.
     expect(output).toContain('test_histogram_bucket{le="1"} 1');
     expect(output).toContain('test_histogram_bucket{le="5"} 2');
     expect(output).toContain('test_histogram_bucket{le="10"} 3');
     expect(output).toContain('test_histogram_bucket{le="+Inf"} 4');
     expect(output).toContain("test_histogram_count 4");
     expect(output).toContain("test_histogram_sum 25.5");
+  });
+
+  test("keeps separate series per label set", () => {
+    const histogram = new Histogram("op_duration", "Op duration", [1, 5], ["op"]);
+    histogram.observe({ op: "read" }, 0.5);
+    histogram.observe({ op: "read" }, 2);
+    histogram.observe({ op: "write" }, 3);
+
+    const output = histogram.toString();
+    expect(output).toContain('op_duration_bucket{op="read",le="1"} 1');
+    expect(output).toContain('op_duration_bucket{op="read",le="+Inf"} 2');
+    expect(output).toContain('op_duration_count{op="read"} 2');
+    expect(output).toContain('op_duration_count{op="write"} 1');
+    expect(output).toContain('op_duration_sum{op="write"} 3');
   });
 
   test("observes values with labels", () => {

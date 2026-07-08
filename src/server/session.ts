@@ -76,7 +76,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   #unsubscribe: Promise<() => Promise<void>> | null = null;
   #cleanupTimeoutId: ReturnType<typeof setTimeout> | undefined;
   #onCleanupScheduled: (session: Session<Context>) => void;
-  readonly #CLEANUP_DELAY_MS = 60_000;
+  readonly #cleanupDelayMs: number;
   #rpcHandlers: RpcHandlerRegistry;
   #server: Server<Context>;
   #presenceConfig: PresenceConfig<Context> | undefined;
@@ -131,6 +131,13 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     attributionConfig?: AttributionConfig<Context>;
     rpcHandlers?: RpcHandlerRegistry;
     server: Server<Context>;
+    /**
+     * How long to wait after the last client leaves before signalling that the
+     * session may be disposed. The delay lets clients reconnect without losing
+     * session state. Defaults to 60s. Primarily overridden in tests to exercise
+     * the cleanup-fires path deterministically.
+     */
+    cleanupDelayMs?: number;
   }) {
     super();
     this.documentId = args.documentId;
@@ -150,6 +157,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     this.#server = args.server;
     this.#dedupe = args.dedupe ?? new TtlDedupe();
     this.#onCleanupScheduled = args.onCleanupScheduled;
+    this.#cleanupDelayMs = args.cleanupDelayMs ?? 60_000;
   }
 
   public get storage(): DocumentStorage {
@@ -1397,7 +1405,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     this.#cleanupTimeoutId = setTimeout(() => {
       this.#cleanupTimeoutId = undefined;
       this.#onCleanupScheduled(this);
-    }, this.#CLEANUP_DELAY_MS);
+    }, this.#cleanupDelayMs);
   }
 
   #cancelCleanup() {

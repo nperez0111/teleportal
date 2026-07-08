@@ -444,6 +444,66 @@ describe("Session", () => {
       }, 10);
     });
 
+    it("should invoke onCleanupScheduled after the cleanup delay elapses", async () => {
+      let cleanupSession: Session<ServerContext> | undefined;
+      const testSession = new Session({
+        documentId: "test-doc-fires",
+        namespacedDocumentId: "test-doc-fires",
+        id: "session-fires",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: (s) => {
+          cleanupSession = s;
+        },
+        server: mockServer,
+        cleanupDelayMs: 1,
+      });
+
+      testSession.addClient(client1 as any);
+      testSession.removeClient("client-1");
+
+      // Event-driven wait: poll until the scheduled cleanup actually fires.
+      const start = Date.now();
+      while (cleanupSession === undefined && Date.now() - start < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      expect(cleanupSession).toBe(testSession);
+      await testSession[Symbol.asyncDispose]();
+    });
+
+    it("should not fire cleanup after the delay if a client reconnects within it", async () => {
+      let cleanupCalled = false;
+      const testSession = new Session({
+        documentId: "test-doc-reconnect-window",
+        namespacedDocumentId: "test-doc-reconnect-window",
+        id: "session-reconnect-window",
+        encrypted: false,
+        storage,
+        pubSub,
+        nodeId,
+        onCleanupScheduled: () => {
+          cleanupCalled = true;
+        },
+        server: mockServer,
+        cleanupDelayMs: 1,
+      });
+
+      testSession.addClient(client1 as any);
+      testSession.removeClient("client-1");
+      // Reconnect before the (1ms) delay is observed on the next tick.
+      testSession.addClient(client1 as any);
+
+      // Give the timer more than enough time to have fired had it not been
+      // cancelled by the reconnect.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(cleanupCalled).toBe(false);
+
+      await testSession[Symbol.asyncDispose]();
+    });
+
     it("should not schedule cleanup if clients remain", () => {
       let cleanupCalled = false;
       const testSession = new Session({

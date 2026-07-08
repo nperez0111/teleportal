@@ -144,4 +144,31 @@ describe("TieredRateLimitStorage", () => {
     expect(result).toBe(42);
     expect(backing.transactionCalls).toBe(1);
   });
+
+  it("swallows fire-and-forget backing setState failures without unhandled rejection", async () => {
+    // The backing write is fire-and-forget; if it rejects and the promise is
+    // left dangling, Bun/Node surface an unhandledRejection that can crash the
+    // process. setState must resolve (cache is authoritative) and the backing
+    // rejection must be caught.
+    const rejections: unknown[] = [];
+    const onUnhandled = (err: unknown) => rejections.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      backing.setState = async () => {
+        throw new Error("backing down");
+      };
+
+      // Must resolve (cache updated synchronously) despite the backing failure.
+      await tiered.setState("k1", makeState(3), 60_000);
+
+      // Cache still serves the value.
+      expect((await tiered.getState("k1"))?.tokens).toBe(3);
+
+      // Give the microtask/macrotask queue a chance to surface a rejection.
+      await new Promise((r) => setTimeout(r, 1));
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });

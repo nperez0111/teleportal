@@ -113,9 +113,8 @@ Transports compose as layers, following a pattern sometimes called the "onion mo
 Every middleware function follows the same signature: it takes a transport (or source/sink) and returns a new transport with the same interface plus the added behavior. This means middleware is stackable in any order:
 
 ```typescript
-import { withLogger } from "teleportal/transports/logger";
+import { withLogger, withMessageValidator } from "teleportal/transports";
 import { withRateLimit } from "teleportal/transports/rate-limiter";
-import { withMessageValidator } from "teleportal/transports/message-validator";
 
 // Start with the base transport
 let transport = getBaseTransport();
@@ -173,8 +172,7 @@ A middleware function wraps a transport's source, sink, or both. Here is a minim
 
 ```typescript
 import type { Transport, Message } from "teleportal";
-import { compose, filterMessages } from "teleportal/transports";
-import { withPassthroughSink } from "teleportal/transports/passthrough";
+import { compose, filterMessages, withPassthroughSink } from "teleportal/transports";
 
 function withCounter<
   Context extends Record<string, unknown>,
@@ -362,9 +360,13 @@ const mappedSource = mapMessages((msg: Message<MyContext>) => {
 Here is a realistic example of wrapping a WebRTC DataChannel as a Teleportal transport. The DataChannel sends and receives raw bytes, so we build a `BinaryTransport` first and then convert it to a `Transport` with `fromBinaryTransport`.
 
 ```typescript
-import { createChannel, compose, fromBinaryTransport } from "teleportal/transports";
-import { withLogger } from "teleportal/transports/logger";
-import { withMessageValidator } from "teleportal/transports/message-validator";
+import {
+  createChannel,
+  compose,
+  fromBinaryTransport,
+  withLogger,
+  withMessageValidator,
+} from "teleportal/transports";
 import type { BinaryTransport, BinaryMessage, Message } from "teleportal";
 
 type MyContext = { clientId: string; document: string };
@@ -435,7 +437,7 @@ Teleportal ships with several built-in middleware transports. Each follows the s
 Logs all messages read from and written to the transport to the console. Useful for debugging during development:
 
 ```typescript
-import { withLogger } from "teleportal/transports/logger";
+import { withLogger } from "teleportal/transports";
 
 const logged = withLogger(transport);
 ```
@@ -467,7 +469,7 @@ const limited = withRateLimit(transport, {
 Adds authorization checks to messages on read, write, or both. Unauthorized messages are silently filtered out:
 
 ```typescript
-import { withMessageValidator } from "teleportal/transports/message-validator";
+import { withMessageValidator } from "teleportal/transports";
 
 const validated = withMessageValidator(transport, {
   isAuthorized: async (message, type) => {
@@ -484,7 +486,7 @@ Separate `withMessageValidatorSource` and `withMessageValidatorSink` functions a
 A general-purpose interceptor for inspecting or filtering messages without modifying them. Return `false` from a callback to drop the message:
 
 ```typescript
-import { withPassthrough } from "teleportal/transports/passthrough";
+import { withPassthrough } from "teleportal/transports";
 
 const inspected = withPassthrough(transport, {
   onRead: (message) => {
@@ -504,7 +506,7 @@ Separate `withPassthroughSource` and `withPassthroughSink` functions are availab
 Add reliable delivery semantics through acknowledgment messages. `withAckSink` is used on the server side to automatically send ACK messages after processing. `withAckTrackingSink` is used on the client side to track sent messages and wait until all are acknowledged:
 
 ```typescript
-import { withAckSink, withAckTrackingSink } from "teleportal/transports/ack";
+import { withAckSink, withAckTrackingSink } from "teleportal/transports";
 
 // Server: auto-send ACKs after writing
 const serverSink = withAckSink(sink, {

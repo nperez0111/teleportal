@@ -6,13 +6,14 @@ import {
   SyncStep2Update,
   type AwarenessUpdateMessage,
   type Message,
+  type Sink,
   type StateVector,
   type Update,
   type VersionedUpdate,
   type VersionedSyncStep2Update,
 } from "teleportal";
 import { createChannel } from "../../lib/iter";
-import { noopTransport, withPassthrough } from ".";
+import { noopTransport, withPassthrough, withPassthroughSink } from ".";
 
 export function generateTestTransport(type: "doc" | "awareness"): {
   source: AsyncIterable<Message<{ test: string }>[]>;
@@ -254,5 +255,25 @@ describe("transport", () => {
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("preserves close() when wrapping a class-based sink", () => {
+    // A class instance carries `close` on its prototype, not as an own
+    // enumerable property, so a naive `{ ...sink }` spread would drop it.
+    let closed = false;
+    const proto = {
+      write(_message: Message<{ test: string }>) {},
+      close() {
+        closed = true;
+      },
+    };
+    // `sink` has no OWN `write`/`close`; they live on the prototype, exactly
+    // like a class instance. A `{ ...sink }` spread would drop them.
+    const sink: Sink<{ test: string }> = Object.create(proto);
+
+    const wrapped = withPassthroughSink(sink);
+    wrapped.close();
+
+    expect(closed).toBe(true);
   });
 });

@@ -195,7 +195,9 @@ function getSSEReaderEndpoint<Context extends ServerContext>({
 
 5. **Initial Document Subscription**: If `getInitialDocuments` is provided, automatically subscribes to the specified documents.
 
-6. **Connection Management**: When the request is aborted, automatically unsubscribes from PubSub and cleans up the connection.
+6. **Connection Management**: When the request is aborted (`req.signal`), the handler unsubscribes from PubSub **and** closes the SSE transport. Closing the transport clears the periodic-ping `setInterval` and ends the response `ReadableStream`, so no timer or consume loop leaks after a client disconnects. `server.createClient` also registers the abort signal and calls `disconnectClient` to remove the client from its sessions.
+
+The SSE stream's **first frame** is an `event:client-id` frame carrying the resolved client ID (the same value returned in the `x-teleportal-client-id` response header), so a client streaming the body — rather than using `EventSource` — learns which id to use for the paired `POST /sse` writer. The reader also emits periodic `event:ping` frames (every 5s) to keep the connection warm.
 
 **Example:**
 
@@ -557,7 +559,7 @@ The HTTP module includes comprehensive error handling:
 
 - **ACK Timeout**: Returns 504 Gateway Timeout if ACKs are not received within the timeout period (SSE writer endpoint).
 
-- **Request Abortion**: Automatically cleans up connections and unsubscribes from PubSub when requests are aborted.
+- **Request Abortion**: When a request is aborted, the SSE reader unsubscribes from PubSub and closes its transport (clearing the ping timer and ending the response stream); the SSE writer's ACK tracking is cancelled and any pending `waitForAcks()` rejects; the direct HTTP endpoint closes its response channel.
 
 - **Unknown Endpoints**: Delegates to the `fetch` fallback handler if provided, otherwise returns 404 Not Found for requests that don't match any endpoint.
 

@@ -202,4 +202,13 @@ describe("PostgresMilestoneStorage", () => {
       "Milestone not found",
     );
   });
+
+  it("getMilestones with lifecycleState 'active' includes never-deleted milestones (Bug 2)", async () => {
+    if (!available) return;
+    const doc = docId();
+    const id = await storage.createMilestone(makeCtx(doc, { name: "v1", createdAt: 1 }));
+
+    const active = await storage.getMilestones(doc, { lifecycleState: "active" });
+    expect(active.map((m) => m.id)).toContain(id);
+  });
 });

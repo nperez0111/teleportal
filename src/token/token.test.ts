@@ -91,18 +91,19 @@ describe("TokenManager", () => {
       expect(result.error).toBeDefined();
     });
 
-    // it("should reject a token with wrong audience", async () => {
-    //   const wrongTokenManager = createTokenManager({
-    //     secret: "test-secret-key-for-testing-only",
-    //     issuer: "test-issuer",
-    //   });
+    it("should reject a token with wrong audience", async () => {
+      const wrongTokenManager = createTokenManager({
+        secret: "test-secret-key-for-testing-only",
+        issuer: "test-issuer",
+        audience: "wrong-audience",
+      });
 
-    //   const token = await tokenManager.createAdminToken("user-123", "org-456");
-    //   const result = await wrongTokenManager.verifyToken(token);
+      const token = await tokenManager.createAdminToken("user-123", "org-456");
+      const result = await wrongTokenManager.verifyToken(token);
 
-    //   expect(result.valid).toBe(false);
-    //   expect(result.error).toBeDefined();
-    // });
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+    });
   });
 
   describe("hasDocumentPermission", () => {
@@ -322,27 +323,40 @@ describe("TokenManager", () => {
     });
   });
 
-  // describe("token expiration", () => {
-  //   it("should create tokens with expiration", async () => {
-  //     const token = await tokenManager.generateToken(
-  //       "user-123",
-  //       "org-456",
-  //       [{ pattern: "*", permissions: ["read"] }],
-  //       { expiresIn: 1 },
-  //     ); // 1 second expiration
+  describe("token expiration", () => {
+    it("sets exp on minted tokens and verifies while unexpired", async () => {
+      const token = await tokenManager.generateToken(
+        "user-123",
+        "org-456",
+        [{ pattern: "*", permissions: ["read"] }],
+        { expiresIn: 3600 },
+      );
+      const result = await tokenManager.verifyToken(token);
+      expect(result.valid).toBe(true);
+      expect(result.payload?.exp).toBeDefined();
+    });
 
-  //     const result = await tokenManager.verifyToken(token);
-  //     expect(result.valid).toBe(true);
-  //     expect(result.payload?.exp).toBeDefined();
+    it("rejects an already-expired token (no sleeping — exp set in the past)", async () => {
+      // Mint a token whose exp is already in the past via jose directly, so the
+      // test is instant and event-free rather than waiting on a real timeout.
+      const { SignJWT } = await import("jose");
+      const secret = new TextEncoder().encode("test-secret-key-for-testing-only");
+      const past = Math.floor(Date.now() / 1000) - 60;
+      const token = await new SignJWT({ userId: "u", room: "r" })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt(past - 60)
+        .setExpirationTime(past)
+        .setIssuer("test-issuer")
+        .setAudience("teleportal")
+        .sign(secret);
 
-  //     // Wait for token to expire
-  //     await new Promise((resolve) => setTimeout(resolve, 1100));
-
-  //     const expiredResult = await tokenManager.verifyToken(token);
-  //     expect(expiredResult.valid).toBe(false);
-  //     expect(expiredResult.error).toBeDefined();
-  //   });
-  // });
+      const result = await tokenManager.verifyToken(token);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBeDefined();
+      // jose surfaces expiry with an "exp" mention in the message.
+      expect(result.error).toContain("exp");
+    });
+  });
 
   describe("custom options", () => {
     it("should respect custom issuer and audience", async () => {
@@ -476,6 +490,29 @@ describe("TokenManager", () => {
         room: "room-1",
       };
       expect(tokenManager.getDocumentPermissions(payload, "any-doc")).toEqual([]);
+    });
+
+    it("documents the fail-open/fail-closed asymmetry for a missing policy", () => {
+      // SECURITY CONTRACT (see README gotcha #1): a token with no documentAccess
+      // grants ALL permissions via hasDocumentPermission (fail-open) but yields
+      // NO permissions via getDocumentPermissions (fail-closed). This asymmetry
+      // is intentional; changing it is a deliberate security decision.
+      const payload: TokenPayload = { userId: "user-1", room: "room-1" };
+      for (const perm of ["read", "write", "comment", "suggest", "admin"] as const) {
+        expect(tokenManager.hasDocumentPermission(payload, "any-doc", perm)).toBe(true);
+      }
+      expect(tokenManager.getDocumentPermissions(payload, "any-doc")).toEqual([]);
+    });
+
+    it("hasDocumentPermission ignores payload.room (caller must check it)", () => {
+      // The permission check is document-scoped only; room enforcement is the
+      // caller's responsibility (see check-permission.ts).
+      const payload: TokenPayload = {
+        userId: "user-1",
+        room: "room-1",
+        documentAccess: [{ pattern: "*", permissions: ["read"] }],
+      };
+      expect(tokenManager.hasDocumentPermission(payload, "doc-in-any-room", "read")).toBe(true);
     });
   });
 
@@ -615,6 +652,78 @@ describe("TokenManager", () => {
       const tampered = parts.join(".");
       const result = await tokenManager.verifyToken(tampered);
       expect(result.valid).toBe(false);
+    });
+
+    it("should only accept HS256, rejecting other HMAC algorithms (alg pinning)", async () => {
+      // A token minted with HS512 against the same secret must NOT verify, because
+      // the manager pins the accepted algorithm to HS256. Without pinning, jose
+      // would accept any HMAC algorithm the symmetric key supports.
+      const { SignJWT } = await import("jose");
+      const secret = new TextEncoder().encode("test-secret-key-for-testing-only");
+      const now = Math.floor(Date.now() / 1000);
+      const token = await new SignJWT({ userId: "u", room: "r" })
+        .setProtectedHeader({ alg: "HS512" })
+        .setIssuedAt(now)
+        .setExpirationTime(now + 3600)
+        .setIssuer("test-issuer")
+        .setAudience("teleportal")
+        .sign(secret);
+
+      const result = await tokenManager.verifyToken(token);
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  describe("pattern matching regex-metacharacter safety", () => {
+    // Wildcard patterns are compiled to a RegExp internally. Every character
+    // other than `*` must be treated LITERALLY; otherwise a pattern (which may
+    // originate from a document name or an exclusion rule) can inject regex
+    // syntax and either over-match (grant unintended access) or under-match
+    // (fail to exclude a document it was meant to deny).
+
+    async function payloadFor(pattern: string) {
+      const token = await tokenManager.createToken("u", "r", [{ pattern, permissions: ["read"] }]);
+      const result = await tokenManager.verifyToken(token);
+      return result.payload!;
+    }
+
+    it("treats parentheses/alternation as literal, not a regex group", async () => {
+      const payload = await payloadFor("a(b|c)*");
+      // Should ONLY match strings beginning with the literal "a(b|c)".
+      expect(tokenManager.hasDocumentPermission(payload, "a(b|c)xyz", "read")).toBe(true);
+      // These must NOT match — "(b|c)" is not an alternation.
+      expect(tokenManager.hasDocumentPermission(payload, "ab", "read")).toBe(false);
+      expect(tokenManager.hasDocumentPermission(payload, "ac", "read")).toBe(false);
+    });
+
+    it("treats character classes as literal, not a regex class", async () => {
+      const payload = await payloadFor("doc[1]*");
+      // Should ONLY match strings beginning with the literal "doc[1]".
+      expect(tokenManager.hasDocumentPermission(payload, "doc[1]file", "read")).toBe(true);
+      // Must NOT match — "[1]" is not a character class selecting "1".
+      expect(tokenManager.hasDocumentPermission(payload, "doc1file", "read")).toBe(false);
+    });
+
+    it("does not let regex metacharacters weaken an exclusion rule", async () => {
+      const token = await tokenManager.createToken("u", "r", [
+        { pattern: "*", permissions: ["read"] },
+        // Intended to exclude documents literally named like "logs[prod]/*"
+        { pattern: "!logs[prod]*", permissions: ["read"] },
+      ]);
+      const payload = (await tokenManager.verifyToken(token)).payload!;
+
+      // The literal document the rule targets must be excluded.
+      expect(tokenManager.hasDocumentPermission(payload, "logs[prod]/2024", "read")).toBe(false);
+      // A document that only matches if "[prod]" is a regex class must NOT be
+      // accidentally excluded (proves the class is literal, not interpreted).
+      expect(tokenManager.hasDocumentPermission(payload, "logsp/2024", "read")).toBe(true);
+    });
+
+    it("treats other metacharacters (+, ?, backslash, anchors) literally", async () => {
+      const payload = await payloadFor("a+b*");
+      expect(tokenManager.hasDocumentPermission(payload, "a+bc", "read")).toBe(true);
+      // "aaab" would match if "+" meant one-or-more "a".
+      expect(tokenManager.hasDocumentPermission(payload, "aaab", "read")).toBe(false);
     });
   });
 });

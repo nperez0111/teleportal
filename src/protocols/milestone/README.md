@@ -47,8 +47,27 @@ const server = new Server({
   rpcHandlers: {
     ...getMilestoneRpcHandlers(milestoneStorage, {
       triggers: [
-        { id: "every-100", type: "update-count", enabled: true, config: { updateCount: 100 } },
-        { id: "hourly", type: "time-based", enabled: true, config: { interval: 3600000 } },
+        {
+          id: "every-100",
+          type: "update-count",
+          enabled: true,
+          config: { updateCount: 100 },
+        },
+        {
+          id: "hourly",
+          type: "time-based",
+          enabled: true,
+          config: { interval: 3600000 },
+        },
+        {
+          id: "on-publish",
+          type: "event-based",
+          enabled: true,
+          config: {
+            event: "document-publish",
+            condition: (data) => data.final === true,
+          },
+        },
       ],
       onMilestoneCreated: (milestoneId, documentId) => {
         console.log(`Auto-milestone ${milestoneId} for ${documentId}`);
@@ -57,6 +76,25 @@ const server = new Server({
   },
 });
 ```
+
+**How triggers fire.** Trigger state is per session, per document. It is created lazily on the
+first `document-write` for a document, and cleaned up when the server's RPC handlers are disposed.
+
+| Trigger type   | Config                  | Fires when                                                                                                     |
+| -------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `update-count` | `{ updateCount: N }`    | A `document-write` brings the running update count to `>= N`. The count resets to 0 after each auto-milestone. |
+| `time-based`   | `{ interval: ms }`      | A `document-write` arrives at least `interval` ms after the last (auto-)milestone for that document.           |
+| `event-based`  | `{ event, condition? }` | The named session event fires and the optional `condition(data)` predicate returns truthy.                     |
+
+Time-based and update-count triggers are **evaluated on the document-write path only** — there is
+no background timer. An idle document never accumulates milestones; a time-based trigger only fires
+on the next write after its interval has elapsed. Trigger accounting (`updateCount` /
+`lastMilestoneTime`) is reset **synchronously** at the moment a trigger decides to fire, before the
+actual (asynchronous, fire-and-forget) milestone creation runs, so a burst of writes cannot spawn
+duplicate milestones from a single threshold crossing.
+
+Automatic milestones are attributed to `{ type: "system", id: "auto" }` and, on encrypted
+documents, store the document's existing content-encrypted payload verbatim.
 
 ## Client Integration
 

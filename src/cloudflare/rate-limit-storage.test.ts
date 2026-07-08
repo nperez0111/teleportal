@@ -28,11 +28,16 @@ describe("DurableObjectRateLimitStorage", () => {
   });
 
   it("expires state after its TTL (stamped expiry, no storage TTL)", async () => {
+    const fake = new FakeDOStorage();
+    storage = new DurableObjectRateLimitStorage(fake);
     await storage.setState("test-key", state, 1);
+    expect(fake.size).toBe(1);
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(await storage.getState("test-key")).toBeNull();
     expect(await storage.hasState("test-key")).toBe(false);
+    // Expired state is deleted lazily on read, not left to accumulate.
+    expect(fake.size).toBe(0);
   });
 
   it("deletes state", async () => {

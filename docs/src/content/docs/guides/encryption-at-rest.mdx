@@ -19,76 +19,46 @@ This guide covers **storage-level encryption at rest** -- encrypting all data th
 ## What it demonstrates
 
 - Encrypting data at the storage layer with a server-held key
-- Wrapping an unstorage driver so all values are encrypted before they hit disk/Redis/S3
+- Wrapping an unstorage driver with `createEncryptedDriver` so all values are encrypted before they hit disk/Redis/S3
 - Generating, importing, and rotating the server-side at-rest key
 - Keeping at-rest encryption independent of client-side content E2EE
 - Combining both layers for defense in depth
 
 ## How to encrypt storage at rest
 
-At-rest encryption is configured entirely on the server. Wrap your storage so every value is encrypted with a server-held AES-256-GCM key before it is written, and decrypted when read. Teleportal's `encryptUpdate` and `decryptUpdate` functions handle the crypto with a random 12-byte IV per write.
+At-rest encryption is a **driver-level** concern. `createEncryptedDriver` (from `teleportal/storage`) wraps any unstorage driver so every value is encrypted with a server-held AES-256-GCM key before it is written, and decrypted when read. It is built on a generic `TransformDriver`, and for each value it lib0-encodes, encrypts (via `encryptUpdate`, with a random 12-byte IV per write), then base64-stores the result.
+
+<Aside type="note">
+  Meta keys whose name ends in `$` pass through the transform **untransformed** (unencrypted). This
+  lets internal bookkeeping keys bypass encryption where needed.
+</Aside>
 
 ### Complete example with Redis
 
 ```typescript
 import { Server } from "teleportal/server";
-import { UnstorageDocumentStorage } from "teleportal/storage";
-import {
-  createEncryptionKey,
-  importEncryptionKey,
-  encryptUpdate,
-  decryptUpdate,
-} from "teleportal/encryption-key";
-import { createStorage, type Storage } from "unstorage";
+import { UnstorageDocumentStorage, createEncryptedDriver } from "teleportal/storage";
+import { generateEncryptionKey, importEncryptionKey } from "teleportal/encryption-key";
+import { createStorage } from "unstorage";
 import redisDriver from "unstorage/drivers/redis";
 
-// --- 1. Import or create the server-side at-rest key ---
+// --- 1. Import or create the server-side at-rest key (a raw CryptoKey) ---
 const AT_REST_KEY = process.env.AT_REST_KEY
   ? await importEncryptionKey(process.env.AT_REST_KEY)
-  : createEncryptionKey(); // only for dev -- persist this in production
+  : await generateEncryptionKey(); // only for dev -- persist this in production
 
-// --- 2. Build a wrapper that encrypts every value ---
-function withAtRestEncryption(inner: Storage, key: CryptoKey): Storage {
-  return {
-    ...inner,
-    async setItem(k: string, value: string, opts?: any) {
-      const plaintext = new TextEncoder().encode(value);
-      const ciphertext = await encryptUpdate(key, plaintext);
-      // Store as base64 so the underlying driver can handle it as a string
-      const encoded = btoa(String.fromCharCode(...ciphertext));
-      return inner.setItem(k, encoded, opts);
-    },
-    async getItem(k: string, opts?: any) {
-      const encoded = await inner.getItem(k, opts);
-      if (encoded === null || encoded === undefined) return null;
-      const raw = Uint8Array.from(atob(encoded as string), (c) => c.charCodeAt(0));
-      const plaintext = await decryptUpdate(key, raw);
-      return new TextDecoder().decode(plaintext);
-    },
-    async setItemRaw(k: string, value: any, opts?: any) {
-      const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
-      const ciphertext = await encryptUpdate(key, bytes);
-      return inner.setItemRaw!(k, ciphertext, opts);
-    },
-    async getItemRaw(k: string, opts?: any) {
-      const ciphertext = await inner.getItemRaw!(k, opts);
-      if (!ciphertext) return null;
-      return await decryptUpdate(key, new Uint8Array(ciphertext));
-    },
-  };
-}
-
-// --- 3. Create the storage stack ---
-const rawStorage = createStorage({
-  driver: redisDriver({
-    base: "teleportal:",
-    url: process.env.REDIS_URL ?? "redis://localhost:6379",
-  }),
+// --- 2. Wrap the underlying driver with encryption ---
+const encryptedStorage = createStorage({
+  driver: createEncryptedDriver(
+    redisDriver({
+      base: "teleportal:",
+      url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    }),
+    AT_REST_KEY,
+  ),
 });
 
-const encryptedStorage = withAtRestEncryption(rawStorage, AT_REST_KEY);
-
-// --- 4. Use the encrypted storage with the server ---
+// --- 3. Use the encrypted storage with the server ---
 const server = new Server({
   storage: async (ctx) => {
     return new UnstorageDocumentStorage(encryptedStorage, {
@@ -101,6 +71,8 @@ const server = new Server({
 
 Every value written to Redis is now AES-256-GCM encrypted with a unique IV. If an attacker accesses Redis directly, they see only ciphertext.
 
+The second argument to `createEncryptedDriver` can be a `CryptoKey`, a `Promise<CryptoKey>`, or a `(key: string) => CryptoKey | Promise<CryptoKey>` function if you want to vary the key per storage key.
+
 ## Key management
 
 The at-rest key is a symmetric AES-256-GCM key that the **server** holds. It is completely separate from the client-side content E2EE key that clients pass to `Provider.create`.
@@ -109,13 +81,13 @@ The at-rest key is a symmetric AES-256-GCM key that the **server** holds. It is 
 
 ```typescript
 import {
-  createEncryptionKey,
+  generateEncryptionKey,
   exportEncryptionKey,
   importEncryptionKey,
 } from "teleportal/encryption-key";
 
-// Generate a new key and export it as a JWK string for storage
-const key = createEncryptionKey();
+// Generate a new random key and export it as a JWK string for storage
+const key = await generateEncryptionKey();
 const keyString = await exportEncryptionKey(key);
 // Store keyString in a secrets manager or environment variable -- treat it as a secret.
 
@@ -158,7 +130,7 @@ This flag is **unrelated** to the at-rest encryption key used by the storage wra
 
 ## Combining with content E2EE
 
-For maximum security, use both layers together. No code changes are needed beyond what is shown above -- content E2EE is on by default, and the at-rest wrapper is transparent to `UnstorageDocumentStorage`.
+For maximum security, use both layers together. No code changes are needed beyond what is shown above -- content E2EE is on by default, and the encrypted driver is transparent to `UnstorageDocumentStorage`.
 
 On the **client**, `Provider.create` encrypts content before it leaves the browser:
 
@@ -173,7 +145,7 @@ const provider = await Provider.create({
 });
 ```
 
-On the **server**, use the `withAtRestEncryption` wrapper from the example above. With both layers active, document content is encrypted by the client before it leaves the browser, and then the server encrypts all persisted bytes (CRDT structure, metadata, encrypted sidecars) again before writing to storage. An attacker who compromises the storage backend sees only AES-256-GCM ciphertext. An attacker who compromises the server process sees encrypted content sidecars but never the plaintext content.
+On the **server**, use the `createEncryptedDriver` wrapper from the example above. With both layers active, document content is encrypted by the client before it leaves the browser, and then the server encrypts all persisted bytes (CRDT structure, metadata, encrypted sidecars) again before writing to storage. An attacker who compromises the storage backend sees only AES-256-GCM ciphertext. An attacker who compromises the server process sees encrypted content sidecars but never the plaintext content.
 
 ## Next Steps
 

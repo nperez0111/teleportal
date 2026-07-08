@@ -129,6 +129,11 @@ export function withAckTrackingSink<
   const messagesToAck = new Set<Promise<void>>();
   let unsubscribeAck: (() => Promise<void>) | null = null;
   let subscriptionReady = false;
+  // Set once the sink is torn down (abort or unsubscribe). Distinct from a
+  // per-message timeout: a timeout forgets just that message so later waits
+  // aren't poisoned, but a terminal teardown means every subsequent
+  // `waitForAcks()` should reject — the sink can no longer receive acks.
+  let terminalError: Error | null = null;
 
   const setupAckSubscription = async () => {
     if (unsubscribeAck) return;
@@ -153,9 +158,10 @@ export function withAckTrackingSink<
 
   if (abortSignal) {
     abortSignal.addEventListener("abort", () => {
+      terminalError = new Error("Request aborted");
       for (const pending of pendingAcks.values()) {
         clearTimeout(pending.timeout);
-        pending.reject(new Error("Request aborted"));
+        pending.reject(terminalError);
       }
       pendingAcks.clear();
       unsubscribeAck?.();
@@ -190,10 +196,15 @@ export function withAckTrackingSink<
           });
         });
         messagesToAck.add(ackPromise);
-        ackPromise.then(
-          () => messagesToAck.delete(ackPromise),
-          () => {},
-        );
+        // Drop the tracked promise once it settles — whether it resolved (ack
+        // received) or rejected (timeout/abort/unsubscribe). Leaving rejected
+        // promises in the set both leaks memory on long-lived connections and
+        // poisons every subsequent `waitForAcks()` (its `Promise.all` would
+        // re-observe the stale rejection). The `.catch` here also marks the
+        // rejection as handled so it never surfaces as an unhandled rejection;
+        // real waiters still observe it via `waitForAcks()`.
+        const forget = () => messagesToAck.delete(ackPromise);
+        ackPromise.then(forget, forget);
       }
 
       await sink.write(message);
@@ -203,12 +214,14 @@ export function withAckTrackingSink<
   return Object.assign(trackedSink, {
     waitForAcks: async () => {
       await subscriptionPromise;
+      if (terminalError) throw terminalError;
       await Promise.all(messagesToAck);
     },
     unsubscribe: async () => {
+      terminalError ??= new Error("Unsubscribed");
       for (const pending of pendingAcks.values()) {
         clearTimeout(pending.timeout);
-        pending.reject(new Error("Unsubscribed"));
+        pending.reject(terminalError);
       }
       pendingAcks.clear();
 

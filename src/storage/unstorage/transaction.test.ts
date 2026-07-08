@@ -82,6 +82,35 @@ describe("withTransaction", () => {
       expect(meta?.ttl).toBeLessThanOrEqual(Date.now());
     });
 
+    it("acquires a fresh lock on the second transaction for the same key", async () => {
+      // Regression: stale `ttl`/`lockId` from the previous cycle must not leak
+      // into the next acquisition. If the acquire write spreads the old meta
+      // over the new ttl/lockId, the second lock is born already-expired and
+      // its verification fails.
+      const key = "test-key-reacquire";
+      const ttl = 1000;
+
+      await withTransaction(storage, key, async () => "first", { ttl });
+
+      let observedLockId: unknown;
+      let observedTtl: number | undefined;
+      await withTransaction(
+        storage,
+        key,
+        async () => {
+          const meta = await storage.getMeta(key);
+          observedLockId = meta?.lockId;
+          observedTtl = meta?.ttl as number | undefined;
+          return "second";
+        },
+        { ttl },
+      );
+
+      // The in-callback lock must be live (a real, future ttl) and carry a lockId.
+      expect(observedLockId).toBeDefined();
+      expect(observedTtl).toBeGreaterThan(Date.now());
+    });
+
     it("should handle concurrent transactions", async () => {
       const key = "test-key-5";
       const executionOrder: string[] = [];
@@ -352,48 +381,59 @@ describe("withTransaction", () => {
 
   describe("lock safety", () => {
     it("should not release lock if TTL expired and another transaction acquired it", async () => {
+      // This test verifies the ownership check in `withTransaction`'s release
+      // path: when transaction A's TTL expires mid-callback and transaction B
+      // acquires the lock, A must NOT release B's lock when its callback
+      // finishes (it must see the lockId no longer matches its own).
+      //
+      // It is written to drive the interleaving DETERMINISTICALLY rather than
+      // racing two real timers (which made this test flaky): A is held inside
+      // its callback by a gate, we let A's TTL lapse using the real meta, then
+      // B acquires the lock, and only then is A released. No assertion depends
+      // on wall-clock ordering between the two callbacks.
       const key = "test-key-lock-safety";
-      const shortTTL = 5; // Very short TTL
-      const executionTime = 15; // Longer than TTL
+      const shortTTL = 1; // A's TTL — expires before A is released
 
       let transactionALockId: string | undefined;
       let transactionBLockId: string | undefined;
       let transactionAFinished = false;
-      let transactionBStarted = false;
 
-      // Start transaction A with short TTL that will expire during execution
+      // Gate that holds transaction A inside its callback until we release it.
+      let releaseA!: () => void;
+      const aGate = new Promise<void>((resolve) => {
+        releaseA = resolve;
+      });
+      let aInCallback!: () => void;
+      const aEnteredCallback = new Promise<void>((resolve) => {
+        aInCallback = resolve;
+      });
+
+      // Start transaction A. It acquires the lock, signals that it is inside
+      // the callback, then blocks on the gate (well past its 1ms TTL).
       const transactionA = withTransaction(
         storage,
         key,
         async () => {
-          // Capture the lockId that transaction A acquired
           const meta = await storage.getMeta(key);
           transactionALockId = meta?.lockId as string | undefined;
           expect(transactionALockId).toBeDefined();
-
-          // Take longer than the TTL to execute
-          await new Promise((resolve) => setTimeout(resolve, executionTime));
+          aInCallback();
+          await aGate;
           transactionAFinished = true;
           return "transaction-a";
         },
         { ttl: shortTTL, baseDelay: 1 },
       );
 
-      // Poll until transaction A has acquired the lock
-      {
-        const deadline = Date.now() + 5000;
-        while (!transactionALockId) {
-          if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 1));
-        }
-      }
+      // Wait until A is actually inside its callback holding the lock.
+      await aEnteredCallback;
 
-      // Verify transaction A has the lock
+      // Verify A holds the lock.
       const metaBeforeTTL = await storage.getMeta(key);
       expect(metaBeforeTTL?.lockId).toBe(transactionALockId);
-      expect(metaBeforeTTL?.ttl).toBeGreaterThan(Date.now());
 
-      // Poll until transaction A's TTL expires
+      // Poll the real meta until A's TTL has lapsed (TTL is 1ms, so this is a
+      // handful of microtasks, not a fixed sleep).
       {
         const deadline = Date.now() + 5000;
         while (((await storage.getMeta(key))?.ttl ?? 0) > Date.now()) {
@@ -401,63 +441,55 @@ describe("withTransaction", () => {
           await new Promise((resolve) => setTimeout(resolve, 1));
         }
       }
-
-      // Verify transaction A's lock has expired
       const metaAfterTTL = await storage.getMeta(key);
       expect(metaAfterTTL?.ttl).toBeLessThanOrEqual(Date.now());
 
-      // Start transaction B - it should acquire the lock since A's TTL expired
+      // Transaction B now acquires the lock (deterministic: A's TTL is expired
+      // and A is parked on the gate). B is likewise held inside its callback so
+      // it still owns the lock when we later release A.
+      let releaseB!: () => void;
+      const bGate = new Promise<void>((resolve) => {
+        releaseB = resolve;
+      });
+      let bInCallback!: () => void;
+      const bEnteredCallback = new Promise<void>((resolve) => {
+        bInCallback = resolve;
+      });
       const transactionB = withTransaction(
         storage,
         key,
         async () => {
-          transactionBStarted = true;
-          // Capture the lockId that transaction B acquired
           const meta = await storage.getMeta(key);
           transactionBLockId = meta?.lockId as string | undefined;
           expect(transactionBLockId).toBeDefined();
-          // Verify we have a different lockId than transaction A
           expect(transactionBLockId).not.toBe(transactionALockId);
-          // Wait longer than transaction A's remaining execution time to ensure B is still running when A finishes
-          await new Promise((resolve) => setTimeout(resolve, executionTime + 5));
+          bInCallback();
+          await bGate;
           return "transaction-b";
         },
         { ttl: 1000, baseDelay: 1 },
       );
 
-      // Poll until transaction B has started and acquired the lock
-      {
-        const deadline = Date.now() + 5000;
-        while (!transactionBStarted) {
-          if (Date.now() > deadline) throw new Error("Polling timed out");
-          await new Promise((resolve) => setTimeout(resolve, 1));
-        }
-      }
-      expect(transactionBStarted).toBeTrue();
+      // Wait until B is inside its callback holding the lock.
+      await bEnteredCallback;
       expect(transactionBLockId).toBeDefined();
       expect(transactionBLockId).not.toBe(transactionALockId);
 
-      // Small delay to ensure lock is properly set
-      await new Promise((resolve) => setTimeout(resolve, 1));
-
-      // Wait for transaction A to finish (it should check lockId and not release B's lock)
+      // Release A. Its callback finishes and it runs its release path, which
+      // must observe that the current lockId is B's, not its own, and leave the
+      // lock intact.
+      releaseA();
       await transactionA;
       expect(transactionAFinished).toBe(true);
 
-      // Verify transaction B still has the lock (transaction A should not have released it)
-      // This is the key test: transaction A should have checked lockId and seen it doesn't match,
-      // so it shouldn't have released transaction B's lock
+      // The critical assertion: B still holds the lock — A did not release it.
       const metaAfterAFinishes = await storage.getMeta(key);
-      // The critical assertion: lockId should still match transaction B's lockId
-      // This proves transaction A checked the lockId, saw it didn't match its own,
-      // and therefore did NOT release transaction B's lock
       expect(metaAfterAFinishes?.lockId).toBe(transactionBLockId);
 
-      // Wait for transaction B to finish
+      // Let B finish and verify it releases its own lock.
+      releaseB();
       const resultB = await transactionB;
       expect(resultB).toBe("transaction-b");
-
-      // Verify transaction B released its own lock
       const finalMeta = await storage.getMeta(key);
       expect(finalMeta?.ttl).toBeLessThanOrEqual(Date.now());
     });

@@ -112,6 +112,67 @@ const fileId = await provider.rpc.file.upload(myFile);
 const file = await provider.rpc.file.download(fileId);
 ```
 
+### Per-operation options
+
+Both `upload` and `download` accept an options object that overrides the extension defaults:
+
+```typescript
+// Upload with a one-off key and no caching for this file.
+await provider.rpc.file.upload(myFile, {
+  encryptionKey: otherKey,
+  cache: false,
+});
+
+// Download with a custom timeout (default 60_000 ms) and cache bypass.
+await provider.rpc.file.download(fileId, { timeout: 10_000, cache: false });
+```
+
+| Option          | `upload` | `download` | Meaning                                                                                                                     |
+| --------------- | :------: | :--------: | --------------------------------------------------------------------------------------------------------------------------- |
+| `encryptionKey` |    ✓     |     ✓      | Override the extension's default key for this operation.                                                                    |
+| `cache`         |    ✓     |     ✓      | `false` bypasses the persistent cache for this operation.                                                                   |
+| `timeout`       |          |     ✓      | Download timeout in ms (default `60000`). Upload has no timeout — completion is ACK-driven with retransmission (see below). |
+
+### Caching
+
+Pass a `FileCache` (e.g. an IndexedDB-backed one) to persist chunks across reloads:
+
+```typescript
+import { createFileRpc } from "teleportal/protocols/file";
+import { IdbFileCache } from "teleportal/storage";
+
+const provider = await Provider.create({
+  url: "wss://...",
+  document: "my-doc",
+  encryptionKey,
+  rpc: {
+    file: () => createFileRpc({ encryptionKey, cache: new IdbFileCache() }),
+  },
+});
+```
+
+- **Uploads** are cached optimistically (keyed by `contentId`) as soon as the server accepts the request — before ACKs arrive.
+- **Downloads** are served straight from the cache when every chunk is present (no server round-trip); a partial/incomplete cache entry falls through to the server. Chunks are cached in their **verified ciphertext** form (before decryption); metadata is written once the whole file completes.
+
+## Retransmission & Rate Limiting
+
+Uploads are ACK-driven: the client resolves once every streamed chunk is positively ACKed. The server can **nack** a chunk (ACK with `retryAfter`) to shed load; the client then runs a single background retransmit loop with exponential backoff (starting at `max(retryAfter, 200)` ms, doubling up to 10 s, for up to 8 rounds). The loop resends only still-unacked chunks and resolves when they clear, or rejects if chunks remain unacknowledged after the final round. Once every chunk has been streamed, the whole-file `preparedChunks` buffer is released and retransmission draws from the shrinking `unackedChunks` map, so peak upload memory trends toward the outstanding (unacked) bytes rather than a full extra copy of the file.
+
+## Progress Events
+
+The client handler emits tiny, numbers-only progress snapshots (chunk payloads deliberately stay off the message-event pipeline). Subscribe via `onFileTransferProgress`:
+
+```typescript
+import { onFileTransferProgress } from "teleportal/protocols/file";
+
+const unsubscribe = onFileTransferProgress((p) => {
+  // p: { fileId, document, direction, chunksTransferred, totalChunks?, bytesTransferred, status, error? }
+  console.log(`${p.direction} ${p.fileId}: ${p.chunksTransferred}/${p.totalChunks} (${p.status})`);
+});
+```
+
+`status` is `"active"`, `"complete"`, or `"error"`. `bytesTransferred` is an approximate plaintext byte count.
+
 ## Contract
 
 The protocol contract is defined in `methods.ts`:

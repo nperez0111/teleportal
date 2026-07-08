@@ -3,6 +3,8 @@ title: Authentication
 description: Why authentication matters in collaborative editing and how Teleportal secures document access
 ---
 
+import { Aside } from "@astrojs/starlight/components";
+
 In a collaborative editing system, authentication is not just about knowing who a user is — it determines what documents they can access, what operations they can perform, and how their actions are attributed. Unlike a traditional web app where a session cookie gates access to pages, a sync server must authorize every individual message: each keystroke, cursor move, or file upload passes through a permission check.
 
 Teleportal provides two approaches: a built-in JWT token system with IAM-like document access patterns, or a bring-your-own-auth hook for integrating with your existing identity provider.
@@ -34,14 +36,26 @@ The `checkPermission` hook runs before every message is processed. It receives t
 ```typescript
 const server = new Server({
   storage: async (ctx) => documentStorage,
-  checkPermission: async ({ context, documentId, fileId, message, type }) => {
-    // Implement any authorization logic you need
-    return await yourAuthService.canAccess(context.userId, documentId, type);
+  checkPermission: async ({ context, documentId, fileId, message, rpcMethod }) => {
+    // Derive read/write intent from the MESSAGE, not the `type` argument.
+    // (For inbound client messages `type` is always "write" — see the caveat below.)
+    const isWrite =
+      message.type === "doc" &&
+      (message.payload.type === "sync-step-2" || message.payload.type === "update");
+    return await yourAuthService.canAccess(context.userId, documentId, isWrite ? "write" : "read");
   },
 });
 ```
 
 This two-hook design separates identity verification (once, at connection time) from authorization (continuously, per message).
+
+<Aside type="caution" title="`type` is always `write` for inbound messages">
+  The transport-level validator authorizes **both** the read (source) and write (sink) directions
+  using the literal `"write"` — it does not compute per-message read/write intent. A custom
+  `checkPermission` must **not** rely on the `type` argument to distinguish reads from writes;
+  derive the real intent from the message itself (payload type for `doc`, method name for `rpc`),
+  exactly as the built-in `checkPermissionWithTokenManager` does.
+</Aside>
 
 ## Built-in JWT Token System
 
@@ -64,20 +78,29 @@ Each token contains:
 {
   userId: string;           // User identifier
   room: string;             // Room/organization identifier
-  documentAccess: [         // Document access patterns
+  documentAccess?: [        // Document access patterns (OPTIONAL — see gotcha below)
     {
-      pattern: string;      // Document pattern (supports wildcards)
+      pattern: string;      // Document pattern (`*` is the only wildcard)
       permissions: Permission[];
     }
   ];
-  exp?: number;             // Expiration time (Unix timestamp)
+  exp?: number;             // Expiration time (Unix timestamp) — set + enforced by verifyToken
   iat?: number;             // Issued at time (Unix timestamp)
-  iss?: string;             // Issuer
-  aud?: string;              // Audience (default: "teleportal")
+  iss?: string;             // Issuer — set + enforced
+  aud?: string;             // Audience (default: "teleportal") — set + enforced
 }
 ```
 
 The `room` field scopes the token to a single room or organization, preventing a token issued for one tenant from being used in another.
+
+<Aside type="danger" title="Fail-open when documentAccess is absent">
+  `documentAccess` is **optional**, and `hasDocumentPermission` **fails open**: a token minted
+  _without_ a `documentAccess` claim grants **every** permission on **every** document in its room —
+  effectively a room-admin token. This is deliberate ("an unrestricted, room-scoped token") but is a
+  footgun. Always attach a `documentAccess` policy (or use `createAdminToken` explicitly) unless you
+  intend room-wide access. Note the asymmetry: `getDocumentPermissions` fails **closed** (returns
+  `[]`) for the same missing claim.
+</Aside>
 
 ### Permission Types
 
@@ -124,6 +147,8 @@ if (result.valid && result.payload) {
 ## Document Pattern Matching
 
 The permission system uses pattern matching to map tokens to documents, similar to IAM policy resources. This avoids needing to enumerate every document in the token.
+
+`*` is the **only** wildcard — it matches any run of characters (including none). **Every other character is matched literally.** Patterns are compiled to an anchored `RegExp` with all regex metacharacters escaped, so a pattern like `logs[prod]*` matches the literal text `logs[prod]…` and is never treated as a regex character class. This escaping is a security boundary: neither patterns nor document names can inject regex syntax.
 
 ### Exact Match
 
@@ -260,12 +285,14 @@ const handlers = getWebsocketHandlers({
 
 ## Security Considerations
 
-1. **Use strong secrets**: Generate cryptographically secure random secrets for signing tokens
-2. **Set appropriate expiration**: Short-lived tokens limit the window of compromise. Prefer tokens that expire in minutes to hours, not days
-3. **Validate room access**: Always verify that the token's `room` claim matches the room being accessed
-4. **Check permissions on every message**: The `checkPermission` hook runs per message by design — do not cache authorization results, as tokens may have been revoked
-5. **Use HTTPS/WSS**: Always use secure connections in production to prevent token interception
-6. **Rotate secrets**: Regularly rotate your JWT signing secrets
+1. **Use strong secrets (≥256 bits)**: Generate cryptographically secure random secrets for signing tokens. `jose` does not enforce a minimum HMAC key length — that is on you.
+2. **Algorithm is pinned to HS256**: Tokens are always signed and verified with **HS256** (symmetric HMAC-SHA-256). `verifyToken` pins `algorithms: ["HS256"]`, so HS384/HS512 tokens and unsecured `alg: "none"` tokens are rejected.
+3. **Always attach a `documentAccess` policy**: A token minted without one fails **open** and grants room-wide admin access (see the danger callout above). Use `createAdminToken` only when you actually mean room-wide access.
+4. **Set appropriate expiration**: Short-lived tokens limit the window of compromise. Prefer tokens that expire in minutes to hours, not days.
+5. **Validate room access**: `hasDocumentPermission` ignores `payload.room` — you must compare the token's `room` claim to the connection's room yourself.
+6. **Check permissions on every message**: The `checkPermission` hook runs per message by design — do not cache authorization results, as tokens may have been revoked. Remember its `type` argument is always `"write"`; derive read/write intent from the message.
+7. **Use HTTPS/WSS**: Always use secure connections in production to prevent token interception.
+8. **Rotate secrets**: Regularly rotate your JWT signing secrets.
 
 ## Next Steps
 

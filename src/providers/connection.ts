@@ -112,6 +112,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
   #token?: string;
   #tokenOptions?: TokenOptions;
   #tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  #tokenRefreshInProgress = false;
 
   // Connection intent
   #connectionIntent: "auto" | "manual" | "destroyed" = "auto";
@@ -223,11 +224,18 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     this.#token = token?.token;
 
     const factor = reconnectBackoffFactor;
-    const maxExponent =
+    // Derive the exponent cap from maxBackoffTime, but guard the arithmetic:
+    // initialReconnectDelay 0 makes the ratio Infinity (→ non-integer exponent
+    // that ExponentialBackoff rejects). Fall back to an uncapped exponent when
+    // the computation isn't a finite non-negative integer — with base 0 the
+    // delay stays 0 regardless, so reconnects simply fire without a base delay.
+    const rawMaxExponent =
       factor > 1
         ? Math.floor(Math.log(maxBackoffTime / initialReconnectDelay) / Math.log(factor))
         : 0;
-    this.#backoff = new ExponentialBackoff(initialReconnectDelay, Math.max(0, maxExponent), factor);
+    const maxExponent =
+      Number.isFinite(rawMaxExponent) && rawMaxExponent >= 0 ? rawMaxExponent : undefined;
+    this.#backoff = new ExponentialBackoff(initialReconnectDelay, maxExponent, factor);
     this.#maxReconnectAttempts = maxReconnectAttempts;
     this.#reconnectDelayJitter = Math.max(0, reconnectDelayJitter);
     this.#maxBufferedMessages =
@@ -1226,6 +1234,13 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
 
   async #doTokenRefresh(reason: "scheduled" | "reactive") {
     if (!this.#tokenOptions?.onTokenExpired || !this.#token) return;
+    // Coalesce concurrent refreshes. The reactive path fires once per
+    // auth-denied message, and the server can deny a whole burst of buffered
+    // messages at once — without this guard each denial spawns its own
+    // onTokenExpired call (hammering the auth server) and races the others'
+    // reconnect. A scheduled refresh can likewise overlap a reactive one.
+    if (this.#tokenRefreshInProgress) return;
+    this.#tokenRefreshInProgress = true;
 
     try {
       const newToken = await this.#tokenOptions.onTokenExpired(this.#token);
@@ -1245,6 +1260,8 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
         type: "errored",
         error,
       });
+    } finally {
+      this.#tokenRefreshInProgress = false;
     }
   }
 

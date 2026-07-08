@@ -14,6 +14,7 @@ Teleportal supports file uploads and downloads alongside document sync, using ch
 - Uploading and downloading files from the client
 - Integrity verification via Merkle proofs
 - Encrypted file transfers
+- Persistent chunk caching, retransmission, and progress events
 
 ## Server Setup
 
@@ -116,11 +117,17 @@ input.addEventListener("change", async () => {
 
 ### Downloading a File
 
-Retrieve a file by its ID. The returned object contains the file data and metadata:
+Retrieve a file by its ID. `download()` returns a native `File` object (decrypted client-side when encryption is enabled):
 
 ```typescript
 const file = await provider.rpc.file.download(fileId);
-// file contains the downloaded data, filename, size, mimeType, etc.
+// file is a File: file.name, file.size, file.type, await file.arrayBuffer(), etc.
+```
+
+`download()` accepts an optional second argument to override the default per-operation behavior -- `{ timeout }` (download timeout in ms, default `60000`), `{ encryptionKey }` to override the extension's key, and `{ cache: false }` to bypass the persistent cache:
+
+```typescript
+const file = await provider.rpc.file.download(fileId, { timeout: 10_000, cache: false });
 ```
 
 ### Error Handling
@@ -161,9 +168,9 @@ Files are split into chunks (sized by the server, default 1MB) and transferred o
 
 ### Merkle Tree Verification
 
-Every file is content-addressed using a Merkle tree built from its chunks. On download, each chunk includes a Merkle proof that the client verifies against the root hash. This guarantees that no chunk has been tampered with or corrupted in transit or at rest.
+Every file is content-addressed using a Merkle tree built from its chunks. The tree hashes the **ciphertext** chunks (for encrypted files), so on download the client verifies each chunk's Merkle proof against the root hash **before decrypting it** -- verification and decryption run concurrently, but a chunk that fails its proof is rejected without its plaintext ever being trusted. This guarantees that no chunk has been tampered with or corrupted in transit or at rest.
 
-On upload, the server rebuilds the Merkle tree from the received chunks and derives the authoritative content ID. The download path is the integrity boundary where proofs are checked.
+On upload, the server rebuilds the Merkle tree from the received chunks and derives the authoritative content ID (the upload stream itself omits per-chunk proofs -- the server recomputes and verifies the root at completion). The download path is the integrity boundary where per-chunk proofs are checked.
 
 <Aside type="tip">
   The maximum supported file size is 1GB. For encrypted files, each plaintext chunk is slightly
@@ -173,6 +180,45 @@ On upload, the server rebuilds the Merkle tree from the received chunks and deri
 ### Encrypted File Transfers
 
 When you pass an `encryptionKey` to `createFileRpc`, files are encrypted client-side before upload and decrypted client-side after download, using the same AES-256-GCM key that protects the document. The server never sees plaintext file content.
+
+### Caching
+
+Pass a `FileCache` (such as the IndexedDB-backed `IdbFileCache`) to persist chunks across reloads:
+
+```typescript
+import { createFileRpc } from "teleportal/protocols/file";
+import { IdbFileCache } from "teleportal/storage";
+
+const provider = await Provider.create({
+  url: "wss://example.com/sync",
+  document: "my-doc",
+  encryptionKey,
+  rpc: {
+    file: () => createFileRpc({ encryptionKey, cache: new IdbFileCache() }),
+  },
+});
+```
+
+Uploads are cached optimistically (keyed by content ID) as soon as the server accepts the request. Downloads are served straight from the cache when every chunk is present -- with no server round-trip -- while a partial cache entry falls through to the server. Chunks are cached in their verified ciphertext form (before decryption). Pass `{ cache: false }` to `upload()` or `download()` to bypass the cache for a single operation.
+
+### Retransmission
+
+Uploads are ACK-driven: the client resolves once every streamed chunk is positively acknowledged. The server can **nack** a chunk (ACK with `retryAfter`) to shed load, and the client runs a single background retransmit loop with exponential backoff (starting at `max(retryAfter, 200)`ms, doubling up to 10s, for up to 8 rounds), resending only still-unacked chunks. File chunks also get their own rate-limit budget on the server (they are recognized as file-transfer messages).
+
+### Progress Events
+
+Subscribe to lightweight, numbers-only progress snapshots via `onFileTransferProgress`:
+
+```typescript
+import { onFileTransferProgress } from "teleportal/protocols/file";
+
+const unsubscribe = onFileTransferProgress((p) => {
+  // p: { fileId, document, direction, chunksTransferred, totalChunks?, bytesTransferred, status, error? }
+  console.log(`${p.direction} ${p.fileId}: ${p.chunksTransferred}/${p.totalChunks} (${p.status})`);
+});
+```
+
+`status` is `"active"`, `"complete"`, or `"error"`; `bytesTransferred` is an approximate plaintext byte count.
 
 ## Next Steps
 

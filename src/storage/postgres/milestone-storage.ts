@@ -156,7 +156,11 @@ export class PostgresMilestoneStorage implements MilestoneStorage {
     }
 
     if (options?.lifecycleState) {
-      milestones = milestones.filter((m) => m.lifecycleState === options.lifecycleState);
+      // Rows insert lifecycle_state 'active' explicitly, but a NULL/undefined
+      // is treated as "active" for parity with the other adapters.
+      milestones = milestones.filter(
+        (m) => (m.lifecycleState ?? "active") === options.lifecycleState,
+      );
     }
 
     return milestones;

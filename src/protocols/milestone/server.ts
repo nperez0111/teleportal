@@ -5,12 +5,10 @@ import type { Session } from "../../server/session";
 import type { ServerContext } from "teleportal";
 import { milestoneProtocol } from "./methods";
 
-type Timer = ReturnType<typeof setTimeout>;
-
 interface MilestoneTriggerState {
   lastMilestoneTime: number;
   updateCount: number;
-  triggerTimers: Map<string, Timer>;
+  /** Unsubscribe callbacks for event-based trigger listeners. */
   unsubscribers: (() => void)[];
 }
 
@@ -19,7 +17,6 @@ async function createAutomaticMilestone(
   documentId: string,
   trigger: MilestoneTrigger,
   milestoneStorage: MilestoneStorage,
-  state: MilestoneTriggerState,
   onMilestoneCreated?: (milestoneId: string, docId: string) => void,
 ): Promise<void> {
   try {
@@ -45,8 +42,10 @@ async function createAutomaticMilestone(
       createdBy: { type: "system", id: "auto" },
     });
 
-    state.lastMilestoneTime = createdAt;
-    state.updateCount = 0;
+    // Trigger accounting (updateCount / lastMilestoneTime) is reset
+    // synchronously at the decision point on the document-write path, so this
+    // fire-and-forget helper deliberately does not touch it — doing so here
+    // would race with, and discard, writes that arrived while it was in flight.
 
     await session.storage.transaction(documentId, async () => {
       const metadata = await session.storage.getDocumentMetadata(documentId);
@@ -283,7 +282,6 @@ export function getMilestoneRpcHandlers(
               state = {
                 lastMilestoneTime: Date.now(),
                 updateCount: 0,
-                triggerTimers: new Map(),
                 unsubscribers: [],
               };
               stateMap.set(documentId, state);
@@ -291,19 +289,13 @@ export function getMilestoneRpcHandlers(
               for (const trigger of triggers) {
                 if (!trigger.enabled) continue;
 
-                if (trigger.type === "time-based") {
-                  const timer = setInterval(async () => {
-                    await createAutomaticMilestone(
-                      session,
-                      documentId,
-                      trigger,
-                      milestoneStorage,
-                      state!,
-                      onMilestoneCreated,
-                    );
-                  }, trigger.config.interval);
-                  state!.triggerTimers.set(trigger.id, timer);
-                } else if (trigger.type === "event-based") {
+                // Time-based and update-count triggers are evaluated on the
+                // document-write path below. Only event-based triggers need a
+                // subscription set up here. (A time-based trigger must NOT get a
+                // self-firing setInterval: it would double-count against the
+                // write-path check and keep creating milestones while the
+                // document is idle.)
+                if (trigger.type === "event-based") {
                   const handler = async (eventData: any) => {
                     try {
                       if (trigger.config.condition && !trigger.config.condition(eventData)) {
@@ -314,7 +306,6 @@ export function getMilestoneRpcHandlers(
                         documentId,
                         trigger,
                         milestoneStorage,
-                        state!,
                         onMilestoneCreated,
                       );
                     } catch (error) {
@@ -344,24 +335,33 @@ export function getMilestoneRpcHandlers(
               if (trigger.type === "update-count") {
                 const config = trigger.config as { updateCount: number };
                 if (state.updateCount >= config.updateCount) {
+                  // Reset the accounting synchronously, BEFORE the async
+                  // creation. createAutomaticMilestone is fire-and-forget, so
+                  // without this every subsequent write while it is in flight
+                  // would still see updateCount >= threshold and spawn a
+                  // duplicate milestone.
+                  state.updateCount = 0;
+                  state.lastMilestoneTime = Date.now();
                   void createAutomaticMilestone(
                     session,
                     documentId,
                     trigger,
                     milestoneStorage,
-                    state,
                     onMilestoneCreated,
                   );
                 }
               } else if (trigger.type === "time-based") {
                 const config = trigger.config as { interval: number };
                 if (Date.now() - state.lastMilestoneTime >= config.interval) {
+                  // See note above: reset synchronously so concurrent writes
+                  // don't each re-fire before the async create resets the clock.
+                  state.lastMilestoneTime = Date.now();
+                  state.updateCount = 0;
                   void createAutomaticMilestone(
                     session,
                     documentId,
                     trigger,
                     milestoneStorage,
-                    state,
                     onMilestoneCreated,
                   );
                 }
@@ -384,9 +384,6 @@ export function getMilestoneRpcHandlers(
             const stateMap = sessionStates.get(session);
             if (stateMap) {
               for (const state of stateMap.values()) {
-                for (const timer of state.triggerTimers.values()) {
-                  clearInterval(timer);
-                }
                 for (const unsub of state.unsubscribers) {
                   unsub();
                 }

@@ -272,5 +272,44 @@ describe("Agent", () => {
 
       await result[Symbol.asyncDispose]();
     }, 15000);
+
+    it("rejects when document is missing", async () => {
+      await expect(
+        agent.createAgent({
+          document: "",
+          context: { clientId: "test-client", userId: "test-user", room: "" },
+          encrypted: false,
+        }),
+      ).rejects.toThrow("Document is required");
+    });
+
+    it("disconnects the client and destroys the ydoc when setup fails after the client is created", async () => {
+      // Force a failure AFTER createClient has registered the client and
+      // spawned its background consume loop. Without cleanup this leaks the
+      // client (loop keeps running) and the transport ydoc.
+      const originalGetOrOpen = server.getOrOpenSession.bind(server);
+      let calls = 0;
+      server.getOrOpenSession = (async () => {
+        calls++;
+        throw new Error("boom: session open failed");
+      }) as typeof server.getOrOpenSession;
+
+      const disconnected: string[] = [];
+      server.on("client-disconnect", (data) => disconnected.push(data.clientId));
+
+      await expect(
+        agent.createAgent({
+          document: "leak-doc",
+          context: { clientId: "leak-client", userId: "u", room: "r" },
+          encrypted: false,
+        }),
+      ).rejects.toThrow("boom: session open failed");
+
+      expect(calls).toBe(1);
+      // The client that was created must be torn down on the error path.
+      expect(disconnected).toContain("leak-client");
+
+      server.getOrOpenSession = originalGetOrOpen;
+    });
   });
 });

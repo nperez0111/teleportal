@@ -34,6 +34,38 @@ function compactAttributionMaps(maps: EncodedContentMap[]): EncodedContentMap {
 }
 
 /**
+ * Choose which dirty documents to persist in a single sweep.
+ *
+ * Two-tier priority:
+ * 1. **Aged docs** — dirty for at least `maxDirtyAgeMs` — are ALWAYS selected,
+ *    even if that exceeds `persistBatchSize`. This is the durability guarantee:
+ *    a document can never stay unpersisted past its max dirty age just because
+ *    the queue is long.
+ * 2. **Young docs** fill whatever budget remains up to `persistBatchSize`, so
+ *    steady-state churn still drains without unbounded per-sweep work.
+ *
+ * Exported for direct unit testing of the selection policy.
+ */
+export function selectDocumentsToPersist(
+  dirty: Iterable<[string, number]>,
+  now: number,
+  maxDirtyAgeMs: number,
+  persistBatchSize: number,
+): string[] {
+  const aged: string[] = [];
+  const young: string[] = [];
+  for (const [key, dirtyTime] of dirty) {
+    if (now - dirtyTime >= maxDirtyAgeMs) {
+      aged.push(key);
+    } else {
+      young.push(key);
+    }
+  }
+  const budget = Math.max(0, persistBatchSize - aged.length);
+  return [...aged, ...young.slice(0, budget)];
+}
+
+/**
  * Composes two {@link AbstractDocumentStorage} instances into a two-tier
  * storage system following the yhub pattern. Merge-strategy-agnostic — the
  * fast and slow tiers each decide their own merge behavior.
@@ -286,17 +318,12 @@ export class TieredDocumentStorage extends AbstractDocumentStorage {
     if (this.#disposed) return;
 
     const now = Date.now();
-    const toPersist: string[] = [];
-
-    for (const [key, dirtyTime] of this.#dirty) {
-      if (
-        now - dirtyTime >= this.#options.maxDirtyAgeMs ||
-        toPersist.length < this.#options.persistBatchSize
-      ) {
-        toPersist.push(key);
-      }
-      if (toPersist.length >= this.#options.persistBatchSize) break;
-    }
+    const toPersist = selectDocumentsToPersist(
+      this.#dirty,
+      now,
+      this.#options.maxDirtyAgeMs,
+      this.#options.persistBatchSize,
+    );
 
     for (const key of toPersist) {
       try {

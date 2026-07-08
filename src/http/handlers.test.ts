@@ -155,6 +155,16 @@ describe("HTTP Handlers", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("Content-Type")).toBe("text/event-stream");
       expect(response.headers.get("x-powered-by")).toBe("teleportal");
+
+      // The SSE stream's first frame must be the `client-id` event so the
+      // client learns which id to use for the paired POST /sse writer.
+      const clientId = response.headers.get("x-teleportal-client-id")!;
+      const reader = response.body!.getReader();
+      const { value } = await reader.read();
+      const frame = new TextDecoder().decode(value);
+      expect(frame).toContain("event:client-id");
+      expect(frame).toContain(`data: ${clientId}`);
+      await reader.cancel();
     });
 
     it("should extract client ID from header", async () => {
@@ -277,6 +287,41 @@ describe("HTTP Handlers", () => {
 
       const response = await responsePromise;
       expect(response.status).toBe(200);
+    });
+
+    it("should close the SSE response stream when the request is aborted", async () => {
+      const endpoint = getSSEReaderEndpoint({
+        server,
+        getContext: mockGetContext,
+      });
+
+      const controller = new AbortController();
+      const request = new Request("http://example.com/sse", {
+        method: "GET",
+        signal: controller.signal,
+      });
+
+      const response = await endpoint(request);
+      const reader = response.body!.getReader();
+
+      // Aborting the request must tear the SSE stream down. Without it, the
+      // ping interval and consume loop leak and the stream never ends.
+      controller.abort();
+
+      // Poll the reader until the stream reports done. If the abort does not
+      // close the underlying channel, this never resolves and the test times
+      // out (red).
+      const done = await Promise.race([
+        (async () => {
+          while (true) {
+            const { done } = await reader.read();
+            if (done) return true;
+          }
+        })(),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+
+      expect(done).toBe(true);
     });
 
     it("should use custom getInitialDocuments", async () => {
@@ -582,6 +627,54 @@ describe("HTTP Handlers", () => {
         const json = await writerResponse.json();
         expect(json.error).toBe("Failed to receive acknowledgment");
         expect(json.message).toContain("ACK timeout");
+      });
+
+      it("delivers a writer message to the paired SSE reader and ACKs it", async () => {
+        const clientId = "roundtrip-client";
+
+        // Establish the SSE reader for this client id. It subscribes to
+        // `client/{clientId}` and sends ACKs on `ack/{clientId}`.
+        const readerEndpoint = getSSEReaderEndpoint({ server, getContext: mockGetContext });
+        const readerResponse = await readerEndpoint(
+          new Request(`http://example.com/sse?client-id=${clientId}`, { method: "GET" }),
+        );
+        const reader = readerResponse.body!.getReader();
+        const decoder = new TextDecoder();
+
+        // Drain the first `client-id` frame so the next frame we read is the
+        // delivered message.
+        await reader.read();
+
+        const writerEndpoint = getSSEWriterEndpoint({
+          server,
+          getContext: mockGetContext,
+          ackTimeout: 1000,
+        });
+        const message = new DocMessage(
+          "roundtrip-doc",
+          { type: "sync-done" },
+          { clientId, userId: "user-1", room: "room-1" },
+        );
+        const writerResponse = await writerEndpoint(
+          new Request("http://example.com/sse", {
+            method: "POST",
+            headers: { "x-teleportal-client-id": clientId },
+            body: encodeMessageArray([message]) as unknown as BodyInit,
+          }),
+        );
+
+        // The reader ACKed, so the writer must succeed (not time out).
+        expect(writerResponse.status).toBe(200);
+
+        // And the reader stream must actually carry the message frame.
+        let sawMessage = false;
+        for (let i = 0; i < 5 && !sawMessage; i++) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (decoder.decode(value).includes("event:message")) sawMessage = true;
+        }
+        expect(sawMessage).toBe(true);
+        await reader.cancel();
       });
     });
   });

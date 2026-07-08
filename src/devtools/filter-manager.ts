@@ -1,4 +1,4 @@
-import type { DevtoolsMessage } from "./types";
+import type { DevtoolsMessage, FilterState } from "./types";
 import { getMessageTypeLabel } from "./utils/message-utils";
 import type { SettingsManager } from "./settings-manager";
 
@@ -140,7 +140,7 @@ export class FilterManager {
     return result;
   }
 
-  updateFilters(updates: Partial<typeof this.getFilters>) {
+  updateFilters(updates: Partial<FilterState>) {
     this.settingsManager.updateFilters(updates);
     this.cachedFiltered = null;
     this.cachedFilteredKey = null;

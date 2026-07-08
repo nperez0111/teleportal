@@ -92,6 +92,24 @@ Client → Transport → Server.createClient()
                     other clients
 ```
 
+## Module Exports
+
+`teleportal/server` re-exports the subsystem's public surface:
+
+| Export                                                                                              | Kind    | Description                                                                                     |
+| --------------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `Server`                                                                                            | class   | Central orchestrator (sessions, clients, routing, metrics). Extends `Observable<ServerEvents>`. |
+| `Session`                                                                                           | class   | One active collaborative document. Extends `Observable<SessionEvents>`.                         |
+| `Client`                                                                                            | class   | One server→client connection wrapper. Extends `Observable<{ "client-message" }>`.               |
+| `checkPermissionWithTokenManager`                                                                   | fn      | Builds a `checkPermission` from a `TokenManager`.                                               |
+| `logger`, `emitWideEvent`, `envContext`, `WideEvent`                                                | logging | Single LogTape logger and the wide-event (canonical log line) emitter.                          |
+| `ServerOptions`, `ServerEvents`, `SessionEvents`                                                    | types   | Configuration and event maps.                                                                   |
+| `PresenceConfig`, `AttributionConfig`                                                               | types   | Presence and attribution projection config.                                                     |
+| `ClientDisconnectReason`, `DocumentUnloadReason`, `ClientMessageDirection`, `DocumentMessageSource` | types   | Event enums.                                                                                    |
+
+`TtlDedupe` (`dedupe.ts`) is an **internal** helper owned by `Session` and is not part of
+the public surface.
+
 ## Server Options
 
 ```typescript
@@ -317,6 +335,13 @@ server.disconnectClient("client-456", "manual");
 server.disconnectClient(client, "manual");
 ```
 
+`disconnectClient` is **idempotent**: a client is removed from every session, the
+`clients_active` gauge is decremented, and the `client-disconnect` event fires **exactly
+once** per client, no matter how many times it is called. This matters because a live
+connection wires up both an `abortSignal` listener and a stream-ended `finally`, either
+of which may call `disconnectClient` for the same client. Calls for an unknown or
+already-disconnected client are no-ops.
+
 ### Server Lifecycle
 
 ```typescript
@@ -382,9 +407,20 @@ The server handles all Teleportal protocol message types:
 - **stream**: Streaming chunks (e.g., file upload parts)
 - **response**: Server response to an RPC request
 
+### Awareness Messages (`awareness`)
+
+- **awareness-update**: Y.js awareness (cursor/selection) state. These are not
+  special-cased in `Session.apply`; they fall through to the default handler, which
+  broadcasts them to the session's other clients and publishes them over PubSub for
+  cross-node fanout. The built-in token checker always allows them.
+
 ### ACK Messages (`ack`)
 
-- **ack**: Message delivery confirmation (with optional `retryAfter` for rate limiting)
+- **ack**: Message delivery confirmation. Carries an optional `retryAfter` (rate-limit
+  backoff) and an optional `error` string. An ACK with `error` is a **NACK**: the server
+  emits it when a message fails to apply so the sender stops waiting/retransmitting.
+  ACKs are published over PubSub (`ack/${clientId}`) so they still reach a client whose
+  connection is homed on a different node.
 
 ## Rate Limiting
 
@@ -471,53 +507,106 @@ Rate limit metrics are automatically recorded via the server's `MetricsCollector
 
 ## Permission Checking
 
-The server supports optional permission checking via the `checkPermission` option. The checker is called for:
+The server supports optional permission checking via the `checkPermission` option.
+It is invoked from `createClient`'s inbound message pipeline (`withMessageValidator`)
+for every non-ACK message before the message reaches a session. Returning `false`
+rejects the message and triggers a denial response (see below); ACK messages bypass
+the check entirely.
 
-- **Document operations**: `sync-step-1` (read), `sync-step-2` (write), `update` (write)
-- **RPC operations**: Any RPC request, with `rpcMethod` provided in the context
+The checker receives:
 
-### Permission Check Behavior
+- `context` — the message's context (token payload fields when using token auth)
+- `documentId` — the message's (un-namespaced) document, if any
+- `fileId` — extracted from RPC **stream** (`file-part`) messages when `document` is absent
+- `message` — the full message
+- `rpcMethod` — the RPC method name for `rpc` messages
+- `type` — see the caveat below
 
-1. **ACK messages**: Always allowed (they're acknowledgments, not requests)
-2. **Read operations**: Checked when client requests data (e.g., sync-step-1)
-3. **Write operations**: Checked when client sends updates (e.g., sync-step-2, update)
-4. **RPC operations**: Checked with the `rpcMethod` name for fine-grained control
-5. **Denied responses**: Server sends appropriate auth-message or RPC error response
+> **Caveat: `type` is always `"write"` for inbound client messages.**
+> The transport-level validator (`withMessageValidator`) authorizes both the read
+> (source) and write (sink) directions using the literal `"write"`. It does **not**
+> compute per-message read/write intent. Therefore a custom `checkPermission` **must
+> not** rely on the `type` parameter to distinguish reads from writes for inbound
+> traffic — it will observe `"write"` even for `sync-step-1`. Derive the real intent
+> from the message itself (payload type for `doc`, method name for `rpc`), exactly as
+> the built-in `checkPermissionWithTokenManager` does.
 
-### Example Permission Checker
+### Denial responses
+
+When `checkPermission` returns `false`, the server responds based on the message:
+
+- **`doc` `sync-step-2`**: server sends `sync-done` (graceful read-only denial) and drops the update.
+- **`rpc`**: server sends an RPC `error` response (`statusCode: 403`, `details: "Permission denied"`) correlated to the request id.
+- **other `doc` messages**: server sends a `doc` `auth-message` with `permission: "denied"`.
+- **messages with neither `document` nor `fileId`**: dropped silently.
+
+### Example custom permission checker
+
+Note how read/write intent is derived from the message, not from `type`:
 
 ```typescript
 const server = new Server({
   storage: async (ctx) => {
     // ... create storage
   },
-  checkPermission: async ({ context, documentId, fileId, message, type, rpcMethod }) => {
+  checkPermission: async ({ context, documentId, fileId, message, rpcMethod }) => {
     const userId = context.userId;
 
-    // Document permissions
-    if (documentId) {
-      if (type === "read") {
-        return await canReadDocument(userId, documentId);
-      } else if (type === "write") {
-        // Special handling for sync-step-2 without write permission:
-        // Server will drop the message and send sync-done instead
-        return await canWriteDocument(userId, documentId);
-      }
+    if (message.type === "doc" && documentId) {
+      const isWrite = message.payload.type === "sync-step-2" || message.payload.type === "update";
+      return isWrite
+        ? await canWriteDocument(userId, documentId)
+        : await canReadDocument(userId, documentId);
+    }
+
+    if (message.type === "rpc" && documentId) {
+      const isWrite = WRITE_METHODS.has(rpcMethod!);
+      return isWrite
+        ? await canWriteDocument(userId, documentId)
+        : await canReadDocument(userId, documentId);
     }
 
     // File permissions (fileId comes from RPC stream messages)
     if (fileId) {
-      if (type === "read") {
-        return await canReadFile(userId, fileId);
-      } else if (type === "write") {
-        return await canWriteFile(userId, fileId);
-      }
+      return await canReadFile(userId, fileId);
     }
 
     return false;
   },
 });
 ```
+
+### Built-in token-manager checker
+
+`checkPermissionWithTokenManager(tokenManager)` returns a ready-made `checkPermission`
+that maps messages onto `tokenManager.hasDocumentPermission`:
+
+```typescript
+import { Server, checkPermissionWithTokenManager } from "teleportal/server";
+import { createTokenManager } from "teleportal/token";
+
+const tokenManager = createTokenManager({ secret: process.env.TOKEN_SECRET! });
+
+const server = new Server({
+  storage: myStorage,
+  checkPermission: checkPermissionWithTokenManager(tokenManager),
+});
+```
+
+Its rules:
+
+- `ack` and `awareness` messages are always allowed.
+- `doc` `sync-step-1` / `sync-done` require **read**; `sync-step-2` / `update` require **write**; `auth-message` is denied (server-authored, never client-originated).
+- `rpc` messages require **read**, **unless** the method is in a fixed write-methods set
+  (`milestoneCreate`, `milestoneUpdateName`, `milestoneDelete`, `milestoneRestore`,
+  `fileUpload`), which require **write**. An RPC without a `documentId` is allowed.
+
+> **Security note (fail-open default for write RPCs):** the write-methods set is an
+> explicit allow-list. Any RPC method _not_ in it — including custom write-capable
+> handlers you register — is treated as a **read** and only needs read permission. If
+> you add a mutating RPC handler, either add its method name to this set (a code change)
+> or supply your own `checkPermission` that classifies it as a write. Do not assume a
+> new RPC handler is write-gated automatically.
 
 ## Events
 
@@ -660,6 +749,9 @@ console.log(health);
 // Get detailed operational status
 const status = await server.getStatus();
 console.log(status);
+// activeClients is a count of DISTINCT clients connected to this node (a client
+// joined to several sessions is counted once), not the sum of per-session client
+// counts.
 // {
 //   nodeId: "node-123",
 //   activeClients: 10,
@@ -702,11 +794,17 @@ The server prevents race conditions during session creation:
 
 Sessions are automatically cleaned up when:
 
-- All clients disconnect (after 60s timeout)
+- All clients disconnect (after the cleanup delay, default 60s)
 - Document is deleted
 - Server is disposed
 
-The cleanup delay (60s) allows clients to reconnect without losing the session state.
+The cleanup delay allows clients to reconnect without losing session state. Removing
+the last client schedules a timer; adding a client back before it fires cancels it. When
+the timer fires, the session notifies the server (`onCleanupScheduled`), which disposes
+it only if it still has no clients (`session.shouldDispose`). The delay is configurable
+per session via the `Session` constructor's `cleanupDelayMs` (primarily to drive the
+cleanup path deterministically in tests); sessions created through
+`Server.getOrOpenSession` use the 60s default.
 
 ## RPC & File Handling
 
@@ -731,16 +829,61 @@ const server = new Server({
 
 The server handles errors gracefully:
 
-- **Permission Denied**: Sends appropriate auth-message to client
-- **Storage Errors**: Logged and propagated to client
-- **Message Processing Errors**: Logged, ACK sent, error not propagated (prevents connection drop)
-- **Session Creation Errors**: Logged, pending session removed, error propagated
+- **Permission Denied**: Sends the appropriate denial response (see [Denial responses](#denial-responses)).
+- **Storage Errors**: Logged and propagated to the caller.
+- **Per-message Processing Errors**: A single bad message must not tear down the
+  connection. The consume loop logs a wide event, sends a **NACK** (an `ack` carrying the
+  error message so the sender stops waiting), and keeps consuming. The error is not
+  rethrown out of the loop.
+- **Client Stream Errors**: If the message stream itself throws, the loop logs, then
+  disconnects the client (`stream-ended`) and closes the transport so the client sees a
+  disconnect and reconnects immediately.
+- **Session Creation Errors**: Logged, the pending-session entry is removed, and the error
+  is propagated to the caller of `getOrOpenSession`.
 
 ### Error Response Types
 
 - **Document Auth Message**: Sent for denied document operations (`doc` messages with `auth-message` payload)
 - **RPC Error Response**: Sent for denied RPC operations (403 status code with "Permission denied")
 - **Sync Done**: Sent when a read-only client sends sync-step-2 (graceful denial)
+
+## Logging
+
+The subsystem uses a single LogTape logger (`teleportal/server`) and emits **wide events**
+(canonical log lines) — one structured, context-rich event per logical operation rather
+than scattered log lines. Use `emitWideEvent(level, event)` from `./logger`:
+
+```typescript
+import { emitWideEvent } from "teleportal/server";
+
+emitWideEvent("info", {
+  event_type: "message",
+  timestamp: new Date().toISOString(),
+  message_id: message.id,
+  client_id: client.id,
+  document_id: message.document,
+  message_type: message.type,
+  user_id: message.context?.userId,
+  outcome: "success",
+  status_code: 200,
+  duration_ms: Date.now() - startTime,
+});
+```
+
+Conventions used throughout:
+
+- **Levels** are limited to `debug`, `info`, and `error`.
+- Each event carries a stable `event_type`, an ISO `timestamp`, and high-cardinality
+  identifiers (`client_id`, `document_id`, `session_id`, `message_id`, `user_id`) so events
+  can be correlated and queried per-user/per-document.
+- `envContext` (currently `{ service: "teleportal" }`) is merged into every event; extend
+  it at startup to add deployment context (commit hash, region, instance id).
+- The per-message path in `createClient` builds one `wideEvent` object and emits it once in
+  a `finally`, tagging `outcome`, `status_code`, and `duration_ms` — the canonical
+  request-completion pattern.
+
+As a library, the subsystem intentionally does **not** configure LogTape sinks; the host
+application wires up sinks/formatting.
 
 ## Best Practices
 

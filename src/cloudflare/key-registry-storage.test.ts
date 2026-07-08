@@ -68,6 +68,33 @@ describe("DurableObjectKeyRegistryStorage", () => {
     expect(await storage.get("doc-1", "bob")).not.toBeNull();
   });
 
+  it("should preserve wrapped keys as binary (no base64/array round-trip)", async () => {
+    await storage.set("doc-1", [{ userId: "alice", wrappedKey: wrap("key-a") }]);
+    const result = await storage.get("doc-1", "alice");
+    expect(result!.wrappedKey).toBeInstanceOf(Uint8Array);
+  });
+
+  it("should return the current generation from revoke", async () => {
+    await storage.set("doc-1", [{ userId: "alice", wrappedKey: wrap("key-a") }]);
+    await storage.rotate("doc-1", [{ userId: "alice", wrappedKey: wrap("new") }], 0);
+
+    // revoke does not bump the generation; it returns the current one.
+    const gen = await storage.revoke("doc-1", ["alice"]);
+    expect(gen).toBe(1);
+  });
+
+  it("should return 0 and be a no-op when revoking on an unknown document", async () => {
+    expect(await storage.revoke("ghost", ["alice"])).toBe(0);
+    expect(await storage.getMeta("ghost")).toEqual({ generation: 0, userIds: [] });
+  });
+
+  it("should return the unchanged generation from set", async () => {
+    expect(await storage.set("doc-1", [{ userId: "a", wrappedKey: wrap("k") }])).toBe(0);
+    await storage.rotate("doc-1", [{ userId: "a", wrappedKey: wrap("k2") }], 0);
+    // set never bumps the generation.
+    expect(await storage.set("doc-1", [{ userId: "b", wrappedKey: wrap("k3") }])).toBe(1);
+  });
+
   it("should return meta with generation and userIds", async () => {
     await storage.set("doc-1", [
       { userId: "alice", wrappedKey: wrap("key-a") },

@@ -1,12 +1,17 @@
 import { Observable, type BinaryMessage, type Message, type RawReceivedMessage } from "teleportal";
 import { decodeMessage } from "teleportal/protocol";
 import { createFanOutWriter, type FanOutReader } from "teleportal/transports";
-import type { ConnectionDiagnostics, ConnectionState, ConnectionEvents } from "../types";
+import type {
+  Connection,
+  ConnectionDiagnostics,
+  ConnectionState,
+  ConnectionEvents,
+} from "../types";
 import type { DownstreamMessage, UpstreamMessage } from "./protocol";
 
 const RPC_TIMEOUT_MS = 30_000;
 
-export class WorkerConnection extends Observable<ConnectionEvents> {
+export class WorkerConnection extends Observable<ConnectionEvents> implements Connection {
   readonly hosting = "worker" as const;
 
   #port: MessagePort;

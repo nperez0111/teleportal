@@ -175,7 +175,10 @@ app.post("/api/documents/:id/share", async (req) => {
 const { wrappingKeys } = await fetch(`${TELEPORTAL_URL}/keys/${documentId}/grant`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ userIds: ["alice", "bob", "charlie"], room: "default" }),
+  body: JSON.stringify({
+    userIds: ["alice", "bob", "charlie"],
+    room: "default",
+  }),
 }).then((r) => r.json());
 // wrappingKeys: { "alice": "abc...", "bob": "def...", "charlie": "ghi..." }
 ```
@@ -237,6 +240,28 @@ Key rotation uses optimistic concurrency via a monotonic generation counter — 
 7. Clients invalidate their cached key and re-fetch on the next operation.
 
 Old-generation keys are retained in storage so historical encrypted sidecars remain decryptable.
+
+### Rotation Notifications on the Client
+
+`createKeyRegistryRpc` is a **per-document** extension factory. Each `Provider` gets its own
+instance with its own set of rotation callbacks. When the server broadcasts a `keysRotated`
+notification, the client extension only dispatches it to the instance whose `document` matches the
+message — a single shared connection can carry rotations for several open documents without
+cross-talk, and destroying one provider clears only its own callbacks.
+
+```typescript
+// provider.rpc.keys is this document's KeyRegistryRpc instance
+const unsubscribe = provider.rpc.keys.onKeysRotated((generation) => {
+  console.log(`document key rotated to generation ${generation}`);
+  // e.g. invalidate the cached CryptoKey and re-fetch via keysGet
+});
+
+// later
+unsubscribe();
+```
+
+`onKeysRotated` returns an unsubscribe function. All registered callbacks are also dropped
+automatically when the provider (and thus the extension instance) is destroyed.
 
 ## Key Wrapping Utilities
 

@@ -76,6 +76,23 @@ Error payload: `[varUint: statusCode] [varString: details] [uint8: hasPayload] [
 
 Custom serializer/deserializer callbacks can override the default `writeAny`/`readAny` encoding for RPC payloads.
 
+## Message identity
+
+Every decoded message (`DocMessage`, `AwarenessMessage`, `AckMessage`,
+`PresenceMessage`, `RpcMessage`) extends `CustomMessage`, which exposes:
+
+- **`encoded`** — the `BinaryMessage`, encoded lazily on first access and cached.
+- **`id`** — a lazily-computed, cached 64-bit **FNV-1a-style hash of the encoded
+  bytes**, rendered as 16 lowercase hex characters. This is a fast content
+  fingerprint (not SHA-256, not base64) used for dedup, ack correlation, and
+  idempotency. `valueOf()` returns `id`.
+- **`resetEncoded()`** — clears the cached `encoded`/`id` after mutating a
+  message in place.
+
+`isBinaryMessage(bytes)` only checks the 3-byte magic, so it also returns `true`
+for ping/pong frames — discriminate those first with `isPingMessage` /
+`isPongMessage`.
+
 ## Ping/Pong
 
 Heartbeat messages use a distinct 7-byte format (not the standard header):
@@ -119,6 +136,13 @@ Milestones (document snapshots at a point in time) use their own binary format:
 [varString: createdBy id]
 [tail: snapshot]             only in full encode (not meta-only)
 ```
+
+`lifecycleState` is an optional field: a never-deleted milestone omits it from
+the wire (the flag bit is 0) rather than writing the string `"active"`, keeping
+the common-case frame minimal. Consumers treat a missing/`undefined`
+`lifecycleState` as `"active"` — this is what `Milestone.toString()` renders and
+what every storage backend's `getMilestones({ lifecycleState: "active" })`
+filter matches.
 
 ## Update utilities
 

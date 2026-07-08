@@ -117,4 +117,75 @@ describe("InMemoryMilestoneStorage", () => {
     expect(restored).not.toBeNull();
     expect(restored?.lifecycleState).toBe("active");
   });
+
+  describe("documentId scoping (Bug 1)", () => {
+    const createInDocA = () =>
+      storage.createMilestone({
+        name: "v1",
+        documentId: "docA",
+        createdAt: 1,
+        snapshot: createTestSnapshot(),
+        createdBy: { type: "system", id: "test-node" },
+      });
+
+    it("getMilestone with the wrong documentId returns null", async () => {
+      const id = await createInDocA();
+      expect(await storage.getMilestone("docB", id)).toBeNull();
+      // sanity: still reachable under the correct documentId
+      expect(await storage.getMilestone("docA", id)).not.toBeNull();
+    });
+
+    it("deleteMilestone with the wrong documentId does not mutate the docA milestone", async () => {
+      const id = await createInDocA();
+      await storage.deleteMilestone("docB", id);
+      const milestone = await storage.getMilestone("docA", id);
+      expect(milestone).not.toBeNull();
+      expect(milestone?.lifecycleState).not.toBe("deleted");
+    });
+
+    it("restoreMilestone with the wrong documentId does not mutate the docA milestone", async () => {
+      const id = await createInDocA();
+      // soft delete under the correct documentId first
+      await storage.deleteMilestone("docA", id);
+      // restore under the wrong documentId must be a no-op
+      await storage.restoreMilestone("docB", id);
+      // still deleted (getMilestone returns null for deleted)
+      expect(await storage.getMilestone("docA", id)).toBeNull();
+      const [deleted] = await storage.getMilestones("docA", { includeDeleted: true });
+      expect(deleted?.lifecycleState).toBe("deleted");
+    });
+
+    it("updateMilestoneName with the wrong documentId throws and does not mutate", async () => {
+      const id = await createInDocA();
+      await expect(storage.updateMilestoneName("docB", id, "renamed")).rejects.toThrow(
+        "Milestone not found",
+      );
+      const milestone = await storage.getMilestone("docA", id);
+      expect(milestone?.name).toBe("v1");
+    });
+
+    it("updateMilestoneRetention with the wrong documentId throws and does not mutate", async () => {
+      const id = await createInDocA();
+      await expect(
+        storage.updateMilestoneRetention("docB", id, { lifecycleState: "archived" }),
+      ).rejects.toThrow("Milestone not found");
+      const milestone = await storage.getMilestone("docA", id);
+      expect(milestone?.lifecycleState).not.toBe("archived");
+    });
+  });
+
+  describe("default lifecycleState filtering (Bug 2)", () => {
+    it("getMilestones with lifecycleState 'active' includes never-deleted milestones", async () => {
+      const id = await storage.createMilestone({
+        name: "v1",
+        documentId: "doc-1",
+        createdAt: 1,
+        snapshot: createTestSnapshot(),
+        createdBy: { type: "system", id: "test-node" },
+      });
+
+      const active = await storage.getMilestones("doc-1", { lifecycleState: "active" });
+      expect(active.map((m) => m.id)).toContain(id);
+    });
+  });
 });

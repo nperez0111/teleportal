@@ -1062,12 +1062,70 @@ describe("Server", () => {
 
       server.disconnectClient("client-1");
 
-      // Client should be removed from all sessions
-      expect(client).toBeDefined();
+      // Client should actually be removed from every session it belonged to.
+      expect([...session1.clients].some((c) => c.id === "client-1")).toBe(false);
+      expect([...session2.clients].some((c) => c.id === "client-1")).toBe(false);
     });
 
     it("should not throw when disconnecting non-existent client", () => {
       expect(() => server.disconnectClient("non-existent")).not.toThrow();
+    });
+
+    it("should be idempotent: disconnecting twice decrements the active-client gauge only once", () => {
+      const transport = new MockTransport();
+      const metrics = server.getMetricsCollector();
+      const before = metrics.clientsActive.getValue();
+
+      server.createClient({ transport, id: "double-disconnect" });
+      expect(metrics.clientsActive.getValue()).toBe(before + 1);
+
+      let disconnectEvents = 0;
+      server.on("client-disconnect", (data) => {
+        if (data.clientId === "double-disconnect") disconnectEvents++;
+      });
+
+      // A real connection wires up BOTH an abort listener and a stream-ended
+      // finally; both can call disconnectClient for the same client. The gauge
+      // must not be double-decremented and the event must fire once.
+      server.disconnectClient("double-disconnect", "abort");
+      server.disconnectClient("double-disconnect", "stream-ended");
+
+      expect(metrics.clientsActive.getValue()).toBe(before);
+      expect(disconnectEvents).toBe(1);
+    });
+
+    it("should not decrement the active-client gauge for an unknown client", () => {
+      const metrics = server.getMetricsCollector();
+      const before = metrics.clientsActive.getValue();
+
+      server.disconnectClient("never-connected");
+
+      expect(metrics.clientsActive.getValue()).toBe(before);
+    });
+  });
+
+  describe("getStatus", () => {
+    it("should count a client joined to multiple sessions only once in activeClients", async () => {
+      const transport = new MockTransport();
+      const client = server.createClient({ transport, id: "multi-session-client" });
+
+      const session1 = await server.getOrOpenSession("status-doc-1", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "multi-session-client" },
+      });
+      const session2 = await server.getOrOpenSession("status-doc-2", {
+        encrypted: false,
+        context: { userId: "user-1", room: "room", clientId: "multi-session-client" },
+      });
+      session1.addClient(client);
+      session2.addClient(client);
+
+      const status = await server.getStatus();
+      // One physical client connected — activeClients is a count of distinct
+      // clients, not (client × session) pairs.
+      expect(status.activeClients).toBe(1);
+
+      transport.closeReadable();
     });
   });
 

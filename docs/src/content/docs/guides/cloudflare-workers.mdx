@@ -40,8 +40,9 @@ Every Teleportal storage interface has a direct implementation on Durable Object
 
 A few implementation details worth knowing:
 
-- The document pending log stores one update per key (zero-padded sequence numbers), so appends are O(1) writes rather than a read-append-rewrite of a single array.
-- `transaction()` is backed by `ctx.storage.transaction()` -- a Durable Object instance is the single writer for its own storage, so no TTL or advisory locks are needed.
+- The document pending log stores one update per key (`pending:{seq}`, `seq` zero-padded to 16 digits so lexicographic `list()` order equals insertion order), so appends are O(1) writes rather than a read-append-rewrite of a single array. Sequence allocation is concurrency-safe: an in-memory counter seeded once from the persisted log tail hands out numbers with no intervening `await`, so concurrent appends never collide.
+- `transaction()` is an in-memory per-key mutex (`KeyedMutex`) -- a Durable Object instance is the single writer for its own storage, so no TTL or advisory locks are needed. The mutex only serializes read-modify-write sequences on the same key across the `await` points where Durable Objects interleave concurrent requests.
+- Milestones are scoped by `documentId`: both the meta doc and each content blob live under `milestone:{documentId}:…`, so a milestone id never resolves or hydrates under the wrong document.
 - Rate-limit TTLs are stamped expiry timestamps, since Durable Object storage has no native TTL; expired state reads as absent and is deleted lazily.
 - Use SQLite-backed Durable Objects (`new_sqlite_classes` in the migration config) -- available on the free plan, with a 2 MiB per-value limit. A document's compacted state and a milestone snapshot are each a single value, so this bounds document size. File chunks are 1 MiB and always fit.
 

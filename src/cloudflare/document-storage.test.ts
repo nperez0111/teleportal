@@ -46,6 +46,66 @@ describe("DurableObjectDocumentStorage", () => {
     expect((await storage.getPendingUpdates("doc")).cursor).toBe(0);
   });
 
+  it("does not collide sequence numbers on concurrent appends to a fresh doc", async () => {
+    const [storage] = make();
+    // Both appends seed the in-memory sequence counter from an empty pending
+    // log; if seeding is not shared, both compute seq 0 and one overwrites the
+    // other, silently dropping an update.
+    await Promise.all([
+      storage.appendUpdate("doc", makePending(1)),
+      storage.appendUpdate("doc", makePending(2)),
+    ]);
+
+    const { updates, cursor } = await storage.getPendingUpdates("doc");
+    expect(cursor).toBe(2);
+    expect(updates.map((u) => u.structureUpdate[0]).sort()).toEqual([1, 2]);
+  });
+
+  it("does not collide sequence numbers on a burst of concurrent appends", async () => {
+    const [storage] = make();
+    const count = 20;
+    await Promise.all(
+      Array.from({ length: count }, (_, i) => storage.appendUpdate("doc", makePending(i))),
+    );
+
+    const { updates, cursor } = await storage.getPendingUpdates("doc");
+    expect(cursor).toBe(count);
+    expect(updates.map((u) => u.structureUpdate[0]).sort((a, b) => a - b)).toEqual([
+      ...Array(count).keys(),
+    ]);
+  });
+
+  it("recovers after a transient failure while seeding the sequence counter", async () => {
+    const fake = new FakeDOStorage();
+    let failNextList = true;
+    const flaky = {
+      get: fake.get.bind(fake),
+      put: fake.put.bind(fake),
+      delete: fake.delete.bind(fake),
+      deleteAll: fake.deleteAll.bind(fake),
+      list(options?: Parameters<FakeDOStorage["list"]>[0]) {
+        if (failNextList) {
+          failNextList = false;
+          return Promise.reject(new Error("transient list failure"));
+        }
+        return fake.list(options);
+      },
+    };
+
+    const storage = new DurableObjectDocumentStorage(flaky as any, { keyPrefix: "document" });
+
+    // First append seeds via list(), which fails once.
+    await expect(storage.appendUpdate("doc", makePending(1))).rejects.toThrow(
+      "transient list failure",
+    );
+    // A retry must not be stuck on a cached rejected seeding promise.
+    await storage.appendUpdate("doc", makePending(2));
+
+    const { updates, cursor } = await storage.getPendingUpdates("doc");
+    expect(cursor).toBe(1);
+    expect(updates.map((u) => u.structureUpdate[0])).toEqual([2]);
+  });
+
   it("continues the sequence after a restart (fresh instance, same storage)", async () => {
     const fake = new FakeDOStorage();
     const [first] = make(fake);
