@@ -1,11 +1,32 @@
+import { TanStackDevtools } from "@tanstack/react-devtools";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import Shell from "./components/shell";
+import { TeleportalDevtoolsPanelReact } from "./components/devtools";
 
 const elem = document.getElementById("root")!;
 const app = (
   <StrictMode>
     <Shell />
+
+    <TanStackDevtools
+      config={{
+        customTrigger: (
+          <img
+            src="https://github.com/nperez0111/teleportal/blob/main/assets/pepper.svg?raw=true"
+            width={60}
+            height={60}
+          />
+        ),
+      }}
+      plugins={[
+        {
+          name: "TelePortal",
+          render: <TeleportalDevtoolsPanelReact />,
+          defaultOpen: true,
+        },
+      ]}
+    />
   </StrictMode>
 );
 

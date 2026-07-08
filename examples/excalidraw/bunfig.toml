@@ -1,0 +1,6 @@
+[serve.static]
+# `bun-plugin-tailwind` processes Tailwind; `./pica-plugin.ts` redirects the
+# bare `pica` specifier to a shim with a normalized default export, fixing a
+# racy CJS->ESM interop in excalidraw's dynamic `import("pica")` under the dev
+# server (see pica-plugin.ts for details).
+plugins = ["bun-plugin-tailwind", "./pica-plugin.ts"]

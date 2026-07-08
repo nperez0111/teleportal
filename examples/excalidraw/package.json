@@ -16,9 +16,12 @@
     "build": "bun run build.ts --target browser"
   },
   "dependencies": {
-    "@excalidraw/excalidraw": "^0.18.0",
+    "@excalidraw/excalidraw": "^0.18.1",
+    "@tanstack/react-devtools": "0.10.8",
     "bun-plugin-tailwind": "latest",
     "crossws": "^0.4.4",
+    "image-blob-reduce": "3.0.1",
+    "pica": "7.1.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tailwindcss": "^4",
