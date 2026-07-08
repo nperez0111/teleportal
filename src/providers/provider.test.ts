@@ -1875,11 +1875,11 @@ describe("Provider", () => {
           if (update && update.version === 2 && update.data instanceof Uint8Array) {
             serverUpdates.push(update.data);
             // Send ack back to client
-            await serverConn.send(new AckMessage(msg.id, {}));
+            await serverConn.send(new AckMessage({ type: "ack", messageId: msg.id }, {}));
           }
         } else if (msg.type === "doc" && msg.payload?.type === "sync-step-1") {
           // Send ack for sync-step-1
-          await serverConn.send(new AckMessage(msg.id, {}));
+          await serverConn.send(new AckMessage({ type: "ack", messageId: msg.id }, {}));
           // Send sync-done to complete sync
           await serverConn.send(new DocMessage(msg.document, { type: "sync-done" }, {}, false));
         }
