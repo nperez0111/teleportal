@@ -89,6 +89,7 @@ async function run() {
     `\n__RESULT__ ${JSON.stringify({ sizeMB, encrypted, elapsedMs: elapsed, throughputMBps: throughput / (1024 * 1024) })}`,
   );
 
+  await provider.flush();
   provider.destroy();
   process.exit(0);
 }

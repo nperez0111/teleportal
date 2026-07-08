@@ -18,6 +18,6 @@ provider.doc.on("update", () => {
   console.log(provider.doc.getText("test").toString());
 });
 
-// Wait a moment for any final syncs, then clean up
-await new Promise((resolve) => setTimeout(resolve, 100));
+// Flush pending messages before cleanup
+await provider.flush();
 await provider.destroy();

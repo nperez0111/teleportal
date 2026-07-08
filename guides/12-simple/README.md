@@ -1,10 +1,10 @@
-# Simple Fallback
+# Simple
 
-This guide demonstrates a Teleportal server that supports both WebSocket and HTTP transports, with the client automatically falling back to HTTP if WebSocket connection fails.
+This guide demonstrates the simplest possible Teleportal server setup with dual transport support (WebSocket and HTTP).
 
 ## What it demonstrates
 
-- Setting up a Teleportal server that supports both WebSocket and HTTP transports
-- Conditional WebSocket upgrade acceptance based on query parameters
-- Client-side automatic fallback from WebSocket to HTTP transport
-- Using the `connectionType` property to determine which transport is active
+- Setting up a minimal Teleportal server with both WebSocket and HTTP transports
+- Using in-memory `MemoryDocumentStorage` for document storage
+- Basic client connection using the `Provider` API
+- Minimal boilerplate required to get a sync server running

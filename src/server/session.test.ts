@@ -954,7 +954,8 @@ describe("Session", () => {
         encSession.addClient(c1 as any);
         encSession.addClient(c2 as any);
 
-        const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+        const keyResolver = createEncryptionKey();
+        const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
         // client1 publishes an ENCRYPTED awareness update (AES-GCM ciphertext)...
         const doc1 = new Y.Doc();

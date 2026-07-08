@@ -29,14 +29,14 @@ graph LR
 
 Every Teleportal storage interface has a direct implementation on Durable Object storage (`ctx.storage`) -- there's no adapter layer in between. Values ride structured clone, so updates, sidecars, chunks, and wrapped keys stay binary.
 
-| Class                                  | Interface                |
-| --------------------------------------- | ------------------------- |
-| `DurableObjectDocumentStorage`          | `DocumentStorage`         |
-| `DurableObjectFileStorage`              | `FileStorage`             |
-| `DurableObjectTemporaryUploadStorage`   | `TemporaryUploadStorage`  |
-| `DurableObjectMilestoneStorage`         | `MilestoneStorage`        |
-| `DurableObjectRateLimitStorage`         | `RateLimitStorage`        |
-| `DurableObjectKeyRegistryStorage`       | `KeyRegistryStorage`      |
+| Class                                 | Interface                |
+| ------------------------------------- | ------------------------ |
+| `DurableObjectDocumentStorage`        | `DocumentStorage`        |
+| `DurableObjectFileStorage`            | `FileStorage`            |
+| `DurableObjectTemporaryUploadStorage` | `TemporaryUploadStorage` |
+| `DurableObjectMilestoneStorage`       | `MilestoneStorage`       |
+| `DurableObjectRateLimitStorage`       | `RateLimitStorage`       |
+| `DurableObjectKeyRegistryStorage`     | `KeyRegistryStorage`     |
 
 A few implementation details worth knowing:
 
@@ -111,10 +111,10 @@ export default {
 ```
 
 <Aside type="tip">
-  Route WebSocket upgrades and HTTP/SSE requests under the same path prefix (e.g. `/api/*`) so
-  both transports reach the same Durable Object instance. A WebSocket upgrade is a plain `GET /`,
-  so if you also configure Workers `[assets]`, keep the API prefix distinct from your static
-  asset paths or the upgrade will never reach the Worker.
+  Route WebSocket upgrades and HTTP/SSE requests under the same path prefix (e.g. `/api/*`) so both
+  transports reach the same Durable Object instance. A WebSocket upgrade is a plain `GET /`, so if
+  you also configure Workers `[assets]`, keep the API prefix distinct from your static asset paths
+  or the upgrade will never reach the Worker.
 </Aside>
 
 ## WebSockets and Hibernation

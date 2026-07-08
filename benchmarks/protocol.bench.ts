@@ -100,7 +100,8 @@ describe("Protocol Benchmarks", () => {
     });
 
     it("EncryptionClient - encrypt small update", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("t").insert(0, "hello");
 
@@ -123,7 +124,8 @@ describe("Protocol Benchmarks", () => {
     });
 
     it("EncryptionClient - encrypt large update", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = createLargeDoc(10_000);
 
       const client = new EncryptionClient({
@@ -146,7 +148,8 @@ describe("Protocol Benchmarks", () => {
     });
 
     it("EncryptionClient - encrypt + decrypt round trip", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("t").insert(0, "benchmark content");
 

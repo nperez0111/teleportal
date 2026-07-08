@@ -16,3 +16,7 @@ console.log(provider.doc.getText("test").toString());
 provider.doc.on("update", () => {
   console.log(provider.doc.getText("test").toString());
 });
+
+// Flush pending messages before cleanup
+await provider.flush();
+await provider.destroy();

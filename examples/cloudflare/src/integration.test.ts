@@ -92,7 +92,7 @@ describe("teleportal on workerd", () => {
       });
       writer.doc.getText("t").insert(0, `hello via ${name}`);
       await writer.synced;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await writer.flush();
       await writer.destroy();
 
       const reader = await Provider.create({

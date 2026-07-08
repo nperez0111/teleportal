@@ -61,6 +61,7 @@ console.log(totalTime.toFixed(2));
 console.log("Final document length:", provider.doc.getText("test").length);
 
 try {
+  await provider.flush();
   await provider.destroy();
   console.log("Provider destroyed successfully");
 } catch (e) {

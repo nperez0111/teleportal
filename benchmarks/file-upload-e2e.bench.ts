@@ -174,7 +174,8 @@ async function uploadFile(
 describe("File Upload E2E Benchmarks", () => {
   describe("Server-side chunk processing (in-memory storage)", () => {
     it("encrypted upload - various sizes", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [1, 5, 30, 100]) {
         const file = makeFile(sizeMB * 1024 * 1024);
@@ -221,7 +222,8 @@ describe("File Upload E2E Benchmarks", () => {
 
   describe("Server-side chunk processing (unstorage)", () => {
     it("encrypted upload - various sizes", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [1, 5, 30, 100]) {
         const file = makeFile(sizeMB * 1024 * 1024);
@@ -269,7 +271,8 @@ describe("File Upload E2E Benchmarks", () => {
 
   describe("Full E2E: client processFile + server store + complete", () => {
     it("encrypted upload through server RPC stack", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [1, 5, 30, 100]) {
         const file = makeFile(sizeMB * 1024 * 1024);
@@ -292,7 +295,8 @@ describe("File Upload E2E Benchmarks", () => {
     });
 
     it("encrypted upload with rate limiting", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const sizeMB = 30;
       const file = makeFile(sizeMB * 1024 * 1024);
       const chunkCount = Math.ceil(file.size / ENCRYPTED_CHUNK_SIZE);
@@ -316,7 +320,8 @@ describe("File Upload E2E Benchmarks", () => {
 
   describe("Breakdown: client vs server time (100MB)", () => {
     it("client: processFile only (encrypt + tree + proofs)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const file = makeFile(100 * 1024 * 1024);
       const chunkCount = Math.ceil(file.size / ENCRYPTED_CHUNK_SIZE);
 
@@ -332,7 +337,8 @@ describe("File Upload E2E Benchmarks", () => {
     });
 
     it("server: storeChunk only (in-memory, no RPC overhead)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const file = makeFile(100 * 1024 * 1024);
 
       const parts = await processFile(file.stream(), file.size, (chunk) =>

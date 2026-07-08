@@ -68,7 +68,8 @@ function extractPayloadUpdate(msg: DocMessage<ClientContext>): VersionedUpdate {
 }
 
 async function createEncryptionClientPair(docSize = 0) {
-  const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+  const keyResolver = createEncryptionKey();
+  const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
   const doc1 = new Y.Doc();
   const doc2 = new Y.Doc();
   if (docSize > 0) {
@@ -102,7 +103,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
   describe("Outbound: local edit → encrypted message", () => {
     it("onUpdate - keystroke edit", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "initial ");
       const client = new EncryptionClient({
@@ -126,7 +128,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("onUpdate - sentence edit", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       const client = new EncryptionClient({
         document: "bench-doc",
@@ -149,7 +152,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("onUpdate - paragraph edit", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       const client = new EncryptionClient({
         document: "bench-doc",
@@ -173,7 +177,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
     it("onUpdate as document grows (1K → 50K chars)", async () => {
       for (const size of [1_000, 5_000, 10_000, 50_000]) {
-        const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+        const keyResolver = createEncryptionKey();
+        const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
         const doc = createLargeDoc(size);
         const client = new EncryptionClient({
           document: "bench-doc",
@@ -200,7 +205,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("onUpdate - compaction spike vs normal edit", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "base");
       const client = new EncryptionClient({
@@ -288,7 +294,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("handleUpdate - burst of 50 rapid remote edits", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const senderDoc = new Y.Doc();
       senderDoc.getText("content").insert(0, "base");
       const sender = new EncryptionClient({
@@ -333,7 +340,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
   describe("Initial sync & reconnect", () => {
     it("handleSyncStep1 - various doc sizes", async () => {
       for (const size of [100, 1_000, 5_000, 10_000]) {
-        const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+        const keyResolver = createEncryptionKey();
+        const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
         const doc = createLargeDoc(size);
         const client = new EncryptionClient({
           document: "bench-doc",
@@ -360,7 +368,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
     it("handleSyncStep2 - receiving full doc state", async () => {
       for (const size of [100, 1_000, 5_000]) {
-        const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+        const keyResolver = createEncryptionKey();
+        const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
         // Sender has the document
         const senderDoc = createLargeDoc(size);
         const sender = new EncryptionClient({
@@ -394,7 +403,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("offline reconnect - sync diff after local edits", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = createLargeDoc(5_000);
       const client = new EncryptionClient({
         document: "bench-doc",
@@ -427,7 +437,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
   describe("Awareness", () => {
     it("encrypt awareness update (onAwarenessUpdate)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       const awareness = new Awareness(doc);
       const client = new EncryptionClient({
@@ -452,7 +463,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("decrypt awareness update (handleAwarenessUpdate)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       const awareness = new Awareness(doc);
       const client = new EncryptionClient({
@@ -490,7 +502,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
   describe("Message wire encoding", () => {
     it("DocMessage encode + decode", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "hello world");
       const client = new EncryptionClient({
@@ -516,7 +529,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("DocMessage.id (SHA-256)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "test content for id hash");
       const client = new EncryptionClient({
@@ -546,7 +560,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
   describe("Connection batching", () => {
     it("mergeContentEncryptedPayloads by batch size", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       const client = new EncryptionClient({
         document: "bench-doc",
@@ -652,7 +667,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
   describe("Encryption internals", () => {
     it("stripContent + restoreContent round trip", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
       const tokenizer = createKeyedTokenizer(rawKey);
 
@@ -682,7 +698,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("compaction cost breakdown", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "base");
 
@@ -746,7 +763,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("hashSidecar", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "hash test content");
       const { encryptedSidecar } = await encryptUpdateContent(key, Y.encodeStateAsUpdateV2(doc), 2);
@@ -761,7 +779,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("encodeContentEncryptedPayload by sidecar count", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const doc = new Y.Doc();
       doc.getText("content").insert(0, "payload test");
       const structureUpdate = Y.encodeStateAsUpdateV2(doc);
@@ -822,7 +841,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
 
   describe("Provider end-to-end", () => {
     it("provider creation (encrypted vs plaintext)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       await bench(
         "Provider creation (encrypted)",
@@ -869,7 +889,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("local edit → outbound (encrypted vs plaintext)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       // Encrypted provider
       const [ct1] = createMemoryTransportPair();
@@ -923,7 +944,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("remote edit → apply (encrypted)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       // Set up a sender to produce encrypted messages
       const senderDoc = new Y.Doc();
@@ -973,7 +995,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("two encrypted providers syncing", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       // Create a pair of connected memory transports
       const [ct1, ct2] = createMemoryTransportPair();
@@ -1017,7 +1040,8 @@ describe("Client Encryption Pipeline Benchmarks", () => {
     });
 
     it("encrypted edit scaling with document size", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const size of [100, 1_000, 10_000]) {
         const [ct] = createMemoryTransportPair();

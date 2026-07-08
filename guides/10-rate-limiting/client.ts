@@ -13,8 +13,13 @@ let totalMessages = 1000;
 while (totalMessages > 0) {
   provider.doc.getText("test").insert(0, "Hello, world!");
   await new Promise((r) => setTimeout(r, 1));
+  totalMessages--;
 }
 
 provider.doc.on("update", () => {
   console.log(provider.doc.getText("test").toString());
 });
+
+// Flush pending messages before cleanup
+await provider.flush();
+await provider.destroy();

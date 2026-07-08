@@ -1,4 +1,4 @@
-import { Provider } from "teleportal/providers";
+import { Provider, websocketTransport } from "teleportal/providers";
 import { createTokenManager } from "teleportal/token";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
@@ -24,9 +24,10 @@ const token = await tokenManager.createToken(
 );
 
 const provider = await Provider.create({
-  url: `http://localhost:3000?token=${token}`,
+  url: `ws://localhost:3000?token=${token}`,
   document: "test",
   encryptionKey: createEncryptionKey(),
+  transports: [websocketTransport()],
 });
 
 await provider.synced;
@@ -38,3 +39,7 @@ console.log(provider.doc.getText("test").toString());
 provider.doc.on("update", () => {
   console.log(provider.doc.getText("test").toString());
 });
+
+// Flush pending messages before cleanup
+await provider.flush();
+await provider.destroy();

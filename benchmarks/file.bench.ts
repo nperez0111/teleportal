@@ -358,7 +358,8 @@ describe("File Upload & Download Benchmarks", () => {
     });
 
     it("client: decrypt all chunks", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [0.5, 1, 5]) {
         const fileSize = Math.floor(sizeMB * 1024 * 1024);
@@ -426,7 +427,8 @@ describe("File Upload & Download Benchmarks", () => {
     });
 
     it("full encrypted download (optimized: parallel verify+decrypt, BlobParts)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [0.5, 1, 3, 5]) {
         const fileSize = Math.floor(sizeMB * 1024 * 1024);
@@ -467,7 +469,8 @@ describe("File Upload & Download Benchmarks", () => {
   // between these two is the added time-to-first-byte on a fresh upload.
   describe("Resumable upload: added time-to-first-byte", () => {
     it("compute-first prepare vs pipelined first-byte (encrypted)", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const deterministic = (await createDeterministicEncryptor(key))!;
 
       for (const sizeMB of [1, 5, 20, 50]) {
@@ -498,7 +501,8 @@ describe("File Upload & Download Benchmarks", () => {
     });
 
     it("per-chunk encrypt: deterministic (keyed-IV) vs random-IV", async () => {
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const deterministic = (await createDeterministicEncryptor(key))!;
       const chunk = new Uint8Array(CHUNK_SIZE - 28);
       crypto.getRandomValues(chunk.subarray(0, 65536));
@@ -515,7 +519,8 @@ describe("File Upload & Download Benchmarks", () => {
       // On a dedup or full-resume hit the client streams ZERO chunks — the whole
       // prepare cost below is what a re-upload of known content now costs total
       // (client-side), vs a full re-transfer previously.
-      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
+      const keyResolver = createEncryptionKey();
+      const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const deterministic = (await createDeterministicEncryptor(key))!;
 
       for (const sizeMB of [5, 20]) {

@@ -22,18 +22,12 @@ Create a new project and install Teleportal:
 
 <Tabs>
   <TabItem label="Bun">
-    ```bash
-    mkdir my-teleportal-app && cd my-teleportal-app
-    bun init -y
-    bun add teleportal yjs crossws srvx
-    ```
+    ```bash mkdir my-teleportal-app && cd my-teleportal-app bun init -y bun add teleportal yjs
+    crossws srvx ```
   </TabItem>
   <TabItem label="npm">
-    ```bash
-    mkdir my-teleportal-app && cd my-teleportal-app
-    npm init -y
-    npm install teleportal yjs crossws srvx
-    ```
+    ```bash mkdir my-teleportal-app && cd my-teleportal-app npm init -y npm install teleportal yjs
+    crossws srvx ```
   </TabItem>
 </Tabs>
 
@@ -108,8 +102,8 @@ provider.doc.on("update", () => {
   console.log("Document updated:", ytext.toString());
 });
 
-// Wait a moment for any final syncs, then clean up
-await new Promise((resolve) => setTimeout(resolve, 100));
+// Flush pending messages before cleanup
+await provider.flush();
 await provider.destroy();
 ```
 
@@ -130,31 +124,15 @@ Here is what each piece does:
 Start the server:
 
 <Tabs>
-  <TabItem label="Bun">
-    ```bash
-    bun run server.ts
-    ```
-  </TabItem>
-  <TabItem label="Node.js">
-    ```bash
-    node --experimental-strip-types server.ts
-    ```
-  </TabItem>
+  <TabItem label="Bun">```bash bun run server.ts ```</TabItem>
+  <TabItem label="Node.js">```bash node --experimental-strip-types server.ts ```</TabItem>
 </Tabs>
 
 The server starts listening on `ws://localhost:3000`. Then in a separate terminal, run the client:
 
 <Tabs>
-  <TabItem label="Bun">
-    ```bash
-    bun run client.ts
-    ```
-  </TabItem>
-  <TabItem label="Node.js">
-    ```bash
-    node --experimental-strip-types client.ts
-    ```
-  </TabItem>
+  <TabItem label="Bun">```bash bun run client.ts ```</TabItem>
+  <TabItem label="Node.js">```bash node --experimental-strip-types client.ts ```</TabItem>
 </Tabs>
 
 You should see `Document updated: Hello, world!` printed as the client inserts text and the change round-trips through the server.
