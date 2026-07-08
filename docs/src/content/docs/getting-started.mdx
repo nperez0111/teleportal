@@ -3,7 +3,7 @@ title: Getting Started
 description: Build your first real-time collaborative app with Teleportal in under 10 minutes
 ---
 
-import { Card, CardGrid, Tabs, TabItem } from "@astrojs/starlight/components";
+import { Card, CardGrid, Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
 This tutorial walks you through creating a working real-time collaborative app with Teleportal. By the end, you'll have a server syncing Y.js documents and a client that connects, edits, and receives live updates.
 
@@ -22,12 +22,20 @@ Create a new project and install Teleportal:
 
 <Tabs>
   <TabItem label="Bun">
-    ```bash mkdir my-teleportal-app && cd my-teleportal-app bun init -y bun add teleportal yjs
-    crossws srvx ```
+    <Code
+      code={`mkdir my-teleportal-app && cd my-teleportal-app
+bun init -y
+bun add teleportal yjs crossws srvx`}
+      lang="bash"
+    />
   </TabItem>
   <TabItem label="npm">
-    ```bash mkdir my-teleportal-app && cd my-teleportal-app npm init -y npm install teleportal yjs
-    crossws srvx ```
+    <Code
+      code={`mkdir my-teleportal-app && cd my-teleportal-app
+npm init -y
+npm install teleportal yjs crossws srvx`}
+      lang="bash"
+    />
   </TabItem>
 </Tabs>
 
@@ -124,15 +132,23 @@ Here is what each piece does:
 Start the server:
 
 <Tabs>
-  <TabItem label="Bun">```bash bun run server.ts ```</TabItem>
-  <TabItem label="Node.js">```bash node --experimental-strip-types server.ts ```</TabItem>
+  <TabItem label="Bun">
+    <Code code="bun run server.ts" lang="bash" />
+  </TabItem>
+  <TabItem label="Node.js">
+    <Code code="node --experimental-strip-types server.ts" lang="bash" />
+  </TabItem>
 </Tabs>
 
 The server starts listening on `ws://localhost:3000`. Then in a separate terminal, run the client:
 
 <Tabs>
-  <TabItem label="Bun">```bash bun run client.ts ```</TabItem>
-  <TabItem label="Node.js">```bash node --experimental-strip-types client.ts ```</TabItem>
+  <TabItem label="Bun">
+    <Code code="bun run client.ts" lang="bash" />
+  </TabItem>
+  <TabItem label="Node.js">
+    <Code code="node --experimental-strip-types client.ts" lang="bash" />
+  </TabItem>
 </Tabs>
 
 You should see `Document updated: Hello, world!` printed as the client inserts text and the change round-trips through the server.
