@@ -13,6 +13,8 @@ export type UpstreamMessage =
   | { type: "connect"; requestId: string }
   | { type: "disconnect"; requestId: string }
   | { type: "switch-transport"; transport: string; requestId: string }
+  | { type: "flush-sync" }
+  | { type: "flush-async"; requestId: string }
   | { type: "destroy"; tabId: string }
   | { type: "network-status"; online: boolean }
   | { type: "heartbeat" }
@@ -49,6 +51,7 @@ export type DownstreamMessage =
       availableTransports: string[];
     }
   | { type: "response"; requestId: string; error?: string }
+  | { type: "flush-sync-result"; count: number }
   | { type: "heartbeat-ack" }
   | { type: "diagnostics"; diagnostics: ConnectionDiagnostics }
   | { type: "file-upload-result"; requestId: string; fileId: string }

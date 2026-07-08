@@ -518,4 +518,129 @@ describe("Connection batching of content-encrypted payloads", () => {
 
     await conn.destroy();
   });
+
+  it("flushSync() returns number of batched messages and sends them immediately", async () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    const [clientTransport] = createMemoryTransportPair();
+    const timer = new FakeTimer();
+    const conn = new Connection({
+      transports: [clientTransport],
+      batchIntervalMs: 100,
+      connect: false,
+      timer,
+    });
+
+    await conn.connect();
+
+    // Send three updates while batching is active
+    text.insert(0, "a");
+    const update1 = plainPayload(Y.encodeStateAsUpdateV2(doc));
+    text.insert(1, "b");
+    const update2 = plainPayload(Y.encodeStateAsUpdateV2(doc, Y.encodeStateVector(doc)));
+    text.insert(2, "c");
+    const update3 = plainPayload(Y.encodeStateAsUpdateV2(doc, Y.encodeStateVector(doc)));
+
+    await conn.send(makeEncDocUpdate("doc1", update1, false));
+    await conn.send(makeEncDocUpdate("doc1", update2, false));
+    await conn.send(makeEncDocUpdate("doc1", update3, false));
+
+    // Messages should be batched (not sent yet)
+    expect(clientTransport.sentMessages.length).toBe(0);
+
+    // flushSync should return 1 (one batched doc message) and send immediately
+    const count = conn.flushSync();
+    expect(count).toBe(1);
+
+    // Give microtasks a chance to process
+    await flushMicrotasks(1);
+
+    // Should have sent the batched message immediately
+    expect(clientTransport.sentMessages.length).toBe(1);
+    expect(clientTransport.sentMessages[0].type).toBe("doc");
+
+    await conn.destroy();
+  });
+
+  it("flushAsync() flushes batched messages and waits for in-flight to clear", async () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("t");
+    const [clientTransport] = createMemoryTransportPair();
+    const timer = new FakeTimer();
+    const conn = new Connection({
+      transports: [clientTransport],
+      batchIntervalMs: 100,
+      connect: false,
+      inFlightMessageTimeout: 1000,
+      timer,
+    });
+
+    await conn.connect();
+
+    // Send updates while batching is active
+    text.insert(0, "a");
+    const update1 = plainPayload(Y.encodeStateAsUpdateV2(doc));
+    text.insert(1, "b");
+    const update2 = plainPayload(Y.encodeStateAsUpdateV2(doc, Y.encodeStateVector(doc)));
+
+    await conn.send(makeEncDocUpdate("doc1", update1, false));
+    await conn.send(makeEncDocUpdate("doc1", update2, false));
+
+    // Messages should be batched (not sent yet)
+    expect(clientTransport.sentMessages.length).toBe(0);
+
+    // Start flushAsync - it should flush and wait for ACK
+    const flushPromise = conn.flushAsync();
+
+    // Give microtasks time to process the flush
+    await flushMicrotasks(1);
+
+    // Should have sent immediately
+    expect(clientTransport.sentMessages.length).toBe(1);
+
+    // The promise should still be pending (waiting for ACK)
+    // We can test this by racing with a quick timeout
+    const raceResult = await Promise.race([
+      flushPromise.then(() => "flushed"),
+      timer.advance(10).then(() => "timeout"),
+    ]);
+    expect(raceResult).toBe("timeout"); // flushAsync is still waiting
+
+    await conn.destroy();
+  });
+
+  it("flushSync() returns 0 when no messages are batched", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const timer = new FakeTimer();
+    const conn = new Connection({
+      transports: [clientTransport],
+      batchIntervalMs: 100,
+      connect: false,
+      timer,
+    });
+
+    await conn.connect();
+
+    const count = conn.flushSync();
+    expect(count).toBe(0);
+
+    await conn.destroy();
+  });
+
+  it("flushAsync() resolves immediately when no messages are batched", async () => {
+    const [clientTransport] = createMemoryTransportPair();
+    const timer = new FakeTimer();
+    const conn = new Connection({
+      transports: [clientTransport],
+      batchIntervalMs: 100,
+      connect: false,
+      timer,
+    });
+
+    await conn.connect();
+
+    await conn.flushAsync(); // Should not hang
+
+    await conn.destroy();
+  });
 });

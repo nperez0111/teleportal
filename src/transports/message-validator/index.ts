@@ -43,7 +43,7 @@ export function withMessageValidatorSource<
   const { isAuthorized } = options;
   return {
     ...source,
-    source: filterMessages<Message<Context>>((msg) => isAuthorized(msg, "read"))(source.source),
+    source: filterMessages<Message<Context>>((msg) => isAuthorized(msg, "write"))(source.source),
   };
 }
 

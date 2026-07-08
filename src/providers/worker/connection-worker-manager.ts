@@ -172,6 +172,30 @@ export class ConnectionWorkerManager {
         break;
       }
 
+      case "flush-sync": {
+        const conn = portState.managedConnection;
+        if (!conn) {
+          portState.post({ type: "flush-sync-result", count: 0 });
+          return;
+        }
+        const count = conn.connection.flushSync();
+        portState.post({ type: "flush-sync-result", count });
+        break;
+      }
+
+      case "flush-async": {
+        const conn = portState.managedConnection;
+        if (!conn) {
+          portState.respond(msg.requestId, "No connection");
+          return;
+        }
+        conn.connection
+          .flushAsync()
+          .then(() => portState.respond(msg.requestId))
+          .catch((e: Error) => portState.respond(msg.requestId, e.message));
+        break;
+      }
+
       case "destroy":
         this.#handleDestroy(portState);
         break;

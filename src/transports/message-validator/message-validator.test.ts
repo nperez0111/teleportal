@@ -96,17 +96,22 @@ describe("withMessageValidator", () => {
       },
       {
         isAuthorized: async (msg, type) => {
+          // Both source (incoming) and sink (outgoing) check "write" permission
+          // This matches server-side usage where both reading from source and
+          // writing to sink require write permission
           if (type === "write") return msg.context.clientId === "writer";
-          return msg.context.clientId === "reader";
+          return false;
         },
       },
     );
 
+    // Sink (outgoing writes) - checks "write" permission
     await transport.write(makeMsg("writer"));
     await transport.write(makeMsg("blocked"));
     expect(written).toHaveLength(1);
 
-    ch.send(makeMsg("reader"));
+    // Source (incoming reads) - now also checks "write" permission
+    ch.send(makeMsg("writer"));
     ch.send(makeMsg("blocked"));
     ch.close();
 
@@ -115,6 +120,6 @@ describe("withMessageValidator", () => {
       for (const msg of batch) received.push(msg);
     }
     expect(received).toHaveLength(1);
-    expect(received[0].context.clientId).toBe("reader");
+    expect(received[0].context.clientId).toBe("writer");
   });
 });

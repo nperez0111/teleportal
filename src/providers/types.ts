@@ -121,6 +121,19 @@ export interface Connection {
   disconnect(): Promise<void>;
   /** Switch to a different registered transport by name. */
   switchTransport(name: string): Promise<void>;
+  /**
+   * Synchronously flush any pending batched updates to the send queue.
+   * Returns the number of messages queued (0 if batching is disabled or no pending updates).
+   * Does NOT wait for messages to be sent or acknowledged.
+   * Use in hot paths where you want to trigger a flush without blocking.
+   */
+  flushSync(): number;
+  /**
+   * Flush pending batched updates and wait for them to be sent and acknowledged.
+   * Useful before {@link destroy} or when you need to ensure all updates are persisted.
+   * Returns a promise that resolves when all flushed messages have been acknowledged.
+   */
+  flushAsync(): Promise<void>;
   /** Tear down the connection and release all resources. */
   destroy(): void | Promise<void>;
   /** Subscribe to a connection event. Returns an unsubscribe function. */

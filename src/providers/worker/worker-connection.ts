@@ -117,6 +117,11 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
         this.#missedHeartbeats = 0;
         break;
 
+      case "flush-sync-result":
+        // Fire and forget - we don't track the count in WorkerConnection
+        // since flushSync can't return it synchronously across the message boundary
+        break;
+
       case "diagnostics":
         this.#diagnostics = msg.diagnostics;
         break;
@@ -316,6 +321,19 @@ export class WorkerConnection extends Observable<ConnectionEvents> {
   async switchTransport(transport: string): Promise<void> {
     const requestId = String(this.#nextRequestId++);
     await this.#rpc({ type: "switch-transport", transport, requestId });
+  }
+
+  flushSync(): number {
+    // For worker connections, we can't get a synchronous return value across the postMessage boundary
+    // So we post the message and return 0 (unknown count)
+    // The actual flush happens asynchronously in the worker
+    this.#postUpstream({ type: "flush-sync" });
+    return 0;
+  }
+
+  async flushAsync(): Promise<void> {
+    const requestId = String(this.#nextRequestId++);
+    await this.#rpc({ type: "flush-async", requestId });
   }
 
   async destroy(): Promise<void> {

@@ -1,22 +1,29 @@
 import { Provider, websocketTransport } from "teleportal/providers";
-import { createEncryptionKey } from "teleportal/encryption-key";
+import { importEncryptionKey } from "teleportal/encryption-key";
+
+// Use a fixed key so all clients can decrypt each other's changes
+const SHARED_KEY = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=";
 
 const provider = await Provider.create({
   url: `ws://localhost:3000`,
   document: "test",
-  encryptionKey: createEncryptionKey(),
+  encryptionKey: await importEncryptionKey(SHARED_KEY),
   transports: [websocketTransport()],
 });
 
 await provider.synced;
 
-provider.doc.getText("test").insert(0, "Hello, world!");
+const text = provider.doc.getText("test");
+const currentContent = text.toString();
+console.log("Before insert:", JSON.stringify(currentContent));
 
-console.log(provider.doc.getText("test").toString());
+text.insert(0, "Hello, world!");
 
-provider.doc.on("update", () => {
-  console.log(provider.doc.getText("test").toString());
-});
+const afterContent = text.toString();
+console.log("After insert:", JSON.stringify(afterContent));
+
+// Wait a bit for the Y.js update event to fire
+await new Promise((resolve) => setTimeout(resolve, 10));
 
 // Flush pending messages before cleanup
 await provider.flush();

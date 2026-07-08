@@ -4,8 +4,20 @@ import { Server } from "teleportal/server";
 import { MemoryDocumentStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
+const storage = new MemoryDocumentStorage();
+
 const server = new Server({
-  storage: new MemoryDocumentStorage(),
+  storage,
+});
+
+server.on("document-load", (event) => {
+  console.log("[Server] Document loaded:", event.documentId);
+});
+
+server.on("session-open", (event) => {
+  event.session.on("document-write", () => {
+    console.log("[Server] Update received for:", event.documentId);
+  });
 });
 
 serve({

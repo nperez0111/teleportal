@@ -488,6 +488,42 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     await this.#closeActiveTransport();
   }
 
+  /**
+   * Synchronously flushes any pending batched updates to the send queue.
+   * Returns the number of messages that were queued for sending.
+   * This does NOT wait for the messages to be sent or acknowledged.
+   * Use in hot paths where you want to trigger a flush without blocking.
+   */
+  flushSync(): number {
+    return this.#flushBatch();
+  }
+
+  /**
+   * Flushes pending batched updates and waits for them to be sent and acknowledged.
+   * This is useful before destroy() or when you need to ensure all updates are persisted.
+   */
+  async flushAsync(): Promise<void> {
+    const count = this.#flushBatch();
+    if (count === 0) return;
+    
+    // Wait for the flushed messages to be acknowledged
+    await this.#waitForInFlightMessages();
+  }
+
+  #waitForInFlightMessages(): Promise<void> {
+    if (this.#inFlightMessages.size === 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const cleanup = this.on("messages-in-flight", (hasMessages) => {
+        if (!hasMessages) {
+          cleanup();
+          resolve();
+        }
+      });
+    });
+  }
+
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     super.destroy();
@@ -688,7 +724,8 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
           this.#timerManager.clearTimeout(this.#batchFlushTimer);
           this.#batchFlushTimer = null;
         }
-        this.#flushBatch();
+        // Fire-and-forget for disconnect flush
+        void this.#flushBatch();
 
         if (previousState.type !== "disconnected") {
           this.call("disconnected");
@@ -773,20 +810,27 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     if (this.#batchFlushTimer || this.#pendingUpdates.size === 0) return;
     const interval = this.#batchIntervalMs;
     if (interval <= 0) {
-      this.#flushBatch();
+      // Fire-and-forget for synchronous immediate flush
+      void this.#flushBatch();
       return;
     }
     this.#batchFlushTimer = this.#timerManager.setTimeout(() => {
       this.#batchFlushTimer = null;
-      this.#flushBatch();
+      // Fire-and-forget for timer-triggered flush
+      void this.#flushBatch();
     }, interval);
   }
 
   #flushing = false;
 
-  #flushBatch(): void {
-    if (this.#pendingUpdates.size === 0) return;
+  /**
+   * Synchronously flushes pending batched updates to the send queue.
+   * Returns the number of messages that were queued for sending.
+   */
+  #flushBatch(): number {
+    if (this.#pendingUpdates.size === 0) return 0;
     this.#flushing = true;
+    let count = 0;
     for (const [, { updates, message }] of this.#pendingUpdates) {
       const batched =
         updates.length === 1
@@ -805,10 +849,12 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
               message.context,
               message.encrypted,
             );
-      this.#sendOrBuffer(batched);
+      void this.#sendOrBuffer(batched);
+      count++;
     }
     this.#pendingUpdates.clear();
     this.#flushing = false;
+    return count;
   }
 
   /**
@@ -890,7 +936,8 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
       this.#batchFlushTimer = this.#timerManager.setTimeout(
         () => {
           this.#batchFlushTimer = null;
-          this.#flushBatch();
+          // Fire-and-forget for rate-limit delayed flush
+          void this.#flushBatch();
         },
         Math.max(retryAfterMs, this.#batchIntervalMs),
       );

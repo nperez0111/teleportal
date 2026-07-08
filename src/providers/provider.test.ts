@@ -1837,4 +1837,79 @@ describe("Provider", () => {
       await serverConn.destroy();
     });
   });
+
+  describe("flush() with batching", () => {
+    it("flushes batched updates before destroy", async () => {
+      // Create a transport pair and connections with batching enabled
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 100, // Enable batching with 100ms interval
+      });
+      
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0, // Server doesn't need batching
+      });
+
+      // Track updates received by server
+      const serverUpdates: Uint8Array[] = [];
+      
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      // Create client provider
+      const clientProvider = new Provider({
+        connection: clientConn,
+        document: "test-flush-doc",
+        enableOfflinePersistence: false,
+        encryptionKey: false,
+      });
+
+      // Create server-side handler that acks updates
+      serverConn.on("received-message", async (msg) => {
+        if (msg.type === "doc" && msg.payload?.type === "update") {
+          const update = msg.payload.update;
+          if (update && update.version === 2 && update.data instanceof Uint8Array) {
+            serverUpdates.push(update.data);
+            // Send ack back to client
+            await serverConn.send(new AckMessage(msg.id, {}));
+          }
+        } else if (msg.type === "doc" && msg.payload?.type === "sync-step-1") {
+          // Send ack for sync-step-1
+          await serverConn.send(new AckMessage(msg.id, {}));
+          // Send sync-done to complete sync
+          await serverConn.send(new DocMessage(msg.document, { type: "sync-done" }, {}, false));
+        }
+      });
+
+      // Wait for initial sync
+      await clientProvider.synced;
+
+      // Insert text - this should be batched
+      const text = clientProvider.doc.getText("test");
+      text.insert(0, "Hello, world!");
+
+      // Wait for microtasks to allow Y.js update event to fire and be processed
+      await flush();
+
+      // At this point, the update should be in the pending batch, not sent yet
+      expect(serverUpdates.length).toBe(0);
+
+      // Flush batched updates and wait for acks
+      await clientProvider.flush(1000);
+
+      // Verify the update was received by the server after flush
+      expect(serverUpdates.length).toBeGreaterThan(0);
+
+      // Clean up
+      await clientProvider.destroy();
+
+      // Cleanup
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+  });
 });

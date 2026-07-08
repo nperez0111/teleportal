@@ -757,7 +757,9 @@ export class Provider<
    */
   public async flush(timeout: number = 500): Promise<void> {
     const flushPromise = Promise.all([
-      this.#waitForInFlightMessages(),
+      // Flush batched updates and wait for them to be acknowledged
+      this.#connection.flushAsync(),
+      // Wait for the apply queue to drain
       this.#waitForApplyQueue(),
     ]).then(() => {});
 
