@@ -1,10 +1,11 @@
-import { Provider } from "teleportal/providers";
+import { Provider, websocketTransport } from "teleportal/providers";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
 const provider = await Provider.create({
   url: `ws://localhost:3000`,
   document: "test",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
+  transports: [websocketTransport()],
 });
 
 await provider.synced;
@@ -16,3 +17,7 @@ console.log(provider.doc.getText("test").toString());
 provider.doc.on("update", () => {
   console.log(provider.doc.getText("test").toString());
 });
+
+// Wait a moment for any final syncs, then clean up
+await new Promise((resolve) => setTimeout(resolve, 100));
+await provider.destroy();

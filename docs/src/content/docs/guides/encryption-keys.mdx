@@ -25,7 +25,7 @@ Generate a new 256-bit AES-GCM key with `createEncryptionKey()`:
 import { createEncryptionKey } from "teleportal/encryption-key";
 import { Provider } from "teleportal/providers";
 
-const encryptionKey = await createEncryptionKey();
+const encryptionKey = createEncryptionKey();
 
 const provider = await Provider.create({
   url: "wss://example.com/sync",
@@ -51,7 +51,7 @@ import {
 } from "teleportal/encryption-key";
 
 // Export to a storable string
-const key = await createEncryptionKey();
+const key = createEncryptionKey();
 const keyString = await exportEncryptionKey(key);
 
 // Store the keyString in localStorage, a database, etc.
@@ -76,7 +76,7 @@ import {
 } from "teleportal/encryption-key";
 
 // Sharer: create a shareable link
-const key = await createEncryptionKey();
+const key = createEncryptionKey();
 const shareUrl = `https://app.example.com/doc/abc123#${keyToUrlFragment(await exportEncryptionKey(key))}`;
 // e.g. https://app.example.com/doc/abc123#token=<key>
 

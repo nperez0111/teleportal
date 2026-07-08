@@ -60,7 +60,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(), // encrypted by default
+  encryptionKey: createEncryptionKey(), // encrypted by default
   rpc: {
     attribution: createAttributionRpc,
   },

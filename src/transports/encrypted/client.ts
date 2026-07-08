@@ -127,13 +127,24 @@ export class EncryptionClient
   ): Promise<void> {
     if (structureUpdate.length === 0) return;
 
-    const decryptedBytes = await Promise.all(
-      encryptedSidecars.map((encrypted) => this.decryptUpdate(encrypted)),
-    );
-    const sidecars = decryptedBytes.map(decodeSidecar);
+    try {
+      const decryptedBytes = await Promise.all(
+        encryptedSidecars.map((encrypted) => this.decryptUpdate(encrypted)),
+      );
+      const sidecars = decryptedBytes.map(decodeSidecar);
 
-    const fullUpdate = restoreContent(structureUpdate, mergeSidecars(sidecars));
-    Y.applyUpdateV2(this.ydoc, fullUpdate, getSyncTransactionOrigin(this.ydoc));
+      const fullUpdate = restoreContent(structureUpdate, mergeSidecars(sidecars));
+      Y.applyUpdateV2(this.ydoc, fullUpdate, getSyncTransactionOrigin(this.ydoc));
+    } catch (error) {
+      throw new Error(
+        `Failed to decrypt document "${this.document}". This likely means:\n` +
+          `  1. The encryption key has changed or is incorrect\n` +
+          `  2. The document was encrypted with a different key\n` +
+          `  3. The stored document data is corrupted\n\n` +
+          `If you're using createEncryptionKey() or passwordKey(), ensure the same passphrase ` +
+          `is used across all clients. Original error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

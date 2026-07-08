@@ -26,7 +26,7 @@ const token = await tokenManager.createToken(
 const provider = await Provider.create({
   url: `http://localhost:3000?token=${token}`,
   document: "test",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 await provider.synced;

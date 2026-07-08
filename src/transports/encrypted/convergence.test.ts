@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import { createEncryptionKey } from "teleportal/encryption-key";
+import { generateEncryptionKey } from "teleportal/encryption-key";
 import {
   InMemoryPubSub,
   type Message,
@@ -42,7 +42,7 @@ describe("encrypted convergence (in-process session harness)", () => {
     MemoryDocumentStorage.attributionMaps.clear();
     storage = new MemoryDocumentStorage(true);
     pubSub = new InMemoryPubSub();
-    key = await createEncryptionKey();
+    key = await generateEncryptionKey();
 
     server = new Server<Ctx>({
       storage: async () => storage,
@@ -311,7 +311,7 @@ describe("encrypted convergence (in-process session harness)", () => {
 
   it("a wrong-key client cannot read content and does not corrupt correct-key clients", async () => {
     const SECRET = "TOP_SECRET_payload_999";
-    const wrongKey = await createEncryptionKey();
+    const wrongKey = await generateEncryptionKey();
 
     const { peer: a, session } = await createPeer("client-a");
     await performSyncHandshake(a, session);

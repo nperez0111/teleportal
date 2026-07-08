@@ -182,7 +182,7 @@ const provider = await WorkerProvider.create({
   workerUrl: new URL("./worker.ts", import.meta.url),
   url: "wss://example.com/sync",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 ```
 
@@ -229,7 +229,7 @@ const connection = new DirectConnection({
   transports: [websocketTransport()],
 });
 
-const key = await createEncryptionKey();
+const key = createEncryptionKey();
 const provider1 = new Provider({ connection, document: "doc-1", encryptionKey: key });
 const provider2 = new Provider({ connection, document: "doc-2", encryptionKey: key });
 ```

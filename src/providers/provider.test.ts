@@ -1100,7 +1100,7 @@ describe("Provider", () => {
     });
 
     it("sends encrypted messages when given a key", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const { provider, clientConn, serverConn } = await createTestProvider({
         encryptionKey: key,
       });
@@ -1111,7 +1111,7 @@ describe("Provider", () => {
     });
 
     it("openDocument inherits the parent's key by default", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const { provider, clientConn, serverConn } = await createTestProvider({
         encryptionKey: key,
       });
@@ -1129,7 +1129,7 @@ describe("Provider", () => {
     });
 
     it("openDocument can override an inherited key with false, and vice versa", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const { provider, clientConn, serverConn } = await createTestProvider({
         encryptionKey: key,
       });

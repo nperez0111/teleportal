@@ -57,7 +57,7 @@ describe("Encrypted Upload Benchmarks", () => {
 
   describe("AES-256-GCM encrypt/decrypt (isolated)", () => {
     it("encrypt single chunk - various sizes", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const size of [1024, 16 * 1024, ENCRYPTED_CHUNK_SIZE, CHUNK_SIZE]) {
         const data = new Uint8Array(size);
@@ -70,7 +70,7 @@ describe("Encrypted Upload Benchmarks", () => {
     });
 
     it("encrypt throughput - batch of chunks", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const batchSize = 100;
       const chunk = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
       crypto.getRandomValues(chunk);
@@ -87,7 +87,7 @@ describe("Encrypted Upload Benchmarks", () => {
     });
 
     it("encrypt sequential vs parallel", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const chunkCount = 16;
       const chunks = makeChunks(chunkCount * ENCRYPTED_CHUNK_SIZE, ENCRYPTED_CHUNK_SIZE);
 
@@ -115,7 +115,7 @@ describe("Encrypted Upload Benchmarks", () => {
 
   describe("encryptUpdate overhead analysis", () => {
     it("raw crypto.subtle.encrypt vs encryptUpdate wrapper", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const data = new Uint8Array(ENCRYPTED_CHUNK_SIZE);
       crypto.getRandomValues(data);
 
@@ -148,7 +148,7 @@ describe("Encrypted Upload Benchmarks", () => {
 
   describe("processFile (File.stream())", () => {
     it("encrypted - various sizes", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [0.1, 1, 5, 30]) {
         const file = makeFile(sizeMB * 1024 * 1024);
@@ -184,7 +184,7 @@ describe("Encrypted Upload Benchmarks", () => {
 
   describe("Full encrypted upload (File → chunk → encrypt → tree → store)", () => {
     it("encrypted upload - various sizes", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [0.064, 0.5, 1, 5, 30]) {
         const file = makeFile(sizeMB * 1024 * 1024);
@@ -221,7 +221,7 @@ describe("Encrypted Upload Benchmarks", () => {
     });
 
     it("encrypted vs unencrypted upload overhead (1MB File)", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const file = makeFile(1 * 1024 * 1024);
 
       const r1 = await bench(
@@ -293,7 +293,7 @@ describe("Encrypted Upload Benchmarks", () => {
     });
 
     it("stage: encrypt only", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const fileSize = 30 * 1024 * 1024;
       const chunkCount = Math.ceil(fileSize / ENCRYPTED_CHUNK_SIZE);
       const chunks = makeChunks(chunkCount * ENCRYPTED_CHUNK_SIZE, ENCRYPTED_CHUNK_SIZE);
@@ -352,7 +352,7 @@ describe("Encrypted Upload Benchmarks", () => {
 
   describe("Optimization: parallel encrypt + sequential hash (30MB)", () => {
     it("pre-encrypt all chunks then build tree vs interleaved", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
       const fileSize = 30 * 1024 * 1024;
       const plainChunks = makeChunks(fileSize, ENCRYPTED_CHUNK_SIZE);
       console.log(`    ${plainChunks.length} chunks`);
@@ -402,7 +402,7 @@ describe("Encrypted Upload Benchmarks", () => {
 
   describe("Full encrypted round-trip (upload + download)", () => {
     it("round-trip - various sizes", async () => {
-      const key = await createEncryptionKey();
+      const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
       for (const sizeMB of [0.1, 1, 30]) {
         const file = makeFile(sizeMB * 1024 * 1024);

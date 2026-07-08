@@ -117,7 +117,7 @@ describe("rate-limited sync during sustained typing (integration)", () => {
       },
     });
 
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const connA = await connectClient(server, "client-a", "alice");
     const connB = await connectClient(server, "client-b", "bob");
     const docA = new Y.Doc();

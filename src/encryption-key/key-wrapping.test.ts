@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createEncryptionKey, encryptUpdate, decryptUpdate } from "./index";
+import { generateEncryptionKey, encryptUpdate, decryptUpdate } from "./index";
 import {
   deriveWrappingKey,
   wrapDocumentKey,
@@ -52,7 +52,7 @@ describe("Key Wrapping", () => {
   describe("wrapDocumentKey / unwrapDocumentKey", () => {
     it("should round-trip a document key through wrap → unwrap", async () => {
       const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
-      const documentKey = await createEncryptionKey();
+      const documentKey = await generateEncryptionKey();
 
       const wrapped = await wrapDocumentKey(wrappingKey, documentKey);
       const unwrapped = await unwrapDocumentKey(wrappingKey, wrapped);
@@ -64,7 +64,7 @@ describe("Key Wrapping", () => {
 
     it("should produce an opaque blob different from the raw key", async () => {
       const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
-      const documentKey = await createEncryptionKey();
+      const documentKey = await generateEncryptionKey();
 
       const wrapped = await wrapDocumentKey(wrappingKey, documentKey);
       const rawKey = await crypto.subtle.exportKey("raw", documentKey);
@@ -76,7 +76,7 @@ describe("Key Wrapping", () => {
     it("should fail to unwrap with a different wrapping key", async () => {
       const wrappingKeyAlice = await deriveWrappingKey(MASTER_SECRET, "alice");
       const wrappingKeyBob = await deriveWrappingKey(MASTER_SECRET, "bob");
-      const documentKey = await createEncryptionKey();
+      const documentKey = await generateEncryptionKey();
 
       const wrapped = await wrapDocumentKey(wrappingKeyAlice, documentKey);
 
@@ -85,7 +85,7 @@ describe("Key Wrapping", () => {
 
     it("should produce an unwrapped key that works for encrypt/decrypt", async () => {
       const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
-      const documentKey = await createEncryptionKey();
+      const documentKey = await generateEncryptionKey();
 
       const wrapped = await wrapDocumentKey(wrappingKey, documentKey);
       const unwrapped = await unwrapDocumentKey(wrappingKey, wrapped);
@@ -120,7 +120,7 @@ describe("Key Wrapping", () => {
       const exported = await exportWrappingKey(original);
       const imported = await importWrappingKey(exported);
 
-      const documentKey = await createEncryptionKey();
+      const documentKey = await generateEncryptionKey();
       const wrapped = await wrapDocumentKey(original, documentKey);
       const unwrapped = await unwrapDocumentKey(imported, wrapped);
 

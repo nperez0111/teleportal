@@ -132,7 +132,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "https://teleportal.tools?token=your-token-here",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 // Wait for the document to sync with the server

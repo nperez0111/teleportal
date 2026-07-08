@@ -59,7 +59,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "https://example.com",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
   // Force HTTP/SSE only -- skip the WebSocket attempt entirely
   transports: [httpTransport()],
 });
@@ -158,7 +158,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "https://example.com",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 ```
 

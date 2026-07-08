@@ -45,7 +45,7 @@ import redisDriver from "unstorage/drivers/redis";
 // --- 1. Import or create the server-side at-rest key ---
 const AT_REST_KEY = process.env.AT_REST_KEY
   ? await importEncryptionKey(process.env.AT_REST_KEY)
-  : await createEncryptionKey(); // only for dev -- persist this in production
+  : createEncryptionKey(); // only for dev -- persist this in production
 
 // --- 2. Build a wrapper that encrypts every value ---
 function withAtRestEncryption(inner: Storage, key: CryptoKey): Storage {
@@ -115,7 +115,7 @@ import {
 } from "teleportal/encryption-key";
 
 // Generate a new key and export it as a JWK string for storage
-const key = await createEncryptionKey();
+const key = createEncryptionKey();
 const keyString = await exportEncryptionKey(key);
 // Store keyString in a secrets manager or environment variable -- treat it as a secret.
 
@@ -169,7 +169,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "wss://example.com/sync",
   document: "my-doc",
-  encryptionKey: await createEncryptionKey(), // never sent to server
+  encryptionKey: createEncryptionKey(), // never sent to server
 });
 ```
 

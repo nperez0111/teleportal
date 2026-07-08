@@ -4,7 +4,7 @@ import { InMemoryKeyRegistryStorage } from "../../storage/in-memory/key-registry
 import { getKeyRegistryHandlers } from "./http";
 import { createKeyRegistryRpc } from "./client";
 import {
-  createEncryptionKey,
+  generateEncryptionKey,
   deriveWrappingKey,
   wrapDocumentKey,
   unwrapDocumentKey,
@@ -57,7 +57,7 @@ describe("Key Registry — end-to-end", () => {
       // Derive her wrapping key the same way the server did, then unwrap
       await (async () => {
         const wk = await deriveWrappingKey(MASTER_SECRET, "alice");
-        const docKey = await createEncryptionKey();
+        const docKey = await generateEncryptionKey();
         return await wrapDocumentKey(wk, docKey);
       })(),
     ).catch(() => null);
@@ -65,7 +65,7 @@ describe("Key Registry — end-to-end", () => {
     // Actually, let's use the storage directly for a cleaner test
     // Both users should be able to unwrap to the same document key
     const { storage } = makeHandler();
-    const docKey = await createEncryptionKey();
+    const docKey = await generateEncryptionKey();
     const aliceWK2 = await deriveWrappingKey(MASTER_SECRET, "alice");
     const bobWK2 = await deriveWrappingKey(MASTER_SECRET, "bob");
 
@@ -94,7 +94,7 @@ describe("Key Registry — end-to-end", () => {
 
   it("rotation produces a new key that old users cannot use", async () => {
     const { storage } = makeHandler();
-    const docKey = await createEncryptionKey();
+    const docKey = await generateEncryptionKey();
     const aliceWK = await deriveWrappingKey(MASTER_SECRET, "alice");
     const bobWK = await deriveWrappingKey(MASTER_SECRET, "bob");
 
@@ -104,7 +104,7 @@ describe("Key Registry — end-to-end", () => {
     ]);
 
     // Rotate: generate new key, only wrap for alice (bob is revoked)
-    const newDocKey = await createEncryptionKey();
+    const newDocKey = await generateEncryptionKey();
     await storage.rotate(
       "doc-1",
       [{ userId: "alice", wrappedKey: await wrapDocumentKey(aliceWK, newDocKey) }],
@@ -134,15 +134,15 @@ describe("Key Registry — end-to-end", () => {
 
   it("concurrent rotations — first wins, second gets conflict", async () => {
     const { storage } = makeHandler();
-    const docKey = await createEncryptionKey();
+    const docKey = await generateEncryptionKey();
     const aliceWK = await deriveWrappingKey(MASTER_SECRET, "alice");
 
     await storage.set("doc-1", [
       { userId: "alice", wrappedKey: await wrapDocumentKey(aliceWK, docKey) },
     ]);
 
-    const newKey1 = await createEncryptionKey();
-    const newKey2 = await createEncryptionKey();
+    const newKey1 = await generateEncryptionKey();
+    const newKey2 = await generateEncryptionKey();
 
     // Both read generation 0
     const meta = await storage.getMeta("doc-1");
@@ -184,7 +184,7 @@ describe("Key Registry — end-to-end", () => {
     // Manually set generation back to simulate stale state
     // (In practice the handler reads the current meta, so we need to
     // do a concurrent rotation via storage directly)
-    const docKey2 = await createEncryptionKey();
+    const docKey2 = await generateEncryptionKey();
     const aliceWK = await deriveWrappingKey(MASTER_SECRET, "alice");
     await expect(
       storage.rotate(

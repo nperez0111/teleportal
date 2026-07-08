@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createEncryptionKey, encryptUpdate, decryptUpdate } from "./index";
+import { generateEncryptionKey, encryptUpdate, decryptUpdate } from "./index";
 import { deriveWrappingKey, wrapDocumentKey } from "./key-wrapping";
 import { registryKey } from "./key-resolver";
 import { RpcMessage } from "teleportal/protocol";
@@ -61,7 +61,7 @@ function createMockConnection(responses: Map<string, any>) {
 
 describe("registryKey", () => {
   it("should fetch and unwrap the document key from the registry", async () => {
-    const documentKey = await createEncryptionKey();
+    const documentKey = await generateEncryptionKey();
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
@@ -79,7 +79,7 @@ describe("registryKey", () => {
   });
 
   it("should produce a usable AES-GCM key", async () => {
-    const documentKey = await createEncryptionKey();
+    const documentKey = await generateEncryptionKey();
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
@@ -98,7 +98,7 @@ describe("registryKey", () => {
   });
 
   it("should cache the resolved key on subsequent calls", async () => {
-    const documentKey = await createEncryptionKey();
+    const documentKey = await generateEncryptionKey();
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
@@ -118,7 +118,7 @@ describe("registryKey", () => {
   });
 
   it("should accept a wrappingKey factory function", async () => {
-    const documentKey = await createEncryptionKey();
+    const documentKey = await generateEncryptionKey();
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
@@ -138,7 +138,7 @@ describe("registryKey", () => {
   });
 
   it("should invalidate cached key via _invalidate", async () => {
-    const documentKey = await createEncryptionKey();
+    const documentKey = await generateEncryptionKey();
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 

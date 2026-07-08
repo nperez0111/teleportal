@@ -291,19 +291,19 @@ export function getYDocSink<Context extends ClientContext>({
     synced: Promise<void>;
   }
 > {
-  let onSynced: (success: boolean) => void;
+  let onSynced: (success: boolean, error?: Error) => void;
   let closed = false;
 
   // Settle the `synced` promise exactly once; later calls are no-ops.
-  const settleSync = (success: boolean) => {
-    onSynced(success);
+  const settleSync = (success: boolean, error?: Error) => {
+    onSynced(success, error);
     onSynced = () => {};
   };
 
   const synced = new Promise<void>((resolve, reject) => {
-    onSynced = (success: boolean) => {
+    onSynced = (success: boolean, error?: Error) => {
       if (success) resolve();
-      else reject(new Error("YDoc cancelled"));
+      else reject(error ?? new Error("YDoc cancelled"));
     };
   });
   // Awaiting `synced` is optional. `close()` rejects it (e.g. switching
@@ -396,7 +396,7 @@ export function getYDocSink<Context extends ClientContext>({
           }
         }
       } catch (err) {
-        settleSync(false);
+        settleSync(false, err instanceof Error ? err : new Error(String(err)));
         throw err;
       }
     },

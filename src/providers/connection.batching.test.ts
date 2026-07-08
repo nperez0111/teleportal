@@ -129,7 +129,7 @@ function makeEncDocUpdate(
 
 describe("mergeContentEncryptedPayloads (direct)", () => {
   it("merges multiple content-encrypted payloads: structureUpdate equals Y.mergeUpdatesV2 of parts and sidecars concat in order", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const doc = new Y.Doc();
     const text = doc.getText("t");
 
@@ -173,7 +173,7 @@ describe("mergeContentEncryptedPayloads (direct)", () => {
   });
 
   it("decrypting the merged payload reconstructs the same combined Y.Doc state as applying parts individually", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
     // Author doc: three sequential edits
     const author = new Y.Doc();
@@ -207,7 +207,7 @@ describe("mergeContentEncryptedPayloads (direct)", () => {
   });
 
   it("preserves sidecar order across payloads carrying multiple sidecars each", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const doc = new Y.Doc();
     const text = doc.getText("t");
 
@@ -253,7 +253,7 @@ describe("mergeContentEncryptedPayloads (direct)", () => {
   // is 13 bytes (Y.encodeStateAsUpdateV2(new Y.Doc())), not zero-length.
 
   it("drops a zero-length structureUpdate interspersed in the batch and merges the rest", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const doc = new Y.Doc();
     const real = await buildEncryptedPayload(key, doc, () => doc.getText("t").insert(0, "data"));
     const empty1 = plainPayload(new Uint8Array(0));
@@ -283,7 +283,7 @@ describe("mergeContentEncryptedPayloads (direct)", () => {
   });
 
   it("merging a real EMPTY-DOC V2 update (13 bytes, not zero-length) is a no-op and does not throw", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     // A genuinely empty Y.Doc still encodes to a non-empty V2 update.
     const realEmptyDocUpdate = Y.encodeStateAsUpdateV2(new Y.Doc());
     expect(realEmptyDocUpdate.length).toBeGreaterThan(0);
@@ -320,7 +320,7 @@ describe("Connection batching of content-encrypted payloads", () => {
   });
 
   it("merges multiple buffered encrypted updates for one doc into ONE wire message that decrypts to the combined state", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const author = new Y.Doc();
     const text = author.getText("t");
     const a = await buildEncryptedPayload(key, author, () => text.insert(0, "foo "));
@@ -402,7 +402,7 @@ describe("Connection batching of content-encrypted payloads", () => {
   });
 
   it("does NOT merge updates for different documents", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const docA = new Y.Doc();
     const docB = new Y.Doc();
     const a = await buildEncryptedPayload(key, docA, () => docA.getText("t").insert(0, "AAA"));
@@ -464,7 +464,7 @@ describe("Connection batching of content-encrypted payloads", () => {
   });
 
   it("buffer-side merge: encrypted updates buffered while disconnected merge into one, sent on reconnect, decrypting to combined state", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const author = new Y.Doc();
     const text = author.getText("t");
     const a = await buildEncryptedPayload(key, author, () => text.insert(0, "x"));

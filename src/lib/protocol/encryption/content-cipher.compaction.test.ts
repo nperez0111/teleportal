@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import { createEncryptionKey, encryptUpdate, decryptUpdate } from "teleportal/encryption-key";
+import { generateEncryptionKey, encryptUpdate, decryptUpdate } from "teleportal/encryption-key";
 import {
   encryptUpdateContent,
   decryptUpdateContent,
@@ -45,7 +45,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
 
   describe("encryptUpdateContent / decryptUpdateContent round trip", () => {
     it("round-trips a V1 update back to the identical doc state (V1 output)", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const src = makeDoc((d) => {
         d.getText("t").insert(0, "Hello secret World");
         d.getMap("m").set("password", "hunter2");
@@ -66,7 +66,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     });
 
     it("round-trips a V2 update back to the identical doc state (V2 output)", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const src = makeDoc((d) => {
         d.getText("t").insert(0, "V2 secret");
         d.getText("t").format(0, 2, { bold: true });
@@ -86,7 +86,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     });
 
     it("can cross versions: V1 input -> V1 output is byte-exact with original", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const src = makeDoc((d) => d.getText("t").insert(0, "cross-version"));
       const original = v1(src);
 
@@ -98,7 +98,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     });
 
     it("structure update never contains the plaintext content", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const src = makeDoc((d) => d.getText("t").insert(0, "TOP-SECRET-VALUE"));
       const encrypted = await encryptUpdateContent(key, v1(src), 1);
       const asStr = Buffer.from(encrypted.structureUpdate).toString("utf-8");
@@ -110,16 +110,16 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
 
   describe("wrong-key decryption", () => {
     it("decryptUpdateContent throws (AES-GCM auth failure) with the wrong key", async () => {
-      const key1 = await createEncryptionKey();
-      const key2 = await createEncryptionKey();
+      const key1 = await generateEncryptionKey();
+      const key2 = await generateEncryptionKey();
       const src = makeDoc((d) => d.getText("t").insert(0, "Secret"));
       const encrypted = await encryptUpdateContent(key1, v1(src), 1);
       await expect(decryptUpdateContent(key2, encrypted, 1)).rejects.toThrow(/Decryption failed/);
     });
 
     it("decryptContentPayload throws with the wrong key", async () => {
-      const key1 = await createEncryptionKey();
-      const key2 = await createEncryptionKey();
+      const key1 = await generateEncryptionKey();
+      const key2 = await generateEncryptionKey();
       const src = makeDoc((d) => d.getText("t").insert(0, "Secret"));
       const enc = await encryptUpdateContent(key1, v1(src), 1);
       await expect(
@@ -132,7 +132,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
 
   describe("encryptToContentPayload + decryptContentPayload", () => {
     it("encrypts a V2 update to a payload and round-trips via decode + decrypt", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const src = makeDoc((d) => {
         d.getText("t").insert(0, "payload content");
         d.getMap("m").set("k", "v");
@@ -158,7 +158,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     // ── Scenario 3: multiple independent updates -> merged structure + sidecars
 
     it("merges multiple structure updates + all sidecars to reconstruct the full doc", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
 
       // Three independent docs (distinct client IDs) each contributing a root type.
       const docA = makeDoc((d) => d.getText("ta").insert(0, "alpha text"), 11);
@@ -191,7 +191,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     });
 
     it("merged sidecar order does not matter for reconstruction", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const docA = makeDoc((d) => d.getText("ta").insert(0, "alpha"), 11);
       const docB = makeDoc((d) => d.getText("tb").insert(0, "beta"), 22);
       const encA = await encryptUpdateContent(key, v2(docA), 2);
@@ -286,19 +286,19 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
 
   describe("compactSidecars", () => {
     it("returns null for 0 sidecars", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       expect(await compactSidecars(key, [])).toBeNull();
     });
 
     it("returns null for 1 sidecar", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const src = makeDoc((d) => d.getText("t").insert(0, "x"));
       const enc = await encryptUpdateContent(key, v2(src), 2);
       expect(await compactSidecars(key, [enc.encryptedSidecar])).toBeNull();
     });
 
     it("compacts overlapping sidecars; compacted sidecar restores the full doc", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
 
       // A single doc edited in three growing snapshots from the SAME client.
       // Each full-state snapshot re-encodes the (contiguous) text run as a
@@ -351,7 +351,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     });
 
     it("dedups multiple clients' overlapping entries into one each", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
 
       // Two clients, each contributing a contiguous run (one item at clock 0).
       const docA = makeDoc((d) => d.getText("ta").insert(0, "alpha"), 1);
@@ -419,7 +419,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
     });
 
     it("end-to-end: real compaction output survives the payload round trip", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const doc = makeDoc((d) => d.getText("t").insert(0, "abc"), 5);
       const s1 = await encryptUpdateContent(key, v2(doc), 2);
       doc.getText("t").insert(3, "def");
@@ -471,7 +471,7 @@ describe("content-cipher: high-level encryption + sidecar compaction", () => {
 
   describe("hashSidecar", () => {
     it("is deterministic and 32 bytes (sha256)", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const enc = await encryptUpdate(key, encodeSidecar({ entries: [], dictionary: new Map() }));
       const h1 = await hashSidecar(enc);
       const h2 = await hashSidecar(enc);

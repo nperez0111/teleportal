@@ -35,7 +35,7 @@ import { createEncryptionKey } from "teleportal/encryption-key";
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 // Wait for document to be synced
@@ -252,7 +252,7 @@ The provider automatically enables offline persistence by default using IndexedD
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document-id",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
   enableOfflinePersistence: true, // default
   indexedDBPrefix: "my-app-", // custom prefix
 });
@@ -303,7 +303,7 @@ const connection = new DirectConnection({
   transports: [websocketTransport(), httpTransport()],
 });
 
-const key = await createEncryptionKey();
+const key = createEncryptionKey();
 
 // Create multiple providers with the same connection
 const provider1 = new Provider({

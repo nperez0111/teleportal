@@ -62,7 +62,7 @@ describe("IDB-like storage round-trip (via MemoryDocumentStorage)", () => {
   });
 
   it("round-trips a real encrypted document", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const doc = new Y.Doc();
     doc.getText("body").insert(0, "encrypted content");
     const v2 = Y.encodeStateAsUpdateV2(doc);
@@ -150,7 +150,7 @@ describe("at-rest secrecy (encrypted vs plaintext)", () => {
   const MARKER = "SUPER_SECRET_MARKER_12345";
 
   it("encrypted content does not contain plaintext marker in stored state", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     const storage = new MemoryDocumentStorage(true);

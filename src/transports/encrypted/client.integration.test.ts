@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import { createEncryptionKey } from "teleportal/encryption-key";
+import { generateEncryptionKey } from "teleportal/encryption-key";
 import {
   decodeContentEncryptedPayload,
   encodeContentEncryptedPayload,
@@ -27,7 +27,7 @@ describe("encrypted client integration", () => {
   // ── Encrypt / decrypt round-trip ──────────────────────────────────────────
 
   it("encrypts and decrypts an update round-trip", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -43,7 +43,7 @@ describe("encrypted client integration", () => {
   });
 
   it("onUpdate produces a content-encrypted doc message", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -67,7 +67,7 @@ describe("encrypted client integration", () => {
   // ── Sync handshake ────────────────────────────────────────────────────────
 
   it("start() returns a sync-step-1 message with the state vector", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -84,7 +84,7 @@ describe("encrypted client integration", () => {
   });
 
   it("handleSyncStep1 responds with a content-encrypted sync-step-2", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -109,7 +109,7 @@ describe("encrypted client integration", () => {
   // ── handleSyncStep2: apply server diff ────────────────────────────────────
 
   it("handleSyncStep2 decrypts and applies the server diff", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
 
     // Client A produces content
     const ydocA = new Y.Doc();
@@ -147,7 +147,7 @@ describe("encrypted client integration", () => {
   // ── handleUpdate: apply peer update ───────────────────────────────────────
 
   it("handleUpdate decrypts and applies an incremental peer update", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydocA = new Y.Doc();
     const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
     const ydocB = new Y.Doc();
@@ -171,7 +171,7 @@ describe("encrypted client integration", () => {
   // ── Multiple sequential updates ──────────────────────────────────────────
 
   it("handles multiple sequential updates correctly", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydocA = new Y.Doc();
     const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
     const ydocB = new Y.Doc();
@@ -203,7 +203,7 @@ describe("encrypted client integration", () => {
   // ── send-message event ────────────────────────────────────────────────────
 
   it("emits send-message only when explicitly invoked (no automatic snapshots)", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -227,7 +227,7 @@ describe("encrypted client integration", () => {
   // ── Storage round-trip ────────────────────────────────────────────────────
 
   it("encrypted update survives storage round-trip and restores content", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydocA = new Y.Doc();
     const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key });
 
@@ -264,7 +264,7 @@ describe("encrypted client integration", () => {
   // ── Constructor defaults ──────────────────────────────────────────────────
 
   it("creates a default Y.Doc and Awareness when not provided", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const client = new EncryptionClient({ document: "doc-1", key });
 
     expect(client.ydoc).toBeDefined();
@@ -281,7 +281,7 @@ describe("encrypted client integration", () => {
   });
 
   it("destroy is safe to call multiple times", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const client = new EncryptionClient({ document: "doc-1", key });
     client.destroy();
     client.destroy(); // should not throw
@@ -290,7 +290,7 @@ describe("encrypted client integration", () => {
   // ── Custom encrypt/decrypt functions ──────────────────────────────────────
 
   it("supports custom encryptUpdate and decryptUpdate functions", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     let encryptCalled = false;
     let decryptCalled = false;
 
@@ -323,7 +323,7 @@ describe("encrypted client integration", () => {
   // ── Client-side compaction ────────────────────────────────────────────────
 
   it("createCompactedSidecar merges multiple sidecars into one", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
 
     // Use two independent clients so sidecars have distinct (clientId, clock) entries
     const ydocA = new Y.Doc();
@@ -399,7 +399,7 @@ describe("encrypted client integration", () => {
   });
 
   it("createCompactedSidecar returns null for a single sidecar", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const client = new EncryptionClient({ document: "doc-1", key });
     const { encryptUpdate } = await import("teleportal/encryption-key");
     const { encodeSidecar } = await import("teleportal/protocol/encryption");
@@ -421,8 +421,8 @@ describe("encrypted client integration", () => {
   // ── Wrong-key rejection ───────────────────────────────────────────────────
 
   it("handleUpdate rejects when decrypting with a different key", async () => {
-    const keyA = await createEncryptionKey();
-    const keyB = await createEncryptionKey();
+    const keyA = await generateEncryptionKey();
+    const keyB = await generateEncryptionKey();
 
     const ydocA = new Y.Doc();
     const clientA = new EncryptionClient({ document: "doc-1", ydoc: ydocA, key: keyA });
@@ -452,7 +452,7 @@ describe("encrypted client integration", () => {
   // ── Empty update handling ─────────────────────────────────────────────────
 
   it("handleUpdate with empty structure update does not crash", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const ydoc = new Y.Doc();
     const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -500,7 +500,7 @@ describe("encrypted client integration", () => {
       const THRESHOLD = 5;
       EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
 
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const client = new EncryptionClient({ document: "doc-1", key });
 
       // Feed THRESHOLD updates
@@ -535,7 +535,7 @@ describe("encrypted client integration", () => {
       const THRESHOLD = 10;
       EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
 
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const client = new EncryptionClient({ document: "doc-1", key });
 
       // Feed fewer than THRESHOLD updates
@@ -564,7 +564,7 @@ describe("encrypted client integration", () => {
       const THRESHOLD = 3;
       EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
 
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const client = new EncryptionClient({ document: "doc-1", key });
 
       // First batch: trigger compaction
@@ -621,7 +621,7 @@ describe("encrypted client integration", () => {
       const THRESHOLD = 4;
       EncryptionClient.COMPACTION_THRESHOLD = THRESHOLD;
 
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const ydoc = new Y.Doc();
       const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 
@@ -654,7 +654,7 @@ describe("encrypted client integration", () => {
     });
 
     it("onUpdate without pending compaction has no compaction field", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const ydoc = new Y.Doc();
       const client = new EncryptionClient({ document: "doc-1", ydoc, key });
 

@@ -36,7 +36,7 @@ const provider = await WorkerProvider.create({
 
   // Document to sync
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 await provider.synced;
@@ -114,7 +114,7 @@ const connection = createConnection({
 const provider = new Provider({
   connection,
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 await provider.synced;

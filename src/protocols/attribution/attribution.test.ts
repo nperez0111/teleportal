@@ -467,7 +467,7 @@ describe("milestone-scoped attribution", () => {
 
   it("recovers milestone IDs after an encrypt/decrypt round-trip", async () => {
     const { s2 } = milestoneScenario();
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
 
     const encrypted = await encryptUpdate(key, s2);
     const decrypted = await decryptUpdate(key, encrypted);

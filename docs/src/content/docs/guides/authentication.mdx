@@ -99,7 +99,7 @@ const token = await tokenManager.createToken("user-123", "org-456", [
 const provider = await Provider.create({
   url: `wss://example.com?token=${token}`,
   document: "user-123/my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 await provider.synced;

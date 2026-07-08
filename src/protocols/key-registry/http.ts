@@ -1,5 +1,5 @@
 import {
-  createEncryptionKey,
+  generateEncryptionKey,
   deriveWrappingKey,
   wrapDocumentKey,
   unwrapDocumentKey,
@@ -41,7 +41,7 @@ export function getKeyRegistryHandlers({
       switch (action) {
         case "mint": {
           const { userId } = body as { userId: string };
-          const documentKey = await createEncryptionKey();
+          const documentKey = await generateEncryptionKey();
           const wrappingKey = await deriveWrappingKey(masterSecret, userId);
           const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
           const generation = await storage.set(documentId, [{ userId, wrappedKey }]);
@@ -98,7 +98,7 @@ export function getKeyRegistryHandlers({
             excludeUserIds?: string[];
           };
           const meta = await storage.getMeta(documentId);
-          const newDocKey = await createEncryptionKey();
+          const newDocKey = await generateEncryptionKey();
 
           const remainingUserIds = meta.userIds.filter((id) => !excludeUserIds.includes(id));
           const entries = await Promise.all(

@@ -196,9 +196,9 @@ describe("mergeContentEncryptedPayloads", () => {
     const Y = await import("yjs");
     const { encryptUpdateContent, decodeSidecar, restoreContent, mergeSidecars } =
       await import("./content-cipher");
-    const { createEncryptionKey, decryptUpdate } = await import("teleportal/encryption-key");
+    const { decryptUpdate, generateEncryptionKey } = await import("teleportal/encryption-key");
 
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
 
     const docA = new Y.Doc();
     docA.getText("t").insert(0, "hello");
@@ -245,8 +245,8 @@ describe("mergeContentEncryptedPayloads", () => {
     // producer already cleared its pending compaction state.
     const Y = await import("yjs");
     const { encryptUpdateContent } = await import("./content-cipher");
-    const { createEncryptionKey } = await import("teleportal/encryption-key");
-    const key = await createEncryptionKey();
+    const { generateEncryptionKey } = await import("teleportal/encryption-key");
+    const key = await generateEncryptionKey();
 
     const docA = new Y.Doc();
     docA.getText("t").insert(0, "hello");

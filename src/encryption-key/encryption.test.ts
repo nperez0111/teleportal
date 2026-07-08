@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   createEncryptionKey,
+  generateEncryptionKey,
   createDeterministicEncryptor,
   importEncryptionKey,
   exportEncryptionKey,
@@ -18,7 +19,7 @@ function createUpdate(data: Uint8Array): Update {
 
 describe("Encryption Functions", () => {
   it("should encrypt and decrypt an update successfully", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
 
     // Encrypt the update
@@ -36,7 +37,7 @@ describe("Encryption Functions", () => {
   });
 
   it("should handle empty updates", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const emptyUpdate = createUpdate(new Uint8Array(0));
 
     const encrypted = await encryptUpdate(key, emptyUpdate);
@@ -46,7 +47,7 @@ describe("Encryption Functions", () => {
   });
 
   it("should handle large updates", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const largeUpdate = new Uint8Array(1000);
     for (let i = 0; i < largeUpdate.length; i++) {
       largeUpdate[i] = i % 256;
@@ -60,7 +61,7 @@ describe("Encryption Functions", () => {
 
   it("should export and import keys correctly", async () => {
     // Create a key and encrypt something
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
     const encrypted = await encryptUpdate(key, testUpdate);
 
@@ -79,7 +80,7 @@ describe("Encryption Functions", () => {
   });
 
   it("should handle multiple consecutive operations", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const updates = [
       createUpdate(new Uint8Array([1, 2, 3])),
       createUpdate(new Uint8Array([4, 5, 6])),
@@ -94,7 +95,7 @@ describe("Encryption Functions", () => {
   });
 
   it("should generate different encrypted outputs for the same input", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
 
     const encrypted1 = await encryptUpdate(key, testUpdate);
@@ -112,8 +113,8 @@ describe("Encryption Functions", () => {
   });
 
   it("should handle multiple keys independently", async () => {
-    const key1 = await createEncryptionKey();
-    const key2 = await createEncryptionKey();
+    const key1 = await generateEncryptionKey();
+    const key2 = await generateEncryptionKey();
     const testUpdate = createUpdate(new Uint8Array([1, 2, 3, 4, 5]));
 
     // Encrypt with key1
@@ -138,8 +139,8 @@ describe("Encryption Functions", () => {
   });
 
   it("should create unique keys", async () => {
-    const key1 = await createEncryptionKey();
-    const key2 = await createEncryptionKey();
+    const key1 = await generateEncryptionKey();
+    const key2 = await generateEncryptionKey();
 
     const exported1 = await exportEncryptionKey(key1);
     const exported2 = await exportEncryptionKey(key2);
@@ -150,8 +151,8 @@ describe("Encryption Functions", () => {
 
   it("should work with imported keys from different sources", async () => {
     // Create two different keys
-    const key1 = await createEncryptionKey();
-    const key2 = await createEncryptionKey();
+    const key1 = await generateEncryptionKey();
+    const key2 = await generateEncryptionKey();
 
     // Export both keys
     const exported1 = await exportEncryptionKey(key1);
@@ -181,7 +182,7 @@ describe("Encryption Functions", () => {
 
 describe("URL fragment key helpers", () => {
   it("round-trips an exported key through a URL fragment", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const exported = await exportEncryptionKey(key);
 
     const fragment = keyToUrlFragment(exported);
@@ -214,7 +215,7 @@ describe("createDeterministicEncryptor", () => {
     new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
 
   it("produces identical ciphertext for the same key and chunk", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const encrypt = await createDeterministicEncryptor(key);
     expect(encrypt).not.toBeNull();
 
@@ -225,7 +226,7 @@ describe("createDeterministicEncryptor", () => {
   });
 
   it("round-trips through the unchanged decryptUpdate", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const encrypt = await createDeterministicEncryptor(key);
 
     const chunk = new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
@@ -234,8 +235,8 @@ describe("createDeterministicEncryptor", () => {
   });
 
   it("differs across chunks and across keys", async () => {
-    const key1 = await createEncryptionKey();
-    const key2 = await createEncryptionKey();
+    const key1 = await generateEncryptionKey();
+    const key2 = await generateEncryptionKey();
     const e1 = await createDeterministicEncryptor(key1);
     const e2 = await createDeterministicEncryptor(key2);
 
@@ -248,7 +249,7 @@ describe("createDeterministicEncryptor", () => {
   });
 
   it("uses a KEYED IV, not the raw SHA-256 of the chunk", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const encrypt = await createDeterministicEncryptor(key);
 
     const chunk = new Uint8Array([1, 1, 1, 1]);
@@ -262,7 +263,7 @@ describe("createDeterministicEncryptor", () => {
   });
 
   it("handles empty chunks deterministically", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const encrypt = await createDeterministicEncryptor(key);
 
     const empty = new Uint8Array(0);
@@ -284,14 +285,14 @@ describe("createDeterministicEncryptor", () => {
 
 describe("decryptUpdate edge cases", () => {
   it("should reject ciphertext shorter than IV + auth tag (28 bytes)", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     await expect(decryptUpdate(key, new Uint8Array(27))).rejects.toThrow("ciphertext too short");
     await expect(decryptUpdate(key, new Uint8Array(0))).rejects.toThrow("ciphertext too short");
     await expect(decryptUpdate(key, new Uint8Array(12))).rejects.toThrow("ciphertext too short");
   });
 
   it("should reject ciphertext with a corrupted auth tag", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const data = new Uint8Array([1, 2, 3]);
     const encrypted = await encryptUpdate(key, data);
 
@@ -301,7 +302,7 @@ describe("decryptUpdate edge cases", () => {
   });
 
   it("should reject ciphertext with a corrupted IV", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const data = new Uint8Array([1, 2, 3]);
     const encrypted = await encryptUpdate(key, data);
 
@@ -313,5 +314,88 @@ describe("decryptUpdate edge cases", () => {
 describe("importEncryptionKey edge cases", () => {
   it("should reject an invalid key string", async () => {
     await expect(importEncryptionKey("not-valid-base64url!")).rejects.toThrow();
+  });
+});
+
+describe("createEncryptionKey", () => {
+  it("should derive a consistent key for the same document (no password)", async () => {
+    const resolver1 = createEncryptionKey();
+    const resolver2 = createEncryptionKey();
+
+    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
+    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
+
+    const exported1 = await crypto.subtle.exportKey("jwk", key1);
+    const exported2 = await crypto.subtle.exportKey("jwk", key2);
+    expect(exported1.k).toBe(exported2.k);
+  });
+
+  it("should derive different keys for different documents (no password)", async () => {
+    const resolver = createEncryptionKey();
+
+    const key1 = await resolver.resolve({ document: "doc-1", connection: {} as any });
+    const key2 = await resolver.resolve({ document: "doc-2", connection: {} as any });
+
+    const exported1 = await crypto.subtle.exportKey("jwk", key1);
+    const exported2 = await crypto.subtle.exportKey("jwk", key2);
+    expect(exported1.k).not.toBe(exported2.k);
+  });
+
+  it("should derive a consistent key for the same document and password", async () => {
+    const resolver1 = createEncryptionKey("my-password");
+    const resolver2 = createEncryptionKey("my-password");
+
+    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
+    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
+
+    const exported1 = await crypto.subtle.exportKey("jwk", key1);
+    const exported2 = await crypto.subtle.exportKey("jwk", key2);
+    expect(exported1.k).toBe(exported2.k);
+  });
+
+  it("should derive different keys for different passwords", async () => {
+    const resolver1 = createEncryptionKey("password-a");
+    const resolver2 = createEncryptionKey("password-b");
+
+    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
+    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
+
+    const exported1 = await crypto.subtle.exportKey("jwk", key1);
+    const exported2 = await crypto.subtle.exportKey("jwk", key2);
+    expect(exported1.k).not.toBe(exported2.k);
+  });
+
+  it("should derive different keys with and without password", async () => {
+    const resolver1 = createEncryptionKey();
+    const resolver2 = createEncryptionKey("password");
+
+    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
+    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
+
+    const exported1 = await crypto.subtle.exportKey("jwk", key1);
+    const exported2 = await crypto.subtle.exportKey("jwk", key2);
+    expect(exported1.k).not.toBe(exported2.k);
+  });
+
+  it("should cache the derived key for repeated resolves", async () => {
+    const resolver = createEncryptionKey("my-password");
+
+    const key1 = await resolver.resolve({ document: "doc-1", connection: {} as any });
+    const key2 = await resolver.resolve({ document: "doc-1", connection: {} as any });
+
+    expect(key1).toBe(key2);
+  });
+
+  it("should produce a usable AES-GCM key", async () => {
+    const resolver = createEncryptionKey("my-password");
+    const key = await resolver.resolve({ document: "doc-1", connection: {} as any });
+
+    expect((key.algorithm as any).name).toBe("AES-GCM");
+    expect((key.algorithm as any).length).toBe(256);
+
+    const plaintext = new Uint8Array([10, 20, 30]);
+    const encrypted = await encryptUpdate(key, plaintext);
+    const decrypted = await decryptUpdate(key, encrypted);
+    expect(decrypted).toEqual(plaintext);
   });
 });

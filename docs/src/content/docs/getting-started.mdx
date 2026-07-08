@@ -22,10 +22,17 @@ Create a new project and install Teleportal:
 
 <Tabs>
   <TabItem label="Bun">
-    ```bash mkdir my-teleportal-app && cd my-teleportal-app bun init -y bun add teleportal yjs ```
+    ```bash
+    mkdir my-teleportal-app && cd my-teleportal-app
+    bun init -y
+    bun add teleportal yjs crossws srvx
+    ```
   </TabItem>
   <TabItem label="npm">
-    ```bash mkdir my-teleportal-app && cd my-teleportal-app npm init -y npm install teleportal yjs
+    ```bash
+    mkdir my-teleportal-app && cd my-teleportal-app
+    npm init -y
+    npm install teleportal yjs crossws srvx
     ```
   </TabItem>
 </Tabs>
@@ -73,9 +80,8 @@ Here is what each piece does:
 Create a file called `client.ts`:
 
 ```typescript
-import { Provider } from "teleportal/providers";
+import { Provider, websocketTransport } from "teleportal/providers";
 import { createEncryptionKey } from "teleportal/encryption-key";
-import * as Y from "yjs";
 
 // Create a provider that connects to the server.
 // End-to-end content encryption is the default, so an `encryptionKey` is
@@ -84,32 +90,38 @@ import * as Y from "yjs";
 const provider = await Provider.create({
   url: "ws://localhost:3000",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
+  transports: [websocketTransport()],
 });
 
 // Wait for the document to sync
 await provider.synced;
 
-// Access the Y.js document
-const ydoc = provider.doc;
-
 // Create a Y.js text type and insert content
-const ytext = ydoc.getText("content");
+const ytext = provider.doc.getText("content");
 ytext.insert(0, "Hello, world!");
 
+console.log("Document updated:", ytext.toString());
+
 // Listen for updates from other clients
-ydoc.on("update", () => {
+provider.doc.on("update", () => {
   console.log("Document updated:", ytext.toString());
 });
+
+// Wait a moment for any final syncs, then clean up
+await new Promise((resolve) => setTimeout(resolve, 100));
+await provider.destroy();
 ```
 
 Here is what each piece does:
 
 - **`Provider.create()`** establishes a WebSocket connection to the server, performs the sync handshake, and returns a ready-to-use provider.
+- **`websocketTransport()`** configures the WebSocket transport layer for real-time communication.
 - **`encryptionKey`** enables end-to-end content encryption (E2EE), which is on by default. The server never sees your plaintext content. To share a document between clients, they need the same key -- distribute it out-of-band (e.g. in the URL fragment). To run without encryption, pass `encryptionKey: false`.
 - **`provider.synced`** resolves once the initial document state has been downloaded from the server.
 - **`provider.doc`** is a standard Y.js `Y.Doc` -- use it exactly as you would in any Y.js application.
 - **Updates** are automatically synced to all other clients connected to the same document.
+- **`provider.destroy()`** cleans up the connection when you're done.
 
 > **Note**: With content-level E2EE the server only ever sees the plaintext CRDT structure and encrypted content sidecars -- never your text or keys. Offline persistence stores the encrypted wire representation to IndexedDB, so data at rest is encrypted too. One caveat: awareness/presence routing IDs (clientID/userId) travel in cleartext even though the awareness payload itself is encrypted.
 
@@ -118,22 +130,40 @@ Here is what each piece does:
 Start the server:
 
 <Tabs>
-  <TabItem label="Bun">```bash bun run server.ts ```</TabItem>
-  <TabItem label="Node.js">```bash node --experimental-strip-types server.ts ```</TabItem>
+  <TabItem label="Bun">
+    ```bash
+    bun run server.ts
+    ```
+  </TabItem>
+  <TabItem label="Node.js">
+    ```bash
+    node --experimental-strip-types server.ts
+    ```
+  </TabItem>
 </Tabs>
 
 The server starts listening on `ws://localhost:3000`. Then in a separate terminal, run the client:
 
 <Tabs>
-  <TabItem label="Bun">```bash bun run client.ts ```</TabItem>
-  <TabItem label="Node.js">```bash node --experimental-strip-types client.ts ```</TabItem>
+  <TabItem label="Bun">
+    ```bash
+    bun run client.ts
+    ```
+  </TabItem>
+  <TabItem label="Node.js">
+    ```bash
+    node --experimental-strip-types client.ts
+    ```
+  </TabItem>
 </Tabs>
 
 You should see `Document updated: Hello, world!` printed as the client inserts text and the change round-trips through the server.
 
 ## Step 4: Test Collaboration
 
-To see real-time sync in action, open a second terminal and run the client again. Both clients connect to the same document, so edits from one appear in the other. If you modify the client script to insert different text, you'll see both clients converge to the same state -- that's the CRDT at work.
+To see real-time sync in action, open a second terminal and run the client again. Both clients connect to the same document, so edits from one appear in the other. Since both use `createEncryptionKey()` without a password, they derive the same encryption key from the document ID (`"my-document"`), allowing them to decrypt each other's content. If you modify the client script to insert different text, you'll see both clients converge to the same state -- that's the CRDT at work.
+
+> **Note**: The document ID-based key derivation is suitable for getting started, but provides minimal security -- anyone who knows the document ID can derive the key. For production, consider using `createEncryptionKey("password")` for password-based encryption, sharing keys via URL fragment (e.g., `#token=...`), or using the key registry for server-managed key distribution.
 
 In a real application, the client code runs in a browser and connects to a Y.js editor binding (like [y-prosemirror](https://github.com/yjs/y-prosemirror), [y-monaco](https://github.com/nicklassandell/y-monaco), or [y-codemirror.next](https://github.com/yjs/y-codemirror.next)). The Provider works the same way regardless of the environment.
 

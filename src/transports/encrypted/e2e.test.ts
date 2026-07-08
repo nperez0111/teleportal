@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crossws from "crossws/adapters/bun";
 import * as Y from "yjs";
-import { createEncryptionKey } from "teleportal/encryption-key";
+import { generateEncryptionKey } from "teleportal/encryption-key";
 import {
   InMemoryPubSub,
   type Message,
@@ -41,7 +41,7 @@ describe("encrypted sync e2e: two clients via server", () => {
     MemoryDocumentStorage.pendingUpdates.clear();
     storage = new MemoryDocumentStorage(true);
     pubSub = new InMemoryPubSub();
-    key = await createEncryptionKey();
+    key = await generateEncryptionKey();
 
     server = new Server<Ctx>({
       storage: async () => storage,
@@ -316,7 +316,7 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     MemoryDocumentStorage.docs.clear();
     MemoryDocumentStorage.pendingUpdates.clear();
     pubSub = new InMemoryPubSub();
-    key = await createEncryptionKey();
+    key = await generateEncryptionKey();
 
     server = new Server<Ctx>({
       storage: async (ctx) => {
@@ -1422,7 +1422,7 @@ describe("attribution e2e: full WebSocket transport", () => {
     MemoryDocumentStorage.attributionMaps.clear();
     MemoryDocumentStorage.attributionCache.clear();
     pubSub = new InMemoryPubSub();
-    key = await createEncryptionKey();
+    key = await generateEncryptionKey();
 
     server = new Server<Ctx>({
       storage: async (ctx) => {

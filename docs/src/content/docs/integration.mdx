@@ -82,7 +82,7 @@ import {
 const provider = await Provider.create({
   url: "wss://example.com",
   document: "my-document",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 // Share the key with collaborators via the URL fragment (never sent to the server)

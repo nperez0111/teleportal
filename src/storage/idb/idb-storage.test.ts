@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import * as Y from "yjs";
 import { toHexString } from "teleportal/utils";
 import {
-  createEncryptionKey,
+  generateEncryptionKey,
   decryptUpdate,
   type EncryptedBinary,
 } from "teleportal/encryption-key";
@@ -150,7 +150,7 @@ describe("IdbDocumentStorage (mocked lib0/indexeddb)", () => {
 
   beforeEach(async () => {
     databases.clear();
-    key = await createEncryptionKey();
+    key = await generateEncryptionKey();
   });
 
   it("creates the four object stores and round-trips an encrypted edit", async () => {

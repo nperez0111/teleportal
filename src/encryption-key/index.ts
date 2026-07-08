@@ -8,13 +8,118 @@ export type DecryptedBinary = Uint8Array;
 export type EncryptedBinary = Uint8Array;
 
 /**
- * Generate a new AES-GCM encryption key
- * @returns A Promise that resolves to a CryptoKey
+ * Create an encryption key resolver for document encryption.
+ *
+ * **Without a password**: Derives a key from the document ID alone. This provides
+ * minimal security — anyone who knows the document ID can decrypt the content.
+ * Suitable for getting started quickly or when the document ID itself is secret
+ * (e.g., a UUID shared only among authorized users).
+ *
+ * **With a password**: Derives a key from the password + document ID using PBKDF2.
+ * All users with the same password can access the document. Good for "share a link
+ * with a password" use cases.
+ *
+ * For production use cases with per-user access control, use `registryKey()` for
+ * server-managed key distribution.
+ *
+ * @param password - Optional passphrase for password-based encryption
+ * @returns A KeyResolver that derives consistent keys per document
+ *
+ * @example
+ * ```ts
+ * // Simple encryption (key derived from document ID)
+ * const provider = await Provider.create({
+ *   url: "wss://example.com",
+ *   document: "my-doc",
+ *   encryptionKey: createEncryptionKey(),
+ * });
+ *
+ * // Password-based encryption
+ * const provider = await Provider.create({
+ *   url: "wss://example.com",
+ *   document: "my-doc",
+ *   encryptionKey: createEncryptionKey("my-secret-password"),
+ * });
+ * ```
  */
-export async function createEncryptionKey(): Promise<CryptoKey> {
+export function createEncryptionKey(password?: string): import("./key-resolver").KeyResolver {
+  const encoder = new TextEncoder();
+  const cache = new Map<string, CryptoKey>();
+
+  return {
+    async resolve({ document }): Promise<CryptoKey> {
+      let key = cache.get(document);
+      if (key) return key;
+
+      if (password) {
+        // Password-based key derivation
+        const keyMaterial = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(password),
+          "PBKDF2",
+          false,
+          ["deriveKey"],
+        );
+        key = await crypto.subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: encoder.encode(`teleportal-pwd:${document}`),
+            iterations: 600_000,
+            hash: "SHA-256",
+          },
+          keyMaterial,
+          { name: "AES-GCM", length: 256 },
+          true,
+          ["encrypt", "decrypt"],
+        );
+      } else {
+        // Simple document-ID-based derivation
+        const keyMaterial = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(document),
+          "PBKDF2",
+          false,
+          ["deriveKey"],
+        );
+        key = await crypto.subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: encoder.encode("teleportal-simple-encryption-v1"),
+            iterations: 100_000,
+            hash: "SHA-256",
+          },
+          keyMaterial,
+          { name: "AES-GCM", length: 256 },
+          true,
+          ["encrypt", "decrypt"],
+        );
+      }
+
+      cache.set(document, key);
+      return key;
+    },
+  };
+}
+
+/**
+ * Generate a random AES-GCM encryption key.
+ *
+ * **Warning**: This generates a new random key each time it's called. The key
+ * is NOT derived from the document ID, so it will be different across sessions.
+ * This is only suitable for:
+ * - One-time use cases where the key is immediately shared via URL fragment
+ * - Testing scenarios
+ * - Cases where you'll export and persist the key yourself
+ *
+ * For most use cases, prefer `createEncryptionKey()` which derives consistent
+ * keys per document.
+ *
+ * @returns A Promise that resolves to a random CryptoKey
+ */
+export async function generateEncryptionKey(): Promise<CryptoKey> {
   try {
     return await crypto.subtle.generateKey(
-      { name: "AES-GCM", length: 256 }, // Use 256-bit key for better security
+      { name: "AES-GCM", length: 256 },
       true, // extractable
       ["encrypt", "decrypt"],
     );

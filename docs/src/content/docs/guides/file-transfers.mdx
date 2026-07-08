@@ -87,7 +87,7 @@ import { Provider } from "teleportal/providers";
 import { createFileRpc } from "teleportal/protocols/file";
 import { createEncryptionKey } from "teleportal/encryption-key";
 
-const encryptionKey = await createEncryptionKey();
+const encryptionKey = createEncryptionKey();
 
 const provider = await Provider.create({
   url: "wss://example.com/sync",

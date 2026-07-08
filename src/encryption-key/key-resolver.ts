@@ -114,3 +114,50 @@ export function passwordKey(passphrase: string): KeyResolver {
     },
   };
 }
+
+/**
+ * Default encryption resolver that derives a key from the document ID.
+ *
+ * **Warning**: This provides minimal security — the key is derived purely from
+ * the document ID, so anyone who knows the document ID can decrypt the content.
+ * This is suitable for getting started quickly or for cases where the document
+ * ID itself is a secret (e.g., a UUID shared only among authorized users).
+ *
+ * For production use cases, prefer:
+ * - {@link passwordKey} for shared-passphrase scenarios
+ * - {@link registryKey} for server-managed key distribution with per-user wrapping
+ * - A manually generated key shared via URL fragment (see `keyToUrlFragment`)
+ */
+export function simpleEncryption(): KeyResolver {
+  const cache = new Map<string, CryptoKey>();
+  return {
+    async resolve({ document }) {
+      let key = cache.get(document);
+      if (!key) {
+        // Derive a key from the document ID alone.
+        // This provides no security if the document ID is known/guessable.
+        const keyMaterial = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(document),
+          "PBKDF2",
+          false,
+          ["deriveKey"],
+        );
+        key = await crypto.subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: encoder.encode("teleportal-simple-encryption-v1"),
+            iterations: 100_000, // Fewer iterations since document ID is low-entropy
+            hash: "SHA-256",
+          },
+          keyMaterial,
+          { name: "AES-GCM", length: 256 },
+          true,
+          ["encrypt", "decrypt"],
+        );
+        cache.set(document, key);
+      }
+      return key;
+    },
+  };
+}

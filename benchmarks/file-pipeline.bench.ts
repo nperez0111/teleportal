@@ -70,7 +70,7 @@ describe("file upload: batch processFile vs pipelined processFileStreaming", () 
   });
 
   it("measures time-to-first-chunk and total under a bandwidth-limited wire", async () => {
-    const key = await createEncryptionKey();
+    const keyResolver = createEncryptionKey(); const key = await keyResolver.resolve({ document: "test-doc", connection: {} as any });
     const FILE_BYTES = 50 * 1024 * 1024;
     const bytes = new Uint8Array(FILE_BYTES);
     for (let off = 0; off < FILE_BYTES; off += 65536) {

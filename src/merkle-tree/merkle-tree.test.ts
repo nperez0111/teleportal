@@ -13,7 +13,7 @@ import {
   verifyMerkleProofAsync,
   type StreamedFilePart,
 } from "./merkle-tree";
-import { createEncryptionKey, decryptUpdate, encryptUpdate } from "../encryption-key";
+import { generateEncryptionKey, decryptUpdate, encryptUpdate } from "../encryption-key";
 
 function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new Blob([bytes as BlobPart]).stream();
@@ -384,7 +384,7 @@ describe("processFileStreaming", () => {
   });
 
   it("encrypted: root matches a tree over the emitted ciphertext and round-trips", async () => {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     const bytes = randomBytes(40 * 3 + 11); // multiple encrypted chunks
     const target = 64; // plaintext chunk = 64 - 28 = 36 bytes
 

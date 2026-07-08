@@ -19,7 +19,7 @@ import type { StateVector, Update, VersionedUpdate } from "teleportal";
 import { getEmptyStateVector } from "teleportal";
 import {
   type EncryptedBinary,
-  createEncryptionKey,
+  generateEncryptionKey,
   decryptUpdate,
   encryptUpdate,
 } from "teleportal/encryption-key";
@@ -218,7 +218,7 @@ describe.each(backends)("AbstractDocumentStorage encrypted sync ($name)", (backe
 
   beforeEach(async () => {
     storage = backend.make();
-    key = await createEncryptionKey();
+    key = await generateEncryptionKey();
   });
 
   afterEach(async () => {

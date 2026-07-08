@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import { createEncryptionKey } from "teleportal/encryption-key";
+import { generateEncryptionKey } from "teleportal/encryption-key";
 import {
   stripContent,
   restoreContent,
@@ -371,7 +371,7 @@ describe("content-cipher", () => {
 
   describe("encrypted API (with CryptoKey)", () => {
     it("encrypts and decrypts a V1 update", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const doc = makeDoc((d) => d.getText("t").insert(0, "Secret message"));
       const original = getV1Update(doc);
 
@@ -388,7 +388,7 @@ describe("content-cipher", () => {
     });
 
     it("encrypts V2 input and decrypts to V2 output", async () => {
-      const key = await createEncryptionKey();
+      const key = await generateEncryptionKey();
       const doc = makeDoc((d) => d.getText("t").insert(0, "V2 test"));
       const originalV2 = Y.encodeStateAsUpdateV2(doc);
 
@@ -401,8 +401,8 @@ describe("content-cipher", () => {
     });
 
     it("fails decryption with wrong key", async () => {
-      const key1 = await createEncryptionKey();
-      const key2 = await createEncryptionKey();
+      const key1 = await generateEncryptionKey();
+      const key2 = await generateEncryptionKey();
       const doc = makeDoc((d) => d.getText("t").insert(0, "Secret"));
       const original = getV1Update(doc);
 

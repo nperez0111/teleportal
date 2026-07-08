@@ -7,7 +7,7 @@ const provider = await Provider.create({
   // use only HTTP transport; bun requires a polyfill for EventSource
   transports: [httpTransport({ EventSource })],
   document: "test",
-  encryptionKey: await createEncryptionKey(),
+  encryptionKey: createEncryptionKey(),
 });
 
 await provider.synced;

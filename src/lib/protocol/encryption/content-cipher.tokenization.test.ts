@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
-import { createEncryptionKey } from "teleportal/encryption-key";
+import { generateEncryptionKey } from "teleportal/encryption-key";
 import { createKeyedTokenizer, decryptUpdateContent, encryptUpdateContent } from "./content-cipher";
 
 /**
@@ -11,7 +11,7 @@ import { createKeyedTokenizer, decryptUpdateContent, encryptUpdateContent } from
  */
 describe("keyed metadata tokenizer", () => {
   async function rawKeyBytes() {
-    const key = await createEncryptionKey();
+    const key = await generateEncryptionKey();
     return { key, bytes: new Uint8Array(await crypto.subtle.exportKey("raw", key)) };
   }
 

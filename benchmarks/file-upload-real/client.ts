@@ -5,7 +5,7 @@
  */
 import { Provider, DirectConnection as Connection, websocketTransport } from "../../src/providers";
 import { createFileRpc } from "../../src/protocols/file";
-import { createEncryptionKey } from "../../src/encryption-key";
+import { generateEncryptionKey } from "../../src/encryption-key";
 
 const port = Number(process.env.BENCH_PORT) || 9877;
 const sizeMB = Number(process.env.BENCH_SIZE_MB) || 100;
@@ -44,7 +44,7 @@ async function run() {
   console.log(`[client] creating ${sizeMB}MB file...`);
   const file = makeFile(fileSize);
 
-  const encryptionKey = encrypted ? await createEncryptionKey() : undefined;
+  const encryptionKey = encrypted ? await generateEncryptionKey() : undefined;
 
   console.log(`[client] fetching token...`);
   const token = await fetchToken();
