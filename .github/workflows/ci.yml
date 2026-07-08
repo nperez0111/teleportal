@@ -32,9 +32,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin
         ports:
           - 9000:9000
-        options: >-
-          --entrypoint /bin/sh
-        command: ["-c", "minio server /data --console-address :9001"]
+        options: server /data --console-address :9001
     env:
       TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
       TEST_S3_ENDPOINT: http://localhost:9000
