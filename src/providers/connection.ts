@@ -505,7 +505,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
   async flushAsync(): Promise<void> {
     const count = this.#flushBatch();
     if (count === 0) return;
-    
+
     // Wait for the flushed messages to be acknowledged
     await this.#waitForInFlightMessages();
   }

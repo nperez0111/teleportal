@@ -1842,13 +1842,13 @@ describe("Provider", () => {
     it("flushes batched updates before destroy", async () => {
       // Create a transport pair and connections with batching enabled
       const [clientTransport, serverTransport] = createMemoryTransportPair();
-      
+
       const clientConn = new Connection({
         transports: [clientTransport],
         connect: false,
         batchIntervalMs: 100, // Enable batching with 100ms interval
       });
-      
+
       const serverConn = new Connection({
         transports: [serverTransport],
         connect: false,
@@ -1857,7 +1857,7 @@ describe("Provider", () => {
 
       // Track updates received by server
       const serverUpdates: Uint8Array[] = [];
-      
+
       await Promise.all([clientConn.connect(), serverConn.connect()]);
 
       // Create client provider

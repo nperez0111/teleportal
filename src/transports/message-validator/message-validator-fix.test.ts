@@ -5,7 +5,7 @@ import { createChannel } from "../../lib/iter";
 
 /**
  * Regression test for the read/write permission bug.
- * 
+ *
  * The source (messages FROM clients) should be checked with "write" permission,
  * because clients are writing to the server. Previously, the source was incorrectly
  * checked with "read" permission, causing UPDATE messages to be rejected even when
