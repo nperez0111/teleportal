@@ -1168,7 +1168,415 @@ describe("Provider", () => {
   });
 
   // -----------------------------------------------------------------------
-  // 11. Offline persistence (encrypted at rest)
+  // 11. flush()
+  // -----------------------------------------------------------------------
+  describe("flush()", () => {
+    it("resolves immediately when no messages are pending", async () => {
+      const { provider, clientConn, serverConn } = await createTestProvider();
+      await flush();
+
+      const start = Date.now();
+      await provider.flush(1000);
+      const duration = Date.now() - start;
+
+      // Should resolve quickly (well under timeout)
+      expect(duration).toBeLessThan(100);
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("waits for outbound in-flight messages", async () => {
+      // Use a connection with batching to keep messages in-flight longer
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 100, // Batch messages so they stay in-flight
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: false,
+        encryptionKey: false,
+        rpc: {},
+      });
+
+      await flush();
+
+      // Create a message that will be in-flight
+      const doc = provider.doc;
+      doc.getText("test").insert(0, "hello");
+
+      // Give time for the message to be batched (but not sent yet)
+      await new Promise((r) => setTimeout(r, 1));
+
+      // flush should wait for all in-flight messages
+      await provider.flush(1000);
+
+      // After flush, no messages should be in-flight
+      expect(clientConn.inFlightMessageCount).toBe(0);
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("waits for inbound apply queue when offline persistence is enabled", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const docs = new Map<string, any>();
+      const offlineStorage = new MemoryDocumentStorage(false, {
+        write: async (key, doc) => {
+          docs.set(key, doc);
+        },
+        fetch: async (key) => docs.get(key),
+        delete: async (key) => {
+          docs.delete(key);
+        },
+        pendingMap: new Map(),
+      });
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: true,
+        offlineStorage,
+        encryptionKey: false,
+        rpc: {},
+      });
+
+      await flush();
+
+      // Send a message from server using content-encrypted format
+      const testDoc = new Y.Doc();
+      testDoc.getText("test").insert(0, "content");
+      const v2 = Y.encodeStateAsUpdateV2(testDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const updateMsg = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: {
+            version: 2,
+            data: payload as any,
+          },
+        },
+        {},
+        false,
+      );
+      serverConn.send(updateMsg);
+
+      // flush should wait for the apply queue to process the message into the doc
+      await provider.flush(1000);
+
+      // After flush, the update should be applied to the doc
+      const text = provider.doc.getText("test").toString();
+      expect(text).toBe("content");
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("rejects on timeout when messages don't flush in time", async () => {
+      // Create a provider with offline persistence and a custom slow transport
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const docs = new Map<string, any>();
+      const offlineStorage = new MemoryDocumentStorage(false, {
+        write: async (key, doc) => {
+          docs.set(key, doc);
+        },
+        fetch: async (key) => docs.get(key),
+        delete: async (key) => {
+          docs.delete(key);
+        },
+        pendingMap: new Map(),
+      });
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: true,
+        offlineStorage,
+        encryptionKey: false,
+        rpc: {},
+        // Inject a slow transport by wrapping the default
+        getTransport: ({ getDefaultTransport }) => {
+          const defaultTransport = getDefaultTransport();
+          // Wrap the write method to add delay
+          const originalWrite = defaultTransport.write;
+          defaultTransport.write = async (msg) => {
+            // Intentionally slow - longer than timeout
+            await new Promise((r) => setTimeout(r, 100));
+            return originalWrite(msg);
+          };
+          return defaultTransport as any;
+        },
+      });
+
+      await flush();
+
+      // Send a message that will trigger slow processing (content-encrypted format)
+      const testDoc = new Y.Doc();
+      testDoc.getText("test").insert(0, "content");
+      const v2 = Y.encodeStateAsUpdateV2(testDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const updateMsg = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: {
+            version: 2,
+            data: payload as any,
+          },
+        },
+        {},
+        false,
+      );
+      serverConn.send(updateMsg);
+
+      // Give time for message to be enqueued
+      await new Promise((r) => setTimeout(r, 1));
+
+      // flush with very short timeout should reject before processing completes
+      await expect(provider.flush(10)).rejects.toThrow("Flush timeout after 10ms");
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("accepts custom timeout values", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const docs = new Map<string, any>();
+      const offlineStorage = new MemoryDocumentStorage(false, {
+        write: async (key, doc) => {
+          docs.set(key, doc);
+        },
+        fetch: async (key) => docs.get(key),
+        delete: async (key) => {
+          docs.delete(key);
+        },
+        pendingMap: new Map(),
+      });
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: true,
+        offlineStorage,
+        encryptionKey: false,
+        rpc: {},
+        // Inject a slow transport
+        getTransport: ({ getDefaultTransport }) => {
+          const defaultTransport = getDefaultTransport();
+          const originalWrite = defaultTransport.write;
+          defaultTransport.write = async (msg) => {
+            await new Promise((r) => setTimeout(r, 200));
+            return originalWrite(msg);
+          };
+          return defaultTransport as any;
+        },
+      });
+
+      await flush();
+
+      // Send a message that will trigger slow processing (content-encrypted format)
+      const testDoc = new Y.Doc();
+      testDoc.getText("test").insert(0, "content");
+      const v2 = Y.encodeStateAsUpdateV2(testDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const updateMsg = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: {
+            version: 2,
+            data: payload as any,
+          },
+        },
+        {},
+        false,
+      );
+      serverConn.send(updateMsg);
+      await new Promise((r) => setTimeout(r, 1));
+
+      // Try with custom timeout
+      const start = Date.now();
+      await expect(provider.flush(50)).rejects.toThrow("Flush timeout after 50ms");
+      const duration = Date.now() - start;
+
+      // Should timeout around the specified duration
+      expect(duration).toBeGreaterThanOrEqual(50);
+      expect(duration).toBeLessThan(150);
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("can be used before destroy() for clean shutdown", async () => {
+      const { provider, clientConn, serverConn } = await createTestProvider();
+      await flush();
+
+      // Send a doc update
+      const doc = provider.doc;
+      doc.getText("test").insert(0, "hello");
+      await flush();
+
+      // Send sync-done so flush can complete
+      await sendSyncDone(serverConn, "test-doc");
+
+      // Clean shutdown pattern
+      await provider.flush(1000);
+      expect(clientConn.inFlightMessageCount).toBe(0);
+
+      // Now safe to destroy
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+
+    it("uses default timeout of 500ms when not specified", async () => {
+      const [clientTransport, serverTransport] = createMemoryTransportPair();
+      const clientConn = new Connection({
+        transports: [clientTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      const serverConn = new Connection({
+        transports: [serverTransport],
+        connect: false,
+        batchIntervalMs: 0,
+      });
+      await Promise.all([clientConn.connect(), serverConn.connect()]);
+
+      const docs = new Map<string, any>();
+      const offlineStorage = new MemoryDocumentStorage(false, {
+        write: async (key, doc) => {
+          docs.set(key, doc);
+        },
+        fetch: async (key) => docs.get(key),
+        delete: async (key) => {
+          docs.delete(key);
+        },
+        pendingMap: new Map(),
+      });
+
+      const provider = new Provider({
+        connection: clientConn,
+        document: "test-doc",
+        enableOfflinePersistence: true,
+        offlineStorage,
+        encryptionKey: false,
+        rpc: {},
+        // Inject a slow transport (longer than default timeout)
+        getTransport: ({ getDefaultTransport }) => {
+          const defaultTransport = getDefaultTransport();
+          const originalWrite = defaultTransport.write;
+          defaultTransport.write = async (msg) => {
+            await new Promise((r) => setTimeout(r, 1000));
+            return originalWrite(msg);
+          };
+          return defaultTransport as any;
+        },
+      });
+
+      await flush();
+
+      // Send a message that will trigger slow processing (content-encrypted format)
+      const testDoc = new Y.Doc();
+      testDoc.getText("test").insert(0, "content");
+      const v2 = Y.encodeStateAsUpdateV2(testDoc);
+      const payload = encodeContentEncryptedPayload({
+        structureUpdate: v2,
+        encryptedSidecars: [],
+      });
+      const updateMsg = new DocMessage(
+        "test-doc",
+        {
+          type: "sync-step-2",
+          update: {
+            version: 2,
+            data: payload as any,
+          },
+        },
+        {},
+        false,
+      );
+      serverConn.send(updateMsg);
+      await new Promise((r) => setTimeout(r, 1));
+
+      // Let it timeout with default
+      const start = Date.now();
+      await expect(provider.flush()).rejects.toThrow("Flush timeout after 500ms");
+      const duration = Date.now() - start;
+
+      // Should use default 500ms timeout
+      expect(duration).toBeGreaterThanOrEqual(500);
+      expect(duration).toBeLessThan(700);
+
+      provider.destroy({ destroyConnection: false });
+      await clientConn.destroy();
+      await serverConn.destroy();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 12. Offline persistence (encrypted at rest)
   // -----------------------------------------------------------------------
   describe("offline persistence (encrypted at rest)", () => {
     /** Create an isolated in-memory storage (not sharing the static Map). */

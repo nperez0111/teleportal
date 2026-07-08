@@ -186,6 +186,7 @@ export class Provider<
   #indexedDBPrefix: string;
   #localReplayed: Promise<void> = Promise.resolve();
   #applyQueue: SerialQueue<RawReceivedMessage> | null = null;
+  #lastApplyPromise: Promise<void> = Promise.resolve();
 
   #abortController = new AbortController();
   #initInProgress = false;
@@ -279,7 +280,7 @@ export class Provider<
       this.#applyQueue = createSerialQueue<RawReceivedMessage>((msg) => this.transport.write(msg));
       void forEachMessage(this.#messageReader.source, (chunk) => {
         this.#persistDocMessage(chunk);
-        void this.#applyQueue!.enqueue(chunk);
+        this.#lastApplyPromise = this.#applyQueue!.enqueue(chunk);
       });
       this.#initOfflinePersistence(offlineStorage);
     } else {
@@ -718,6 +719,14 @@ export class Provider<
     });
   }
 
+  #waitForApplyQueue(): Promise<void> {
+    if (!this.#applyQueue) {
+      return Promise.resolve();
+    }
+    // Wait for the last enqueued item to finish processing
+    return this.#lastApplyPromise;
+  }
+
   // --- Public getters ---
 
   public get state() {
@@ -726,6 +735,37 @@ export class Provider<
 
   public get connection() {
     return this.#connection;
+  }
+
+  // --- Flush ---
+
+  /**
+   * Wait for all pending messages (both outbound and inbound) to be processed.
+   *
+   * Resolves immediately if no messages are pending. Useful for clean shutdown
+   * patterns where you want to ensure all data is sent before calling destroy().
+   *
+   * @param timeout Maximum time to wait in milliseconds (default: 500ms)
+   * @returns Promise that resolves when all messages are flushed, or rejects on timeout
+   *
+   * @example
+   * ```ts
+   * // Clean shutdown
+   * await provider.flush(1000); // Wait up to 1 second
+   * provider.destroy();
+   * ```
+   */
+  public async flush(timeout: number = 500): Promise<void> {
+    const flushPromise = Promise.all([
+      this.#waitForInFlightMessages(),
+      this.#waitForApplyQueue(),
+    ]).then(() => {});
+
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error(`Flush timeout after ${timeout}ms`)), timeout);
+    });
+
+    return Promise.race([flushPromise, timeoutPromise]);
   }
 
   // --- Document switching ---
