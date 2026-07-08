@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.0.7
+
+[compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.6...v0.0.7)
+
+### 🚀 Enhancements
+
+- **encryption:** Simplify default encryption API and improve error messages ([f9a8952](https://github.com/nperez0111/teleportal/commit/f9a8952))
+- Add flush() method to Provider for clean shutdown ([5973d83](https://github.com/nperez0111/teleportal/commit/5973d83))
+
+### 🩹 Fixes
+
+- Provider.flush() now properly flushes batched updates ([3d906fa](https://github.com/nperez0111/teleportal/commit/3d906fa))
+- Correct AckMessage constructor usage in test ([5211588](https://github.com/nperez0111/teleportal/commit/5211588))
+- Use official minio/minio image instead of deprecated bitnami/minio ([9b56c8e](https://github.com/nperez0111/teleportal/commit/9b56c8e))
+- Correct MinIO container command syntax ([8158872](https://github.com/nperez0111/teleportal/commit/8158872))
+- Simplify MinIO container options ([5a6983d](https://github.com/nperez0111/teleportal/commit/5a6983d))
+- Use Quay.io MinIO image with default entrypoint ([7d0df6d](https://github.com/nperez0111/teleportal/commit/7d0df6d))
+- Use bitnami/minio:2024 image with proper defaults ([3e139ba](https://github.com/nperez0111/teleportal/commit/3e139ba))
+- Start MinIO as docker container in step instead of service ([c9513a2](https://github.com/nperez0111/teleportal/commit/c9513a2))
+
+### 📖 Documentation
+
+- Fix guide examples and use provider.flush() for cleanup ([8029ef5](https://github.com/nperez0111/teleportal/commit/8029ef5))
+
+### ❤️ Contributors
+
+- Nick The Sick ([@nperez0111](https://github.com/nperez0111))
+
 ## v0.0.6
 
 [compare changes](https://github.com/nperez0111/teleportal/compare/v0.0.5...v0.0.6)
