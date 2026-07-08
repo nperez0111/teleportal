@@ -26,12 +26,20 @@ jobs:
           --health-timeout 5s
           --health-retries 15
       minio:
-        image: bitnami/minio:latest
+        image: minio/minio:latest
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
         ports:
           - 9000:9000
+        options: >-
+          --health-cmd "mc ready local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+          --entrypoint sh
+        # Start MinIO server
+        command: -c 'minio server /data'
     env:
       TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
       TEST_S3_ENDPOINT: http://localhost:9000
