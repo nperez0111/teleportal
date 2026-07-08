@@ -2,17 +2,29 @@
 
 <img align="right" src="./assets/pepper.png?raw=true" height="240" />
 
-> TelePortal: A storage, transport & runtime agnostic Y.js server/provider. Built on web primitives, supports subdocs, and handles everything without in-memory storage. Perfect for collaborative apps! 🚀
+> TelePortal: A storage, transport & runtime agnostic Y.js server & provider. Built on web primitives, end-to-end encrypted by default, and never keeps documents in memory. The self-hosted backbone for collaborative apps. 🚀
 
-This is a **Y.js Server & Provider** that aims to be storage, transport, and runtime agnostic.
+TelePortal is a library of tools, built on [Y.js](https://yjs.dev), that you add to _your application_ to enable real-time collaborative editing — the kind you see in Google Docs, Notion, and Figma.
 
-- **💾 Storage:** Storage is completely de-coupled from the library, you can store documents in a KV, relational database or even S3, totally up to you
-  - Currently this is implemented with `unstorage` which can swap out drivers for many different storage schemes.
+That "add to your application" part is the whole point. TelePortal is a **collaborative editing framework, not a sync server**. A sync server runs alongside your app with its own storage, endpoints, and APIs that you then have to integrate with. TelePortal instead lives _inside_ your server: it reuses your storage, your auth, your runtime, and scales with your app. There's no separate service to run.
 
-- **🔄 Transport:** everything is defined using Web standard streams and encodes to a `Uint8Array`
-  - Use Websockets, HTTP, HTTP + SSE, anything you like that can fulfill a bidirectional communication
+Y.js is powerful, but it isn't approachable — wiring up a production sync server is a lot of work. The goal of TelePortal is to lower that barrier: drop it into the app you already have and get real-time collaboration without standing up new infrastructure.
 
-- **🏃 Runtime:** built on web primitives, everything should work on any JavaScript runtime, with minimal dependencies
+### Why TelePortal?
+
+It aims to have properties other Y.js servers don't:
+
+- **🏃 Runs anywhere** — Any JS runtime (Bun, Node.js, Deno, Cloudflare Workers), any storage backend, over any transport. It's built from the ground up on web-native primitives — the server can even run on the client (not sure why you would, but you can!).
+
+- **🧩 Built into your app** — No separate service. Reuse your existing storage, auth, and endpoints, and scale collaboration alongside everything else.
+
+- **💾 Storage agnostic** — Persist documents in a KV store, Postgres, S3/R2, Cloudflare Durable Objects, or your own backend. Storage is fully decoupled behind a small interface, with `unstorage`, Postgres, S3, in-memory, and Cloudflare implementations included.
+
+- **🔄 Transport agnostic** — Everything is modeled as Web-standard streams that encode to `Uint8Array`. Use WebSockets, HTTP, HTTP+SSE, or anything bidirectional — with automatic fallback between them.
+
+- **🔒 End-to-end encryption** — Content-level E2EE is on by default: the server merges, syncs, and attributes edits **without ever seeing your plaintext**.
+
+- **🪶 Zero in-memory storage** — Documents are loaded on demand and evicted when idle, so your server's memory footprint stays flat no matter how many documents exist.
 
 ![TelePortal Demo](./assets/teleportal.gif)
 
@@ -51,11 +63,11 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 ### File Transfer
 
-- **Chunked File Transfer:** Files are split into 64KB chunks for efficient transfer
-- **Merkle Tree Verification:** Content-addressable storage with Merkle tree integrity verification
-- **Large File Support:** Files up to 1GB supported
-- **Encrypted Files:** Optional end-to-end encryption for file transfers
-- **Incremental Uploads:** Support for resumable uploads from temporary storage
+- **Chunked File Transfer:** Files are streamed in chunks (1MB default, configurable) for efficient transfer
+- **Merkle Tree Verification:** Content-addressed storage with Merkle-tree integrity verification — the id _is_ the content hash, so uploads dedupe and resume for free
+- **Large File Support:** Files up to 1GB
+- **Encrypted Files:** End-to-end encryption for file transfers; the tree hashes ciphertext, so integrity is verified before anything is decrypted
+- **Resumable Uploads:** Interrupted uploads resume from temporary storage instead of restarting
 
 ### Milestones (Document Snapshots)
 
@@ -97,23 +109,22 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 
 ### Security & Authentication
 
-- **JWT Token Authentication:** Built-in JWT token support using `jose` library
+- **JWT Token Authentication:** Built-in JWT support via `jose`, with the signing algorithm pinned to HS256
 - **IAM-like Permissions:** Granular permission system with document pattern matching
-- **Permission Types:** `read`, `write` per message
-- **Pattern Matching:** Support for exact, prefix, wildcard, and suffix patterns
+- **Permission Types:** `read` / `write`, checked per message
+- **Pattern Matching:** Glob-style document patterns (`*` wildcard) with allow and `!`-exclusion rules; all other characters are matched literally
 - **Room-based Access Control:** Multi-tenant support with room/organization isolation
 - **Document Access Builder:** Fluent API for constructing complex permission rules
 - **Token Expiration:** Configurable token expiration and validation
 
 ### Monitoring & Observability
 
-- **Prometheus Metrics:** Built-in Prometheus metrics collection
-- **Health Checks:** Health status endpoints with component checks
-- **Status Endpoints:** Real-time server status (clients, sessions, messages)
+- **Prometheus Metrics:** Built-in Prometheus-format metrics collection
+- **Status Endpoint:** Real-time server status (active clients, sessions, message breakdown, document sizes)
 - **Metrics Collected:**
   - Active clients and sessions
   - Total documents opened
-  - Message counts by type
+  - Message counts by wire type
   - Message processing duration
   - Storage operation counts and duration
   - Error counts by type
@@ -152,28 +163,59 @@ This is a **Y.js Server & Provider** that aims to be storage, transport, and run
 - **Playground:** Interactive playground for testing and development
 - **Multiple Server Implementations:** Examples for Bun, Node.js, and more
 
-## Quick Start
+## How easy is it?
+
+This sets up a server with WebSocket support, and it runs on any JS runtime:
 
 ```typescript
+import { serve } from "crossws/server";
 import { Server } from "teleportal/server";
 import { MemoryDocumentStorage } from "teleportal/storage";
 import { getWebsocketHandlers } from "teleportal/websocket-server";
 
 const server = new Server({
-  storage: async (ctx) => {
-    return new MemoryDocumentStorage(ctx.encrypted);
-  },
+  storage: new MemoryDocumentStorage(),
 });
 
-const handlers = getWebsocketHandlers({
-  onConnect: async ({ transport, context, id }) => {
-    await server.createClient(transport, context, id);
-  },
-  onDisconnect: async (id) => {
-    await server.disconnectClient(id);
-  },
+server.on("document-load", (event) => {
+  console.log("Document loaded:", event.documentId);
+});
+
+serve({
+  websocket: getWebsocketHandlers({
+    server,
+    onUpgrade: async () => {
+      return { context: { userId: "nick", room: "test" } };
+    },
+  }),
+  fetch: () => new Response("Not found", { status: 404 }),
 });
 ```
+
+The client connects, syncs, and makes a change:
+
+```typescript
+import { Provider, websocketTransport } from "teleportal/providers";
+import { createEncryptionKey } from "teleportal/encryption-key";
+
+const provider = await Provider.create({
+  url: "ws://localhost:3000",
+  document: "test",
+  encryptionKey: createEncryptionKey(),
+  transports: [websocketTransport()],
+});
+
+await provider.synced;
+
+// provider.doc is a standard Y.Doc — use it as you would anywhere.
+const text = provider.doc.getText("test");
+text.insert(0, "Hello, world!");
+
+await provider.flush();
+await provider.destroy();
+```
+
+See the [Getting Started guide](https://teleportal.tools/docs/getting-started/) and the [guides/](./guides/) directory for more examples.
 
 ## Installation
 
@@ -187,31 +229,50 @@ pnpm add teleportal
 
 ## Documentation
 
-- [Protocol Documentation](./src/lib/README.md) - Complete protocol specification
-- [Storage Documentation](./src/storage/README.md) - Storage interface and implementations
-- [Provider Documentation](./src/providers/README.md) - Provider and connection architecture
-- [Token Documentation](./src/token/README.md) - JWT authentication and permissions
+Full documentation lives at **[teleportal.tools](https://teleportal.tools/)**:
+
+- [Getting Started](https://teleportal.tools/docs/getting-started/) - Build your first collaborative app in ~10 minutes
+- [What is TelePortal?](https://teleportal.tools/docs/what-is-teleportal/) - How it compares to y-websocket, Hocuspocus, and Liveblocks
+- [Core Concepts](https://teleportal.tools/docs/core-concepts/protocol/) - Protocol, server, provider, transport, and attribution
+- [Guides](https://teleportal.tools/docs/guides/) - Auth, persistent storage, scaling, encryption, file transfers, and more
+
+Each subsystem also ships a detailed technical README next to its source:
+
+- [Protocol](./src/lib/README.md) · [Storage](./src/storage/README.md) · [Providers](./src/providers/README.md) · [Server](./src/server/README.md) · [Transports](./src/transports/README.md) · [Token & Auth](./src/token/README.md) · [Encryption Keys](./src/encryption-key/README.md) · [Cloudflare](./src/cloudflare/README.md) · [Monitoring](./src/monitoring/README.md)
 
 ## Exports
 
-TelePortal provides multiple entry points:
+TelePortal is fully tree-shakeable and exposes focused entry points:
 
-- `teleportal` - Core library
-- `teleportal/server` - Server implementation
-- `teleportal/providers` - Client providers
-- `teleportal/storage` - Storage interfaces and implementations
-- `teleportal/http` - HTTP handlers
-- `teleportal/websocket-server` - WebSocket server handlers
-- `teleportal/protocol` - Protocol encoding/decoding
-- `teleportal/protocol/encryption` - Encryption protocol
-- `teleportal/transports` - Transport middleware
-- `teleportal/transports/redis` - Redis transport
-- `teleportal/transports/nats` - NATS transport
-- `teleportal/token` - JWT token utilities
-- `teleportal/encryption-key` - Encryption key management
-- `teleportal/monitoring` - Metrics and monitoring
-- `teleportal/devtools` - DevTools integration
-- `teleportal/merkle-tree` - Merkle tree utilities
+| Entry point                          | What it provides                                             |
+| ------------------------------------ | ------------------------------------------------------------ |
+| `teleportal`                         | Core library and shared types                                |
+| `teleportal/server`                  | Server implementation                                        |
+| `teleportal/providers`               | Client providers and transports                              |
+| `teleportal/providers/worker`        | Shared-worker provider                                       |
+| `teleportal/storage`                 | Storage interfaces and in-memory / unstorage implementations |
+| `teleportal/storage/postgres`        | Postgres storage                                             |
+| `teleportal/storage/s3`              | S3 file storage                                              |
+| `teleportal/http`                    | HTTP + SSE handlers                                          |
+| `teleportal/websocket-server`        | WebSocket server handlers                                    |
+| `teleportal/cloudflare`              | Cloudflare Workers / Durable Objects support                 |
+| `teleportal/protocol`                | Protocol encoding/decoding                                   |
+| `teleportal/protocol/encryption`     | Content encryption protocol                                  |
+| `teleportal/protocols/milestone`     | Milestone (snapshot) RPC                                     |
+| `teleportal/protocols/file`          | File-transfer RPC                                            |
+| `teleportal/protocols/attribution`   | Attribution (authorship) RPC                                 |
+| `teleportal/protocols/key-registry`  | Key-distribution RPC + HTTP management                       |
+| `teleportal/transports`              | Transport middleware (ack, logger, validation, pubsub, ...)  |
+| `teleportal/transports/redis`        | Redis pub/sub transport                                      |
+| `teleportal/transports/nats`         | NATS transport                                               |
+| `teleportal/transports/rate-limiter` | Rate-limiting middleware                                     |
+| `teleportal/token`                   | JWT token utilities and permissions                          |
+| `teleportal/encryption-key`          | Encryption key management                                    |
+| `teleportal/attribution`             | Attribution data model and set operations                    |
+| `teleportal/monitoring`              | Prometheus metrics and monitoring                            |
+| `teleportal/devtools`                | DevTools integration                                         |
+| `teleportal/merkle-tree`             | Merkle-tree utilities                                        |
+| `teleportal/agent`                   | Server-side document manipulation                            |
 
 ## Requirements
 
