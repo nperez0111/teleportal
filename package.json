@@ -73,6 +73,7 @@
     "lint:fix": "vp check --fix",
     "prepack": "bun run build",
     "dev": "PORT=1235 bun run --watch ./showcase/server.ts",
+    "dev:access-control": "PORT=1238 bun run --watch ./examples/access-control/server.ts",
     "dev:blocknote": "PORT=1235 bun run --watch ./examples/blocknote/server.ts",
     "dev:excalidraw": "PORT=1234 bun run --watch ./examples/excalidraw/server.ts",
     "dev:prosemirror": "PORT=1236 bun run --watch ./examples/prosemirror/server.ts",

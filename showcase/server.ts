@@ -1,10 +1,11 @@
+import * as accessControl from "../examples/access-control/app";
 import * as blocknote from "../examples/blocknote/app";
 import * as excalidraw from "../examples/excalidraw/app";
 import * as prosemirror from "../examples/prosemirror/app";
 
 import landing from "./landing/index.html";
 
-const apps = [blocknote, excalidraw, prosemirror];
+const apps = [accessControl, blocknote, excalidraw, prosemirror];
 const bySlug = new Map(apps.map((a) => [a.manifest.slug, a]));
 
 const instance = Bun.serve({
