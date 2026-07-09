@@ -147,6 +147,40 @@ describe("Key Registry HTTP Handlers", () => {
     expect(bobReturned.k).toBe(bobExpected.k);
   });
 
+  it("should call onRotate with documentId and generation after rotate", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    const calls: [string, number][] = [];
+    const handler = getKeyRegistryHandlers({
+      storage,
+      masterSecret: MASTER_SECRET,
+      onRotate: (documentId, generation) => {
+        calls.push([documentId, generation]);
+      },
+    });
+
+    await handler(req("POST", "/keys/doc-1/mint", { userId: "alice" }));
+    await handler(req("POST", "/keys/doc-1/rotate", {}));
+
+    expect(calls).toEqual([["doc-1", 1]]);
+  });
+
+  it("should call onRotate with namespaced documentId when room is set", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    const calls: [string, number][] = [];
+    const handler = getKeyRegistryHandlers({
+      storage,
+      masterSecret: MASTER_SECRET,
+      onRotate: (documentId, generation) => {
+        calls.push([documentId, generation]);
+      },
+    });
+
+    await handler(req("POST", "/keys/doc-1/mint", { userId: "alice", room: "myroom" }));
+    await handler(req("POST", "/keys/doc-1/rotate", { room: "myroom" }));
+
+    expect(calls).toEqual([["myroom/doc-1", 1]]);
+  });
+
   it("should return 404 for unknown actions", async () => {
     const { handler } = makeHandler();
     const res = await handler(req("GET", "/keys/doc-1/unknown"));

@@ -281,6 +281,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
   }
 
   /**
+   * Look up an existing session by its (composite) document ID.
+   * Returns `undefined` when no session is open for the document.
+   */
+  getSession(documentId: string): Session<Context> | undefined {
+    return this.#sessions.get(documentId);
+  }
+
+  /**
    * Create or get a session for a document.
    * @param documentId - The ID of the document.
    * @param encrypted - Whether the document is encrypted.

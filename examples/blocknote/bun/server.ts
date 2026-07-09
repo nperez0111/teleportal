@@ -6,6 +6,7 @@ import { createStorage } from "unstorage";
 import dbDriver from "unstorage/drivers/db0";
 
 import { importEncryptionKey } from "teleportal/encryption-key";
+import { RpcMessage } from "teleportal/protocol";
 import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
@@ -150,6 +151,21 @@ const ws = crossws({
 const keyHandlers = getKeyRegistryHandlers({
   storage: keyRegistryStorage,
   masterSecret: MASTER_SECRET,
+  onRotate: (documentId, generation) => {
+    server
+      .getSession(documentId)
+      ?.broadcast(
+        new RpcMessage(
+          documentId,
+          { type: "success", payload: { generation } },
+          "keysRotated",
+          "request",
+          undefined,
+          {},
+          false,
+        ) as any,
+      );
+  },
 });
 
 const httpHandler = tokenAuthenticatedHTTPHandler({

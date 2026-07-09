@@ -13,6 +13,7 @@
 import crossws from "crossws/adapters/bun";
 import postgres from "postgres";
 
+import { RpcMessage } from "teleportal/protocol";
 import { getAttributionRpcHandlers } from "teleportal/protocols/attribution";
 import { getFileRpcHandlers } from "teleportal/protocols/file";
 import { getMilestoneRpcHandlers } from "teleportal/protocols/milestone";
@@ -144,6 +145,21 @@ const ws = crossws({
 const keyHandlers = getKeyRegistryHandlers({
   storage: keyRegistryStorage,
   masterSecret: MASTER_SECRET,
+  onRotate: (documentId, generation) => {
+    server
+      .getSession(documentId)
+      ?.broadcast(
+        new RpcMessage(
+          documentId,
+          { type: "success", payload: { generation } },
+          "keysRotated",
+          "request",
+          undefined,
+          {},
+          false,
+        ) as any,
+      );
+  },
 });
 
 const httpHandler = tokenAuthenticatedHTTPHandler({
