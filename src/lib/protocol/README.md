@@ -88,6 +88,16 @@ Every decoded message (`DocMessage`, `AwarenessMessage`, `AckMessage`,
   idempotency. `valueOf()` returns `id`.
 - **`resetEncoded()`** — clears the cached `encoded`/`id` after mutating a
   message in place.
+- **`durability`** — `"durable" | "ephemeral"`, driving whether a durable
+  [`PubSub`](../../transports/README.md) backend persists the message (and replays
+  it after a reconnect) or routes it over a non-persistent channel. Default
+  `"durable"` (safe for unknown/future types). `DocMessage` is durable for
+  `update`/`sync-step-2` and ephemeral for the sync handshake
+  (`sync-step-1`/`sync-done`/`auth-message`); `Awareness`/`Presence`/`Ack` are
+  ephemeral; `Rpc` inherits the durable default (it is never fanned out over
+  pub/sub). **Invariant:** a type may be `"ephemeral"` only if its effect is
+  order-independent w.r.t. durable traffic _and_ self-heals if dropped, since the
+  durable and ephemeral delivery paths carry no mutual ordering guarantee.
 
 `isBinaryMessage(bytes)` only checks the 3-byte magic, so it also returns `true`
 for ping/pong frames — discriminate those first with `isPingMessage` /

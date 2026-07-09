@@ -58,6 +58,27 @@ Anytime that a document update (or other broadcast message) is applied to a serv
 
 In this example, we are using Redis as the PubSub backend, but you can use any PubSub backend that implements the PubSub interface (literally publish/subscribe with callbacks).
 
+## Durability
+
+Plain pub/sub is fire-and-forget: a node that briefly disconnects silently misses the messages published during the gap. It keeps serving its connected clients stale state until they happen to reconnect. Storage still has every update (the session holds no in-memory Y.Doc), so this is **staleness, not data loss** — but it's still a hole.
+
+Durability closes it as an **optional capability of the `PubSub` interface**. The base contract stays as simple as ever (a custom backend only needs `publish`/`subscribe`); a durable backend additionally implements `DurablePubSub` (`durable: true`). The shipped backends are durable:
+
+- **`InMemoryPubSub`** and **`RedisPubSub`** are durable out of the box (Redis via Streams — no new dependency).
+- **`NatsJetStreamPubSub`** (`teleportal/transports/nats/jetstream`) is durable via JetStream. Core-NATS `NatsPubSub` is unchanged and stays fire-and-forget.
+
+How it works:
+
+- **Per-message classification.** Each message declares `durability: "durable" | "ephemeral"`. Document updates and full-state sync are durable (persisted, replayed after a blip); presence, awareness, acks, and the sync handshake are ephemeral (they self-heal, so they ride a non-persistent channel and don't consume retention). This is automatic — you never tag publishes by hand.
+- **Transparent catch-up.** After a reconnect, a durable backend resumes from its last-read position and delivers everything missed, in order. The server core never touches offsets.
+- **Beyond-retention gaps.** If a node is disconnected long enough that its resume position is trimmed out of retention, the backend reports a gap and the session heals by pushing a storage-derived full-state `sync-step-2` to its local clients (a `"replication-gap"` session event fires too). This heals when **storage is shared across nodes** (the standard deployment); with per-node storage, only in-retention durable replay heals cross-node gaps.
+
+Retention is tunable per backend (`stream.maxLen`/`ttlMs` for Redis, `maxMsgsPerSubject`/`maxAgeMs` for JetStream). To opt out entirely and keep pure fire-and-forget, set `isDurableTopic: () => false`.
+
+:::note[Replay and custom RPC]
+Replayed document updates and sync messages are CRDT-idempotent and de-duplicated, so replay is safe. RPC is never fanned out over pub/sub, so it is unaffected. If you add a custom cross-node publish path with side effects, keep those handlers idempotent.
+:::
+
 ## Next Steps
 
 - [Scaling](/docs/advanced/scaling/) - Learn more about scaling strategies

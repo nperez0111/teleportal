@@ -78,6 +78,32 @@ export type BinaryTransport<AdditionalProperties extends Record<string, unknown>
 } & AdditionalProperties;
 
 /**
+ * Options for {@link PubSub.publish}.
+ */
+export interface PublishOptions {
+  /**
+   * Ephemeral messages (presence/awareness/ack) skip the durable log and travel over the
+   * backend's plain fire-and-forget channel. Plain (non-durable) backends ignore this flag —
+   * everything is fire-and-forget for them anyway.
+   */
+  ephemeral?: boolean;
+}
+
+/**
+ * Options for {@link PubSub.subscribe}.
+ */
+export interface SubscribeOptions {
+  /**
+   * Called when the backend knows messages may have been missed and cannot replay them
+   * (e.g. the resume position was trimmed out of a durable log's retention window). The
+   * consumer is expected to heal out-of-band (Teleportal re-syncs from storage).
+   *
+   * Plain (non-durable) backends never call it.
+   */
+  onGap?: (topic: PubSubTopic) => void;
+}
+
+/**
  * Generic interface for a pub/sub backend implementation.
  * Can be implemented by in-memory queues, Redis, or any other pub/sub system.
  */
@@ -93,6 +119,7 @@ export interface PubSub {
      * If not provided, the message is published to all subscribers.
      */
     sourceId: string,
+    options?: PublishOptions,
   ): Promise<void>;
 
   /**
@@ -110,12 +137,61 @@ export interface PubSub {
        */
       sourceId: string,
     ) => void,
+    options?: SubscribeOptions,
   ): Promise<() => Promise<void>>;
 
   /**
    * Shutdown the backend
    */
   [Symbol.asyncDispose]?: () => Promise<void>;
+}
+
+/**
+ * An opaque, backend-specific position in a durable log (a Redis Stream entry id, a JetStream
+ * stream sequence, an in-memory counter). Only meaningful to the backend that produced it.
+ */
+export type PubSubOffset = string;
+
+/**
+ * Options for {@link DurablePubSub.subscribeDurable}.
+ */
+export interface DurableSubscribeOptions extends SubscribeOptions {
+  /**
+   * Where to start delivering from:
+   * - `"new"` (default): live messages only — same as plain {@link PubSub.subscribe}.
+   * - `{ after }`: replay everything after that offset, then continue live. If `after` was
+   *   trimmed from retention, replay starts at the oldest retained entry and {@link
+   *   SubscribeOptions.onGap} fires.
+   */
+  start?: "new" | { after: PubSubOffset };
+}
+
+/**
+ * Optional durable capability of a {@link PubSub} backend.
+ *
+ * @experimental No part of Teleportal's core calls {@link subscribeDurable} — the core relies
+ * only on a durable backend's internal read loop resuming after a transport blip via plain
+ * {@link PubSub.subscribe}. This surface exists for external replay consumers (cross-restart
+ * resume, tailing) and its shape may change.
+ */
+export interface DurablePubSub extends PubSub {
+  readonly durable: true;
+  /**
+   * Subscribe with replay support. Fans in two sources into one callback: the durable stream
+   * (offset defined) and the plain ephemeral channel (offset `undefined`).
+   */
+  subscribeDurable(
+    topic: PubSubTopic,
+    callback: (message: BinaryMessage, sourceId: string, offset: PubSubOffset | undefined) => void,
+    options?: DurableSubscribeOptions,
+  ): Promise<() => Promise<void>>;
+}
+
+/**
+ * Narrow a {@link PubSub} to {@link DurablePubSub} when it advertises durability.
+ */
+export function isDurablePubSub(pubSub: PubSub): pubSub is DurablePubSub {
+  return (pubSub as Partial<DurablePubSub>).durable === true;
 }
 
 /**

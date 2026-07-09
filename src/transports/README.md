@@ -183,14 +183,47 @@ Backend-agnostic publish/subscribe over any `PubSub` implementation.
   backing `pubSub` to stop consuming.
 - **`getPubSubTransport(...)`** — `compose` of the two.
 
+#### Durability (optional capability)
+
+The base `PubSub` contract stays fire-and-forget and dead simple — a custom backend only
+implements `publish`/`subscribe`. Durability is an **opt-in extension** so backends that don't
+need it take on no complexity:
+
+- **`PubSub`** (in `teleportal`, `src/lib/index.ts`) gained two _optional_ fields only:
+  `publish(..., { ephemeral })` and `subscribe(..., { onGap })`. Plain backends ignore both.
+- **`DurablePubSub extends PubSub`** adds `durable: true` + `subscribeDurable(topic, cb, { start })`
+  where `cb` also receives an opaque `PubSubOffset`. Narrow with `isDurablePubSub(pubSub)`. This
+  surface is **experimental** — no Teleportal core code calls `subscribeDurable`; the core relies
+  only on a durable backend's `subscribe()` internally resuming after a blip. It exists for
+  external replay consumers (cross-restart resume, tailing).
+- **Which traffic is durable is declared per message type**, not per call site. `CustomMessage`
+  (in `teleportal/protocol`) exposes `durability: "durable" | "ephemeral"` (default `durable`;
+  `DocMessage` update/sync-step-2 durable, sync handshake ephemeral; presence/awareness/ack
+  ephemeral). The server publishes with `{ ephemeral: message.durability === "ephemeral" }` from
+  one helper, so ephemeral traffic (presence heartbeats, awareness) rides the backend's
+  non-persistent channel and never consumes durable-log retention. **Invariant:** a type may be
+  `ephemeral` only if it is order-independent w.r.t. durable traffic _and_ self-heals if dropped
+  (the two paths have no mutual ordering guarantee).
+- **Beyond-retention gaps** (resume position trimmed out) are surfaced via `onGap`; the server
+  session heals by re-syncing its local clients from storage (fires a `replication-gap` session
+  event). This heals when storage is shared across nodes (the standard deployment).
+
+Shipped durable backends: `InMemoryPubSub` (`teleportal`, ring buffer), `RedisPubSub` (Streams),
+and `NatsJetStreamPubSub` (opt-in subpath). Plain `NatsPubSub` stays core-NATS fire-and-forget.
+See the [PubSub durability guide](../../docs/src/content/docs/guides/pub-sub.mdx).
+
 ### Redis (`redis/`) · `teleportal/transports/redis`
 
-- **`RedisPubSub`** — `PubSub` over `ioredis` using **separate publisher and
-  subscriber connections**. Topic subscriptions are **reference-counted**: N
-  subscribers to a topic share one Redis `SUBSCRIBE`; the Redis `UNSUBSCRIBE`
-  only fires when the last local subscriber leaves. Decode failures emit an
-  `error` wide event instead of throwing on the connection. Implements
-  `Symbol.asyncDispose` (`quit`s both connections).
+- **`RedisPubSub`** — `DurablePubSub` over `ioredis`. Durable topics (`document/*`
+  by default) are persisted to a per-topic **Redis Stream** (`XADD MAXLEN ~`) and
+  consumed by a single multiplexed blocking `XREAD` loop that resumes from the last
+  id after a connection blip — so a briefly disconnected node catches up on
+  everything it missed. Ephemeral publishes and non-durable topics (`ack/*`,
+  `client/*`) use plain reference-counted `PUBLISH`/`SUBSCRIBE`. Beyond-retention
+  gaps fire `onGap`. Tunable via `stream: { maxLen, ttlMs, blockMs, readCount,
+isDurableTopic }` (`isDurableTopic: () => false` restores pure fire-and-forget).
+  Uses four connections (plain pub/sub pair, command, blocking `XREAD`); decode and
+  stream-read failures emit `error` wide events; `Symbol.asyncDispose` closes all.
 - **`getRedisTransport(...)`** — a `getPubSubTransport` over a `RedisPubSub`,
   with an async `close()` that disposes the connections.
 - **`RedisRateLimitStorage`** — `RateLimitStorage` over Redis hashes, with
@@ -202,8 +235,17 @@ Backend-agnostic publish/subscribe over any `PubSub` implementation.
 
 - **`NatsPubSub`** — `PubSub` over a lazily-provided `NatsConnection` (you pass a
   `() => Promise<NatsConnection>` factory so the NATS client isn't imported until
-  used). Decode failures emit an `error` wide event; `Symbol.asyncDispose`
-  drains the connection.
+  used). Core NATS, fire-and-forget. Decode failures emit an `error` wide event;
+  `Symbol.asyncDispose` drains the connection.
+- **`NatsJetStreamPubSub`** · `teleportal/transports/nats/jetstream` —
+  `DurablePubSub` over NATS **JetStream**, shipped as a separate opt-in subpath so
+  core-NATS users never pull in `@nats-io/jetstream` (an optional peer dep).
+  Durable traffic goes to one stream bound to `<prefix>.>`, consumed by a single
+  multiplexed **ordered consumer** (demuxed by subject; auto-recreates on reconnect
+  for transparent catch-up). Ephemeral/non-durable traffic uses core NATS via a
+  composed `NatsPubSub` on the same connection. Fails fast in `ready()` if the
+  server has no JetStream (no silent downgrade). Tunable via `{ streamName,
+subjectPrefix, maxMsgsPerSubject, maxAgeMs, manageStream, isDurableTopic }`.
 
 ### YDoc (`ydoc/`)
 

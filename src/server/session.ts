@@ -4,6 +4,7 @@ import {
   type DecodedPresenceJoin,
   type DecodedPresenceLeave,
   DocMessage,
+  getEmptyStateVector,
   type Message,
   PresenceMessage,
   type PubSub,
@@ -74,6 +75,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
   #clients = new Map<string, Client<Context>>();
   #unsubscribe: Promise<() => Promise<void>> | null = null;
+  #resyncInFlight = false;
+  #resyncPending = false;
+  #publishFailedSinceHeal = false;
   #cleanupTimeoutId: ReturnType<typeof setTimeout> | undefined;
   #onCleanupScheduled: (session: Session<Context>) => void;
   readonly #cleanupDelayMs: number;
@@ -240,6 +244,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
             });
           }
         },
+        { onGap: () => this.#handleReplicationGap() },
       );
     } catch (error) {
       emitWideEvent("error", {
@@ -432,13 +437,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
         sends.push(peer.send(joinMessage));
       }
     }
-    sends.push(
-      this.#pubSub.publish(
-        `document/${this.namespacedDocumentId}` as const,
-        joinMessage.encoded,
-        this.#nodeId,
-      ),
-    );
+    sends.push(this.#publishDocumentMessage(joinMessage));
     await Promise.all(sends).catch((error) => {
       emitWideEvent("error", {
         event_type: "presence_join_broadcast_failed",
@@ -470,14 +469,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
         userId: presence.context.userId,
         data: presence.data,
       });
-      sends.push(
-        this.broadcast(message, clientId),
-        this.#pubSub.publish(
-          `document/${this.namespacedDocumentId}` as const,
-          message.encoded,
-          this.#nodeId,
-        ),
-      );
+      sends.push(this.broadcast(message, clientId), this.#publishDocumentMessage(message));
     }
     void Promise.all(sends).catch((error) => {
       emitWideEvent("error", {
@@ -513,23 +505,18 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     // Not excluding the sender: sibling tabs on the same SharedWorker
     // connection need the leave too (the retracting tab is gone or drops its
     // own awarenessId client-side).
-    void Promise.all([
-      this.broadcast(message),
-      this.#pubSub.publish(
-        `document/${this.namespacedDocumentId}` as const,
-        message.encoded,
-        this.#nodeId,
-      ),
-    ]).catch((error) => {
-      emitWideEvent("error", {
-        event_type: "presence_leave_broadcast_failed",
-        timestamp: new Date().toISOString(),
-        document_id: this.documentId,
-        session_id: this.id,
-        client_id: clientId,
-        error,
-      });
-    });
+    void Promise.all([this.broadcast(message), this.#publishDocumentMessage(message)]).catch(
+      (error) => {
+        emitWideEvent("error", {
+          event_type: "presence_leave_broadcast_failed",
+          timestamp: new Date().toISOString(),
+          document_id: this.documentId,
+          session_id: this.id,
+          client_id: clientId,
+          error,
+        });
+      },
+    );
   }
 
   /**
@@ -659,13 +646,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
         type: "presence-heartbeat",
         clients: snapshot,
       });
-      sends.push(
-        this.#pubSub.publish(
-          `document/${this.namespacedDocumentId}` as const,
-          heartbeat.encoded,
-          this.#nodeId,
-        ),
-      );
+      sends.push(this.#publishDocumentMessage(heartbeat));
     }
 
     const now = Date.now();
@@ -720,6 +701,112 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
           error,
         });
       }
+    }
+  }
+
+  /**
+   * Publish a message to this document's cross-node fan-out topic.
+   *
+   * Every document-topic publish goes through here so the message-declared durability
+   * classification is applied uniformly: ephemeral types (presence/awareness/sync handshake)
+   * are routed over the backend's non-durable channel so they don't consume durable-log
+   * retention, while durable types (update/sync-step-2) are persisted for cross-node
+   * replay/catch-up. Callers keep their own error handling around the returned promise.
+   */
+  #publishDocumentMessage(message: Message<Context>): Promise<void> {
+    const published = this.#pubSub.publish(
+      `document/${this.namespacedDocumentId}` as const,
+      message.encoded,
+      this.#nodeId,
+      { ephemeral: message.durability === "ephemeral" },
+    );
+    if (message.durability === "durable") {
+      // A durable publish that fails means remote nodes never saw this update (their side shows
+      // no gap). Remember it so the next resync also republishes full state to them. NOTE: this
+      // is flushed on the next resync (i.e. the next inbound gap on this node). If this node's
+      // document then goes completely quiet, the outbound republish is deferred until some later
+      // resync — ioredis's offline queue already covers most short blips, so this is the
+      // residual case; a durable log on the remote side is the stronger guarantee.
+      published.catch(() => {
+        this.#publishFailedSinceHeal = true;
+      });
+    }
+    return published;
+  }
+
+  /**
+   * Handle a durable-backend gap signal: the node may have missed cross-node updates it can no
+   * longer replay. Emit observability, then heal local clients from storage.
+   */
+  #handleReplicationGap(): void {
+    emitWideEvent("info", {
+      event_type: "replication_gap",
+      timestamp: new Date().toISOString(),
+      document_id: this.documentId,
+      session_id: this.id,
+    });
+    void this.call("replication-gap", {
+      documentId: this.documentId,
+      namespacedDocumentId: this.namespacedDocumentId,
+      sessionId: this.id,
+    });
+    void this.resyncLocalClientsFromStorage();
+  }
+
+  /**
+   * Re-derive full document state from storage and push it to local clients as an unsolicited
+   * sync-step-2. This heals clients on this node after a replication gap (missed cross-node
+   * updates) — cheap (one storage read) and idempotent (providers apply unsolicited sync-step-2
+   * without replying, so there is no sync loop).
+   *
+   * Coalesced leading+trailing: concurrent calls collapse into one storage read, but a gap that
+   * arrives *during* an in-flight resync schedules exactly one more run afterward — so the
+   * trailing gap (which may reflect newer storage state than the in-flight read captured) is
+   * never dropped, which would otherwise leave the node silently stale.
+   *
+   * Only heals when storage is shared across nodes (the standard deployment). With per-node
+   * storage, cross-node gaps are healed by durable replay instead.
+   */
+  async resyncLocalClientsFromStorage(): Promise<void> {
+    if (this.#resyncInFlight) {
+      // A resync is already running; remember that another gap arrived so we re-run once it ends.
+      this.#resyncPending = true;
+      return;
+    }
+    this.#resyncInFlight = true;
+    try {
+      do {
+        this.#resyncPending = false;
+        // The empty state-vector diff is the full document state (includes encrypted sidecars).
+        const doc = await this.#storage.handleSyncStep1(
+          this.namespacedDocumentId,
+          getEmptyStateVector(),
+        );
+        const message = new DocMessage<Context>(
+          this.documentId,
+          {
+            type: "sync-step-2",
+            update: {
+              version: 2,
+              data: doc.content.update as unknown as SyncStep2UpdateV2,
+            } as VersionedSyncStep2Update,
+          },
+          undefined,
+          this.encrypted,
+        );
+        await this.broadcast(message);
+
+        // Outbound heal: if one of this node's own durable publishes failed while it was
+        // disconnected, remote nodes never saw a gap on their side — republish full state to the
+        // document topic so they heal via the idempotent replication path (own-sourceId filter
+        // prevents a local loop). The helper re-sets the flag if this publish fails again.
+        if (this.#publishFailedSinceHeal) {
+          this.#publishFailedSinceHeal = false;
+          await this.#publishDocumentMessage(message).catch(() => {});
+        }
+      } while (this.#resyncPending);
+    } finally {
+      this.#resyncInFlight = false;
     }
   }
 
@@ -972,12 +1059,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
               await Promise.all([
                 this.broadcast(message, client?.id),
-                this.#pubSub
-                  .publish(
-                    `document/${this.namespacedDocumentId}` as const,
-                    message.encoded,
-                    this.#nodeId,
-                  )
+                this.#publishDocumentMessage(message)
                   // A failed publish on the doc-update fan-out lane silently
                   // desyncs clients on other nodes; name it instead of
                   // folding it into the generic apply failure.
@@ -1009,11 +1091,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
               await Promise.all([
                 this.broadcast(message, client?.id),
                 this.#storage.handleSyncStep2(this.namespacedDocumentId, message.payload.update),
-                this.#pubSub.publish(
-                  `document/${this.namespacedDocumentId}` as const,
-                  message.encoded,
-                  this.#nodeId,
-                ),
+                this.#publishDocumentMessage(message),
               ]);
 
               this.#emitDocumentMessage(
@@ -1321,11 +1399,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
         default: {
           await Promise.all([
             this.broadcast(message, client?.id),
-            this.#pubSub.publish(
-              `document/${this.namespacedDocumentId}` as const,
-              message.encoded,
-              this.#nodeId,
-            ),
+            this.#publishDocumentMessage(message),
           ]);
 
           this.#emitDocumentMessage(

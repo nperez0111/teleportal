@@ -177,6 +177,17 @@ export type SessionEvents<Context extends ServerContext = ServerContext> = {
   }) => void;
 
   /**
+   * Emitted when a durable pub/sub backend reports that cross-node messages may have been missed
+   * and cannot be replayed (its resume position was trimmed out of retention). The session heals
+   * by re-syncing its local clients from storage. Plain backends never trigger this.
+   */
+  "replication-gap": (data: {
+    documentId: string;
+    namespacedDocumentId: string;
+    sessionId: string;
+  }) => void;
+
+  /**
    * Emitted when the session is about to be disposed.
    * This allows handlers to clean up any session-related resources.
    */

@@ -101,6 +101,24 @@ export abstract class CustomMessage<
     this.#id = undefined;
   }
 
+  /**
+   * Whether this message must survive a durable pub/sub log (`"durable"`) or may travel over a
+   * fire-and-forget channel that is dropped after a brief disconnect (`"ephemeral"`).
+   *
+   * Defaults to `"durable"` — the safe choice for unknown/future message types, so a new type
+   * is persisted (and replayed after a blip) unless it explicitly opts out.
+   *
+   * INVARIANT: a message may return `"ephemeral"` only if its effect is **order-independent
+   * relative to durable traffic** AND it **self-heals if dropped**. This is what makes it safe
+   * for a durable backend to deliver ephemeral traffic over a separate, uncoordinated channel
+   * from the durable stream (the two paths have no mutual ordering guarantee). Presence
+   * (heartbeats + TTL), awareness (client-side clock guards), and acks (worthless after the
+   * sender's retry timeout) all satisfy this.
+   */
+  public get durability(): "durable" | "ephemeral" {
+    return "durable";
+  }
+
   public toJSON(): Record<string, unknown> {
     return {
       type: this.type,
@@ -144,6 +162,11 @@ export class AwarenessMessage<Context extends Record<string, unknown>> extends C
     super(encoded);
     this.context = context ?? ({} as Context);
   }
+
+  /** Awareness is idempotent and clock-guarded client-side → ephemeral. */
+  public override get durability(): "durable" | "ephemeral" {
+    return "ephemeral";
+  }
 }
 
 /**
@@ -173,6 +196,24 @@ export class DocMessage<Context extends Record<string, unknown>> extends CustomM
     super(encoded);
     this.context = context ?? ({} as Context);
   }
+
+  /**
+   * The sync handshake (`sync-step-1`/`sync-done`/`auth-message`) is a request/response between a
+   * specific client and the node it is talking to — replaying it to a node that wasn't there is
+   * meaningless → ephemeral. Everything else that carries document state (`update`/`sync-step-2`
+   * and any future state-bearing payload) defaults to durable — the safe choice, so a new
+   * payload type is persisted unless it explicitly opts out here.
+   */
+  public override get durability(): "durable" | "ephemeral" {
+    switch (this.payload.type) {
+      case "sync-step-1":
+      case "sync-done":
+      case "auth-message":
+        return "ephemeral";
+      default:
+        return "durable";
+    }
+  }
 }
 
 /**
@@ -193,6 +234,11 @@ export class AckMessage<Context extends Record<string, unknown>> extends CustomM
   ) {
     super();
     this.context = context ?? ({} as Context);
+  }
+
+  /** An ack is worthless after the sender's retry timeout → ephemeral. */
+  public override get durability(): "durable" | "ephemeral" {
+    return "ephemeral";
   }
 }
 
@@ -224,6 +270,11 @@ export class PresenceMessage<Context extends Record<string, unknown>> extends Cu
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
+  }
+
+  /** Presence self-heals via heartbeats + TTL → ephemeral. */
+  public override get durability(): "durable" | "ephemeral" {
+    return "ephemeral";
   }
 }
 
