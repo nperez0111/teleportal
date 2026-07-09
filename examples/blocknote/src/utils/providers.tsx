@@ -17,7 +17,7 @@ import { getEncryptedTransport } from "./encrypted";
 
 const fileCache = new IdbFileCache();
 import { ClientContext, Transport } from "teleportal";
-import { EncryptionClient } from "../../../src/transports/encrypted/client";
+import { EncryptionClient } from "../../../../src/transports/encrypted/client";
 import { getIdentity } from "./identity";
 import { createConnection } from "teleportal/providers/worker";
 
@@ -41,7 +41,7 @@ export type PlaygroundProvider = Provider<
 >;
 
 async function fetchToken(userId: string): Promise<string> {
-  const res = await fetch("/api/token", {
+  const res = await fetch(new URL("api/token", new URL("./", window.location.href)).href, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userId }),
@@ -74,8 +74,8 @@ class ProviderManager {
             // in-tab connection — simulates separate browsers for sync testing.
             workerUrl: new URLSearchParams(location.search).has("direct")
               ? undefined
-              : "/worker.js",
-            url: `${window.location.protocol}//${window.location.host}/`,
+              : new URL("worker.js", new URL("./", window.location.href)).href,
+            url: new URL("./", window.location.href).href,
             token: { token },
             transports: [websocketTransport({ timeout: 5000 }), httpTransport()],
           }),

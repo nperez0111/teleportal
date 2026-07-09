@@ -7,7 +7,7 @@ import {
 import { getEncryptedTransport as getEncryptedTransportBase } from "teleportal/transports";
 import { Awareness } from "y-protocols/awareness.js";
 import * as Y from "yjs";
-import { EncryptionClient } from "../../../src/transports/encrypted/client";
+import { EncryptionClient } from "../../../../src/transports/encrypted/client";
 
 /**
  * Wraps a transport with encryption secured by the provided key.

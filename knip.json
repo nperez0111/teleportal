@@ -33,8 +33,15 @@
       ],
       "project": ["src/**/*.ts"]
     },
-    "playground": {
-      "entry": ["src/frontend.tsx", "src/worker.ts", "src/devtools/index.tsx", "bun/*.ts"],
+    "examples/blocknote": {
+      "entry": [
+        "src/frontend.tsx",
+        "src/worker.ts",
+        "src/devtools/index.tsx",
+        "bun/*.ts",
+        "app.ts",
+        "server.ts"
+      ],
       "project": ["src/**/*.{ts,tsx}", "bun/**/*.ts"]
     },
     "examples/cloudflare": {
@@ -42,7 +49,7 @@
       "project": ["src/**/*.ts", "scripts/**/*.ts"]
     },
     "examples/*": {
-      "entry": ["src/frontend.tsx", "backend/server.ts"],
+      "entry": ["src/frontend.tsx", "src/frontend.ts", "backend/server.ts", "app.ts", "server.ts"],
       "project": ["src/**/*.{ts,tsx}", "backend/**/*.ts"]
     },
     "docs": {

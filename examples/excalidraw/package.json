@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
+    "@tanstack/react-devtools": "0.10.8",
     "bun-plugin-tailwind": "latest",
     "crossws": "^0.4.4",
     "react": "^19.2.4",

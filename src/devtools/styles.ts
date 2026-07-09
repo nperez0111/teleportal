@@ -978,14 +978,14 @@ pre.devtools-bg-gray-50 {
    ============================================ */
 
 .devtools-header-bar {
-  flex-shrink: 0;
+  flex: 0 0 34px;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 10px;
   background: var(--dt-bg-secondary);
   border-bottom: 1px solid var(--dt-border);
-  min-height: 34px;
+  overflow: hidden;
 }
 
 .devtools-tab-bar {

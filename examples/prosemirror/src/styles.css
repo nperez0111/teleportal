@@ -1,0 +1,392 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --font-family:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, sans-serif;
+  --mono-font-family:
+    "Fira Code", "Hack", Menlo, Monaco, "Lucida Console", "Liberation Mono", "Courier New",
+    monospace;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-family);
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+/* ── Page header ─────────────────────────────────────── */
+
+.page-header {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 1rem;
+}
+
+.page-header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  color: #0f172a;
+  letter-spacing: -0.025em;
+}
+
+.page-header p {
+  font-size: 0.875rem;
+  margin: 0;
+  color: #64748b;
+}
+
+/* ── Page main ───────────────────────────────────────── */
+
+.page-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 1.5rem 2rem;
+}
+
+/* ── Editor chrome ───────────────────────────────────── */
+
+#editor {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+  box-shadow:
+    0 1px 3px 0 rgb(0 0 0 / 0.06),
+    0 1px 2px -1px rgb(0 0 0 / 0.06);
+}
+
+/* ── ProseMirror content area ────────────────────────── */
+
+.ProseMirror {
+  position: relative;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  font-variant-ligatures: none;
+  padding: 1.25rem 1.5rem;
+  line-height: 1.7;
+  outline: none;
+  min-height: 320px;
+  font-size: 1rem;
+  color: #1e293b;
+}
+
+.ProseMirror p {
+  margin-bottom: 0.875em;
+}
+
+.ProseMirror pre {
+  white-space: pre-wrap;
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-family: var(--mono-font-family);
+  font-size: 0.875rem;
+}
+
+.ProseMirror li {
+  position: relative;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.75rem;
+}
+
+.ProseMirror blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid #cbd5e1;
+  margin-left: 0;
+  margin-right: 0;
+  color: #475569;
+}
+
+.ProseMirror h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0.75rem;
+  letter-spacing: -0.025em;
+}
+
+.ProseMirror h2 {
+  font-size: 1.375rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.625rem;
+}
+
+.ProseMirror h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+}
+
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 1.5rem 0;
+}
+
+/* ── Menu bar ────────────────────────────────────────── */
+
+.ProseMirror-menubar {
+  position: relative;
+  min-height: 2.5rem;
+  color: #475569;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.125rem;
+}
+
+.ProseMirror-menubar-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.ProseMirror-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: middle;
+  padding: 0.375rem 0.5rem;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background-color 0.15s ease;
+}
+
+.ProseMirror-icon:hover {
+  background: #e2e8f0;
+}
+
+.ProseMirror-icon svg {
+  fill: currentColor;
+  height: 1em;
+}
+
+.ProseMirror-menu-active {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-radius: 5px;
+}
+
+.ProseMirror-menu-disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.ProseMirror-selectednode {
+  outline: 2px solid #3b82f6;
+  border-radius: 4px;
+}
+
+/* Separators between menu groups */
+.ProseMirror-menuseparator {
+  display: inline-block;
+  width: 1px;
+  height: 1.25rem;
+  background: #e2e8f0;
+  margin: 0 0.25rem;
+  vertical-align: middle;
+}
+
+/* ── Dropdowns ───────────────────────────────────────── */
+
+.ProseMirror-menu-dropdown,
+.ProseMirror-menu-dropdown-menu {
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.ProseMirror-menu-dropdown {
+  vertical-align: middle;
+  cursor: pointer;
+  position: relative;
+  padding: 0.375rem 1.5rem 0.375rem 0.5rem;
+  border-radius: 5px;
+  transition: background-color 0.15s ease;
+}
+
+.ProseMirror-menu-dropdown:hover {
+  background: #e2e8f0;
+}
+
+.ProseMirror-menu-dropdown:after {
+  content: "";
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid currentColor;
+  opacity: 0.5;
+  position: absolute;
+  right: 6px;
+  top: calc(50% - 2px);
+}
+
+.ProseMirror-menu-dropdown-menu,
+.ProseMirror-menu-submenu {
+  position: absolute;
+  background: #fff;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.25rem;
+  box-shadow:
+    0 4px 12px -2px rgb(0 0 0 / 0.1),
+    0 2px 4px -2px rgb(0 0 0 / 0.06);
+}
+
+.ProseMirror-menu-dropdown-menu {
+  z-index: 15;
+  min-width: 7rem;
+}
+
+.ProseMirror-menu-dropdown-item {
+  cursor: pointer;
+  padding: 0.375rem 0.75rem;
+  border-radius: 5px;
+  transition: background-color 0.15s ease;
+}
+
+.ProseMirror-menu-dropdown-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.ProseMirror-menu-submenu-wrap {
+  position: relative;
+  margin-right: -4px;
+}
+
+.ProseMirror-menu-submenu {
+  display: none;
+  min-width: 5rem;
+  left: 100%;
+  top: -3px;
+}
+
+.ProseMirror-menu-submenu-wrap:hover .ProseMirror-menu-submenu {
+  display: block;
+}
+
+/* ── Prompt dialogs (link, image) ────────────────────── */
+
+.ProseMirror-prompt {
+  background: #fff;
+  padding: 0.75rem 1rem 0.75rem 1.25rem;
+  border: 1px solid #e2e8f0;
+  position: fixed;
+  border-radius: 10px;
+  z-index: 11;
+  box-shadow:
+    0 8px 24px -4px rgb(0 0 0 / 0.12),
+    0 2px 6px -2px rgb(0 0 0 / 0.06);
+}
+
+.ProseMirror-prompt h5 {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #334155;
+}
+
+.ProseMirror-prompt input[type="text"],
+.ProseMirror-prompt textarea {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  outline: none;
+  border-radius: 6px;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.875rem;
+  width: 100%;
+  margin-top: 0.25rem;
+  transition: border-color 0.15s ease;
+}
+
+.ProseMirror-prompt input[type="text"]:focus,
+.ProseMirror-prompt textarea:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+}
+
+.ProseMirror-prompt-close {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  color: #94a3b8;
+  border: none;
+  background: transparent;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.ProseMirror-prompt-close:hover {
+  color: #475569;
+}
+
+.ProseMirror-prompt-close:after {
+  content: "\2715";
+  font-size: 12px;
+}
+
+.ProseMirror-prompt-buttons {
+  margin-top: 0.5rem;
+  display: none;
+}
+
+/* ── Collaboration cursors ───────────────────────────── */
+
+.ProseMirror-yjs-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid black;
+  border-right: 1px solid black;
+  border-color: orange;
+  word-break: normal;
+  pointer-events: none;
+}
+
+.ProseMirror-yjs-cursor > div {
+  position: absolute;
+  top: -1.05em;
+  left: -1px;
+  font-size: 12px;
+  background-color: rgb(250, 129, 0);
+  font-family: var(--font-family);
+  font-style: normal;
+  font-weight: 500;
+  line-height: normal;
+  user-select: none;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+}
+
+.ProseMirror > .ProseMirror-yjs-cursor:first-child {
+  margin-top: 16px;
+}
+
+/* ── Gap cursor ──────────────────────────────────────── */
+
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+}
+
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
