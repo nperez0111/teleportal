@@ -35,7 +35,15 @@ export type ConnectionDiagnosticEvent =
       retryAfterMs: number;
       batchIntervalMs: number;
       foldedIntoBatch: boolean;
-    };
+    }
+  /**
+   * An inbound message failed to apply to the local document and was skipped so
+   * the inbound loop can keep running. Expected for control signals the sink
+   * rejects (e.g. a server `auth-message` permission denial) or a `sync-step-2`
+   * that can't be decrypted (wrong key). The connection reacts separately (e.g.
+   * reactive token refresh); this only records that the message was not applied.
+   */
+  | { type: "inbound-apply-error"; document: string; error: string };
 
 /** SharedWorker-side view of a pooled connection (see ConnectionWorkerManager). */
 export type WorkerConnectionDiagnostics = {

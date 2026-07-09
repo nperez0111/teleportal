@@ -208,13 +208,44 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    */
   #sessions = new Map<string, Session<Context>>();
   /**
-   * IDs of clients currently connected to this node. A connection wires up both
-   * an abort listener and a stream-ended finally, either of which can call
-   * {@link disconnectClient}; membership here makes disconnect idempotent so the
-   * active-client gauge and `client-disconnect` event fire exactly once per
-   * client.
+   * Clients currently connected to this node, keyed by client id and holding the
+   * exact {@link Client} instance registered by that physical connection.
+   *
+   * A connection wires up both an abort listener and a stream-ended finally,
+   * either of which can call {@link disconnectClient}; membership here makes
+   * disconnect idempotent so the active-client gauge and `client-disconnect`
+   * event fire exactly once per client.
+   *
+   * Storing the instance (not just the id) is what makes reconnection with a
+   * reused client id safe: when a client disconnects and immediately reconnects,
+   * the OLD connection's consume-loop `finally` runs a microtask later and calls
+   * `disconnectClient` for that same id — by which point the NEW connection has
+   * already re-registered a different {@link Client} instance under it. Teardown
+   * only proceeds when the registered instance still matches the one being torn
+   * down, so a stale teardown can never evict the freshly reconnected client.
    */
-  #connectedClientIds = new Set<string>();
+  #connectedClients = new Map<string, Client<Context>>();
+  /**
+   * Per-connection teardown callbacks, keyed by the exact {@link Client}
+   * instance a physical connection registered. Each closure closes that
+   * connection's validated transport, which ends its consume loop and runs the
+   * loop's `finally` (disconnect + transport close). {@link Symbol.asyncDispose}
+   * uses this to actively hang up every connected client on shutdown — otherwise
+   * a loopback (`serverTransport`) client's consume loop would keep awaiting its
+   * still-open channel and the client would believe it is forever connected.
+   * Keyed by instance (not id) so it composes with reconnect-under-same-id.
+   */
+  #clientTeardowns = new Map<Client<Context>, () => void>();
+  /**
+   * Every {@link Client} instance this server has managed via
+   * {@link createClient}. Used by {@link #isClientActive} to distinguish a
+   * client whose connection lifecycle the server owns (must still be the
+   * registered instance to (re)join a session) from a client handed directly to
+   * {@link getOrOpenSession}/{@link Session.addClient} by an embedder or test
+   * harness (never tracked in {@link #connectedClients}, so it is always allowed
+   * to join). A {@link WeakSet} so disconnected clients can be GC'd.
+   */
+  #managedClients = new WeakSet<Client<Context>>();
   /**
    * Pending session creation promises to prevent race conditions.
    * Maps composite document ID to the promise that will resolve to the session.
@@ -342,7 +373,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
         if (encryptionAuthoritative) {
           this.#tentativeEncryptionSessions.delete(compositeDocumentId);
         }
-        if (client) {
+        if (client && this.#isClientActive(client)) {
           existing.addClient(client);
         }
         return existing;
@@ -351,7 +382,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       if (!encryptionAuthoritative) {
         // Metadata attaches to the session regardless of its mode and never
         // (re)defines it.
-        if (client) {
+        if (client && this.#isClientActive(client)) {
           existing.addClient(client);
         }
         return existing;
@@ -506,11 +537,39 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
     const session = await sessionPromise;
 
-    if (client) {
+    if (client && this.#isClientActive(client)) {
       session.addClient(client);
     }
 
     return session;
+  }
+
+  /**
+   * Whether `client` is still the live connection registered under its id.
+   *
+   * A client's consume loop can drain a message that was already buffered in
+   * the transport at the moment the client disconnected. Processing that
+   * straggler calls {@link getOrOpenSession} with the client, which would
+   * otherwise re-`addClient` it to the session AFTER {@link disconnectClient}
+   * already removed it — resurrecting a ghost participant and preventing the
+   * session from ever becoming idle-cleanup eligible. Gating every session
+   * (re)join on current registration closes that teardown-vs-drain race. The
+   * instance check (not just the id) also means a stale straggler cannot attach
+   * itself to a session owned by a newer connection that reconnected under the
+   * same id.
+   */
+  #isClientActive(client: Client<Context>): boolean {
+    // Clients the server never managed (handed straight to getOrOpenSession by
+    // an embedder or test harness) have no connection lifecycle here, so they
+    // are always eligible to join a session.
+    if (!this.#managedClients.has(client)) {
+      return true;
+    }
+    // A server-managed client may only (re)join while it is still the live
+    // instance registered under its id — this rejects a straggler message
+    // draining after disconnect, or one belonging to a connection superseded by
+    // a reconnect under the same id.
+    return this.#connectedClients.get(client.id) === client;
   }
 
   /**
@@ -930,27 +989,50 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           error: err,
         });
       } finally {
-        this.disconnectClient(client.id, "stream-ended");
-        // The consume loop is gone, so the connection can never be serviced
+        // This connection's loop is over; drop its shutdown teardown (keyed by
+        // instance, so this never removes a newer reconnection's entry).
+        this.#clientTeardowns.delete(client);
+        // Pass the client INSTANCE, not just the id: if the client already
+        // reconnected under the same id, this stale teardown must be a no-op and
+        // must not close the new connection's transport below.
+        const tornDown = this.disconnectClient(client, "stream-ended");
+        // The consume loop is gone, so this connection can never be serviced
         // again — close the transport so the client sees a disconnect and
         // reconnects immediately instead of waiting out its receive timeout.
-        try {
-          validatedTransport.close();
-        } catch {
-          // ignore
+        // Only when we actually tore THIS client down: if a newer connection has
+        // superseded us, its transport must stay open.
+        if (tornDown) {
+          try {
+            validatedTransport.close();
+          } catch {
+            // ignore
+          }
         }
       }
     })();
 
-    // Record client connect metric
-    this.#connectedClientIds.add(id);
+    // Record client connect metric. Registering the instance (not just the id)
+    // lets teardown distinguish this physical connection from a later one that
+    // reconnects under the same id.
+    this.#connectedClients.set(id, client);
+    this.#managedClients.add(client);
+    // Record how to hang up this specific connection on server shutdown. Closing
+    // the validated transport ends the consume loop above, whose `finally` then
+    // disconnects the client and notifies its transport.
+    this.#clientTeardowns.set(client, () => {
+      try {
+        validatedTransport.close();
+      } catch {
+        // ignore — best-effort shutdown
+      }
+    });
     this.#metrics.clientsActive.inc();
 
     this.call("client-connect", { clientId: id });
 
     if (abortSignal) {
       abortSignal.addEventListener("abort", () => {
-        this.disconnectClient(client.id, "abort");
+        this.disconnectClient(client, "abort");
       });
     }
 
@@ -984,22 +1066,46 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
   /**
    * Disconnect a client from all sessions.
-   * @param client - The client or client ID to disconnect.
+   *
+   * @param client - The client instance or client ID to disconnect. Prefer the
+   *   instance: passing an id tears down whichever client is currently
+   *   registered under it, whereas passing the instance only tears down that
+   *   exact connection. The latter is required for reconnect safety — a stale
+   *   connection's deferred teardown passes its own {@link Client} object, which
+   *   no longer matches the instance a newer reconnection registered under the
+   *   same id, so it correctly becomes a no-op instead of evicting the new one.
    * @param reason - The reason for disconnection.
+   * @returns `true` if this call actually disconnected the client, `false` if it
+   *   was a no-op (already disconnected, or superseded by a newer connection).
    */
-  disconnectClient(client: string | Client<Context>, reason: ClientDisconnectReason = "manual") {
+  disconnectClient(
+    client: string | Client<Context>,
+    reason: ClientDisconnectReason = "manual",
+  ): boolean {
     const clientId = typeof client === "string" ? client : client.id;
+    const registered = this.#connectedClients.get(clientId);
 
     // Idempotent: a client that was never connected here, or was already
     // disconnected, must not remove sessions, decrement the gauge, or re-emit
     // the event. Both the abort listener and the stream-ended finally target
     // the same client; only the first call does work.
-    if (!this.#connectedClientIds.delete(clientId)) {
-      return;
+    if (!registered) {
+      return false;
     }
 
+    // Instance mismatch: the id was re-registered by a NEWER connection since
+    // this (stale) teardown was scheduled. Leave the new client untouched.
+    if (typeof client !== "string" && registered !== client) {
+      return false;
+    }
+
+    this.#connectedClients.delete(clientId);
+
+    // Remove the exact registered instance from every session. Using `registered`
+    // rather than `client` matters when a bare id was passed: it guarantees we
+    // remove the client the server actually knows about.
     for (const s of this.#sessions.values()) {
-      s.removeClient(client);
+      s.removeClient(registered);
     }
 
     emitWideEvent("info", {
@@ -1014,6 +1120,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     this.#metrics.clientsActive.dec();
 
     this.call("client-disconnect", { clientId, reason });
+    return true;
   }
 
   /**
@@ -1098,6 +1205,18 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       this.#pendingSessions.clear();
     }
 
+    // Actively hang up every connected client. Without this, a loopback
+    // (`serverTransport`) client's consume loop would keep awaiting its still-open
+    // channel and the client would believe it is connected forever. Closing each
+    // validated transport ends its consume loop, whose `finally` disconnects the
+    // client and notifies the transport (which surfaces as a disconnect on the
+    // client connection). Snapshot first: the teardowns mutate the map.
+    const teardowns = Array.from(this.#clientTeardowns.values());
+    this.#clientTeardowns.clear();
+    for (const teardown of teardowns) {
+      teardown();
+    }
+
     for (const s of this.#sessions.values()) {
       this.call("document-unload", {
         documentId: s.documentId,
@@ -1179,7 +1298,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     // Count distinct clients connected to this node. A single client may be
     // joined to several sessions; the connected-id registry counts it once,
     // whereas summing per-session client counts would double-count it.
-    const activeClients = this.#connectedClientIds.size;
+    const activeClients = this.#connectedClients.size;
 
     // Get total messages processed from metrics
     const totalMessagesProcessed = this.#metrics.totalMessagesProcessed.getValue();

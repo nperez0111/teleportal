@@ -6,3 +6,4 @@ export {
 } from "./memory";
 export { websocketTransport } from "./websocket";
 export { httpTransport } from "./http";
+export { serverTransport, type ServerTransportOptions } from "./server";
