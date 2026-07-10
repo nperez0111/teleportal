@@ -46,6 +46,7 @@ export default defineConfig({
       "merkle-tree/index": "src/merkle-tree/index.ts",
       "devtools/index": "src/devtools/index.ts",
       "agent/index": "src/agent/index.ts",
+      "cursors/index": "src/cursors/index.ts",
     },
     format: ["esm"],
     dts: true,

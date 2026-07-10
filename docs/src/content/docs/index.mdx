@@ -24,22 +24,10 @@ import CardHover from "../../components/CardHover.astro";
 import { Card, CardGrid } from "@astrojs/starlight/components";
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 import { LinkButton } from "@astrojs/starlight/components";
-import { Badge } from "@astrojs/starlight/components";
 
 ## Try it out!
 
-<div style="display: flex; gap: 1rem;">
-  <iframe
-    src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false"
-    style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"
-  ></iframe>
-  <iframe
-    src="https://demo.teleportal.tools?name=Demo&id=demo&show-sidebar=false"
-    style="border: none; height: 500px; width: 100%; display: block; margin-top: 1rem;"
-  ></iframe>
-</div>
-
-<Badge text="Tip" variant="tip" /> Click on Pepper, the parrot, to open the Teleportal devtools!
+<div id="homepage-demo-root" style="margin-top: 1rem;"></div>
 
 <div class="hero-code">
   <h2 class="head">Features</h2>

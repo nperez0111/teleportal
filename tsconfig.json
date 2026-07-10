@@ -36,6 +36,7 @@
       "teleportal/merkle-tree": ["./src/merkle-tree/index.ts"],
       "teleportal/devtools": ["./src/devtools/index.ts"],
       "teleportal/agent": ["./src/agent/index.ts"],
+      "teleportal/cursors": ["./src/cursors/index.ts"],
       "teleportal/attribution": ["./src/lib/attribution/index.ts"],
       "teleportal/rpc": ["./src/lib/rpc/index.ts"],
       "teleportal/utils": ["./src/utils/index.ts"],

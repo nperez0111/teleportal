@@ -110,6 +110,9 @@ export function getBunWebsocketHandler<T extends ServerContext>({
                   send_result: result,
                   chunk_bytes: chunk.byteLength,
                 });
+                if (result === 0) {
+                  ws.close();
+                }
               }
             } catch (err) {
               emitWideEvent("error", {

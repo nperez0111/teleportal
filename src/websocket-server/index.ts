@@ -148,6 +148,9 @@ export function getWebsocketHandlers<T extends ServerContext>({
                 buffered_amount: peer.websocket?.bufferedAmount,
                 chunk_bytes: chunk.byteLength,
               });
+              if (result === 0) {
+                peer.close();
+              }
             }
           } catch (err) {
             emitWideEvent("error", {

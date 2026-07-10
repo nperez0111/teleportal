@@ -139,6 +139,36 @@ describe("getWebsocketHandlers connection lifecycle", () => {
     expect(disconnected).toContain("peer-3");
   });
 
+  it("closes the peer when send returns 0 (dropped)", async () => {
+    const { server } = makeMockServer();
+    const hooks = getWebsocketHandlers({
+      server,
+      onUpgrade: async () => ({ context: {} as any }),
+    });
+
+    const { peer, isClosed } = makeMockPeer("peer-drop");
+    peer.send = () => 0;
+    await hooks.open!(peer as any);
+
+    peer.context.transport.write(new Uint8Array([1, 2, 3]));
+    expect(isClosed()).toBe(true);
+  });
+
+  it("does not close the peer when send returns -1 (queued)", async () => {
+    const { server } = makeMockServer();
+    const hooks = getWebsocketHandlers({
+      server,
+      onUpgrade: async () => ({ context: {} as any }),
+    });
+
+    const { peer, isClosed } = makeMockPeer("peer-queued");
+    peer.send = () => -1;
+    await hooks.open!(peer as any);
+
+    peer.context.transport.write(new Uint8Array([1, 2, 3]));
+    expect(isClosed()).toBe(false);
+  });
+
   it("closes the peer when createClient fails during open", async () => {
     const server = {
       createClient: async () => {
