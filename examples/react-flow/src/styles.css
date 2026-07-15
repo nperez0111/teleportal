@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+.react-flow__node {
+  font-size: 12px;
+}
