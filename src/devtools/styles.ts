@@ -1495,6 +1495,57 @@ pre.devtools-bg-gray-50 {
 .devtools-op-delete { color: var(--dt-error); }
 .devtools-op-gc, .devtools-op-skip { color: var(--dt-text-muted); }
 
+.devtools-ops-summary-text {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dt-text-primary);
+  line-height: 1.4;
+}
+
+.devtools-ops-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-top: 1px solid var(--dt-border);
+  background: var(--dt-bg-secondary);
+  color: var(--dt-text-muted);
+  font-family: var(--dt-font-sans);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.devtools-ops-toggle:hover {
+  color: var(--dt-text-secondary);
+}
+.devtools-ops-toggle svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.devtools-ops-detail {
+  border-top: 1px solid var(--dt-border);
+}
+
+.devtools-ops-json {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--dt-font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--dt-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid var(--dt-border);
+  background: var(--dt-bg-primary);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
 /* Inspector error box */
 .devtools-inspector-error-box {
   padding: 10px;

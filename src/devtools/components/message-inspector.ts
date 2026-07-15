@@ -13,7 +13,12 @@ import {
   getMessageTypeLabel,
   getMessageTypeColor,
 } from "../utils/message-utils";
-import { decodeUpdateOps, formatUpdateOp, type DecodedUpdateOps } from "../utils/update-decoder";
+import {
+  decodeUpdateOps,
+  formatUpdateOp,
+  summarizeUpdate,
+  type DecodedUpdateOps,
+} from "../utils/update-decoder";
 import {
   cloneSvg,
   ICON_COPY,
@@ -527,7 +532,6 @@ export class MessageInspector {
   private appendOpsSection(content: HTMLElement) {
     const selected = this.message;
     this.getUpdateOps().then((decoded) => {
-      // Bail if the selection changed while decoding.
       if (!decoded || decoded.ops.length === 0 || this.message !== selected) return;
 
       const section = document.createElement("div");
@@ -547,30 +551,67 @@ export class MessageInspector {
       const box = document.createElement("div");
       box.className = "devtools-ops-box";
 
-      const summaryParts: string[] = [];
+      // Human-readable summary
+      const summaryEl = document.createElement("div");
+      summaryEl.className = "devtools-ops-summary-text";
+      summaryEl.textContent = summarizeUpdate(decoded);
+      box.append(summaryEl);
+
+      // Stat line
+      const statParts: string[] = [];
       if (decoded.insertCount > 0) {
-        summaryParts.push(`${decoded.insertCount} inserts (${decoded.insertedLength} items)`);
+        statParts.push(`${decoded.insertCount} insert${decoded.insertCount !== 1 ? "s" : ""} (${decoded.insertedLength} items)`);
       }
       if (decoded.deleteCount > 0) {
-        summaryParts.push(`${decoded.deleteCount} deletes (${decoded.deletedLength} items)`);
+        statParts.push(`${decoded.deleteCount} delete${decoded.deleteCount !== 1 ? "s" : ""} (${decoded.deletedLength} items)`);
       }
-      if (summaryParts.length > 0) {
-        const summary = document.createElement("div");
-        summary.className = "devtools-ops-summary";
-        summary.textContent = summaryParts.join(" · ");
-        box.append(summary);
+      if (statParts.length > 0) {
+        const statEl = document.createElement("div");
+        statEl.className = "devtools-ops-summary";
+        statEl.textContent = statParts.join(" · ");
+        box.append(statEl);
       }
+
+      // Collapsible detail
+      const detail = document.createElement("div");
+      detail.className = "devtools-ops-detail";
+      detail.style.display = "none";
 
       for (const op of decoded.ops) {
         const line = document.createElement("div");
         line.className = `devtools-op-line devtools-op-${op.kind}`;
         line.textContent = formatUpdateOp(op);
-        box.append(line);
+        detail.append(line);
       }
 
+      const jsonPre = document.createElement("pre");
+      jsonPre.className = "devtools-ops-json";
+      jsonPre.textContent = JSON.stringify(decoded.ops, null, 2);
+      detail.append(jsonPre);
+
+      // Toggle button
+      const toggle = document.createElement("button");
+      toggle.className = "devtools-ops-toggle";
+      const updateToggle = (expanded: boolean) => {
+        toggle.replaceChildren();
+        toggle.append(cloneSvg(expanded ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
+        const label = document.createElement("span");
+        label.textContent = expanded
+          ? "Hide details"
+          : `Show ${decoded.ops.length} op${decoded.ops.length !== 1 ? "s" : ""}`;
+        toggle.append(label);
+      };
+      updateToggle(false);
+      toggle.addEventListener("click", () => {
+        const expanded = detail.style.display !== "none";
+        detail.style.display = expanded ? "none" : "";
+        updateToggle(!expanded);
+      });
+
+      box.append(toggle);
+      box.append(detail);
       section.append(box);
 
-      // Insert before the payload sections so the readable diff comes first.
       const firstPayloadSection = content.querySelector(
         ":scope > .devtools-inspector-section .devtools-inspector-payload",
       )?.parentElement;
