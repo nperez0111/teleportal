@@ -108,12 +108,12 @@
     "crossws": "0.4.9",
     "eventsource": "4.1.0",
     "ioredis": "5.11.1",
-    "msw": "2.14.6",
+    "msw": "2.15.0",
     "postgres": "3.4.9",
     "srvx": "0.11.21",
     "tinybench": "6.0.2",
     "unstorage": "1.17.5",
-    "vite-plus": "0.2.2"
+    "vite-plus": "0.2.4"
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",

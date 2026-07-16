@@ -22,7 +22,7 @@
     "yjs": "^13.6.31"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260115.0",
+    "@cloudflare/workers-types": "^5.20260708.1",
     "eventsource": "^4.1.0",
     "wrangler": "^4.61.1"
   }
