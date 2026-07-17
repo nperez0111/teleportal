@@ -44,6 +44,7 @@ export default defineConfig({
       "encryption-key/index": "src/encryption-key/index.ts",
       "token/index": "src/token/index.ts",
       "merkle-tree/index": "src/merkle-tree/index.ts",
+      "movable-tree/index": "src/movable-tree/index.ts",
       "devtools/index": "src/devtools/index.ts",
       "agent/index": "src/agent/index.ts",
       "cursors/index": "src/cursors/index.ts",

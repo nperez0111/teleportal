@@ -26,6 +26,7 @@ There are several sub-packages built with documentation:
 - [`teleportal/providers`](./src/providers/README.md) - Provider and connection architecture
 - [`teleportal/transports`](./src/transports/README.md) - Transport middleware
 - [`teleportal/cursors`](./src/cursors/README.md) - Spring-smoothed multiplayer cursors driven by Y.js awareness
+- [`teleportal/movable-tree`](./src/movable-tree/README.md) - Cycle-free movable tree CRDT on a Y.Doc (Kleppmann move-op)
 - [`teleportal/cloudflare`](./src/cloudflare/README.md) - Cloudflare Workers / Durable Objects support (storage + wiring)
 - [`teleportal/token`](./src/token/README.md) - JWT token utilities
 - [`teleportal/encryption-key`](./src/encryption-key/README.md) - Encryption key utilities, key wrapping, and key resolvers

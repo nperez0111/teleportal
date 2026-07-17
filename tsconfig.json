@@ -34,6 +34,7 @@
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
       "teleportal/merkle-tree": ["./src/merkle-tree/index.ts"],
+      "teleportal/movable-tree": ["./src/movable-tree/index.ts"],
       "teleportal/devtools": ["./src/devtools/index.ts"],
       "teleportal/agent": ["./src/agent/index.ts"],
       "teleportal/cursors": ["./src/cursors/index.ts"],
