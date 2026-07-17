@@ -148,7 +148,9 @@ export class EncryptionClient
           `  2. The document was encrypted with a different key\n` +
           `  3. The stored document data is corrupted\n\n` +
           `If you're using createEncryptionKey() or passwordKey(), ensure the same passphrase ` +
-          `is used across all clients. Original error: ${error instanceof Error ? error.message : String(error)}`,
+          `is used across all clients. ` +
+          `structureUpdate=${structureUpdate.length}B, sidecars=${encryptedSidecars.length}, ` +
+          `original error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
