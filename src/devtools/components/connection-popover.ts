@@ -7,6 +7,7 @@ export type ConnectionInfoSource = {
   getTimeline(): ConnectionTimelineEntry[];
   getStatistics(): Statistics;
   getLastConnectedAt(): number | null;
+  toggleConnection(): void;
 };
 
 const TIMELINE_DOT_COLOR: Record<ConnectionTimelineEntry["kind"], string> = {
@@ -31,21 +32,55 @@ function formatClock(timestamp: number): string {
  * Anchored panel with connection internals: live stats (in-flight, buffering,
  * AIMD batch window, reconnects), SharedWorker pooling details, and the
  * connection timeline (state transitions, token refreshes, probes).
+ *
+ * Interactive controls (toggle button, transport select) are created once and
+ * patched in place so they survive the 1-second refresh cycle. Display-only
+ * sections (stats grids, timeline) are rebuilt each tick.
  */
 export class ConnectionPopover {
   private element: HTMLElement;
   private source: ConnectionInfoSource;
+  private onTransportSwitch: ((name: string) => void) | null;
   private open = false;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
   private outsideClickHandler: ((e: MouseEvent) => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private anchor: HTMLElement | null = null;
 
-  constructor(source: ConnectionInfoSource) {
+  // Stable interactive elements — survive re-renders.
+  private controlsContainer: HTMLElement;
+  private toggleBtn: HTMLButtonElement;
+  private transportSelect: HTMLSelectElement;
+  private contentContainer: HTMLElement;
+
+  // Track previous transport list to avoid rebuilding <option>s needlessly.
+  private prevTransports: string[] = [];
+
+  constructor(source: ConnectionInfoSource, onTransportSwitch?: (name: string) => void) {
     this.source = source;
+    this.onTransportSwitch = onTransportSwitch ?? null;
     this.element = document.createElement("div");
     this.element.className = "devtools-popover";
     this.element.style.display = "none";
+
+    // Controls: toggle button + transport select (created once, patched in render)
+    this.controlsContainer = document.createElement("div");
+    this.controlsContainer.className = "devtools-popover-controls";
+
+    this.toggleBtn = document.createElement("button");
+    this.toggleBtn.addEventListener("click", () => this.source.toggleConnection());
+    this.controlsContainer.append(this.toggleBtn);
+
+    this.transportSelect = document.createElement("select");
+    this.transportSelect.className = "devtools-popover-transport-select";
+    this.transportSelect.addEventListener("change", (e) => {
+      this.onTransportSwitch?.((e.target as HTMLSelectElement).value);
+    });
+    this.controlsContainer.append(this.transportSelect);
+
+    this.contentContainer = document.createElement("div");
+
+    this.element.append(this.controlsContainer, this.contentContainer);
   }
 
   toggle(anchor: HTMLElement) {
@@ -110,12 +145,52 @@ export class ConnectionPopover {
   }
 
   private render() {
-    this.element.innerHTML = "";
-
     const state = this.source.getConnectionState();
     const connection = this.source.getConnection();
     const statistics = this.source.getStatistics();
     const diagnostics = connection?.diagnostics;
+
+    this.patchControls(state);
+    this.rebuildContent(state, connection, statistics, diagnostics);
+  }
+
+  /** Patch the stable controls in place — never destroy/recreate. */
+  private patchControls(state: ConnectionStateInfo | null) {
+    const isOnline = state?.type === "connected" || state?.type === "connecting";
+
+    this.toggleBtn.textContent = isOnline ? "Go Offline" : "Go Online";
+    this.toggleBtn.className = `devtools-popover-toggle ${isOnline ? "devtools-popover-toggle--online" : "devtools-popover-toggle--offline"}`;
+
+    const availableTransports = state?.availableTransports ?? [];
+    const showSelect = availableTransports.length > 1 && !!this.onTransportSwitch;
+
+    this.transportSelect.style.display = showSelect ? "" : "none";
+    if (!showSelect) return;
+
+    // Only rebuild <option>s when the transport list changes.
+    if (!arraysEqual(availableTransports, this.prevTransports)) {
+      this.transportSelect.innerHTML = "";
+      for (const name of availableTransports) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        this.transportSelect.append(option);
+      }
+      this.prevTransports = availableTransports;
+    }
+
+    this.transportSelect.value = state?.transport ?? "";
+    this.transportSelect.disabled = !isOnline;
+  }
+
+  /** Rebuild display-only sections (stats, worker, timeline). */
+  private rebuildContent(
+    state: ConnectionStateInfo | null,
+    connection: any,
+    statistics: Statistics,
+    diagnostics: any,
+  ) {
+    this.contentContainer.innerHTML = "";
 
     // --- Connection stats ---
     const stats = this.createSection("Connection");
@@ -127,9 +202,6 @@ export class ConnectionPopover {
 
     if (state?.hosting) {
       this.addStat(grid, "Hosting", state.hosting === "worker" ? "SharedWorker" : "main thread");
-    }
-    if (state?.availableTransports?.length) {
-      this.addStat(grid, "Transports", state.availableTransports.join(", "));
     }
 
     const lastConnectedAt = this.source.getLastConnectedAt();
@@ -164,7 +236,7 @@ export class ConnectionPopover {
     }
 
     stats.append(grid);
-    this.element.append(stats);
+    this.contentContainer.append(stats);
 
     // --- SharedWorker section ---
     const worker = diagnostics?.worker;
@@ -202,7 +274,7 @@ export class ConnectionPopover {
       }
 
       section.append(workerGrid);
-      this.element.append(section);
+      this.contentContainer.append(section);
     }
 
     // --- Timeline ---
@@ -238,7 +310,6 @@ export class ConnectionPopover {
       label.textContent = entry.label;
       row.append(label);
 
-      // Duration this state lasted (until the next recorded event)
       const next = timeline[i + 1];
       if (next && entry.kind !== "info" && entry.kind !== "warn") {
         const duration = document.createElement("span");
@@ -251,7 +322,7 @@ export class ConnectionPopover {
     }
 
     section.append(list);
-    this.element.append(section);
+    this.contentContainer.append(section);
   }
 
   private createSection(title: string): HTMLElement {
@@ -285,4 +356,12 @@ export class ConnectionPopover {
   destroy() {
     this.hide();
   }
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }

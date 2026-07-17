@@ -1163,6 +1163,57 @@ pre.devtools-bg-gray-50 {
   font-size: 11px;
 }
 
+.devtools-popover-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.devtools-popover-toggle {
+  flex: 1;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--dt-border);
+  border-radius: var(--dt-radius);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.devtools-popover-toggle--online {
+  background: var(--dt-bg-secondary);
+  color: var(--dt-error);
+}
+.devtools-popover-toggle--online:hover {
+  background: #fef2f2;
+  border-color: var(--dt-error);
+}
+
+.devtools-popover-toggle--offline {
+  background: var(--dt-bg-secondary);
+  color: var(--dt-success);
+}
+.devtools-popover-toggle--offline:hover {
+  background: #f0fdf4;
+  border-color: var(--dt-success);
+}
+
+.devtools-popover-transport-select {
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid var(--dt-border);
+  border-radius: var(--dt-radius);
+  background: var(--dt-bg-secondary);
+  color: var(--dt-text-primary);
+  cursor: pointer;
+}
+.devtools-popover-transport-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ============================================
    Documents Tab
    ============================================ */
@@ -1197,6 +1248,69 @@ pre.devtools-bg-gray-50 {
   font-family: var(--dt-font-mono);
   color: var(--dt-text-muted);
   white-space: nowrap;
+}
+
+.devtools-doc-row {
+  padding: 2px;
+  border-bottom: 1px solid var(--dt-border);
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 12px;
+}
+.devtools-doc-row:hover {
+  background: var(--dt-bg-hover);
+}
+.devtools-doc-row-selected {
+  background: var(--dt-bg-selected);
+  border-left: 2px solid var(--dt-border-selected);
+  padding-left: 0;
+}
+
+.devtools-doc-inspector {
+  width: 380px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--dt-bg-primary);
+  overflow-y: auto;
+}
+
+.devtools-doc-meta-card {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  row-gap: 4px;
+  column-gap: 10px;
+  font-size: 11px;
+  padding: 10px 12px;
+}
+
+.devtools-doc-json-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 12px 12px;
+}
+
+.devtools-doc-json {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--dt-bg-tertiary);
+  border: 1px solid var(--dt-border);
+  border-radius: 6px;
+}
+
+.devtools-doc-json-content {
+  margin: 0;
+  padding: 10px;
+  font-family: var(--dt-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dt-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Sync stepper: three dots for sync-step-1 → sync-step-2 → sync-done */
