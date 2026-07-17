@@ -84,6 +84,7 @@ export function createTeleportalDevtools(
       getTimeline: () => eventManager.getConnectionTimeline(),
       getStatistics: () => eventManager.getStatistics(),
       getLastConnectedAt: () => eventManager.getLastConnectedAt(),
+      toggleConnection: () => eventManager.toggleConnection(),
     },
   );
 

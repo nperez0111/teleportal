@@ -633,6 +633,29 @@ export class EventManager {
     }
   }
 
+  async disconnectConnection(): Promise<void> {
+    if (this.connection && typeof this.connection.disconnect === "function") {
+      await this.connection.disconnect();
+    }
+  }
+
+  async connectConnection(): Promise<void> {
+    if (this.connection && typeof this.connection.connect === "function") {
+      await this.connection.connect();
+    }
+  }
+
+  toggleConnection(): void {
+    const isOnline =
+      this.connectionState?.type === "connected" ||
+      this.connectionState?.type === "connecting";
+    if (isOnline) {
+      this.disconnectConnection();
+    } else {
+      this.connectConnection();
+    }
+  }
+
   clearMessages() {
     this.messages = [];
     this.messageIndex.clear();

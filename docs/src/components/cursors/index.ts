@@ -36,10 +36,8 @@ export async function init() {
   injectStyles();
 
   const identity = getOrCreateIdentity();
-  const pathHash = Array.from(
-    new TextEncoder().encode(window.location.pathname),
-  )
-    .reduce((h, b) => (Math.imul(h ^ b, 0x01000193) >>> 0), 0x811c9dc5)
+  const pathHash = Array.from(new TextEncoder().encode(window.location.pathname))
+    .reduce((h, b) => Math.imul(h ^ b, 0x01000193) >>> 0, 0x811c9dc5)
     .toString(36);
   const document = `docs-${pathHash}`;
 

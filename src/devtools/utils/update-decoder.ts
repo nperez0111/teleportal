@@ -165,9 +165,7 @@ export function summarizeUpdate(decoded: DecodedUpdateOps): string {
   const parts: string[] = [];
 
   const textOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "text");
-  const formatOps = decoded.ops.filter(
-    (op) => op.kind === "insert" && op.contentType === "format",
-  );
+  const formatOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "format");
   const typeOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "type");
   const valueOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "value");
   const embedOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "embed");

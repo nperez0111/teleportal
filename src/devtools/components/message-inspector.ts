@@ -560,10 +560,14 @@ export class MessageInspector {
       // Stat line
       const statParts: string[] = [];
       if (decoded.insertCount > 0) {
-        statParts.push(`${decoded.insertCount} insert${decoded.insertCount !== 1 ? "s" : ""} (${decoded.insertedLength} items)`);
+        statParts.push(
+          `${decoded.insertCount} insert${decoded.insertCount !== 1 ? "s" : ""} (${decoded.insertedLength} items)`,
+        );
       }
       if (decoded.deleteCount > 0) {
-        statParts.push(`${decoded.deleteCount} delete${decoded.deleteCount !== 1 ? "s" : ""} (${decoded.deletedLength} items)`);
+        statParts.push(
+          `${decoded.deleteCount} delete${decoded.deleteCount !== 1 ? "s" : ""} (${decoded.deletedLength} items)`,
+        );
       }
       if (statParts.length > 0) {
         const statEl = document.createElement("div");
