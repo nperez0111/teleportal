@@ -1,10 +1,4 @@
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlowProvider,
-} from "@xyflow/react";
+import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider } from "@xyflow/react";
 import type { Node, Edge } from "@xyflow/react";
 import type { Provider } from "teleportal/providers";
 

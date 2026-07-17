@@ -37,13 +37,7 @@ function DefaultCursor({ x, y, name, color }: CursorComponentProps) {
         transition: "opacity 0.3s",
       }}
     >
-      <svg
-        width="16"
-        height="20"
-        viewBox="0 0 16 20"
-        fill="none"
-        style={{ display: "block" }}
-      >
+      <svg width="16" height="20" viewBox="0 0 16 20" fill="none" style={{ display: "block" }}>
         <path
           d="M0.928955 0.291992L15.071 12.292H6.5L0.928955 18.708V0.291992Z"
           fill={cursorColor}

@@ -329,7 +329,9 @@ describe("concurrent editing", () => {
       (docA.getMap("nodes").get("n1") as Y.Map<unknown>).set("position", { x: 300, y: 400 });
 
       // User B edits the data label
-      const yDataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
+      const yDataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
       yDataB.set("label", "renamed");
 
       syncDocs(docA, docB);
@@ -386,8 +388,12 @@ describe("concurrent editing", () => {
       syncDocs(docA, docB);
 
       // User A changes label, User B changes count
-      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
-      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
+      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
+      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
 
       dataA.set("label", "updated by A");
       dataB.set("count", 42);
@@ -413,8 +419,12 @@ describe("concurrent editing", () => {
 
       syncDocs(docA, docB);
 
-      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
-      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
+      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
+      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
 
       dataA.set("label", "from A");
       dataB.set("label", "from B");
@@ -440,8 +450,12 @@ describe("concurrent editing", () => {
 
       syncDocs(docA, docB);
 
-      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
-      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
+      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
+      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
 
       dataA.set("label", "updated");
       dataB.set("description", "newly added");
@@ -641,7 +655,9 @@ describe("concurrent editing", () => {
 
       // Each user edits a different node
       (docA.getMap("nodes").get("n1") as Y.Map<unknown>).set("position", { x: 10, y: 10 });
-      const dataB = (docB.getMap("nodes").get("n2") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
+      const dataB = (docB.getMap("nodes").get("n2") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
       dataB.set("label", "edited by B");
       (docC.getMap("nodes").get("n3") as Y.Map<unknown>).set("type", "output");
 
@@ -675,9 +691,15 @@ describe("concurrent editing", () => {
       syncDocs(docA, docB);
       syncDocs(docA, docC);
 
-      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
-      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
-      const dataC = (docC.getMap("nodes").get("n1") as Y.Map<unknown>).get("data") as Y.Map<unknown>;
+      const dataA = (docA.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
+      const dataB = (docB.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
+      const dataC = (docC.getMap("nodes").get("n1") as Y.Map<unknown>).get(
+        "data",
+      ) as Y.Map<unknown>;
 
       dataA.set("a", "from A");
       dataB.set("b", "from B");

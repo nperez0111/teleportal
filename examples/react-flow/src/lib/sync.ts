@@ -114,10 +114,7 @@ export function yMapToEdge(id: string, ymap: Y.Map<unknown>): Edge {
   return edge as Edge;
 }
 
-export function findConnectedEdges(
-  nodeIds: Set<string>,
-  yEdges: Y.Map<Y.Map<unknown>>,
-): string[] {
+export function findConnectedEdges(nodeIds: Set<string>, yEdges: Y.Map<Y.Map<unknown>>): string[] {
   const result: string[] = [];
   for (const [edgeId, yEdge] of yEdges) {
     const source = yEdge.get("source") as string;
