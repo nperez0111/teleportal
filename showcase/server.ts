@@ -2,12 +2,13 @@ import * as accessControl from "../examples/access-control/app";
 import * as awareness from "../examples/awareness/app";
 import * as blocknote from "../examples/blocknote/app";
 import * as excalidraw from "../examples/excalidraw/app";
+import * as fileSystem from "../examples/file-system/app";
 import * as prosemirror from "../examples/prosemirror/app";
 import * as reactFlow from "../examples/react-flow/app";
 
 import landing from "./landing/index.html";
 
-const apps = [accessControl, awareness, blocknote, excalidraw, prosemirror, reactFlow];
+const apps = [accessControl, awareness, blocknote, excalidraw, fileSystem, prosemirror, reactFlow];
 const bySlug = new Map(apps.map((a) => [a.manifest.slug, a]));
 
 const instance = Bun.serve({
