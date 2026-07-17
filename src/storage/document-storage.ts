@@ -1,6 +1,12 @@
 import * as Y from "yjs";
 
-import type { StateVector, UpdateV2, VersionedSyncStep2Update, VersionedUpdate } from "teleportal";
+import type {
+  StateVector,
+  Update,
+  UpdateV2,
+  VersionedSyncStep2Update,
+  VersionedUpdate,
+} from "teleportal";
 import { getEmptyStateVector } from "teleportal";
 import type { EncryptedUpdatePayload } from "../lib/protocol/encryption/encoding";
 import type { IndexedSidecar } from "../lib/protocol/encryption/content-cipher";
@@ -16,7 +22,7 @@ import {
 } from "../lib/protocol/encryption/encoding";
 import type { SidecarCompaction } from "../lib/protocol/encryption/encoding";
 import type { Document, DocumentMetadata, DocumentStorage, EncodedContentMap } from "./types";
-import { bytesEqual } from "./utils";
+import { bytesEqual, clipUpdateAtGaps } from "./utils";
 
 /**
  * Internal representation of a document's persisted state: a merged V2
@@ -235,8 +241,14 @@ export abstract class AbstractDocumentStorage implements DocumentStorage {
       };
     }
 
-    const diff = Y.diffUpdateV2(state.update, syncStep1);
-    const serverSV = Y.encodeStateVectorFromUpdateV2(state.update) as StateVector;
+    // Serve only the gap-free prefix: a diff containing Skip structs (from a
+    // permanently lost update) would park the receiver's structs forever and
+    // trap its provider in a 10s sync-step-1/sync-step-2 resync loop. The
+    // clipped tail stays in the pending log; the honest state vector below
+    // lets a live sender retransmit the missing range and heal the document.
+    const servable = clipUpdateAtGaps(state.update as Update);
+    const diff = Y.diffUpdateV2(servable, syncStep1);
+    const serverSV = Y.encodeStateVectorFromUpdateV2(servable) as StateVector;
 
     let encryptedSidecars: Uint8Array[];
     if (state.sidecars.length === 0) {
