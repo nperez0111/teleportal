@@ -239,6 +239,24 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * Cleanup functions returned by handler init() methods.
    */
   #handlerCleanups: (() => void)[] = [];
+  /**
+   * Per-client liveness used to kill the presence of dead connections: a
+   * wedged (half-open) socket never emits a close event, so without this its
+   * presence entries would survive forever. `lastSeen` is refreshed by every
+   * decoded inbound message and by protocol pings (via {@link markClientAlive});
+   * `pingCapable` latches once the client demonstrates it heartbeats, and only
+   * ping-capable clients are ever presumed dead (see
+   * {@link PresenceConfig.clientTtlMs}). `close` tears down the transport so a
+   * client that was wrongly presumed dead reconnects cleanly instead of
+   * lingering on a connection the server no longer services.
+   */
+  #clientLiveness = new Map<
+    string,
+    { lastSeen: number; pingCapable: boolean; close: () => void }
+  >();
+  #clientLivenessTimer: ReturnType<typeof setInterval> | undefined;
+  #lastLivenessSweepAt = 0;
+  readonly #clientTtlMs: number;
 
   constructor(options: ServerOptions<Context>) {
     super();
@@ -247,6 +265,15 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
     this.#metrics = new MetricsCollector(register);
+    this.#clientTtlMs = options.presenceConfig?.clientTtlMs ?? 60_000;
+    if (this.#clientTtlMs > 0) {
+      this.#clientLivenessTimer = setInterval(
+        () => this.sweepDeadClients(),
+        Math.max(1, Math.floor(this.#clientTtlMs / 2)),
+      );
+      // Don't keep the process alive solely for the liveness sweep.
+      (this.#clientLivenessTimer as { unref?: () => void }).unref?.();
+    }
 
     // Initialize RPC handlers
     if (options.rpcHandlers) {
@@ -824,10 +851,28 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       },
     });
 
+    // Track liveness from the moment the connection exists. The transport is
+    // closed when the client is presumed dead so it reconnects cleanly.
+    this.#clientLiveness.set(id, {
+      lastSeen: Date.now(),
+      pingCapable: false,
+      close: () => {
+        try {
+          validatedTransport.close();
+        } catch {
+          // ignore — the transport may already be closed
+        }
+      },
+    });
+
     // Consume validated transport source
     (async () => {
       try {
         await forEachMessage(validatedTransport.source, async (message) => {
+          const liveness = this.#clientLiveness.get(id);
+          if (liveness) {
+            liveness.lastSeen = Date.now();
+          }
           if (message.type === "ack") {
             this.#metrics.incrementMessage(message.type);
             return;
@@ -991,6 +1036,74 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
   }
 
   /**
+   * Record proof of life for a client's connection: called by transports when
+   * a protocol ping arrives (decoded messages refresh liveness in the consume
+   * loop directly). The first ping also marks the client ping-capable, opting
+   * it into dead-client sweeping — see {@link PresenceConfig.clientTtlMs}.
+   */
+  markClientAlive(clientId: string): void {
+    const liveness = this.#clientLiveness.get(clientId);
+    if (liveness) {
+      liveness.lastSeen = Date.now();
+      liveness.pingCapable = true;
+    }
+  }
+
+  /**
+   * One dead-client sweep tick (driven by the interval): disconnect every
+   * ping-capable client whose last sign of life is older than
+   * {@link PresenceConfig.clientTtlMs}. Disconnecting removes the client from
+   * all sessions, which broadcasts presence-leave for its awareness entries —
+   * so peers stop seeing ghosts of dead connections. Public so it can be
+   * driven deterministically in tests.
+   */
+  sweepDeadClients(): void {
+    if (this.#clientTtlMs <= 0) {
+      return;
+    }
+    const now = Date.now();
+
+    // Stall guard: the sweep runs every ttl/2, so arriving a full TTL late
+    // means THIS process stalled (event-loop freeze, suspend, clock jump) —
+    // the silence is ours, not the clients'. Every lastSeen is uniformly
+    // stale, and sweeping now would mass-disconnect all ping-capable clients
+    // at once, a self-inflicted reconnect storm exactly when the server is
+    // already struggling. Grant a fresh window instead.
+    if (this.#lastLivenessSweepAt !== 0 && now - this.#lastLivenessSweepAt > this.#clientTtlMs) {
+      emitWideEvent("info", {
+        event_type: "client_liveness_sweep_stalled",
+        timestamp: new Date().toISOString(),
+        sweep_delay_ms: now - this.#lastLivenessSweepAt,
+        client_ttl_ms: this.#clientTtlMs,
+      });
+      for (const liveness of this.#clientLiveness.values()) {
+        liveness.lastSeen = now;
+      }
+      this.#lastLivenessSweepAt = now;
+      return;
+    }
+    this.#lastLivenessSweepAt = now;
+
+    for (const [clientId, liveness] of this.#clientLiveness) {
+      if (!liveness.pingCapable || now - liveness.lastSeen <= this.#clientTtlMs) {
+        continue;
+      }
+      emitWideEvent("info", {
+        event_type: "client_presumed_dead",
+        timestamp: new Date().toISOString(),
+        client_id: clientId,
+        last_seen_ms_ago: now - liveness.lastSeen,
+        client_ttl_ms: this.#clientTtlMs,
+      });
+      // disconnectClient deletes the liveness entry; closing the transport
+      // afterwards ends the consume loop (whose stream-ended path re-invoking
+      // disconnectClient is a no-op thanks to idempotency).
+      this.disconnectClient(clientId, "timeout");
+      liveness.close();
+    }
+  }
+
+  /**
    * Disconnect a client from all sessions.
    * @param client - The client or client ID to disconnect.
    * @param reason - The reason for disconnection.
@@ -1001,10 +1114,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     // Idempotent: a client that was never connected here, or was already
     // disconnected, must not remove sessions, decrement the gauge, or re-emit
     // the event. Both the abort listener and the stream-ended finally target
-    // the same client; only the first call does work.
+    // the same client; only the first call does work. The liveness delete
+    // must sit BEHIND this guard: on an id-reusing transport, a stale
+    // connection's redundant disconnect would otherwise delete the liveness
+    // entry a reconnect just registered.
     if (!this.#connectedClientIds.delete(clientId)) {
       return;
     }
+    this.#clientLiveness.delete(clientId);
 
     for (const s of this.#sessions.values()) {
       s.removeClient(client);
@@ -1083,6 +1200,12 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       activeSessions: this.#sessions.size,
       pendingSessions: this.#pendingSessions.size,
     });
+
+    if (this.#clientLivenessTimer !== undefined) {
+      clearInterval(this.#clientLivenessTimer);
+      this.#clientLivenessTimer = undefined;
+    }
+    this.#clientLiveness.clear();
 
     // Call handler cleanup functions
     for (const cleanup of this.#handlerCleanups) {

@@ -21,12 +21,16 @@ async function createTestProvider(options?: {
   awareness?: Awareness;
   /** Defaults to `false` (plaintext) since most mechanics tests don't need crypto. */
   encryptionKey?: CryptoKey | false;
+  offlineTimeoutMs?: number;
+  presenceJoinGraceMs?: number;
+  maxReconnectAttempts?: number;
 }) {
   const [clientTransport, serverTransport] = createMemoryTransportPair();
   const clientConn = new Connection({
     transports: [clientTransport],
     connect: false,
     batchIntervalMs: 0,
+    maxReconnectAttempts: options?.maxReconnectAttempts,
   });
   const serverConn = new Connection({
     transports: [serverTransport],
@@ -44,6 +48,8 @@ async function createTestProvider(options?: {
     ydoc: options?.ydoc,
     awareness: options?.awareness,
     encryptionKey: options?.encryptionKey ?? false,
+    offlineTimeoutMs: options?.offlineTimeoutMs,
+    presenceJoinGraceMs: options?.presenceJoinGraceMs,
   });
 
   return { provider, clientConn, serverConn, clientTransport, serverTransport };
@@ -850,34 +856,285 @@ describe("Provider", () => {
       await serverConn.destroy();
     });
 
-    it("ignores presence-heartbeat", async () => {
+    it("tracks peers in provider.peers on join/leave", async () => {
+      const { provider, serverConn } = await createTestProvider();
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "client-1",
+          userId: "user-1",
+          data: { name: "Alice" },
+        }),
+      );
+      await flush();
+
+      expect(provider.peers.size).toBe(1);
+      expect(provider.peers.get(42)?.userId).toBe("user-1");
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-leave",
+          awarenessId: 42,
+          clientId: "client-1",
+          userId: "user-1",
+          data: { name: "Alice" },
+        }),
+      );
+      await flush();
+
+      expect(provider.peers.size).toBe(0);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("reconciles peers against a presence-heartbeat roster snapshot", async () => {
+      // presenceJoinGraceMs 0: removals apply immediately (the join-protection
+      // window is exercised by its own test below).
+      const { provider, serverConn } = await createTestProvider({ presenceJoinGraceMs: 0 });
+
+      const joins: number[] = [];
+      const leaves: number[] = [];
+      provider.on("peer-join", (peer) => joins.push(peer.awarenessId));
+      provider.on("peer-leave", (peer) => leaves.push(peer.awarenessId));
+
+      // Known peer 42 with an awareness state; peer 43 is a ghost whose
+      // presence-leave was lost.
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "c-42",
+          userId: "u-42",
+          data: {},
+        }),
+      );
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 43,
+          clientId: "c-43",
+          userId: "u-43",
+          data: {},
+        }),
+      );
+      await flush();
+      provider.awareness.states.set(43, { name: "Ghost" });
+
+      // Snapshot: 42 stays, 43 is gone, 44 is new. Our own clientID in the
+      // snapshot must be skipped.
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-heartbeat",
+          clients: [
+            { awarenessId: 42, clientId: "c-42", userId: "u-42", data: {} },
+            { awarenessId: 44, clientId: "c-44", userId: "u-44", data: {} },
+            {
+              awarenessId: provider.awareness.clientID,
+              clientId: "c-self",
+              userId: "u-self",
+              data: {},
+            },
+          ],
+        }),
+      );
+      await flush();
+
+      expect([...provider.peers.keys()].sort()).toEqual([42, 44]);
+      expect(joins).toEqual([42, 43, 44]);
+      expect(leaves).toEqual([43]);
+      // The ghost's awareness state was cleared by the reconcile.
+      expect(provider.awareness.getStates().has(43)).toBe(false);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("sweeps a ghost awareness state that outlived its presence-leave", async () => {
+      const { provider, serverConn } = await createTestProvider({ presenceJoinGraceMs: 0 });
+
+      // Peer 42 joins, then leaves...
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "c-42",
+          userId: "u-42",
+          data: {},
+        }),
+      );
+      await flush();
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-leave",
+          awarenessId: 42,
+          clientId: "c-42",
+          userId: "u-42",
+          data: {},
+        }),
+      );
+      await flush();
+      expect(provider.peers.size).toBe(0);
+
+      // ...but its final awareness update was still buffered when its socket
+      // closed and arrives AFTER the leave, resurrecting the state with no
+      // roster entry behind it.
+      provider.awareness.states.set(42, { user: "ghost" });
+      // A state whose id was NEVER rostered on this document belongs to
+      // another provider sharing this awareness (subdocs) — must be spared.
+      provider.awareness.states.set(99, { user: "other-doc" });
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", { type: "presence-heartbeat", clients: [] }),
+      );
+      await flush();
+
+      expect(provider.awareness.getStates().has(42)).toBe(false);
+      expect(provider.awareness.getStates().has(99)).toBe(true);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("does not drop a freshly-joined peer over a stale roster snapshot", async () => {
+      // Default join grace: a snapshot built before this peer's join (racing
+      // announces) must not remove it.
+      const { provider, serverConn } = await createTestProvider();
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "c-42",
+          userId: "u-42",
+          data: {},
+        }),
+      );
+      await flush();
+      expect(provider.peers.has(42)).toBe(true);
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", { type: "presence-heartbeat", clients: [] }),
+      );
+      await flush();
+
+      // Protected by the join grace — still present.
+      expect(provider.peers.has(42)).toBe(true);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("ignores presence messages for other documents", async () => {
       const { provider, serverConn } = await createTestProvider();
 
       let joinFired = false;
-      let leaveFired = false;
       provider.on("peer-join", () => {
         joinFired = true;
       });
-      provider.on("peer-leave", () => {
-        leaveFired = true;
-      });
 
-      const heartbeatMsg = new PresenceMessage("test-doc", {
-        type: "presence-heartbeat",
-        clients: [
-          {
-            awarenessId: 1,
-            clientId: "c-1",
-            userId: "u-1",
-            data: {},
-          },
-        ],
-      });
-      await serverConn.send(heartbeatMsg);
+      await serverConn.send(
+        new PresenceMessage("other-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "client-1",
+          userId: "user-1",
+          data: {},
+        }),
+      );
+      // A heartbeat for another document must not clear this doc's peers.
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 7,
+          clientId: "c-7",
+          userId: "u-7",
+          data: {},
+        }),
+      );
+      await serverConn.send(
+        new PresenceMessage("other-doc", { type: "presence-heartbeat", clients: [] }),
+      );
       await flush();
 
-      expect(joinFired).toBe(false);
-      expect(leaveFired).toBe(false);
+      expect(joinFired).toBe(true);
+      expect(provider.peers.size).toBe(1);
+      expect(provider.peers.has(7)).toBe(true);
+      expect(provider.peers.has(42)).toBe(false);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("clears peers and remote awareness after the offline timeout", async () => {
+      const { provider, serverConn, clientTransport } = await createTestProvider({
+        offlineTimeoutMs: 5,
+        maxReconnectAttempts: 0,
+      });
+
+      const leaves: number[] = [];
+      provider.on("peer-leave", (peer) => leaves.push(peer.awarenessId));
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "c-42",
+          userId: "u-42",
+          data: {},
+        }),
+      );
+      await flush();
+      // A remote awareness state that never announced presence is cleared too.
+      provider.awareness.states.set(43, { name: "Silent" });
+      expect(provider.peers.size).toBe(1);
+
+      clientTransport.simulateDisconnect();
+      // Wait until past the offline timeout.
+      const start = Date.now();
+      while (provider.peers.size > 0 && Date.now() - start < 3000) {
+        await flush();
+      }
+
+      expect(provider.peers.size).toBe(0);
+      expect(leaves).toEqual([42]);
+      expect(provider.awareness.getStates().has(42)).toBe(false);
+      expect(provider.awareness.getStates().has(43)).toBe(false);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
+    it("keeps peers when the connection recovers within the offline timeout", async () => {
+      const { provider, serverConn, clientTransport, clientConn } = await createTestProvider({
+        offlineTimeoutMs: 500,
+      });
+
+      await serverConn.send(
+        new PresenceMessage("test-doc", {
+          type: "presence-join",
+          awarenessId: 42,
+          clientId: "c-42",
+          userId: "u-42",
+          data: {},
+        }),
+      );
+      await flush();
+      expect(provider.peers.size).toBe(1);
+
+      clientTransport.simulateDisconnect();
+      // Auto-reconnect (memory transport reconnects instantly) beats the 500ms
+      // offline timeout, so the roster must survive.
+      const start = Date.now();
+      while (clientConn.state.type !== "connected" && Date.now() - start < 3000) {
+        await flush();
+      }
+      await flush();
+
+      expect(clientConn.state.type).toBe("connected");
+      expect(provider.peers.size).toBe(1);
 
       provider.destroy();
       await serverConn.destroy();

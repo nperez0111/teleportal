@@ -75,6 +75,19 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
 const DEFAULT_INITIAL_RECONNECT_DELAY = 100;
 const DEFAULT_MAX_BACKOFF_TIME = 30_000;
 const DEFAULT_MESSAGE_RECONNECT_TIMEOUT = 30_000;
+/**
+ * Heartbeats serve two liveness contracts at once, so they are ON by default:
+ *
+ * - Client-side: on an idle document nothing else flows, so without pings the
+ *   `messageReconnectTimeout` (30s) fires and force-reconnects a perfectly
+ *   healthy connection every 30s — churning presence (leave/join flaps) for
+ *   every peer. The pong resets the receive timer.
+ * - Server-side: the ping is the client's proof of life. The server's
+ *   dead-client sweep (`presenceConfig.clientTtlMs`, 60s default) kills the
+ *   presence of ping-capable clients that go silent, so the interval must
+ *   comfortably undercut that TTL.
+ */
+const DEFAULT_HEARTBEAT_INTERVAL = 15_000;
 const DEFAULT_MIN_UPTIME = 0;
 const DEFAULT_RECONNECT_DELAY_JITTER = 0;
 const DEFAULT_MAX_BUFFERED_MESSAGES = Number.POSITIVE_INFINITY;
@@ -201,7 +214,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
     initialReconnectDelay = DEFAULT_INITIAL_RECONNECT_DELAY,
     maxBackoffTime = DEFAULT_MAX_BACKOFF_TIME,
     reconnectBackoffFactor = DEFAULT_RECONNECT_BACKOFF_FACTOR,
-    heartbeatInterval = 0,
+    heartbeatInterval = DEFAULT_HEARTBEAT_INTERVAL,
     messageReconnectTimeout = DEFAULT_MESSAGE_RECONNECT_TIMEOUT,
     minUptime = DEFAULT_MIN_UPTIME,
     reconnectDelayJitter = DEFAULT_RECONNECT_DELAY_JITTER,
@@ -1175,7 +1188,10 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
   // --- Heartbeat & timeout ---
 
   #setupHeartbeat() {
-    if (this.#heartbeatIntervalMs > 0) {
+    // No interval at all when no transport can heartbeat (memory/http-only
+    // connections) — it would tick for the connection's whole lifetime
+    // without ever doing anything.
+    if (this.#heartbeatIntervalMs > 0 && this.#transports.some((t) => t.sendHeartbeat)) {
       this.#timerManager.setInterval(() => {
         if (this.#state.type === "connected" && this.#activeTransport?.sendHeartbeat) {
           this.#activeTransport.sendHeartbeat();

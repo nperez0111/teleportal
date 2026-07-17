@@ -5,7 +5,7 @@ import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
 
-export type ClientDisconnectReason = "abort" | "stream-ended" | "manual" | "error";
+export type ClientDisconnectReason = "abort" | "stream-ended" | "manual" | "error" | "timeout";
 
 export type ClientMessageDirection = "in" | "out";
 
@@ -39,6 +39,23 @@ export type PresenceConfig<Context extends ServerContext = ServerContext> = {
    * 90_000 (90s, ~2 missed heartbeats).
    */
   presenceTtlMs?: number;
+
+  /**
+   * How long (ms) a *local* client's connection is trusted without any inbound
+   * traffic (messages or protocol pings) before the server presumes it dead,
+   * disconnects it, and broadcasts presence-leave for its awareness entries.
+   *
+   * Liveness is only enforced for clients that have demonstrated they ping
+   * (the websocket transport heartbeats by default): a client that has never
+   * pinged (e.g. an SSE client, whose death is detected via request abort, or
+   * an older client with heartbeats disabled) is never presumed dead by this
+   * mechanism. This makes the sweep safe by construction — it can only kill
+   * clients that stopped doing something they were provably doing before.
+   *
+   * Should be a multiple of the client heartbeat interval (15s by default).
+   * Defaults to 60_000 (60s, ~4 missed pings). Set to 0 to disable.
+   */
+  clientTtlMs?: number;
 };
 
 /**

@@ -438,6 +438,23 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
       }
     }
     sends.push(this.#publishDocumentMessage(joinMessage));
+
+    // Close the roster exchange with a full snapshot (local + cross-node).
+    // The joins above tell the newcomer who is present; the snapshot lets it
+    // RECONCILE — dropping any peer it still remembers from before a
+    // reconnect that is no longer present (whose presence-leave it missed
+    // while offline). Sent after the joins so it reflects everything above.
+    sends.push(
+      client
+        .send(
+          new PresenceMessage<Context>(this.documentId, {
+            type: "presence-heartbeat",
+            clients: this.#combinedPresenceSnapshot(),
+          }),
+        )
+        .catch(() => {}),
+    );
+
     await Promise.all(sends).catch((error) => {
       emitWideEvent("error", {
         event_type: "presence_join_broadcast_failed",
@@ -632,6 +649,26 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   }
 
   /**
+   * Build the full roster (this node's local clients + clients on other
+   * nodes) as a heartbeat snapshot. This is what clients reconcile against —
+   * unlike the node-to-node heartbeat, which carries only local clients.
+   */
+  #combinedPresenceSnapshot(): DecodedPresenceHeartbeat["clients"] {
+    const snapshot = this.#localPresenceSnapshot();
+    for (const node of this.#remotePresence.values()) {
+      for (const peer of node.clients.values()) {
+        snapshot.push({
+          awarenessId: peer.awarenessId,
+          clientId: peer.clientId,
+          userId: peer.userId,
+          data: peer.data,
+        });
+      }
+    }
+    return snapshot;
+  }
+
+  /**
    * One presence-maintenance tick (driven by the interval): advertise this
    * node's local clients to other nodes, then expire any remote node that has
    * stopped sending heartbeats (e.g. crashed) and clear its clients locally.
@@ -666,6 +703,24 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
           }),
         );
       }
+    }
+
+    // Also push the FULL roster (local + cross-node) to this node's own
+    // clients. Clients reconcile their peer set against it, so any lost
+    // join/leave (dropped message, missed while briefly offline) self-heals
+    // within one heartbeat interval instead of persisting forever. Sent even
+    // when empty — an empty roster is exactly what tells a client its last
+    // remaining peer is gone. Built after the TTL expiry above so it never
+    // resurrects clients of a node that was just expired.
+    if (this.#clients.size > 0) {
+      sends.push(
+        this.broadcast(
+          new PresenceMessage<Context>(this.documentId, {
+            type: "presence-heartbeat",
+            clients: this.#combinedPresenceSnapshot(),
+          }),
+        ),
+      );
     }
 
     await Promise.all(sends).catch((error) => {

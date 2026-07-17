@@ -332,6 +332,16 @@ The `Provider` class extends `Observable` and emits the following events:
 - **`peer-leave: (peer: PresenceEvent) => void`**
   - Emitted when a peer leaves the document
 
+#### Presence roster (`provider.peers`)
+
+`provider.peers` is a `ReadonlyMap<number, PresenceEvent>` (keyed by awareness clientID) of the peers currently believed present. It is kept accurate by three mechanisms:
+
+- **Join/leave messages** from the server maintain it incrementally.
+- **Roster heartbeats**: the server sends the full roster after every announce and periodically (`presenceConfig.heartbeatIntervalMs`, 30s default); the provider reconciles against it, so a lost join/leave self-heals within one heartbeat instead of persisting forever.
+- **Offline honesty**: after `offlineTimeoutMs` without a connection, the provider clears all peers and remote awareness states (emitting `peer-leave` for each) — an offline client reports _no_ peers rather than a stale roster. On reconnect the provider re-announces, rebuilds the roster from the server's reply, re-broadcasts its own awareness state, and sends an `awareness-request` so peers' cursor states reappear immediately.
+
+Server-side, the presence of a dead connection (e.g. a wedged socket that never fires `close`) is killed by the server's client-liveness sweep: clients heartbeat over the websocket transport every 15s by default, and a ping-capable client that goes silent past `presenceConfig.clientTtlMs` (60s default) is disconnected and its presence broadcast as left.
+
 ### Provider Options
 
 ```typescript
@@ -346,6 +356,8 @@ type ProviderOptions<T, R> = {
   offlineStorage?: AbstractDocumentStorage; // Custom offline storage backend
   rpc?: R; // RPC extension map
   getTransport?: (ctx) => T; // Custom transport factory
+  offlineTimeoutMs?: number; // Clear peers/remote awareness after this long offline (default: 30_000; 0 = immediately, Infinity = never)
+  presenceJoinGraceMs?: number; // Roster-reconcile join-protection window (default: 5_000)
 };
 ```
 

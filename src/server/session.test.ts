@@ -1172,6 +1172,63 @@ describe("Session", () => {
         });
       });
 
+      it("closes the announce roster reply with a full heartbeat snapshot", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+        await session.apply(announce("client-2", 222), client2 as any);
+
+        // The newcomer's reply ends with a presence-heartbeat carrying the
+        // complete roster, so the client can reconcile away any stale peers
+        // it still remembers from before a reconnect.
+        const heartbeats = presenceMsgs(client2).filter(
+          (m) => (m.payload as any).type === "presence-heartbeat",
+        );
+        expect(heartbeats).toHaveLength(1);
+        const ids = (heartbeats[0]!.payload as any).clients.map((c: any) => c.awarenessId).sort();
+        expect(ids).toEqual([111, 222]);
+      });
+
+      it("runPresenceMaintenance pushes the combined roster to local clients", async () => {
+        session.addClient(client1 as any);
+        session.addClient(client2 as any);
+
+        await session.apply(announce("client-1", 111), client1 as any);
+        const prev1 = presenceMsgs(client1).length;
+        const prev2 = presenceMsgs(client2).length;
+
+        await session.runPresenceMaintenance();
+
+        for (const [client, prev] of [
+          [client1, prev1],
+          [client2, prev2],
+        ] as const) {
+          const heartbeats = presenceMsgs(client)
+            .slice(prev)
+            .filter((m) => (m.payload as any).type === "presence-heartbeat");
+          expect(heartbeats).toHaveLength(1);
+          expect((heartbeats[0]!.payload as any).clients).toEqual([
+            { awarenessId: 111, clientId: "client-1", userId: "user-1", data: {} },
+          ]);
+        }
+      });
+
+      it("runPresenceMaintenance sends an empty roster when nobody announced", async () => {
+        session.addClient(client1 as any);
+        const prev = presenceMsgs(client1).length;
+
+        await session.runPresenceMaintenance();
+
+        // An empty roster is meaningful: it tells a client holding stale
+        // peers that everyone is gone.
+        const heartbeats = presenceMsgs(client1)
+          .slice(prev)
+          .filter((m) => (m.payload as any).type === "presence-heartbeat");
+        expect(heartbeats).toHaveLength(1);
+        expect((heartbeats[0]!.payload as any).clients).toEqual([]);
+      });
+
       it("broadcasts a presence-leave with ids, userId and async data on disconnect", async () => {
         const presenceSession = new Session<ServerContext>({
           documentId: "test-doc",

@@ -145,8 +145,10 @@ describe("SharedWorker presence end-to-end", () => {
     expect(peerSees.joins.every((p) => p.clientId === "worker-client")).toBe(true);
 
     // Awareness still flows end-to-end: tab A's cursor state reaches the peer.
+    // (Providers broadcast their initial {} state on connect, so wait for the
+    // actual value, not mere presence of the entry.)
     tabA.provider.awareness.setLocalState({ user: "alice" });
-    await waitFor(() => peer.awareness.getStates().has(idA));
+    await waitFor(() => peer.awareness.getStates().get(idA)?.user === "alice");
     expect(peer.awareness.getStates().get(idA)).toEqual({ user: "alice" });
 
     // Tab A is refreshed: the browser fires `close` on the worker-side port
@@ -221,9 +223,10 @@ describe("SharedWorker presence end-to-end", () => {
     await waitFor(() => bSees.joins.some((p) => p.awarenessId === idA));
     expect(bSees.joins.some((p) => p.awarenessId === tabB.provider.awareness.clientID)).toBe(false);
 
-    // Awareness: tab A's cursor state reaches tab B.
+    // Awareness: tab A's cursor state reaches tab B. (Providers broadcast
+    // their initial {} state on connect, so wait for the actual value.)
     tabA.provider.awareness.setLocalState({ user: "alice" });
-    await waitFor(() => tabB.provider.awareness.getStates().has(idA));
+    await waitFor(() => tabB.provider.awareness.getStates().get(idA)?.user === "alice");
     expect(tabB.provider.awareness.getStates().get(idA)).toEqual({ user: "alice" });
 
     // Document content: tab A's edit reaches tab B.
