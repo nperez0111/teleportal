@@ -5,7 +5,13 @@ import type { Session } from "./session";
 
 export type DocumentUnloadReason = "cleanup" | "delete" | "dispose";
 
-export type ClientDisconnectReason = "abort" | "stream-ended" | "manual" | "error" | "timeout";
+export type ClientDisconnectReason =
+  | "abort"
+  | "stream-ended"
+  | "manual"
+  | "error"
+  | "timeout"
+  | "server-shutdown";
 
 export type ClientMessageDirection = "in" | "out";
 

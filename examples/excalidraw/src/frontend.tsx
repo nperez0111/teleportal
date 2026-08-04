@@ -1,7 +1,7 @@
-import { createRoot } from "react-dom/client";
 import { TanStackDevtools } from "@tanstack/react-devtools";
+import { createRoot } from "react-dom/client";
 import Shell from "./components/shell";
-import { TeleportalDevtoolsPanelReact } from "./devtools";
+import { TeleportalDevtoolsPanelReact } from "./components/devtools";
 
 const elem = document.getElementById("root")!;
 const app = (

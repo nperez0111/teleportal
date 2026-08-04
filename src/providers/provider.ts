@@ -19,7 +19,6 @@ import {
   getEncryptedTransport,
   EncryptionClient,
   createSerialQueue,
-  connect,
   forEachMessage,
   type SerialQueue,
   type FanOutReader,
@@ -27,7 +26,7 @@ import {
 import type { AbstractDocumentStorage } from "teleportal/storage";
 import { IdbDocumentStorage } from "../storage/idb/document-storage";
 import { DirectConnection } from "./connection";
-import type { Connection, ConnectionState } from "./types";
+import type { Connection, ConnectionState, ConnectionDiagnosticEvent } from "./types";
 import { RpcClient } from "./rpc-client";
 import { websocketTransport } from "./transports/websocket";
 import { httpTransport } from "./transports/http";
@@ -187,6 +186,7 @@ type ProviderEvents = {
   update: (state: ConnectionState) => void;
   "peer-join": (peer: PresenceEvent) => void;
   "peer-leave": (peer: PresenceEvent) => void;
+  diagnostic: (event: ConnectionDiagnosticEvent) => void;
 };
 
 export class Provider<
@@ -343,15 +343,29 @@ export class Provider<
       this.#connection.send(message);
     });
 
-    if (this.#enableOfflinePersistence) {
-      this.#applyQueue = createSerialQueue<RawReceivedMessage>((msg) => this.transport.write(msg));
-      void forEachMessage(this.#messageReader.source, (chunk) => {
-        this.#persistDocMessage(chunk);
-        this.#lastApplyPromise = this.#applyQueue!.enqueue(chunk);
+    // Inbound apply loop. Reads from the connection's fan-out reader — which
+    // OUTLIVES individual transport connections (it survives reconnects) — so
+    // this loop must never terminate on a single bad message. A message can
+    // legitimately fail to apply (e.g. a server `auth-message` denial, or a
+    // sync-step-2 encrypted with the wrong key): the underlying `transport.write`
+    // rejects `synced` and rethrows to signal that failure, but if that throw
+    // escaped `forEachMessage` the loop would die and no further inbound message
+    // would ever be applied again — even after a successful token-refresh
+    // reconnect. It would also surface as an unhandled rejection. So we isolate
+    // each message: surface the error as a diagnostic and keep draining.
+    this.#applyQueue = createSerialQueue<RawReceivedMessage>((msg) => this.transport.write(msg));
+    void forEachMessage(this.#messageReader.source, (chunk) => {
+      this.#persistDocMessage(chunk);
+      // `createSerialQueue` already isolates failures (a rejected item does not
+      // poison the queue), but its per-item promise still rejects; swallow it
+      // here so it neither escapes as an unhandled rejection nor poisons
+      // `flush()` (which awaits `#lastApplyPromise`).
+      this.#lastApplyPromise = this.#applyQueue!.enqueue(chunk).catch((error) => {
+        this.#onInboundApplyError(chunk, error);
       });
+    });
+    if (this.#enableOfflinePersistence) {
       this.#initOfflinePersistence(offlineStorage);
-    } else {
-      void connect(this.#messageReader.source, this.transport);
     }
 
     this.doc.on("subdocs", this.#subdocListener);
@@ -965,6 +979,22 @@ export class Provider<
           resolve();
         }
       });
+    });
+  }
+
+  /**
+   * Handle a message that failed to apply in the inbound loop. The failure has
+   * already been surfaced where it matters (the transport rejects its `synced`
+   * promise), so here we only keep the loop alive and emit an observable signal.
+   * A denied write, for instance, arrives as a control `auth-message`: the
+   * connection independently reacts (reactive token refresh + reconnect), and
+   * this loop must keep running so post-reconnect messages still apply.
+   */
+  #onInboundApplyError(message: RawReceivedMessage, error: unknown) {
+    this.call("diagnostic", {
+      type: "inbound-apply-error",
+      document: (message as { document?: string }).document ?? this.document,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 

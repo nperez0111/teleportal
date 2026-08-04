@@ -5,6 +5,7 @@
     "types": ["@types/bun", "@types/react", "@types/react-dom"],
     "baseUrl": ".",
     "paths": {
+      "teleportal/devtools": ["../../src/devtools/index.ts"],
       "teleportal/encryption-key": ["../../src/encryption-key/index.ts"],
       "teleportal/storage": ["../../src/storage/index.ts"],
       "teleportal/transports/redis": ["../../src/transports/redis/index.ts"],

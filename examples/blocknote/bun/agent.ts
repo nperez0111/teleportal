@@ -9,7 +9,7 @@ import { createTokenManager, TokenPayload } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
 import homepage from "../src/index.html";
-import { Agent } from "../../src/agent";
+import { createAgent } from "../../src/agent";
 
 const memoryStorage = createStorage({
   driver: fsDriver({
@@ -59,19 +59,14 @@ const instance = Bun.serve({
 
 console.info(`Server running on http://${instance.hostname}:${instance.port}`);
 
-new Promise((r) => setTimeout(r, 100));
-const serverAgent = new Agent(server);
-
-serverAgent
-  .createAgent({
-    document: "ABC-123",
-    context: { clientId: "ajfkldsjklfdbc", userId: "test", room: "room1" },
-    encrypted: false,
-  })
-  .then((agent) => {
-    agent.ydoc.getText("TEST").insert(0, "whoaaAoh");
-    console.log(agent.ydoc.getText("TEST").toJSON());
-    setTimeout(() => {
-      agent[Symbol.asyncDispose]();
-    });
+createAgent(server, {
+  document: "ABC-123",
+  context: { clientId: "ajfkldsjklfdbc", userId: "test", room: "room1" },
+  encryptionKey: false,
+}).then((agent) => {
+  agent.doc.getText("TEST").insert(0, "whoaaAoh");
+  console.log(agent.doc.getText("TEST").toJSON());
+  setTimeout(() => {
+    agent.destroy();
   });
+});
