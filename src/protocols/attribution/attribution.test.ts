@@ -129,15 +129,15 @@ function twoUserDoc() {
 describe("getAttributionRpcHandlers", () => {
   it("registers both read methods", () => {
     const handlers = getAttributionRpcHandlers();
-    expect("attributionActivity" in handlers).toBe(true);
-    expect("attributionGet" in handlers).toBe(true);
+    expect("attribution.activity" in handlers).toBe(true);
+    expect("attribution.get" in handlers).toBe(true);
   });
 
-  describe("attributionActivity", () => {
+  describe("attribution.activity", () => {
     it("returns a timeline from stored attribution", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
 
       const { response } = (await handler.handler!(
         {},
@@ -151,7 +151,7 @@ describe("getAttributionRpcHandlers", () => {
     it("applies the userId filter", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
 
       const { response } = (await handler.handler!(
         { userId: "user-2" },
@@ -162,7 +162,7 @@ describe("getAttributionRpcHandlers", () => {
     });
 
     it("returns an empty timeline when the storage has no attribution", async () => {
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
       const { response } = (await handler.handler!({}, mockContext())) as {
         response: { activity: unknown[] };
       };
@@ -178,7 +178,7 @@ describe("getAttributionRpcHandlers", () => {
         [createContentAttribute("delete", "enc-user"), createContentAttribute("deleteAt", 5000)],
       );
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
 
       const { response } = (await handler.handler!(
         {},
@@ -189,11 +189,11 @@ describe("getAttributionRpcHandlers", () => {
     });
   });
 
-  describe("attributionGet", () => {
+  describe("attribution.get", () => {
     it("returns the stored ContentMap unchanged when unfiltered", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
 
       const { response } = (await handler.handler!(
         {},
@@ -206,7 +206,7 @@ describe("getAttributionRpcHandlers", () => {
     it("narrows the ContentMap by filter", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
 
       const { response } = (await handler.handler!(
         { filter: { userId: "user-1" } },
@@ -226,7 +226,7 @@ describe("getAttributionRpcHandlers", () => {
     });
 
     it("returns null when the storage has no attribution", async () => {
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
       const { response } = (await handler.handler!({}, mockContext())) as {
         response: { contentMap: EncodedContentMap | null };
       };
@@ -252,7 +252,7 @@ describe("getAttributionRpcHandlers", () => {
 
       const merged = mergeContentMaps([map1, map2]);
       const encoded = encodeContentMap(merged);
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
 
       const { response } = (await handler.handler!(
         { filter: { attributes: { source: "ai" } } },
@@ -486,7 +486,7 @@ describe("incremental ContentMap sync", () => {
   it("attributionGetIncremental returns only new ranges", async () => {
     const { map } = twoUserDoc();
     const encoded = encodeContentMap(map);
-    const handler = getAttributionRpcHandlers().attributionGetIncremental;
+    const handler = getAttributionRpcHandlers()["attribution.getIncremental"];
 
     const ids1 = createContentIds();
     ids1.inserts.add(map.inserts.clients.keys().next().value!, 0, 6);
@@ -513,7 +513,7 @@ describe("incremental ContentMap sync", () => {
   });
 
   it("returns null when storage has no attribution", async () => {
-    const handler = getAttributionRpcHandlers().attributionGetIncremental;
+    const handler = getAttributionRpcHandlers()["attribution.getIncremental"];
     const knownIds = encodeContentIds(createContentIds());
 
     const { response } = (await handler.handler!(

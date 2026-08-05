@@ -31,7 +31,7 @@ export type PresenceApi = Observable<{
   readonly peers: ReadonlyMap<number, PresenceEvent>;
 };
 
-const PUSH_METHODS = new Set(["presenceJoin", "presenceLeave", "presenceRoster"]);
+const PUSH_METHODS = new Set(["presence.join", "presence.leave", "presence.roster"]);
 
 class PresenceClient extends Observable<{
   "peer-join": (peer: PresenceEvent) => void;
@@ -88,7 +88,7 @@ class PresenceClient extends Observable<{
   /** Announce this provider's awareness clientID (fire-and-forget). */
   announce(): void {
     this.#ctx.rpcClient
-      .sendRequest(this.#ctx.document, "presenceAnnounce", {
+      .sendRequest(this.#ctx.document, "presence.announce", {
         awarenessId: this.#ctx.awareness.clientID,
       })
       .catch(() => {
@@ -103,7 +103,7 @@ class PresenceClient extends Observable<{
     // `provider.destroy()`, which tears down the connection synchronously right
     // after. Awaiting `connected` would defer the send to a microtask that runs
     // after the connection is destroyed, dropping the unannounce entirely.
-    this.#ctx.rpcClient.sendFireAndForget(this.#ctx.document, "presenceUnannounce", {
+    this.#ctx.rpcClient.sendFireAndForget(this.#ctx.document, "presence.unannounce", {
       awarenessId: this.#ctx.awareness.clientID,
     });
   }
@@ -121,7 +121,7 @@ class PresenceClient extends Observable<{
     // The server's roster is the full truth at a point in time: reconcile
     // against it so any join/leave this client missed (dropped push, brief
     // offline window) heals instead of persisting forever.
-    if (message.rpcMethod === "presenceRoster") {
+    if (message.rpcMethod === "presence.roster") {
       this.#reconcilePeers((payload as { clients: PresenceEntry[] }).clients);
       return true;
     }
@@ -130,7 +130,7 @@ class PresenceClient extends Observable<{
     if (entry.awarenessId === this.#ctx.awareness.clientID) {
       return true;
     }
-    if (message.rpcMethod === "presenceLeave") {
+    if (message.rpcMethod === "presence.leave") {
       this.#peers.delete(entry.awarenessId);
       this.#peerJoinedAt.delete(entry.awarenessId);
       this.#forgetAwarenessStates([entry.awarenessId], "presence");

@@ -20,26 +20,25 @@ src/protocols/presence/
 
 ## Contract
 
-| Wire name               | Kind             | Direction                | Payload                          | QoS                                 |
-| ----------------------- | ---------------- | ------------------------ | -------------------------------- | ----------------------------------- |
-| `presenceAnnounce`      | request-response | client → server          | `{ awarenessId, nonce? }` → `{}` | —                                   |
-| `presenceUnannounce`    | request-response | client → server          | `{ awarenessId, nonce? }` → `{}` | —                                   |
-| `presenceJoin`          | push             | server → clients + nodes | `PresenceEntry`                  | push defaults + **`dedupe: false`** |
-| `presenceLeave`         | push             | server → clients + nodes | `PresenceEntry`                  | push defaults + **`dedupe: false`** |
-| `presenceRoster`        | push             | server → clients + nodes | `{ clients: PresenceEntry[] }`   | push defaults + **`dedupe: false`** |
-| `presenceRosterRequest` | push             | node → nodes             | `{}`                             | push defaults + **`dedupe: false`** |
+| Wire name                | Kind             | Direction                | Payload                        | QoS           |
+| ------------------------ | ---------------- | ------------------------ | ------------------------------ | ------------- |
+| `presence.announce`      | request-response | client → server          | `{ awarenessId }` → `{}`       | —             |
+| `presence.unannounce`    | request-response | client → server          | `{ awarenessId }` → `{}`       | —             |
+| `presence.join`          | push             | server → clients + nodes | `PresenceEntry`                | push defaults |
+| `presence.leave`         | push             | server → clients + nodes | `PresenceEntry`                | push defaults |
+| `presence.roster`        | push             | server → clients + nodes | `{ clients: PresenceEntry[] }` | push defaults |
+| `presence.rosterRequest` | push             | node → nodes             | `{}`                           | push defaults |
 
-`PresenceEntry` is `{ awarenessId, clientId, userId, data }`. The announce `nonce` keeps
-byte-identical re-announces (rapid reconnects) from colliding in ack correlation.
+`PresenceEntry` is `{ awarenessId, clientId, userId, data }`.
 
-`dedupe: false` on every push is load-bearing: presence messages are content-hash
-identified, and byte-identical repeats are _legitimate_ — identical periodic roster
-snapshots, an announce → unannounce → re-announce of the same entry within the 30s dedup
-window (the re-join would silently vanish cluster-wide), and roster requests, whose empty
-payload makes any two requests identical. Handlers are idempotent upserts/removes, so
-genuine duplicate deliveries are harmless.
+Presence repeats itself constantly and legitimately: identical periodic roster snapshots,
+an announce → unannounce → re-announce of the same entry, roster requests whose empty
+payload makes any two identical. All of that is safe under the default `dedupe: true`
+because every authored `RpcMessage` carries a nonce, so only a genuine redelivery of one
+message collides. (Before the nonce existed these were content-hash identified, and each
+push needed an explicit `dedupe: false` to stop a re-join vanishing cluster-wide.)
 
-`presenceRosterRequest` is the pull side of the roster exchange: a node publishes it when
+`presence.rosterRequest` is the pull side of the roster exchange: a node publishes it when
 a session opens (a fresh node would otherwise wait up to a full heartbeat interval with an
 empty cross-node roster) and on a `replication-gap` event, publishing its own snapshot
 alongside; every node answers by publishing its local roster, so the whole network
@@ -60,8 +59,8 @@ another node). Without this, the stale connection's death would clobber the live
 destroy its awareness state on every client. The combined roster deduplicates by
 awarenessId with local entries winning.
 
-Server-authored pushes are not forgeable: a client-authored `presenceJoin`/`presenceLeave`/
-`presenceRoster`/`presenceRosterRequest` push is dropped (`forwardToLocalClients: false`,
+Server-authored pushes are not forgeable: a client-authored `presence.join`/`presence.leave`/
+`presence.roster`/`presence.rosterRequest` push is dropped (`forwardToLocalClients: false`,
 `replicate: false`), not applied — and the RPC layer additionally never replicates
 client-authored pushes unless a handler explicitly vouches for them.
 
@@ -139,9 +138,9 @@ manually (e.g. with custom options per document).
 - **Announce on connect**: the extension's `onConnect` hook announces this provider's
   awareness clientID on every (re)connect, after the doc sync handshake (fire-and-forget —
   a lost announce is healed by the next reconnect or the server's roster push). `destroy`
-  sends a best-effort `presenceUnannounce`.
+  sends a best-effort `presence.unannounce`.
 - **Roster reconcile**: join/leave pushes maintain `peers` incrementally; the server's
-  periodic `presenceRoster` snapshot is the full truth the client reconciles against, so a
+  periodic `presence.roster` snapshot is the full truth the client reconciles against, so a
   missed push heals within one heartbeat. A peer that joined within `presenceJoinGraceMs`
   is spared from removal by a stale snapshot.
 - **Offline honesty**: after `offlineTimeoutMs` without a connection, all remote presence
@@ -150,7 +149,7 @@ manually (e.g. with custom options per document).
 
 **Server side:**
 
-- **Announce** records the entry, notifies already-announced local peers (`presenceJoin`),
+- **Announce** records the entry, notifies already-announced local peers (`presence.join`),
   publishes the join to other nodes, and replies to the announcer with a full combined
   roster snapshot (local + cross-node).
 - **Heartbeat/TTL cross-node reconciliation**: every `heartbeatIntervalMs`, each node

@@ -7,11 +7,11 @@ function push(method: string, payload: unknown): RpcMessage<any> {
 }
 
 function join(clientId: string, userId: string, awarenessId = 1): RpcMessage<any> {
-  return push("presenceJoin", { awarenessId, clientId, userId, data: { cursor: null } });
+  return push("presence.join", { awarenessId, clientId, userId, data: { cursor: null } });
 }
 
 function leave(clientId: string, userId: string): RpcMessage<any> {
-  return push("presenceLeave", { awarenessId: 1, clientId, userId, data: {} });
+  return push("presence.leave", { awarenessId: 1, clientId, userId, data: {} });
 }
 
 describe("PresenceTracker", () => {
@@ -44,7 +44,7 @@ describe("PresenceTracker", () => {
     const tracker = new PresenceTracker();
     tracker.recordMessage(join("conn-1", "alice"));
 
-    const roster = push("presenceRoster", {
+    const roster = push("presence.roster", {
       clients: [{ awarenessId: 2, clientId: "conn-2", userId: "bob", data: {} }],
     });
     tracker.recordMessage(roster);
@@ -66,7 +66,7 @@ describe("PresenceTracker", () => {
     const announce = new RpcMessage(
       "doc-1",
       { type: "success", payload: { awarenessId: 42 } },
-      "presenceAnnounce",
+      "presence.announce",
       "request",
       undefined,
     );
@@ -75,12 +75,12 @@ describe("PresenceTracker", () => {
     const response = new RpcMessage(
       "doc-1",
       { type: "success", payload: { awarenessId: 1, clientId: "c", userId: "u", data: {} } },
-      "presenceJoin",
+      "presence.join",
       "response",
       "req-1",
     );
     expect(tracker.recordMessage(response)).toBe(false);
-    const other = push("attributionPush", { contentMap: "x" });
+    const other = push("attribution.push", { contentMap: "x" });
     expect(tracker.recordMessage(other)).toBe(false);
     expect(tracker.getPeers()).toHaveLength(0);
   });

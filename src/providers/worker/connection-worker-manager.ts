@@ -109,9 +109,9 @@ export class ConnectionWorkerManager {
           const awarenessId = (rpc.payload.payload as { awarenessId?: number } | undefined)
             ?.awarenessId;
           if (typeof awarenessId === "number" && rpc.document !== undefined) {
-            if (rpc.rpcMethod === "presenceAnnounce") {
+            if (rpc.rpcMethod === "presence.announce") {
               portState.trackAnnounce(rpc.document, awarenessId);
-            } else if (rpc.rpcMethod === "presenceUnannounce") {
+            } else if (rpc.rpcMethod === "presence.unannounce") {
               portState.trackUnannounce(rpc.document, awarenessId);
             }
           }
@@ -356,7 +356,7 @@ export class ConnectionWorkerManager {
         const msg = new RpcMessage(
           document,
           { type: "success", payload: { awarenessId } },
-          "presenceUnannounce",
+          "presence.unannounce",
           "request",
           undefined,
         );

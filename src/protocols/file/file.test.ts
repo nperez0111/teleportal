@@ -27,13 +27,13 @@ describe("File RPC Methods", () => {
     it("should register fileUpload method", () => {
       const mockStorage = createMockStorage();
       const registry = getFileRpcHandlers(mockStorage);
-      expect("fileUpload" in registry).toBe(true);
+      expect("file.upload" in registry).toBe(true);
     });
 
     it("should register fileDownload method", () => {
       const mockStorage = createMockStorage();
       const registry = getFileRpcHandlers(mockStorage);
-      expect("fileDownload" in registry).toBe(true);
+      expect("file.download" in registry).toBe(true);
     });
   });
 
@@ -56,7 +56,7 @@ describe("File RPC Methods", () => {
     describe("fileUpload handler", () => {
       it("should allow upload by default (no permission options)", async () => {
         const registry = getFileRpcHandlers(mockStorage);
-        const handler = registry["fileUpload"];
+        const handler = registry["file.upload"];
 
         expect(handler).toBeDefined();
 
@@ -87,7 +87,7 @@ describe("File RPC Methods", () => {
         };
 
         const registry = getFileRpcHandlers(mockStorage, options);
-        const handler = registry["fileUpload"];
+        const handler = registry["file.upload"];
 
         const result = await handler!.handler!(
           {
@@ -119,7 +119,7 @@ describe("File RPC Methods", () => {
         };
 
         const registry = getFileRpcHandlers(mockStorage, options);
-        const handler = registry["fileUpload"];
+        const handler = registry["file.upload"];
 
         const result = await handler!.handler!(
           {
@@ -152,7 +152,7 @@ describe("File RPC Methods", () => {
         };
 
         const registry = getFileRpcHandlers(mockStorage, options);
-        const handler = registry["fileUpload"];
+        const handler = registry["file.upload"];
 
         const result = await handler!.handler!(
           {
@@ -197,7 +197,7 @@ describe("File RPC Methods", () => {
           },
         };
         const registry = getFileRpcHandlers(storageWithFile);
-        const handler = registry["fileDownload"];
+        const handler = registry["file.download"];
 
         const result = await handler!.handler!({ fileId: "file-1" }, context);
 
@@ -225,7 +225,7 @@ describe("File RPC Methods", () => {
         };
 
         const registry = getFileRpcHandlers(mockStorage, options);
-        const handler = registry["fileDownload"];
+        const handler = registry["file.download"];
 
         const result = await handler!.handler!({ fileId: "file-1" }, context);
 
@@ -251,7 +251,7 @@ describe("File RPC Methods", () => {
         };
 
         const registry = getFileRpcHandlers(mockStorage, options);
-        const handler = registry["fileDownload"];
+        const handler = registry["file.download"];
 
         const result = await handler!.handler!({ fileId: "file-999" }, context);
 
@@ -274,7 +274,7 @@ describe("File RPC Methods", () => {
         };
 
         const registry = getFileRpcHandlers(mockStorage, options);
-        const handler = registry["fileDownload"];
+        const handler = registry["file.download"];
 
         const result = await handler!.handler!({ fileId: "file-1" }, context);
 

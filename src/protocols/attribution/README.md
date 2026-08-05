@@ -47,7 +47,7 @@ Use the `rpcMethod` field for method-level authorization:
 const server = new Server({
   storage: async (ctx) => storage,
   checkPermission: async ({ context, documentId, rpcMethod }) => {
-    if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
+    if (rpcMethod === "attribution.activity" || rpcMethod === "attribution.get") {
       return canReadAttribution(context.userId, documentId);
     }
   },
@@ -102,9 +102,9 @@ The protocol contract is defined in `methods.ts`:
 import { attributionProtocol } from "teleportal/protocols/attribution";
 
 // attributionProtocol.methods:
-//   activity         → wire name "attributionActivity"
-//   get              → wire name "attributionGet"
-//   getIncremental   → wire name "attributionGetIncremental"
+//   activity         → wire name "attribution.activity"
+//   get              → wire name "attribution.get"
+//   getIncremental   → wire name "attribution.getIncremental"
 ```
 
 All methods use type-first definitions (no schema validation).
@@ -134,7 +134,7 @@ stays in **plaintext**; only the document content is encrypted into sidecars. Th
 derives the CRDT operation IDs `(clientID, clock)` directly from the plaintext structure
 update and tags them with userId/timestamp to build the ContentMap.
 
-The server **can** answer `attributionActivity` (derived from the plaintext structure),
+The server **can** answer `attribution.activity` (derived from the plaintext structure),
 but it **cannot** map a content position to a CRDT id — only the client can, against its
 decrypted document. `getForRange` (and `resolveRangeAttribution` / `collectRangeIds`)
 run entirely client-side.
@@ -158,7 +158,7 @@ const server = new Server({
 ```
 
 Custom attributes are stored alongside standard attributes and can be filtered
-via the `attributes` field on both `attributionActivity` and `attributionGet`.
+via the `attributes` field on both `attribution.activity` and `attribution.get`.
 
 ## Methods
 

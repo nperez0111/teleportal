@@ -1,5 +1,6 @@
 import type { Message, ServerContext, Transport } from "teleportal";
 import { AckMessage, RpcMessage } from "teleportal/protocol";
+import { fileProtocol } from "../../protocols/file/methods";
 import { mapMessages } from "../utils";
 import type { MetricsCollector } from "../../monitoring";
 import {
@@ -691,13 +692,22 @@ export function withRateLimit<
   };
 }
 
+const FILE_TRANSFER_METHODS = new Set([
+  fileProtocol.methods.upload.name,
+  fileProtocol.methods.download.name,
+]);
+
 /**
  * Returns true if the message is a file transfer chunk (upload or download stream).
+ *
+ * Keyed off the method definitions, not literals: misclassifying chunks silently charges
+ * them to the sync budget instead of their own, which shows up as stalled edits under load
+ * rather than as an error.
  */
 export function isFileTransferMessage(message: Message<any>): boolean {
   return (
     message instanceof RpcMessage &&
-    (message.rpcMethod === "fileUpload" || message.rpcMethod === "fileDownload") &&
+    FILE_TRANSFER_METHODS.has(message.rpcMethod) &&
     message.requestType === "stream"
   );
 }

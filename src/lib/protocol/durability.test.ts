@@ -69,7 +69,7 @@ describe("message durability classification", () => {
     const m = new RpcMessage(
       "doc",
       { type: "success", payload: { data: "x" } },
-      "presenceRoster",
+      "presence.roster",
       "response",
       undefined,
       {},

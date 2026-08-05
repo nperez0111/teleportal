@@ -181,8 +181,8 @@ The protocol contract is defined in `methods.ts`:
 import { fileProtocol } from "teleportal/protocols/file";
 
 // fileProtocol.methods:
-//   upload   → wire name "fileUpload"   (kind: "multipart")
-//   download → wire name "fileDownload" (kind: "request-response")
+//   upload   → wire name "file.upload"   (kind: "multipart")
+//   download → wire name "file.download" (kind: "request-response")
 ```
 
 Upload uses the `"multipart"` method kind — it has both a `handler` (initiation) and a `streamHandler` (chunk processing). Download is `"request-response"` but returns a stream of file parts in the response.

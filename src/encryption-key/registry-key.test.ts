@@ -65,7 +65,9 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
+    const conn = createMockConnection(
+      new Map([["key-registry.get", { wrappedKey, generation: 0 }]]),
+    );
 
     const resolver = registryKey({ wrappingKey });
     const resolved = await resolver.resolve({
@@ -83,7 +85,9 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
+    const conn = createMockConnection(
+      new Map([["key-registry.get", { wrappedKey, generation: 0 }]]),
+    );
 
     const resolver = registryKey({ wrappingKey });
     const resolved = await resolver.resolve({
@@ -102,7 +106,9 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
+    const conn = createMockConnection(
+      new Map([["key-registry.get", { wrappedKey, generation: 0 }]]),
+    );
 
     const resolver = registryKey({ wrappingKey });
     const key1 = await resolver.resolve({
@@ -122,7 +128,9 @@ describe("registryKey", () => {
     const wrappingKey = await deriveWrappingKey(MASTER_SECRET, "alice");
     const wrappedKey = await wrapDocumentKey(wrappingKey, documentKey);
 
-    const conn = createMockConnection(new Map([["keysGet", { wrappedKey, generation: 0 }]]));
+    const conn = createMockConnection(
+      new Map([["key-registry.get", { wrappedKey, generation: 0 }]]),
+    );
 
     const resolver = registryKey({
       wrappingKey: async () => wrappingKey,

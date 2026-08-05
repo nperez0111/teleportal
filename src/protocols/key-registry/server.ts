@@ -1,5 +1,4 @@
 import { createHandlers, ok, err, type RpcHandlerRegistry } from "teleportal/rpc";
-import { RpcMessage } from "teleportal/protocol";
 import type { KeyRegistryStorage } from "./storage";
 import { keyRegistryProtocol } from "./methods";
 
@@ -66,18 +65,19 @@ export function getKeyRegistryRpcHandlers(storage: KeyRegistryStorage): RpcHandl
           throw e;
         }
 
-        const notification = new RpcMessage(
-          context.documentId,
-          { type: "success" as const, payload: { generation } },
-          "keysRotated",
-          "request",
-          undefined,
-          {},
-          false,
+        // Tell the other clients on this document to re-fetch the key. Local-only: the new
+        // generation is already in the shared registry, so every node notifies its own.
+        await context.session.broadcastRpc(
+          keyRegistryProtocol.methods.rotated.name,
+          { generation },
+          { excludeClientId: context.clientId as string },
         );
-        await context.session.broadcast(notification as any, context.clientId as string);
 
         return ok({ generation });
       },
+
+    // Server-authored by the `rotate` handler above, and never replicated, so an inbound
+    // one has no work to do beyond reaching this node's clients.
+    rotated: () => () => {},
   });
 }

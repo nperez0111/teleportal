@@ -11,7 +11,7 @@ The Teleportal Devtools is a developer tool that helps you debug and monitor you
 - **ACK latency**: Acknowledged messages show their round-trip time, color-coded against the in-flight timeout
 - **Update operations decoder**: `update`/`sync-step-2` payloads are decoded into human-readable ops (`insert "hel" @ (client, clock) in body`), including for encrypted documents when the key is available
 - **Documents tab**: Tree of documents and subdocuments with live sync handshake state (sync-step-1 → sync-step-2 → synced), traffic counters, encryption, and last activity; click a document to filter the Messages tab
-- **Presence tab**: Live peer roster from `presenceJoin`/`presenceLeave`/`presenceRoster` RPC pushes with expandable per-peer data and a recent join/leave feed
+- **Presence tab**: Live peer roster from `presence.join`/`presence.leave`/`presence.roster` RPC pushes with expandable per-peer data and a recent join/leave feed
 - **Connection popover**: Click the connection status for live internals — in-flight/buffered counts, AIMD batch window, reconnect attempts, SharedWorker pooling details (tabs, key, grace period, heartbeat), and a timeline of state transitions, transport fallbacks/upgrades, and token refreshes
 - **Message filtering**: Filter messages by document, type, direction, and search text
 - **Message inspection**: View detailed payloads, metadata, and acknowledgment status
@@ -196,7 +196,7 @@ Pure derivation that groups the rpc messages of a message list into logical call
 
 #### `PresenceTracker` (`presence-tracker.ts`)
 
-Stateful roster fed by presence RPC pushes (`presenceJoin`/`presenceLeave`/`presenceRoster`): join/leave maintenance, roster-snapshot upserts, and a bounded join/leave feed.
+Stateful roster fed by presence RPC pushes (`presence.join`/`presence.leave`/`presence.roster`): join/leave maintenance, roster-snapshot upserts, and a bounded join/leave feed.
 
 #### `update-decoder.ts`
 
@@ -314,14 +314,14 @@ protocol's message kinds — `doc`, `awareness`, `rpc`, `ack`:
 ### Presence
 
 Presence is not a distinct message type — it is an RPC protocol
-(`teleportal/protocols/presence`). Its pushes (`presenceJoin` / `presenceLeave`
-/ `presenceRoster`) and requests (`presenceAnnounce` / `presenceUnannounce`)
+(`teleportal/protocols/presence`). Its pushes (`presence.join` / `presence.leave`
+/ `presence.roster`) and requests (`presence.announce` / `presence.unannounce`)
 appear as RPC messages; the pushes feed the roster in the Presence tab.
 
 ### RPC messages (`rpc`)
 
 RPC is the transport for milestones (`listMilestones`, …), key registry, file
-transfers (`fileUpload` / `fileDownload`), and other request/response methods.
+transfers (`file.upload` / `file.download`), and other request/response methods.
 There is **no** standalone `milestone-*` or `file-*` message type. The badge is
 indigo, shaded by `requestType`:
 

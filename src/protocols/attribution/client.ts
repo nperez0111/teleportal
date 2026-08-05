@@ -120,7 +120,7 @@ const attributionExtension = createClientExtension(attributionProtocol, {
     async function milestoneContentIds(milestoneId: string): Promise<ContentIds> {
       const response = await ctx.rpcClient.sendRequest<MilestoneGetResponse>(
         ctx.document,
-        "milestoneGet",
+        "milestone.get",
         { milestoneId },
       );
 
@@ -286,7 +286,7 @@ export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
 
     handleMessage(message) {
       if (
-        message.rpcMethod === "attributionPush" &&
+        message.rpcMethod === "attribution.push" &&
         message.requestType === "response" &&
         message.payload?.type === "success"
       ) {

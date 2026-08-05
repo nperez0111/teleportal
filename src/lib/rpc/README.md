@@ -6,9 +6,9 @@ Thin authoring layer for defining type-safe RPC protocols. Eliminates boilerplat
 
 Every RPC protocol in Teleportal is defined by a **contract** (`defineMethod` / `definePush` + `defineProtocol`), implemented with **server handlers** (`createHandlers`), and consumed via a **client extension** (`createClientExtension`). The framework provides:
 
-- **`defineMethod`** — single source of truth for a method's wire name, request/response types, and optional validation
+- **`defineMethod`** — single source of truth for a method's request/response types and optional validation
 - **`definePush`** — unsolicited notification methods (server→client and node→node) with per-method delivery QoS
-- **`defineProtocol`** — groups related methods under ergonomic keys
+- **`defineProtocol`** — groups related methods under ergonomic keys and assigns each its wire name, `<protocol>.<key>`
 - **`createHandlers`** — type-safe server handler registration with automatic validation, error wrapping, and codec pass-through
 - **`createClientExtension`** — type-safe client extension factory with auto-generated or custom client methods
 - **`ok` / `err`** — structured result constructors (discriminated union, can't collide with data payloads)
@@ -22,17 +22,16 @@ Every RPC protocol in Teleportal is defined by a **contract** (`defineMethod` / 
 import { defineMethod, defineProtocol } from "teleportal/rpc";
 
 export const commentList = defineMethod<
-  "commentList",
   { cursor?: string; limit?: number },
   { comments: Comment[]; nextCursor?: string }
->("commentList");
+>();
 
 export const commentCreate = defineMethod<
-  "commentCreate",
   { text: string; parentId?: string },
   { comment: Comment }
->("commentCreate");
+>();
 
+// Wire names come from here: "comments.list" and "comments.create".
 export const commentProtocol = defineProtocol("comments", {
   list: commentList,
   create: commentCreate,
@@ -138,15 +137,14 @@ await provider.rpc.comments.create({ text: "Hello" });
 
 ## Push Methods (`definePush`)
 
-A push is fire-and-forget: it has a payload but no response. Define it with a name, an optional payload schema/codec, and per-method delivery **QoS**:
+A push is fire-and-forget: it has a payload but no response. Define it with an optional payload schema/codec and per-method delivery **QoS**:
 
 ```typescript
 import { definePush, defineProtocol } from "teleportal/rpc";
 
-export const presenceRoster = definePush<"presenceRoster", PresenceRosterPayload>(
-  "presenceRoster",
-  { qos: { durability: "durable" } },
-);
+const roster = definePush<PresenceRosterPayload>({ qos: { durability: "durable" } });
+
+export const presenceProtocol = defineProtocol("presence", { roster }); // "presence.roster"
 ```
 
 ### QoS knobs (`RpcMethodQos`)
@@ -206,7 +204,7 @@ Schemas are optional — methods without schemas (type-first mode) skip validati
 Methods can provide custom binary encode/decode for the wire format, overriding the default lib0 `encodeAny`/`decodeAny`:
 
 ```typescript
-const milestoneGet = defineMethod<"milestoneGet", GetRequest, GetResponse>("milestoneGet", {
+const milestoneGet = defineMethod<GetRequest, GetResponse>({
   responseCodec: {
     encode: (payload) => customBinaryEncode(payload),
     decode: (bytes) => customBinaryDecode(bytes),

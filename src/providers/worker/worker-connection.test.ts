@@ -609,7 +609,7 @@ describe("WorkerConnection", () => {
     const announce = new RpcMessage(
       "test-doc",
       { type: "success", payload: { awarenessId: 42 } },
-      "presenceAnnounce",
+      "presence.announce",
       "request",
       undefined,
     );
@@ -629,7 +629,7 @@ describe("WorkerConnection", () => {
     unsub();
 
     const unannounces = sentMessages.filter(
-      (m) => m.type === "rpc" && m.rpcMethod === "presenceUnannounce",
+      (m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce",
     );
     expect(unannounces).toHaveLength(1);
     expect(unannounces[0].payload.payload.awarenessId).toBe(42);
@@ -658,7 +658,7 @@ describe("WorkerConnection", () => {
       new RpcMessage(
         "test-doc",
         { type: "success", payload: { awarenessId: 7 } },
-        "presenceAnnounce",
+        "presence.announce",
         "request",
         undefined,
       ),
@@ -675,7 +675,7 @@ describe("WorkerConnection", () => {
     unsub();
 
     const unannounces = sentMessages.filter(
-      (m) => m.type === "rpc" && m.rpcMethod === "presenceUnannounce",
+      (m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce",
     );
     expect(unannounces).toHaveLength(1);
     expect(unannounces[0].payload.payload.awarenessId).toBe(7);
@@ -708,7 +708,7 @@ describe("WorkerConnection", () => {
       new RpcMessage(
         "test-doc",
         { type: "success", payload: { awarenessId: 9 } },
-        "presenceAnnounce",
+        "presence.announce",
         "request",
         undefined,
       ),
@@ -725,7 +725,7 @@ describe("WorkerConnection", () => {
     unsub();
 
     const unannounces = sentMessages.filter(
-      (m) => m.type === "rpc" && m.rpcMethod === "presenceUnannounce",
+      (m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce",
     );
     expect(unannounces).toHaveLength(1);
   });
@@ -831,7 +831,7 @@ describe("WorkerConnection", () => {
       new RpcMessage(
         "doc-a",
         { type: "success", payload: { awarenessId: 1 } },
-        "presenceAnnounce",
+        "presence.announce",
         "request",
         undefined,
       ),
@@ -840,7 +840,7 @@ describe("WorkerConnection", () => {
       new RpcMessage(
         "doc-b",
         { type: "success", payload: { awarenessId: 2 } },
-        "presenceAnnounce",
+        "presence.announce",
         "request",
         undefined,
       ),
@@ -856,7 +856,7 @@ describe("WorkerConnection", () => {
     // for, and port A, already retracted, never emits another one. Filtering by
     // method is enough on its own: nothing has been retracted before this point.
     const unannounces = () =>
-      sentMessages.filter((m) => m.type === "rpc" && m.rpcMethod === "presenceUnannounce");
+      sentMessages.filter((m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce");
 
     // The stale-port sweep is a wall-clock setInterval, so poll for its effect
     // rather than guessing a fixed delay (which flakes under load): wait until

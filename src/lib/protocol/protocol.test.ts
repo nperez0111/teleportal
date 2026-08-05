@@ -1153,8 +1153,8 @@ describe("rpc message identity", () => {
   const build = (nonce?: number) =>
     new RpcMessage(
       "doc-1",
-      { type: "success", payload: { method: "milestoneList" } },
-      "milestoneList",
+      { type: "success", payload: { method: "milestone.list" } },
+      "milestone.list",
       "request",
       undefined,
       {},

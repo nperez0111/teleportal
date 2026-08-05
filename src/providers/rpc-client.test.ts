@@ -54,15 +54,15 @@ describe("RpcClient.sendFireAndForget", () => {
     };
     const client = new RpcClient(connection as any);
 
-    client.sendFireAndForget("doc-1", "presenceUnannounce", { awarenessId: 42 });
+    client.sendFireAndForget("doc-1", "presence.unannounce", { awarenessId: 42 });
 
     // The message hit connection.send synchronously (before `connected`
     // resolved), so a teardown that destroys the connection on the very next
     // line can no longer drop it.
     expect(sent).toHaveLength(1);
-    expect(sent[0].rpcMethod).toBe("presenceUnannounce");
+    expect(sent[0].rpcMethod).toBe("presence.unannounce");
     expect(sent[0].payload.payload).toMatchObject({
-      method: "presenceUnannounce",
+      method: "presence.unannounce",
       awarenessId: 42,
     });
   });
@@ -77,7 +77,7 @@ describe("RpcClient.sendFireAndForget", () => {
       sendStream: () => {},
     };
     const client = new RpcClient(connection as any);
-    expect(client.sendFireAndForget("doc-1", "presenceUnannounce", {})).toBeUndefined();
+    expect(client.sendFireAndForget("doc-1", "presence.unannounce", {})).toBeUndefined();
   });
 });
 
@@ -92,12 +92,12 @@ describe("RpcClient request correlation", () => {
     const client = new RpcClient(connection as any);
 
     const [first, second] = await Promise.all([
-      client.sendRequest("doc-1", "milestoneList", {}, { timeout: 50 }),
-      client.sendRequest("doc-1", "milestoneList", {}, { timeout: 50 }),
+      client.sendRequest("doc-1", "milestone.list", {}, { timeout: 50 }),
+      client.sendRequest("doc-1", "milestone.list", {}, { timeout: 50 }),
     ]);
 
-    expect(first).toEqual({ echoed: "milestoneList" });
-    expect(second).toEqual({ echoed: "milestoneList" });
+    expect(first).toEqual({ echoed: "milestone.list" });
+    expect(second).toEqual({ echoed: "milestone.list" });
     // Both really were distinct messages on the wire.
     expect(connection.sent).toHaveLength(2);
     expect(connection.sent[0].id).not.toBe(connection.sent[1].id);
@@ -109,8 +109,8 @@ describe("RpcClient request correlation", () => {
     const connection = echoConnection();
     const client = new RpcClient(connection as any);
 
-    await client.sendRequest("doc-1", "milestoneList", {}, { timeout: 50 });
-    await client.sendRequest("doc-1", "milestoneList", {}, { timeout: 50 });
+    await client.sendRequest("doc-1", "milestone.list", {}, { timeout: 50 });
+    await client.sendRequest("doc-1", "milestone.list", {}, { timeout: 50 });
 
     expect(connection.sent[0].id).not.toBe(connection.sent[1].id);
   });

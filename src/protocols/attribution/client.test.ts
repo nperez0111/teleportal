@@ -26,7 +26,7 @@ function mockCtx(document: string): RpcExtensionContext {
 
 function pushMessage(document: string, contentMap: Uint8Array) {
   return {
-    rpcMethod: "attributionPush",
+    rpcMethod: "attribution.push",
     requestType: "response",
     document,
     payload: { type: "success", payload: { contentMap } },

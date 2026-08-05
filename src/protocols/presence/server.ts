@@ -270,7 +270,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
       // remote claim from before a cross-node reconnect — don't forward it
       // over the live local entry.
       if (!previous.has(key) && !locallyOwned(state, peer.awarenessId)) {
-        sends.push(broadcastLocalOnly(session, "presenceJoin", peer));
+        sends.push(broadcastLocalOnly(session, "presence.join", peer));
       }
     }
 
@@ -288,7 +288,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
       ) {
         continue;
       }
-      sends.push(broadcastLocalOnly(session, "presenceLeave", peer));
+      sends.push(broadcastLocalOnly(session, "presence.leave", peer));
     }
 
     state.remote.set(nodeId, { lastSeen: Date.now(), clients: next });
@@ -316,7 +316,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
       }
       sends.push(
         session.broadcastRpc(
-          "presenceLeave",
+          "presence.leave",
           {
             awarenessId,
             clientId,
@@ -354,7 +354,9 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
     const snapshot = localSnapshot(state);
     if (snapshot.length > 0) {
       sends.push(
-        session.publishRpc("presenceRoster", { clients: snapshot } satisfies PresenceRosterPayload),
+        session.publishRpc("presence.roster", {
+          clients: snapshot,
+        } satisfies PresenceRosterPayload),
       );
     }
 
@@ -370,7 +372,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
         if (knownElsewhere(state, peer.awarenessId)) {
           continue;
         }
-        sends.push(broadcastLocalOnly(session, "presenceLeave", peer));
+        sends.push(broadcastLocalOnly(session, "presence.leave", peer));
       }
     }
 
@@ -379,7 +381,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
     // expiry above so it never resurrects clients of a node that was just
     // expired.
     sends.push(
-      broadcastLocalOnly(session, "presenceRoster", {
+      broadcastLocalOnly(session, "presence.roster", {
         clients: combinedSnapshot(state),
       } satisfies PresenceRosterPayload),
     );
@@ -412,11 +414,13 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
       }
       state.lastRefreshAt = now;
     }
-    const sends: Promise<unknown>[] = [session.publishRpc("presenceRosterRequest", {})];
+    const sends: Promise<unknown>[] = [session.publishRpc("presence.rosterRequest", {})];
     const snapshot = localSnapshot(state);
     if (snapshot.length > 0) {
       sends.push(
-        session.publishRpc("presenceRoster", { clients: snapshot } satisfies PresenceRosterPayload),
+        session.publishRpc("presence.roster", {
+          clients: snapshot,
+        } satisfies PresenceRosterPayload),
       );
     }
     await Promise.all(sends).catch((error) => {
@@ -516,9 +520,9 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
             if (otherId === clientId) {
               continue;
             }
-            sends.push(session.sendRpcToClient(otherId, "presenceJoin", newEntry));
+            sends.push(session.sendRpcToClient(otherId, "presence.join", newEntry));
           }
-          sends.push(session.publishRpc("presenceJoin", newEntry));
+          sends.push(session.publishRpc("presence.join", newEntry));
 
           // Close the roster exchange with a full snapshot (local + cross-node)
           // to the announcing connection. It replaces the historical per-peer
@@ -527,7 +531,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
           // own entries are included on purpose so those tabs learn about each
           // other (each tab drops its own awarenessId client-side).
           sends.push(
-            session.sendRpcToClient(clientId, "presenceRoster", {
+            session.sendRpcToClient(clientId, "presence.roster", {
               clients: combinedSnapshot(state),
             } satisfies PresenceRosterPayload),
           );
@@ -568,7 +572,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
           // connection need the leave too (the retracting tab is gone or drops
           // its own awarenessId client-side).
           await session
-            .broadcastRpc("presenceLeave", {
+            .broadcastRpc("presence.leave", {
               awarenessId,
               clientId,
               userId: presence.userId,
@@ -636,7 +640,7 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
             return suppress;
           }
           state.lastAnswerAt = Date.now();
-          await (ctx.session as Session<ServerContext>).publishRpc("presenceRoster", {
+          await (ctx.session as Session<ServerContext>).publishRpc("presence.roster", {
             clients: snapshot,
           } satisfies PresenceRosterPayload);
           return suppress;

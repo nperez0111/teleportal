@@ -58,7 +58,7 @@ export function registryKey(opts: {
         const response = await rpc.sendRequest<{
           wrappedKey: Uint8Array;
           generation: number;
-        }>(document, "keysGet", {}, { encrypted: true });
+        }>(document, "key-registry.get", {}, { encrypted: true });
 
         const wk =
           typeof opts.wrappingKey === "function" ? await opts.wrappingKey() : opts.wrappingKey;

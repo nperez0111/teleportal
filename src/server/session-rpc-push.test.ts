@@ -219,11 +219,11 @@ describe("Session RPC push primitives", () => {
       const remoteClient = new MockClient<ServerContext>("remote-client");
       sessionB.addClient(remoteClient as any);
 
-      await sessionA.broadcastRpc("attributionPush", { contentMap: "opaque" });
+      await sessionA.broadcastRpc("attribution.push", { contentMap: "opaque" });
 
       await waitFor(() => remoteClient.sentMessages.length === 1);
       const message = remoteClient.sentMessages[0] as RpcMessage<ServerContext>;
-      expect(message.rpcMethod).toBe("attributionPush");
+      expect(message.rpcMethod).toBe("attribution.push");
     });
 
     it("does not publish when the method declares replicate: false", async () => {

@@ -48,16 +48,10 @@ export type PresenceRosterPayload = {
  * `RpcMessage` carries its own nonce (so only true redeliveries collide).
  */
 export const presenceProtocol = defineProtocol("presence", {
-  announce: defineMethod<"presenceAnnounce", PresenceAnnounceRequest, Record<string, never>>(
-    "presenceAnnounce",
-  ),
-  unannounce: defineMethod<"presenceUnannounce", PresenceAnnounceRequest, Record<string, never>>(
-    "presenceUnannounce",
-  ),
-  join: definePush<"presenceJoin", PresenceEntry>("presenceJoin"),
-  leave: definePush<"presenceLeave", PresenceEntry>("presenceLeave"),
-  roster: definePush<"presenceRoster", PresenceRosterPayload>("presenceRoster"),
-  rosterRequest: definePush<"presenceRosterRequest", Record<string, never>>(
-    "presenceRosterRequest",
-  ),
+  announce: defineMethod<PresenceAnnounceRequest, Record<string, never>>(),
+  unannounce: defineMethod<PresenceAnnounceRequest, Record<string, never>>(),
+  join: definePush<PresenceEntry>(),
+  leave: definePush<PresenceEntry>(),
+  roster: definePush<PresenceRosterPayload>(),
+  rosterRequest: definePush<Record<string, never>>(),
 });

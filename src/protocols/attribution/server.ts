@@ -106,6 +106,12 @@ export function getAttributionRpcHandlers(): RpcHandlerRegistry {
         const diff = excludeContentMap(fullMap, knownIds);
         return ok({ contentMap: encodeContentMap(diff) });
       },
+
+      // Server-authored: `Session` sends this itself after an attributed write, so there is
+      // nothing to do when one arrives — it is relayed to local clients unchanged. A push
+      // that a *client* authored is never vouched into the node-to-node plane, so it can
+      // reach peers on this node but cannot forge attribution cluster-wide.
+      push: () => () => {},
     },
   );
 }

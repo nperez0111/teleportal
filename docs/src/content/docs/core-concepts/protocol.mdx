@@ -128,9 +128,9 @@ Rather than creating separate protocols or connections for these features, RPC m
 
 **Built-in RPC methods** demonstrate this pattern:
 
-- **Milestones**: `milestoneList`, `milestoneCreate`, `milestoneGet`, etc.
-- **Files**: `fileUpload`, `fileDownload`
-- **Attribution**: `attributionActivity`, `attributionGet`, etc.
+- **Milestones**: `milestone.list`, `milestone.create`, `milestone.get`, etc.
+- **Files**: `file.upload`, `file.download`
+- **Attribution**: `attribution.activity`, `attribution.get`, etc.
 - **Key registry**: key distribution methods
 
 None of these are dedicated wire message types — they are all RPC methods (wire type `0x04`), showing how the protocol can be extended for domain-specific needs without changing the core wire format.

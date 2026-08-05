@@ -243,13 +243,13 @@ const server = new Server({
 
 ### Permission Control
 
-Attribution RPC methods (`attributionActivity`, `attributionGet`) are covered by the server's global `checkPermission` hook. Use the `rpcMethod` field to apply method-level authorization:
+Attribution RPC methods (`attribution.activity`, `attribution.get`) are covered by the server's global `checkPermission` hook. Use the `rpcMethod` field to apply method-level authorization:
 
 ```typescript
 const server = new Server({
   storage: async (ctx) => storage,
   checkPermission: async ({ context, documentId, rpcMethod }) => {
-    if (rpcMethod === "attributionActivity" || rpcMethod === "attributionGet") {
+    if (rpcMethod === "attribution.activity" || rpcMethod === "attribution.get") {
       return canReadAttribution(context.userId, documentId);
     }
     // ... other permission logic

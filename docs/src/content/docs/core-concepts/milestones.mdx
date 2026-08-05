@@ -145,7 +145,7 @@ interface Milestone {
 
 The `createdBy` field indicates who or what created the milestone:
 
-- `{ type: "user", id: userId }` - Created by a user via the `milestoneCreate` RPC method
+- `{ type: "user", id: userId }` - Created by a user via the `milestone.create` RPC method
 - `{ type: "system", id: "auto" }` - Created automatically by a trigger
 
 > **Note**: A freshly-created milestone has `lifecycleState === undefined`, which every `getMilestones` filter and `Milestone.toString()` treats as `"active"`. The string `"active"` is not written to the wire in the common case — a milestone only carries an explicit `lifecycleState` once it has been deleted, archived, or expired.

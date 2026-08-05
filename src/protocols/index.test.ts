@@ -37,7 +37,7 @@ describe("getMilestoneRpcHandlers factory", () => {
     expect(handlers).toBeDefined();
     expect(typeof handlers).toBe("object");
     // Verify it has the milestone method handlers
-    expect(handlers["milestoneList"]).toBeDefined();
+    expect(handlers["milestone.list"]).toBeDefined();
   });
 });
 
@@ -60,9 +60,9 @@ describe("getFileRpcHandlers factory", () => {
     };
     const result = getFileRpcHandlers(mockStorage as any);
     expect(result).toBeDefined();
-    expect("fileUpload" in result).toBe(true);
-    expect("fileDownload" in result).toBe(true);
-    expect(result["fileUpload"]).toHaveProperty("handler");
-    expect(result["fileDownload"]).toHaveProperty("handler");
+    expect("file.upload" in result).toBe(true);
+    expect("file.download" in result).toBe(true);
+    expect(result["file.upload"]).toHaveProperty("handler");
+    expect(result["file.download"]).toHaveProperty("handler");
   });
 });

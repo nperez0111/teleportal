@@ -351,7 +351,7 @@ describe("presence end-to-end (Provider ↔ Server)", () => {
     // ghost from the client's perspective).
     const session = server.getSession(`room/${DOC}`)!;
     expect(session).toBeDefined();
-    await session.broadcastRpc("presenceJoin", {
+    await session.broadcastRpc("presence.join", {
       awarenessId: 424242,
       clientId: "ghost",
       userId: "user-ghost",

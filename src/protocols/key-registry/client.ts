@@ -77,7 +77,7 @@ export const createKeyRegistryRpc = (): RpcExtension<KeyRegistryRpc> => {
     },
 
     handleMessage(message) {
-      if (message.rpcMethod !== "keysRotated") return false;
+      if (message.rpcMethod !== "key-registry.rotated") return false;
       const payload = message.payload?.payload as { generation?: number } | undefined;
       const generation = payload?.generation;
       if (generation === undefined) return true;

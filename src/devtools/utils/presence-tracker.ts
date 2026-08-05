@@ -39,12 +39,12 @@ export class PresenceTracker {
     const now = Date.now();
 
     switch (rpc.rpcMethod) {
-      case "presenceJoin": {
+      case "presence.join": {
         const entry = rpc.payload.payload as PresenceEntry;
         return this.upsertPeer(entry, message.document, now);
       }
 
-      case "presenceLeave": {
+      case "presence.leave": {
         const entry = rpc.payload.payload as PresenceEntry;
         const removed = this.peers.delete(entry.clientId);
         if (removed) {
@@ -58,7 +58,7 @@ export class PresenceTracker {
         return removed;
       }
 
-      case "presenceRoster": {
+      case "presence.roster": {
         // A roster carries a snapshot — upsert its entries, but don't remove
         // absent peers (a node-to-node roster carries only one node's clients).
         const { clients } = rpc.payload.payload as PresenceRosterPayload;

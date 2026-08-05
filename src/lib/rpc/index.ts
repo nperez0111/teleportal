@@ -24,13 +24,17 @@ export interface Codec<T> {
 }
 
 export interface MethodDef<
-  Name extends string = string,
   Request = unknown,
   Response = unknown,
   Stream = never,
   Kind extends MethodKind = MethodKind,
 > {
-  readonly name: Name;
+  /**
+   * The wire name, assigned by {@link defineProtocol} as `<protocol>.<key>`. Methods are
+   * never named at the definition site: the registry is one flat map keyed by this string,
+   * so hand-written names put every protocol in one namespace where a collision is silent.
+   */
+  readonly name: string;
   readonly kind: Kind;
   /** Phantom — use `typeof method._request` for the inferred type. */
   readonly _request: Request;
@@ -56,11 +60,9 @@ interface CodecOptions<Req = unknown, Res = unknown, Stream = unknown> {
 
 // Overload 1: schema-first (simple)
 export function defineMethod<
-  Name extends string,
   ReqSchema extends StandardSchemaV1,
   ResSchema extends StandardSchemaV1,
 >(
-  name: Name,
   options: {
     request: ReqSchema;
     response: ResSchema;
@@ -70,7 +72,6 @@ export function defineMethod<
     StandardSchemaV1.InferOutput<ResSchema>
   >,
 ): MethodDef<
-  Name,
   StandardSchemaV1.InferOutput<ReqSchema>,
   StandardSchemaV1.InferOutput<ResSchema>,
   never,
@@ -79,12 +80,10 @@ export function defineMethod<
 
 // Overload 2: schema-first + streaming
 export function defineMethod<
-  Name extends string,
   ReqSchema extends StandardSchemaV1,
   ResSchema extends StandardSchemaV1,
   StreamSchema extends StandardSchemaV1,
 >(
-  name: Name,
   options: {
     request: ReqSchema;
     response: ResSchema;
@@ -96,7 +95,6 @@ export function defineMethod<
     StandardSchemaV1.InferOutput<StreamSchema>
   >,
 ): MethodDef<
-  Name,
   StandardSchemaV1.InferOutput<ReqSchema>,
   StandardSchemaV1.InferOutput<ResSchema>,
   StandardSchemaV1.InferOutput<StreamSchema>,
@@ -104,32 +102,28 @@ export function defineMethod<
 >;
 
 // Overload 3: type-first (simple)
-export function defineMethod<Name extends string, Request, Response>(
-  name: Name,
+export function defineMethod<Request, Response>(
   options?: { kind?: "request-response" } & CodecOptions<Request, Response>,
-): MethodDef<Name, Request, Response, never, "request-response">;
+): MethodDef<Request, Response, never, "request-response">;
 
 // Overload 4: type-first + streaming
-export function defineMethod<Name extends string, Request, Response, Stream>(
-  name: Name,
+export function defineMethod<Request, Response, Stream>(
   options: { kind: "multipart" } & CodecOptions<Request, Response, Stream>,
-): MethodDef<Name, Request, Response, Stream, "multipart">;
+): MethodDef<Request, Response, Stream, "multipart">;
 
 // Implementation
-export function defineMethod(
-  name: string,
-  options?: {
-    request?: StandardSchemaV1;
-    response?: StandardSchemaV1;
-    stream?: StandardSchemaV1;
-    kind?: MethodKind;
-    requestCodec?: Codec<any>;
-    responseCodec?: Codec<any>;
-    streamCodec?: Codec<any>;
-  },
-): MethodDef<string, unknown, unknown, unknown, MethodKind> {
+export function defineMethod(options?: {
+  request?: StandardSchemaV1;
+  response?: StandardSchemaV1;
+  stream?: StandardSchemaV1;
+  kind?: MethodKind;
+  requestCodec?: Codec<any>;
+  responseCodec?: Codec<any>;
+  streamCodec?: Codec<any>;
+}): MethodDef<unknown, unknown, unknown, MethodKind> {
   return {
-    name,
+    // Replaced by `defineProtocol`, which is the only thing that knows the namespace.
+    name: "",
     kind: options?.kind ?? "request-response",
     _request: undefined as never,
     _response: undefined as never,
@@ -161,32 +155,27 @@ const PUSH_QOS_DEFAULTS: RpcMethodQos = {
 };
 
 // Overload 1: schema-first
-export function definePush<Name extends string, PayloadSchema extends StandardSchemaV1>(
-  name: Name,
-  options: {
-    payload: PayloadSchema;
-    qos?: PushQosOptions;
-    payloadCodec?: Codec<StandardSchemaV1.InferOutput<PayloadSchema>>;
-  },
-): MethodDef<Name, StandardSchemaV1.InferOutput<PayloadSchema>, void, never, "push">;
+export function definePush<PayloadSchema extends StandardSchemaV1>(options: {
+  payload: PayloadSchema;
+  qos?: PushQosOptions;
+  payloadCodec?: Codec<StandardSchemaV1.InferOutput<PayloadSchema>>;
+}): MethodDef<StandardSchemaV1.InferOutput<PayloadSchema>, void, never, "push">;
 
 // Overload 2: type-first
-export function definePush<Name extends string, Payload>(
-  name: Name,
-  options?: { qos?: PushQosOptions; payloadCodec?: Codec<Payload> },
-): MethodDef<Name, Payload, void, never, "push">;
+export function definePush<Payload>(options?: {
+  qos?: PushQosOptions;
+  payloadCodec?: Codec<Payload>;
+}): MethodDef<Payload, void, never, "push">;
 
 // Implementation
-export function definePush(
-  name: string,
-  options?: {
-    payload?: StandardSchemaV1;
-    qos?: PushQosOptions;
-    payloadCodec?: Codec<any>;
-  },
-): MethodDef<string, unknown, void, never, "push"> {
+export function definePush(options?: {
+  payload?: StandardSchemaV1;
+  qos?: PushQosOptions;
+  payloadCodec?: Codec<any>;
+}): MethodDef<unknown, void, never, "push"> {
   return {
-    name,
+    // Replaced by `defineProtocol`, which is the only thing that knows the namespace.
+    name: "",
     kind: "push",
     _request: undefined as never,
     _response: undefined as never,
@@ -201,17 +190,27 @@ export function definePush(
 // ProtocolDef — groups related methods under ergonomic keys
 // ---------------------------------------------------------------------------
 
-export interface ProtocolDef<
-  Methods extends Record<string, MethodDef<string, any, any, any, any>>,
-> {
+export interface ProtocolDef<Methods extends Record<string, MethodDef<any, any, any, any>>> {
   readonly name: string;
   readonly methods: Methods;
 }
 
-export function defineProtocol<
-  Methods extends Record<string, MethodDef<string, any, any, any, any>>,
->(name: string, methods: Methods): ProtocolDef<Methods> {
-  return { name, methods };
+/**
+ * Group methods under a protocol and give each one its wire name, `<protocol>.<key>`.
+ *
+ * The registry every server dispatches from is one flat `method -> handler` map, and
+ * registries are merged by spreading. Deriving the name here is what keeps two protocols
+ * from silently claiming the same key, and is why methods are not named individually.
+ */
+export function defineProtocol<Methods extends Record<string, MethodDef<any, any, any, any>>>(
+  name: string,
+  methods: Methods,
+): ProtocolDef<Methods> {
+  const named = {} as Record<string, MethodDef<any, any, any, any>>;
+  for (const [key, method] of Object.entries(methods)) {
+    named[key] = { ...method, name: `${name}.${key}` };
+  }
+  return { name, methods: named as Methods };
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +415,18 @@ export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefin
   const registry: RpcHandlerRegistry = {};
   let initAttached = false;
 
+  function register(
+    name: string,
+    entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,
+  ) {
+    // Within one protocol this can only fire if two keys somehow derive the same wire name.
+    // Across protocols the collision surfaces where registries are merged, in `Server`.
+    if (registry[name]) {
+      throw new Error(`Duplicate RPC method "${name}" in protocol "${protocol.name}"`);
+    }
+    registry[name] = entry;
+  }
+
   // Keyed by session identity, so two servers sharing this registry never see each other's
   // state. Only the *lifecycle* below is per-server.
   const scopeOptions = options?.scope;
@@ -524,7 +535,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefin
         entry.init = buildInit();
       }
 
-      registry[methodDef.name] = entry;
+      register(methodDef.name, entry);
     } else if (methodDef.kind === "multipart") {
       const { handler, streamHandler } = factory(deps) as StreamingHandlerDef<
         unknown,
@@ -583,7 +594,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefin
         entry.init = buildInit();
       }
 
-      registry[methodDef.name] = entry;
+      register(methodDef.name, entry);
     } else {
       const handlerFn = factory(deps) as HandlerFn<unknown, unknown, State>;
 
@@ -625,11 +636,34 @@ export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefin
         entry.init = buildInit();
       }
 
-      registry[methodDef.name] = entry;
+      register(methodDef.name, entry);
     }
   }
 
   return registry;
+}
+
+/**
+ * Combine handler registries, refusing to let one silently shadow another.
+ *
+ * Spreading registries together (`{ ...a, ...b }`) is last-write-wins, so two protocols
+ * claiming the same wire name leave you with whichever came last and no indication the
+ * other is gone. Namespaced names make that unlikely; this makes it impossible.
+ *
+ * `Server` deliberately does *not* use this for its own defaults — overriding the built-in
+ * presence handlers by passing your own is a supported swap, not a collision.
+ */
+export function mergeHandlers(...registries: RpcHandlerRegistry[]): RpcHandlerRegistry {
+  const merged: RpcHandlerRegistry = {};
+  for (const registry of registries) {
+    for (const [name, entry] of Object.entries(registry)) {
+      if (merged[name]) {
+        throw new Error(`Duplicate RPC method "${name}" across merged handler registries`);
+      }
+      merged[name] = entry;
+    }
+  }
+  return merged;
 }
 
 // ---------------------------------------------------------------------------

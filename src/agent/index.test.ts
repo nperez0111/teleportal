@@ -284,8 +284,8 @@ describe("createAgent", () => {
 
 // A tiny RPC protocol used to prove an agent can *call* server RPC methods
 // and await typed responses — the capability the old bare Agent lacked.
-const echo = defineMethod<"echo", { text: string }, { echoed: string }>("echo");
-const whoami = defineMethod<"whoami", {}, { userId: string; documentId: string }>("whoami");
+const echo = defineMethod<{ text: string }, { echoed: string }>();
+const whoami = defineMethod<{}, { userId: string; documentId: string }>();
 const testProtocol = defineProtocol("test", { echo, whoami });
 
 function getTestRpcHandlers() {

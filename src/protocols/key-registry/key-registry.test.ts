@@ -215,7 +215,7 @@ describe("Key Registry — RPC server handlers", () => {
   it("keysGet returns 401 when userId is missing", async () => {
     const storage = new InMemoryKeyRegistryStorage();
     const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
-    const handler = handlers["keysGet"];
+    const handler = handlers["key-registry.get"];
 
     const context = {
       documentId: "doc-1",
@@ -235,7 +235,7 @@ describe("Key Registry — RPC server handlers", () => {
   it("keysGet returns 404 when no key exists for the user", async () => {
     const storage = new InMemoryKeyRegistryStorage();
     const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
-    const handler = handlers["keysGet"];
+    const handler = handlers["key-registry.get"];
 
     const context = {
       documentId: "doc-1",
@@ -259,7 +259,7 @@ describe("Key Registry — RPC server handlers", () => {
     await storage.set("doc-1", [{ userId: "alice", wrappedKey }]);
 
     const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
-    const handler = handlers["keysGet"];
+    const handler = handlers["key-registry.get"];
 
     const context = {
       documentId: "doc-1",
@@ -282,7 +282,7 @@ describe("Key Registry — RPC server handlers", () => {
     await storage.rotate("doc-1", [{ userId: "alice", wrappedKey: new Uint8Array([4, 5]) }], 0);
 
     const handlers = (await import("./server")).getKeyRegistryRpcHandlers(storage);
-    const handler = handlers["keysRotate"];
+    const handler = handlers["key-registry.rotate"];
 
     const context = {
       documentId: "doc-1",
@@ -335,7 +335,7 @@ describe("Key Registry — client rotation notifications", () => {
     const notification = new RpcMessage(
       "test-doc",
       { type: "success" as const, payload: { generation: 42 } },
-      "keysRotated",
+      "key-registry.rotated",
       "request",
       undefined,
       {},
@@ -391,7 +391,7 @@ describe("Key Registry — client rotation notifications", () => {
     return new RpcMessage(
       document,
       { type: "success" as const, payload: { generation } },
-      "keysRotated",
+      "key-registry.rotated",
       "request",
       undefined,
       {},

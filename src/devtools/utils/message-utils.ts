@@ -135,7 +135,7 @@ function formatRpcPayload(message: MessageType & { type: "rpc" }): unknown {
 
   if (payload.type === "error") return payload;
 
-  if (message.rpcMethod === "attributionGet" && message.requestType === "response") {
+  if (message.rpcMethod === "attribution.get" && message.requestType === "response") {
     const data = payload.payload as { contentMap: EncodedContentMap | null };
     if (!data.contentMap) return { ...payload, payload: { contentMap: null } };
 

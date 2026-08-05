@@ -538,7 +538,7 @@ describe("Connection", () => {
       const msg = new RpcMessage<any>(
         "doc-nack-cap",
         { type: "success", payload: {} } as any,
-        "milestoneCreate" as any,
+        "milestone.create" as any,
         "request",
         undefined,
         {} as any,
@@ -1484,7 +1484,7 @@ describe("Connection", () => {
       const rpcMsg = new RpcMessage<any>(
         "doc-timeout",
         { type: "success", payload: {} } as any,
-        "milestoneCreate" as any,
+        "milestone.create" as any,
         "request",
         undefined,
         {} as any,
@@ -3816,7 +3816,7 @@ describe("Connection", () => {
         new RpcMessage<any>(
           id,
           { type: "success", payload: {} } as any,
-          "milestoneCreate" as any,
+          "milestone.create" as any,
           "request",
           undefined,
           {} as any,
@@ -4023,7 +4023,7 @@ describe("sendStream observability", () => {
     const chunk = new RpcMessage(
       "doc-1",
       { type: "success", payload: { fileId: "f1", chunkIndex: 0, totalChunks: 1 } },
-      "fileUpload",
+      "file.upload",
       "stream",
       "f1",
     );
@@ -4049,7 +4049,7 @@ describe("sendStream observability", () => {
     const chunk = new RpcMessage(
       "doc-1",
       { type: "success", payload: { fileId: "f1", chunkIndex: 0, totalChunks: 1 } },
-      "fileUpload",
+      "file.upload",
       "stream",
       "f1",
     );
@@ -4079,7 +4079,7 @@ describe("sendStream observability", () => {
     const chunk = new RpcMessage(
       "doc-1",
       { type: "success", payload: { fileId: "f1", chunkIndex: 0, totalChunks: 1 } },
-      "fileUpload",
+      "file.upload",
       "stream",
       "f1",
     );

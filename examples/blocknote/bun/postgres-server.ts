@@ -152,7 +152,7 @@ const keyHandlers = getKeyRegistryHandlers({
         new RpcMessage(
           documentId,
           { type: "success", payload: { generation } },
-          "keysRotated",
+          "key-registry.rotated",
           "request",
           undefined,
           {},

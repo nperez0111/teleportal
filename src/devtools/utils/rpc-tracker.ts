@@ -59,7 +59,7 @@ export type RpcGroupIndex = {
   groupKeyByMessageId: Map<string, string>;
 };
 
-const FILE_METHODS = new Set(["fileUpload", "fileDownload"]);
+const FILE_METHODS = new Set(["file.upload", "file.download"]);
 
 function isRpc(msg: DevtoolsMessage): boolean {
   return msg.message.type === "rpc";
@@ -253,7 +253,7 @@ function applyLiveProgress(transfer: FileTransferSummary, live: FileTransferProg
 }
 
 function buildTransferSummary(group: RpcGroup): FileTransferSummary {
-  const direction = group.method === "fileUpload" ? "upload" : "download";
+  const direction = group.method === "file.upload" ? "upload" : "download";
   const summary: FileTransferSummary = {
     direction,
     encrypted: false,

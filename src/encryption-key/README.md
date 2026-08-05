@@ -63,7 +63,7 @@ resolvers cache **per document**.
 | `simpleEncryption()`             | PBKDF2 over the **document ID** (salt `teleportal-simple-encryption-v1`, 100k iters) | no              |
 | `passwordKey(passphrase)`        | PBKDF2 over the **passphrase** (salt `teleportal-pwd:<doc>`, 600k iters)             | no              |
 | `createEncryptionKey(password?)` | Convenience wrapper: `password ? passwordKey(password) : simpleEncryption()`         | no              |
-| `registryKey({ wrappingKey })`   | Fetches a wrapped key from the server via `keysGet` RPC, unwraps locally             | yes             |
+| `registryKey({ wrappingKey })`   | Fetches a wrapped key from the server via `key-registry.get` RPC, unwraps locally    | yes             |
 
 `createEncryptionKey` is a **thin wrapper** — it delegates to `passwordKey` /
 `simpleEncryption`, which are the single source of truth for the derivation
@@ -72,7 +72,7 @@ not — it returns a `KeyResolver`.)
 
 #### `registryKey`
 
-On first `resolve` for a document it sends an (encrypted) `keysGet` RPC, receives
+On first `resolve` for a document it sends an (encrypted) `key-registry.get` RPC, receives
 `{ wrappedKey, generation }`, and unwraps `wrappedKey` with the supplied
 `wrappingKey` (a `CryptoKey` or an async factory). The unwrapped key is cached
 **per document**; a failed RPC/unwrap does **not** poison the cache. On key

@@ -411,7 +411,7 @@ The server handles all Teleportal protocol message types:
 - **stream**: Streaming chunks (e.g., file upload parts)
 - **response**: Server response to an RPC request. A response with no
   `originalRequestId` is a **push**: an unsolicited server-authored notification
-  (e.g. `presenceJoin`), fanned out to local clients and — per the method's QoS —
+  (e.g. `presence.join`), fanned out to local clients and — per the method's QoS —
   replicated to other nodes over pub/sub.
 
 Presence is not a native message type: it is a default-on RPC protocol
@@ -609,8 +609,8 @@ Its rules:
 - `ack` and `awareness` messages are always allowed.
 - `doc` `sync-step-1` / `sync-done` require **read**; `sync-step-2` / `update` require **write**; `auth-message` is denied (server-authored, never client-originated).
 - `rpc` messages require **read**, **unless** the method is in a fixed write-methods set
-  (`milestoneCreate`, `milestoneUpdateName`, `milestoneDelete`, `milestoneRestore`,
-  `fileUpload`), which require **write**. An RPC without a `documentId` is allowed.
+  (`milestone.create`, `milestone.updateName`, `milestone.delete`, `milestone.restore`,
+  `file.upload`), which require **write**. An RPC without a `documentId` is allowed.
 
 > **Security note (fail-open default for write RPCs):** the write-methods set is an
 > explicit allow-list. Any RPC method _not_ in it — including custom write-capable

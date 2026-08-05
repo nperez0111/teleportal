@@ -30,6 +30,7 @@ import {
   encodeContentMap,
   recordToAttrs,
 } from "teleportal/attribution";
+import { attributionProtocol } from "../protocols/attribution/methods";
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
@@ -622,9 +623,15 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
           contentMap: attribution,
         });
 
-        if (this.#storage.retrieveAttribution && this.#rpcHandlers.attributionGet) {
+        // Only push when the attribution protocol is actually registered — otherwise no
+        // client could interpret it. Keyed off the imported method definition rather than a
+        // literal, so renaming a method can't silently turn this guard off.
+        if (
+          this.#storage.retrieveAttribution &&
+          this.#rpcHandlers[attributionProtocol.methods.get.name]
+        ) {
           this.broadcastRpc(
-            "attributionPush",
+            attributionProtocol.methods.push.name,
             { contentMap: attribution },
             { excludeClientId: clientId },
           ).catch(() => {});
