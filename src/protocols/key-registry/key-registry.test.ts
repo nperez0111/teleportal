@@ -421,15 +421,9 @@ describe("Key Registry — client rotation notifications", () => {
     expect(bGens).toEqual([7]);
   });
 
-  it("ignores a rotation notification addressed to a different document", () => {
-    const ext = createKeyRegistryRpc();
-    const api = ext.create(mockCtx("doc-a"));
-    let calls = 0;
-    api.onKeysRotated(() => calls++);
-
-    expect(ext.handleMessage!(rotatedMessage("doc-b", 1))).toBe(false);
-    expect(calls).toBe(0);
-  });
+  // Cross-document filtering is the Provider's job now (it owns the shared connection and
+  // knows which document each extension belongs to), so it is covered there rather than
+  // re-implemented in every extension. See provider.test.ts.
 
   it("destroying one instance does not disable notifications for another", () => {
     const extA = createKeyRegistryRpc();

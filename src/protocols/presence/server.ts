@@ -1,5 +1,11 @@
 import type { ServerContext } from "teleportal";
-import { createHandlers, ok, type RpcHandlerRegistry, type RpcPushContext } from "teleportal/rpc";
+import {
+  createHandlers,
+  ok,
+  type RpcHandlerRegistry,
+  type RpcPushContext,
+  type SessionScope,
+} from "teleportal/rpc";
 import { emitWideEvent } from "../../server/logger";
 import type { Session } from "../../server/session";
 import { presenceProtocol, type PresenceEntry, type PresenceRosterPayload } from "./methods";
@@ -171,23 +177,17 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
   const presenceTtlMs = config.presenceTtlMs ?? 90_000;
   const rosterRefreshMinIntervalMs = config.rosterRefreshMinIntervalMs ?? 1_000;
 
-  const sessionStates = new WeakMap<Session<ServerContext>, PresenceSessionState>();
-  const trackedSessions = new Set<Session<ServerContext>>();
+  // Assigned when the `Server` runs `init`. Per-session state itself is owned by
+  // `createHandlers` (keyed by session identity, so one registry is safe to share across
+  // servers); this is just the handle the helpers below reach it through.
+  //
+  // Sharing one registry between two servers reassigns this — harmless, because only
+  // `get` is used below and every scope's `get` resolves against the same store. The
+  // per-server half (`sessions()`, session teardown) is owned by the framework.
+  let scope: SessionScope<PresenceSessionState>;
 
   function stateFor(session: Session<ServerContext>): PresenceSessionState {
-    let state = sessionStates.get(session);
-    if (!state) {
-      state = {
-        local: new Map(),
-        remote: new Map(),
-        timer: undefined,
-        unsubscribers: [],
-        lastRefreshAt: 0,
-        lastAnswerAt: 0,
-      };
-      sessionStates.set(session, state);
-    }
-    return state;
+    return scope.get(session);
   }
 
   /**
@@ -300,10 +300,10 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
    * encrypted documents because the awareness clientID travels in cleartext.
    */
   function broadcastClientLeave(session: Session<ServerContext>, clientId: string) {
-    const state = sessionStates.get(session);
-    const entries = state?.local.get(clientId);
-    state?.local.delete(clientId);
-    if (!entries || !state) {
+    const state = stateFor(session);
+    const entries = state.local.get(clientId);
+    state.local.delete(clientId);
+    if (!entries) {
       return;
     }
     const sends: Promise<unknown>[] = [];
@@ -456,9 +456,9 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
     };
   }
 
-  const registry = createHandlers(
+  const registry = createHandlers<typeof presenceProtocol, unknown, PresenceSessionState>(
     presenceProtocol,
-    { sessionStates },
+    undefined,
     {
       announce:
         () =>
@@ -643,14 +643,16 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
         }),
     },
     {
-      init: (server) => {
-        const unsubscribers: (() => void)[] = [];
-
-        function setupSession(session: Session<ServerContext>): void {
-          if (trackedSessions.has(session)) return;
-          trackedSessions.add(session);
-          const state = stateFor(session);
-
+      scope: {
+        create: () => ({
+          local: new Map(),
+          remote: new Map(),
+          timer: undefined,
+          unsubscribers: [],
+          lastRefreshAt: 0,
+          lastAnswerAt: 0,
+        }),
+        attach: (state, session: Session<ServerContext>) => {
           if (heartbeatIntervalMs > 0) {
             state.timer = setInterval(() => {
               void runMaintenanceTick(session);
@@ -666,61 +668,44 @@ export function getPresenceRpcHandlers<Context extends ServerContext = ServerCon
             session.on("replication-gap", () => {
               void requestRosterRefresh(session);
             }),
-            session.on("dispose", () => {
-              if (state.timer !== undefined) {
-                clearInterval(state.timer);
-                state.timer = undefined;
-              }
-              state.unsubscribers.forEach((fn) => fn());
-              state.unsubscribers.length = 0;
-              state.local.clear();
-              state.remote.clear();
-              trackedSessions.delete(session);
-            }),
           );
-        }
 
-        unsubscribers.push(
-          server.on("session-open", ({ session }) => {
-            setupSession(session as Session<ServerContext>);
-            // The session's pub/sub subscription is live before session-open
-            // fires (Server awaits session.load() first), so responses to
-            // this pull cannot be missed. Without it a fresh node would show
-            // an empty cross-node roster until the next heartbeat.
-            void requestRosterRefresh(session as Session<ServerContext>);
-          }),
-        );
+          // The session's pub/sub subscription is live before session-open fires (Server
+          // awaits session.load() first), so responses to this pull cannot be missed.
+          // Without it a fresh node would show an empty cross-node roster until the next
+          // heartbeat.
+          void requestRosterRefresh(session);
 
-        return () => {
-          for (const session of trackedSessions) {
-            const state = sessionStates.get(session);
-            if (state) {
-              if (state.timer !== undefined) {
-                clearInterval(state.timer);
-                state.timer = undefined;
-              }
-              state.unsubscribers.forEach((fn) => fn());
-              state.unsubscribers.length = 0;
+          return () => {
+            if (state.timer !== undefined) {
+              clearInterval(state.timer);
+              state.timer = undefined;
             }
-          }
-          trackedSessions.clear();
-          unsubscribers.forEach((fn) => fn());
-          unsubscribers.length = 0;
-        };
+            state.unsubscribers.forEach((fn) => fn());
+            state.unsubscribers.length = 0;
+            state.local.clear();
+            state.remote.clear();
+          };
+        },
+      },
+      init: (_server, _deps, sessionScope) => {
+        scope = sessionScope;
       },
     },
   );
 
-  // Expose the tick for deterministic driving in tests (see
-  // runPresenceMaintenance); the interval set up in init calls it directly.
-  (registry.presenceRoster as PresenceRosterEntry).__tick = runMaintenanceTick;
+  // Expose the tick for deterministic driving in tests (see runPresenceMaintenance); the
+  // interval set up by `attach` calls it directly. Keyed by registry rather than hung off a
+  // handler entry, so it does not depend on any method's wire name.
+  maintenanceTicks.set(registry, runMaintenanceTick);
 
   return registry;
 }
 
-type PresenceRosterEntry = RpcHandlerRegistry[string] & {
-  __tick?: (session: Session<ServerContext>) => Promise<void>;
-};
+const maintenanceTicks = new WeakMap<
+  RpcHandlerRegistry,
+  (session: Session<ServerContext>) => Promise<void>
+>();
 
 /**
  * Drive one maintenance tick for a session deterministically (tests). The
@@ -730,5 +715,5 @@ export async function runPresenceMaintenance(
   registry: RpcHandlerRegistry,
   session: Session<ServerContext>,
 ): Promise<void> {
-  await (registry.presenceRoster as PresenceRosterEntry).__tick?.(session);
+  await maintenanceTicks.get(registry)?.(session);
 }

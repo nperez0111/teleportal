@@ -440,6 +440,10 @@ export class Provider<
       "abort",
       connection.on("received-message", async (message) => {
         if (message.type === "rpc") {
+          // One connection multiplexes many documents (subdocs, SharedWorker tabs), so
+          // filter here rather than making every extension re-implement the same guard.
+          // A message with no document is not document-scoped and reaches everyone.
+          if (message.document !== undefined && message.document !== this.document) return;
           for (const ext of this.#extensions) {
             if (ext.handleMessage && (await ext.handleMessage(message as any))) return;
           }

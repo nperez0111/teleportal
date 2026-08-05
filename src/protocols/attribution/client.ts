@@ -268,19 +268,18 @@ const attributionExtension = createClientExtension(attributionProtocol, {
  * Per-provider attribution extension factory.
  *
  * Each Provider (i.e. each document) gets its own extension instance with its
- * own cache, captured in `create()`. `attributionPush` responses are merged
- * only into the instance whose document matches the message, so having several
- * documents open in the same context never cross-contaminates their attribution
- * caches and destroying one provider never disables pushes for the others.
+ * own cache, captured in `create()`. The Provider filters inbound RPC by document
+ * before dispatching, so `attributionPush` responses are merged only into the
+ * instance they belong to: having several documents open in the same context never
+ * cross-contaminates their attribution caches, and destroying one provider never
+ * disables pushes for the others.
  */
 export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
   const base = attributionExtension();
   let instance: AttributionRpc | undefined;
-  let document: string | undefined;
 
   return {
     create(ctx) {
-      document = ctx.document;
       instance = base.create(ctx) as AttributionRpc;
       return instance;
     },
@@ -291,9 +290,6 @@ export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
         message.requestType === "response" &&
         message.payload?.type === "success"
       ) {
-        // Only merge pushes addressed to this instance's document; a shared
-        // connection can carry pushes belonging to other documents' extensions.
-        if (message.document !== document) return false;
         const pushPayload = message.payload.payload as Record<string, unknown> | undefined;
         const encoded = pushPayload?.contentMap as EncodedContentMap | undefined;
         if (encoded && instance) {
@@ -307,7 +303,6 @@ export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
     destroy() {
       base.destroy?.();
       instance = undefined;
-      document = undefined;
     },
   };
 };

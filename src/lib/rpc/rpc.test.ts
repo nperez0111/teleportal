@@ -318,10 +318,20 @@ describe("createHandlers", () => {
     const firstKey = Object.keys(registry)[0];
     expect(registry[firstKey].init).toBeDefined();
 
-    const mockServer = {} as any;
+    const mockServer = { on: () => () => {} } as any;
     const result = registry[firstKey].init!(mockServer);
-    expect(initFn).toHaveBeenCalledWith(mockServer, {});
-    expect(result).toBe(cleanup);
+    expect(initFn).toHaveBeenCalledWith(
+      mockServer,
+      {},
+      expect.objectContaining({ get: expect.any(Function), sessions: expect.any(Function) }),
+    );
+
+    // The framework wraps the caller's cleanup so it can release session state alongside
+    // it, so this is no longer the same function reference — but calling it must still
+    // run the caller's cleanup.
+    expect(cleanup).not.toHaveBeenCalled();
+    result!();
+    expect(cleanup).toHaveBeenCalled();
   });
 
   test("schema validation rejects invalid payloads with 400", async () => {
@@ -432,7 +442,13 @@ describe("createHandlers", () => {
 
     expect(registry["upload"].handler).toBeDefined();
     expect(registry["upload"].streamHandler).toBeDefined();
-    expect(registry["upload"].streamHandler).toBe(streamHandlerFn);
+
+    // Wrapped rather than passed through by identity, so the stream handler gets the same
+    // scoped context as every other handler. It must still delegate.
+    const context = mockContext();
+    const send = async () => {};
+    await registry["upload"].streamHandler!({ chunk: 1 }, context, "msg-1", send);
+    expect(streamHandlerFn).toHaveBeenCalledWith({ chunk: 1 }, context, "msg-1", send);
   });
 
   test("codecs from defineMethod are passed through to registry entries", () => {
@@ -710,5 +726,140 @@ describe("createClientExtension", () => {
       expect(error).toBeInstanceOf(CustomError);
       expect((error as CustomError).op).toBe("get");
     }
+  });
+});
+
+describe("createHandlers session scope", () => {
+  /** A Session/Server pair with just the event surface the scope machinery uses. */
+  function mockServerWithSessions() {
+    const sessionOpen: Array<(arg: { session: any }) => void> = [];
+    const server = {
+      on: (event: string, cb: any) => {
+        if (event === "session-open") sessionOpen.push(cb);
+        return () => {};
+      },
+    } as any;
+    const openSession = (id: string) => {
+      const disposeListeners: Array<() => void> = [];
+      const session = {
+        id,
+        on: (event: string, cb: () => void) => {
+          if (event === "dispose") disposeListeners.push(cb);
+          return () => {};
+        },
+        dispose: () => disposeListeners.forEach((fn) => fn()),
+      } as any;
+      sessionOpen.forEach((cb) => cb({ session }));
+      return session;
+    };
+    return { server, openSession };
+  }
+
+  const method = defineMethod<"ping", {}, { seen: number }>("ping");
+  const protocol = defineProtocol("scoped", { ping: method });
+
+  function build(attach?: (state: { seen: number }, session: any) => () => void) {
+    return createHandlers<typeof protocol, {}, { seen: number }>(
+      protocol,
+      {},
+      {
+        ping: () => async (_payload, ctx) => {
+          ctx.state.seen++;
+          return ok({ seen: ctx.state.seen });
+        },
+      },
+      { scope: { create: () => ({ seen: 0 }), attach } },
+    );
+  }
+
+  test("gives each session its own state, reachable as ctx.state", async () => {
+    const registry = build();
+    const sessionA = { id: "a" } as any;
+    const sessionB = { id: "b" } as any;
+
+    await registry["ping"].handler!({}, mockContext({ session: sessionA }));
+    const secondA = await registry["ping"].handler!({}, mockContext({ session: sessionA }));
+    const firstB = await registry["ping"].handler!({}, mockContext({ session: sessionB }));
+
+    expect((secondA as any).response).toEqual({ seen: 2 });
+    expect((firstB as any).response).toEqual({ seen: 1 });
+  });
+
+  test("runs a session's teardown when the session disposes", () => {
+    // Milestone's hand-rolled version leaked here: its dispose handler dropped the session
+    // from the tracked set without running the per-session unsubscribers, and the
+    // server-level cleanup then iterated a set the session was no longer in.
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const { server, openSession } = mockServerWithSessions();
+    registry["ping"].init!(server);
+
+    const session = openSession("a");
+    expect(torn).toEqual([]);
+    session.dispose();
+    expect(torn).toEqual(["a"]);
+  });
+
+  test("runs teardown for still-live sessions when the server disposes", () => {
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const { server, openSession } = mockServerWithSessions();
+    const cleanup = registry["ping"].init!(server);
+
+    openSession("a");
+    openSession("b");
+    cleanup!();
+    expect(torn.sort()).toEqual(["a", "b"]);
+  });
+
+  test("tears a session down exactly once", () => {
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const { server, openSession } = mockServerWithSessions();
+    const cleanup = registry["ping"].init!(server);
+
+    const session = openSession("a");
+    session.dispose();
+    cleanup!();
+    expect(torn).toEqual(["a"]);
+  });
+
+  test("keeps two servers' session lifecycles independent", () => {
+    // The presence protocol used to hold its tracked-session Set in the factory closure,
+    // so one registry shared by two servers gave them one shared set — and the first
+    // server's dispose tore down the second server's sessions.
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const nodeA = mockServerWithSessions();
+    const nodeB = mockServerWithSessions();
+    const cleanupA = registry["ping"].init!(nodeA.server);
+    const cleanupB = registry["ping"].init!(nodeB.server);
+
+    nodeA.openSession("a");
+    nodeB.openSession("b");
+
+    cleanupA!();
+    expect(torn).toEqual(["a"]);
+
+    cleanupB!();
+    expect(torn).toEqual(["a", "b"]);
+  });
+
+  test("exposes live sessions to init for maintenance sweeps", () => {
+    let scope: any;
+    const registry = createHandlers<typeof protocol, {}, { seen: number }>(
+      protocol,
+      {},
+      { ping: () => async (_p, ctx) => ok({ seen: ctx.state.seen }) },
+      { scope: { create: () => ({ seen: 0 }) }, init: (_server, _deps, s) => void (scope = s) },
+    );
+    const { server, openSession } = mockServerWithSessions();
+    registry["ping"].init!(server);
+
+    expect(scope.sessions()).toEqual([]);
+    const session = openSession("a");
+    expect(scope.sessions()).toEqual([session]);
+    session.dispose();
+    expect(scope.sessions()).toEqual([]);
   });
 });

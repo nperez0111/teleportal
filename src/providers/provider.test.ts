@@ -679,6 +679,33 @@ describe("Provider", () => {
       await serverConn.destroy();
     });
 
+    it("does not route RPC for another document to this provider's extensions", async () => {
+      // One connection multiplexes many documents (subdocs, SharedWorker tabs). Filtering
+      // here is what lets an extension assume every message it sees is its own — otherwise
+      // each one has to re-implement the same guard, and forgetting it silently
+      // cross-contaminates state (an attribution cache, a presence roster).
+      const mock = createMockRpc();
+      const { provider, serverConn } = await createTestProvider({
+        rpc: { myExt: mock.factory },
+      });
+
+      await serverConn.send(
+        new RpcMessage(
+          "some-other-doc",
+          { type: "success", payload: { method: "test" } },
+          "test",
+          "request",
+          undefined,
+        ),
+      );
+      await flush();
+
+      expect(mock.handledMessages.filter((m: any) => m.type === "rpc")).toHaveLength(0);
+
+      provider.destroy();
+      await serverConn.destroy();
+    });
+
     it("routes ACK messages to extension handleAck", async () => {
       const mock = createMockRpc();
       const { provider, clientConn, serverConn } = await createTestProvider({

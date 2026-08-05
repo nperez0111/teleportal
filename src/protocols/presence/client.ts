@@ -113,11 +113,6 @@ class PresenceClient extends Observable<{
     if (message.requestType !== "response" || !PUSH_METHODS.has(message.rpcMethod)) {
       return false;
     }
-    // A connection multiplexes many documents (subdocs, SharedWorker tabs);
-    // presence for another document must not touch this roster.
-    if (message.document !== this.#ctx.document) {
-      return false;
-    }
     if (message.payload.type !== "success") {
       return true;
     }

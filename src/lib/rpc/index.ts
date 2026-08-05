@@ -9,6 +9,7 @@ import type {
   Message,
 } from "teleportal/protocol";
 import type { Server } from "../../server/server";
+import type { Session } from "../../server/session";
 import type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";
 
 // ---------------------------------------------------------------------------
@@ -272,48 +273,92 @@ export class RpcOperationError extends Error {
 // createHandlers — type-safe server handler registration
 // ---------------------------------------------------------------------------
 
-type HandlerFn<Request, Response> = (
+/** A handler context carrying the protocol's per-session state (see {@link SessionScope}). */
+type Scoped<Context, State> = Context & { state: State };
+
+type HandlerFn<Request, Response, State> = (
   payload: Request,
-  context: RpcServerContext,
+  context: Scoped<RpcServerContext, State>,
 ) => Promise<RpcResult<Response>> | RpcResult<Response>;
 
-type StreamingHandlerDef<Request, Response, Stream> = {
+type StreamingHandlerDef<Request, Response, Stream, State> = {
   handler: (
     payload: Request,
-    context: RpcServerContext,
+    context: Scoped<RpcServerContext, State>,
   ) => Promise<RpcResult<Response & { stream?: AsyncIterable<Stream> }>>;
   streamHandler: (
     payload: Stream,
-    context: RpcServerContext,
+    context: Scoped<RpcServerContext, State>,
     messageId: string,
     sendMessage: (message: Message<any>) => Promise<void>,
   ) => Promise<void>;
 };
 
-type PushHandlerFn<Payload> = (
+type PushHandlerFn<Payload, State> = (
   payload: Payload,
-  context: RpcPushContext,
+  context: Scoped<RpcPushContext, State>,
 ) =>
   | Promise<{ forwardToLocalClients?: boolean; replicate?: boolean } | void>
   | { forwardToLocalClients?: boolean; replicate?: boolean }
   | void;
 
-type HandlersFor<P extends ProtocolDef<any>, Deps> = {
+type HandlersFor<P extends ProtocolDef<any>, Deps, State> = {
   [K in keyof P["methods"]]: P["methods"][K]["kind"] extends "multipart"
     ? (
         deps: Deps,
       ) => StreamingHandlerDef<
         P["methods"][K]["_request"],
         P["methods"][K]["_response"],
-        P["methods"][K]["_stream"]
+        P["methods"][K]["_stream"],
+        State
       >
     : P["methods"][K]["kind"] extends "push"
-      ? (deps: Deps) => PushHandlerFn<P["methods"][K]["_request"]>
-      : (deps: Deps) => HandlerFn<P["methods"][K]["_request"], P["methods"][K]["_response"]>;
+      ? (deps: Deps) => PushHandlerFn<P["methods"][K]["_request"], State>
+      : (deps: Deps) => HandlerFn<P["methods"][K]["_request"], P["methods"][K]["_response"], State>;
 };
 
-interface CreateHandlersOptions<Deps> {
-  init?: (server: Server<any>, deps: Deps) => (() => void) | void;
+// ---------------------------------------------------------------------------
+// Per-session handler scope
+// ---------------------------------------------------------------------------
+
+/**
+ * The sessions one {@link Server} currently has open, and this protocol's state for them.
+ *
+ * A handler registry is built once and shared by every session on the node, so a "handler"
+ * is a node-wide function — anything per-document has to be keyed by session. Declaring a
+ * {@link SessionScopeOptions} makes the framework own that keying: handlers read
+ * `context.state`, and `init` gets this view for maintenance sweeps across sessions.
+ */
+export interface SessionScope<State> {
+  /** This protocol's state for `session`, created on first access. */
+  get(session: Session<any>): State;
+  /** Every session this server currently has open. */
+  sessions(): Session<any>[];
+}
+
+export interface SessionScopeOptions<Deps, State> {
+  /** Build a session's state. Called once per session, lazily. */
+  create: (session: Session<any>, deps: Deps) => State;
+  /**
+   * Wire up the session's listeners and timers.
+   *
+   * The returned teardown runs when the session disposes or when the server does,
+   * whichever comes first, and runs exactly once either way — so a session that closes
+   * under a long-lived server cannot leak its subscriptions.
+   */
+  attach?: (state: State, session: Session<any>, deps: Deps) => (() => void) | void;
+}
+
+interface CreateHandlersOptions<Deps, State> {
+  /**
+   * Per-session state owned by the framework rather than hand-rolled in a closure.
+   *
+   * The state map is keyed by session identity, so it is safe to share one registry
+   * across servers; the *lifecycle* (which sessions are live, and their listeners) is
+   * per-`init`, i.e. per-server.
+   */
+  scope?: SessionScopeOptions<Deps, State>;
+  init?: (server: Server<any>, deps: Deps, scope: SessionScope<State>) => (() => void) | void;
 }
 
 function translateResult(result: RpcResult<unknown>): {
@@ -362,21 +407,99 @@ async function validatePayload(
   return { ok: true, value: result.value };
 }
 
-export function createHandlers<P extends ProtocolDef<any>, Deps>(
+export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefined>(
   protocol: P,
   deps: Deps,
-  handlers: HandlersFor<P, Deps>,
-  options?: CreateHandlersOptions<Deps>,
+  handlers: HandlersFor<P, Deps, State>,
+  options?: CreateHandlersOptions<Deps, State>,
 ): RpcHandlerRegistry {
   const registry: RpcHandlerRegistry = {};
   let initAttached = false;
+
+  // Keyed by session identity, so two servers sharing this registry never see each other's
+  // state. Only the *lifecycle* below is per-server.
+  const scopeOptions = options?.scope;
+  const states = new WeakMap<Session<any>, State>();
+
+  function stateFor(session: Session<any>): State {
+    if (!scopeOptions) return undefined as State;
+    let state = states.get(session);
+    if (state === undefined) {
+      state = scopeOptions.create(session, deps);
+      states.set(session, state);
+    }
+    return state;
+  }
+
+  /**
+   * Stamp the session's state onto the per-call context. The context is built fresh for
+   * every dispatch (see `Session`), so assigning in place is safe and allocation-free.
+   */
+  function scopeContext<C extends { session: unknown }>(context: C): Scoped<C, State> {
+    (context as { state?: State }).state = stateFor(context.session as Session<any>);
+    return context as Scoped<C, State>;
+  }
+
+  /**
+   * Wrap the caller's `init` so the framework owns session tracking: state is created when
+   * a session opens, and its teardown runs on session dispose or server dispose, whichever
+   * comes first.
+   */
+  function buildInit(): (server: Server<any>) => () => void {
+    return (server) => {
+      const cleanups: Array<() => void> = [];
+      const live = new Set<Session<any>>();
+      const detachers = new Map<Session<any>, () => void>();
+
+      const release = (session: Session<any>) => {
+        if (!live.delete(session)) return;
+        const detach = detachers.get(session);
+        detachers.delete(session);
+        detach?.();
+      };
+
+      if (scopeOptions) {
+        cleanups.push(
+          server.on("session-open", ({ session }: { session: Session<any> }) => {
+            if (live.has(session)) return;
+            live.add(session);
+            const detach = scopeOptions.attach?.(stateFor(session), session, deps);
+            const disposeUnsub = session.on("dispose", () => release(session));
+            detachers.set(session, () => {
+              disposeUnsub();
+              detach?.();
+            });
+          }),
+        );
+        cleanups.push(() => {
+          // Snapshot first: `release` deletes from `live` as it goes.
+          for (const session of Array.from(live)) release(session);
+        });
+      }
+
+      const scope: SessionScope<State> = {
+        get: stateFor,
+        sessions: () => [...live],
+      };
+      const userCleanup = options?.init?.(server, deps, scope);
+      if (userCleanup) cleanups.push(userCleanup);
+
+      // Reverse order: the caller's own teardown runs before the sessions it was using
+      // are released, and the `session-open` subscription is dropped last.
+      return () => {
+        for (const cleanup of cleanups.reverse()) cleanup();
+      };
+    };
+  }
+
+  const needsInit = Boolean(options?.init || scopeOptions);
 
   for (const key of Object.keys(protocol.methods) as Array<keyof P["methods"] & string>) {
     const methodDef: MethodDef = protocol.methods[key];
     const factory = handlers[key] as (deps: Deps) => any;
 
     if (methodDef.kind === "push") {
-      const pushHandlerFn = factory(deps) as PushHandlerFn<unknown>;
+      const pushHandlerFn = factory(deps) as PushHandlerFn<unknown, State>;
 
       const entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext> = {
         pushHandler: async (payload, context) => {
@@ -389,16 +512,16 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
             if (!v.ok) return { forwardToLocalClients: false, replicate: false };
             payload = v.value;
           }
-          return pushHandlerFn(payload, context);
+          return pushHandlerFn(payload, scopeContext(context));
         },
         qos: methodDef.qos,
       };
 
       if (methodDef.requestCodec) entry.request = methodDef.requestCodec;
 
-      if (!initAttached && options?.init) {
+      if (!initAttached && needsInit) {
         initAttached = true;
-        entry.init = (server) => options.init!(server, deps);
+        entry.init = buildInit();
       }
 
       registry[methodDef.name] = entry;
@@ -406,7 +529,8 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
       const { handler, streamHandler } = factory(deps) as StreamingHandlerDef<
         unknown,
         unknown,
-        unknown
+        unknown,
+        State
       >;
 
       const wrappedHandler: RpcServerRequestHandler<
@@ -421,7 +545,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
           payload = v.value;
         }
         try {
-          const result = await handler(payload, context);
+          const result = await handler(payload, scopeContext(context));
           if (result.ok) {
             const { stream, ...rest } = result.value as Record<string, unknown> & {
               stream?: AsyncIterable<unknown>;
@@ -446,21 +570,22 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
 
       const entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext> = {
         handler: wrappedHandler,
-        streamHandler,
+        streamHandler: (payload, context, messageId, sendMessage) =>
+          streamHandler(payload, scopeContext(context), messageId, sendMessage),
       };
 
       if (methodDef.requestCodec) entry.request = methodDef.requestCodec;
       if (methodDef.responseCodec) entry.response = methodDef.responseCodec;
       if (methodDef.streamCodec) entry.stream = methodDef.streamCodec;
 
-      if (!initAttached && options?.init) {
+      if (!initAttached && needsInit) {
         initAttached = true;
-        entry.init = (server) => options.init!(server, deps);
+        entry.init = buildInit();
       }
 
       registry[methodDef.name] = entry;
     } else {
-      const handlerFn = factory(deps) as HandlerFn<unknown, unknown>;
+      const handlerFn = factory(deps) as HandlerFn<unknown, unknown, State>;
 
       const wrappedHandler: RpcServerRequestHandler<
         unknown,
@@ -474,7 +599,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
           payload = v.value;
         }
         try {
-          const result = await handlerFn(payload, context);
+          const result = await handlerFn(payload, scopeContext(context));
           return translateResult(result);
         } catch (error) {
           return {
@@ -495,9 +620,9 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
       if (methodDef.responseCodec) entry.response = methodDef.responseCodec;
       if (methodDef.streamCodec) entry.stream = methodDef.streamCodec;
 
-      if (!initAttached && options?.init) {
+      if (!initAttached && needsInit) {
         initAttached = true;
-        entry.init = (server) => options.init!(server, deps);
+        entry.init = buildInit();
       }
 
       registry[methodDef.name] = entry;
