@@ -27,13 +27,14 @@ for the exact byte layout.
 
 ## Wire protocol at a glance
 
-Every framed message (version 1) begins with a fixed header:
+Every framed message (version 2) begins with a fixed header:
 
 ```
 [0x59 0x4a 0x53]   magic "YJS" (3 bytes)
-[0x01]             version (1 byte)
+[0x02]             version (1 byte)
 [varString]        document name (empty string for ack messages)
 [uint8]            encrypted flag (0 or 1)
+[uint8]            best-effort flag (1 = receivers must not ack; senders do not retransmit)
 [uint8]            message type
 ```
 
@@ -44,11 +45,12 @@ Every framed message (version 1) begins with a fixed header:
 | `0x00`    | `doc`       | Y.js sync/update (sync-step-1/2, update, sync-done, auth-message) |
 | `0x01`    | `awareness` | Awareness update / request                                        |
 | `0x02`    | `ack`       | Acknowledgement or NACK (retry-after or permanent error)          |
-| `0x03`    | `presence`  | Client join/leave/announce/unannounce/heartbeat                   |
 | `0x04`    | `rpc`       | Remote procedure call (request / stream / response)               |
 
-> **Note:** file transfer and milestone operations are **not** distinct message
-> types — they are RPC protocols carried inside `0x04`. See
+> **Note:** presence, file transfer, and milestone operations are **not**
+> distinct message types — they are RPC protocols carried inside `0x04` (type
+> `0x03`, formerly presence, is deleted). See
+> [`teleportal/protocols/presence`](../protocols/presence/README.md),
 > [`teleportal/protocols/file`](../protocols/file/README.md) and
 > [`teleportal/protocols/milestone`](../protocols/milestone/README.md).
 
@@ -85,11 +87,11 @@ An ack with no flags is a plain acknowledgement. `retryAfter` and `error` are
 mutually exclusive and signal retryable vs. permanent rejection. Ack messages
 carry **no** document name (`document` is `undefined`).
 
-### Presence (`0x03`) and RPC (`0x04`)
+### RPC (`0x04`)
 
-See [`protocol/README.md`](./protocol/README.md#presence-sub-types-type-0x03)
-for the presence sub-types and RPC framing (method name, request type,
-optional `originalRequestId`, success/error payloads, and custom codecs).
+See [`protocol/README.md`](./protocol/README.md#rpc-message-type-0x04)
+for the RPC framing (method name, request type, optional `originalRequestId` —
+absent for pushes — success/error payloads, and custom codecs).
 
 ## Message IDs
 

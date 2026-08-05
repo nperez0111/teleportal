@@ -21,10 +21,7 @@ import { MemoryDocumentStorage } from "./in-memory/document-storage";
 const DOC = "encrypted-gap-test";
 const SENDER = 111;
 
-async function makeEncryptedUpdate(
-  key: CryptoKey,
-  v2Update: Uint8Array,
-): Promise<VersionedUpdate> {
+async function makeEncryptedUpdate(key: CryptoKey, v2Update: Uint8Array): Promise<VersionedUpdate> {
   const { structureUpdate, encryptedSidecar } = await encryptUpdateContent(key, v2Update, 2);
   const payload = encodeContentEncryptedPayload({
     structureUpdate,

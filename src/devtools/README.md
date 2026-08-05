@@ -11,7 +11,7 @@ The Teleportal Devtools is a developer tool that helps you debug and monitor you
 - **ACK latency**: Acknowledged messages show their round-trip time, color-coded against the in-flight timeout
 - **Update operations decoder**: `update`/`sync-step-2` payloads are decoded into human-readable ops (`insert "hel" @ (client, clock) in body`), including for encrypted documents when the key is available
 - **Documents tab**: Tree of documents and subdocuments with live sync handshake state (sync-step-1 → sync-step-2 → synced), traffic counters, encryption, and last activity; click a document to filter the Messages tab
-- **Presence tab**: Live peer roster from presence-join/leave/heartbeat messages with expandable per-peer data and a recent join/leave feed
+- **Presence tab**: Live peer roster from `presenceJoin`/`presenceLeave`/`presenceRoster` RPC pushes with expandable per-peer data and a recent join/leave feed
 - **Connection popover**: Click the connection status for live internals — in-flight/buffered counts, AIMD batch window, reconnect attempts, SharedWorker pooling details (tabs, key, grace period, heartbeat), and a timeline of state transitions, transport fallbacks/upgrades, and token refreshes
 - **Message filtering**: Filter messages by document, type, direction, and search text
 - **Message inspection**: View detailed payloads, metadata, and acknowledgment status
@@ -138,10 +138,10 @@ Tree of main documents and their subdocuments (from `load-subdoc`/`unload-subdoc
 
 #### `PresencePanel`
 
-Live peer roster derived from cleartext presence messages:
+Live peer roster derived from cleartext presence RPC pushes:
 
 - One row per peer: color dot (stable per userId), userId, clientId, awareness id, joined time; click to expand the integrator-supplied `data` blob
-- Heartbeat rosters upsert peers without evicting peers from other nodes
+- Roster snapshots upsert peers without evicting peers from other nodes
 - Recent join/leave feed below the roster; the roster clears on disconnect
 
 #### `MessageInspector`
@@ -196,7 +196,7 @@ Pure derivation that groups the rpc messages of a message list into logical call
 
 #### `PresenceTracker` (`presence-tracker.ts`)
 
-Stateful roster fed by presence messages: join/leave maintenance, heartbeat upserts, and a bounded join/leave feed.
+Stateful roster fed by presence RPC pushes (`presenceJoin`/`presenceLeave`/`presenceRoster`): join/leave maintenance, roster-snapshot upserts, and a bounded join/leave feed.
 
 #### `update-decoder.ts`
 
@@ -296,7 +296,7 @@ destroyDevtoolsState();
 
 `getMessageTypeLabel()` derives the label shown on a row and `getMessageTypeColor()`
 its badge color (`message-utils.ts`). The recognized types map to the wire
-protocol's message kinds — `doc`, `awareness`, `presence`, `rpc`, `ack`:
+protocol's message kinds — `doc`, `awareness`, `rpc`, `ack`:
 
 ### Document (`doc`) messages
 
@@ -311,10 +311,12 @@ protocol's message kinds — `doc`, `awareness`, `presence`, `rpc`, `ack`:
 - `awareness-update`: Awareness state update (yellow)
 - `awareness-request`: Awareness state request (darker yellow)
 
-### Presence messages
+### Presence
 
-- `presence-join` / `presence-leave` / `presence-heartbeat` / `presence-announce`
-  (purple). The label is the payload's `type`; feed the roster in the Presence tab.
+Presence is not a distinct message type — it is an RPC protocol
+(`teleportal/protocols/presence`). Its pushes (`presenceJoin` / `presenceLeave`
+/ `presenceRoster`) and requests (`presenceAnnounce` / `presenceUnannounce`)
+appear as RPC messages; the pushes feed the roster in the Presence tab.
 
 ### RPC messages (`rpc`)
 

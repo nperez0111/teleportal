@@ -74,10 +74,12 @@ per tracked entity within that connection instead of silently not at all.
 
 Separate budgets so one traffic class can't starve another:
 
-- **sync** — 300 msgs/s per user, 1500 msgs/10 s per document (skips awareness &
-  file chunks)
-- **awareness/presence** — 120 msgs/s per user (ephemeral: dropping one is
-  harmless, never retransmitted, so it can't drain the sync budget)
+- **sync** — 300 msgs/s per user, 1500 msgs/10 s per document (skips best-effort
+  metadata & file chunks)
+- **best-effort metadata** — 120 msgs/s per user. Classified by
+  `isEphemeralMetadataMessage`, i.e. `requiresAck === false` (awareness and any
+  best-effort RPC push; excludes acks). Dropping one is harmless: it is never
+  acked or retransmitted, so it can't drain the sync budget.
 - **file transfer** — 5000 chunks/s per user
 
 File _initiation_ requests (non-stream RPC) count toward the sync budget.

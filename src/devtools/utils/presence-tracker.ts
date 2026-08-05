@@ -1,4 +1,5 @@
-import type { Message, RawReceivedMessage } from "teleportal";
+import type { Message, RawReceivedMessage, RpcMessage } from "teleportal";
+import type { PresenceEntry, PresenceRosterPayload } from "../../protocols/presence/methods";
 
 export type PresencePeer = {
   awarenessId: number;
@@ -21,8 +22,8 @@ export type PresenceFeedEntry = {
 const FEED_LIMIT = 50;
 
 /**
- * Live peer roster derived from the presence message stream
- * (presence-join / presence-leave / presence-heartbeat).
+ * Live peer roster derived from the presence protocol's RPC push stream
+ * (presenceJoin / presenceLeave / presenceRoster).
  */
 export class PresenceTracker {
   private peers = new Map<string, PresencePeer>();
@@ -30,78 +31,69 @@ export class PresenceTracker {
 
   /** Returns true when the roster or feed changed. */
   recordMessage(message: Message | RawReceivedMessage): boolean {
-    if (message.type !== "presence") return false;
-    const payload = message.payload;
+    if (message.type !== "rpc") return false;
+    const rpc = message as RpcMessage<Record<string, unknown>>;
+    // Pushes only (server-authored notifications): a "response" to no request.
+    if (rpc.requestType !== "response" || rpc.originalRequestId !== undefined) return false;
+    if (rpc.payload.type !== "success") return false;
     const now = Date.now();
 
-    switch (payload.type) {
-      case "presence-join": {
-        const existing = this.peers.get(payload.clientId);
-        this.peers.set(payload.clientId, {
-          awarenessId: payload.awarenessId,
-          clientId: payload.clientId,
-          userId: payload.userId,
-          data: payload.data,
-          document: message.document,
-          joinedAt: existing?.joinedAt ?? now,
-          lastSeen: now,
-        });
-        if (!existing) {
-          this.pushFeed({
-            timestamp: now,
-            kind: "join",
-            userId: payload.userId,
-            clientId: payload.clientId,
-          });
-        }
-        return true;
+    switch (rpc.rpcMethod) {
+      case "presenceJoin": {
+        const entry = rpc.payload.payload as PresenceEntry;
+        return this.upsertPeer(entry, message.document, now);
       }
 
-      case "presence-leave": {
-        const removed = this.peers.delete(payload.clientId);
+      case "presenceLeave": {
+        const entry = rpc.payload.payload as PresenceEntry;
+        const removed = this.peers.delete(entry.clientId);
         if (removed) {
           this.pushFeed({
             timestamp: now,
             kind: "leave",
-            userId: payload.userId,
-            clientId: payload.clientId,
+            userId: entry.userId,
+            clientId: entry.clientId,
           });
         }
         return removed;
       }
 
-      case "presence-heartbeat": {
-        // A heartbeat carries one node's local clients — upsert them, but
-        // don't remove absent peers (they may live on another node).
+      case "presenceRoster": {
+        // A roster carries a snapshot — upsert its entries, but don't remove
+        // absent peers (a node-to-node roster carries only one node's clients).
+        const { clients } = rpc.payload.payload as PresenceRosterPayload;
         let changed = false;
-        for (const client of payload.clients) {
-          const existing = this.peers.get(client.clientId);
-          this.peers.set(client.clientId, {
-            awarenessId: client.awarenessId,
-            clientId: client.clientId,
-            userId: client.userId,
-            data: client.data,
-            document: message.document,
-            joinedAt: existing?.joinedAt ?? now,
-            lastSeen: now,
-          });
-          if (!existing) {
-            changed = true;
-            this.pushFeed({
-              timestamp: now,
-              kind: "join",
-              userId: client.userId,
-              clientId: client.clientId,
-            });
-          }
+        for (const client of clients) {
+          changed = this.upsertPeer(client, message.document, now) || changed;
         }
-        return changed || payload.clients.length > 0;
+        return changed || clients.length > 0;
       }
 
       default:
-        // presence-announce carries only our own awarenessId
         return false;
     }
+  }
+
+  private upsertPeer(entry: PresenceEntry, document: string | undefined, now: number): boolean {
+    const existing = this.peers.get(entry.clientId);
+    this.peers.set(entry.clientId, {
+      awarenessId: entry.awarenessId,
+      clientId: entry.clientId,
+      userId: entry.userId,
+      data: entry.data,
+      document,
+      joinedAt: existing?.joinedAt ?? now,
+      lastSeen: now,
+    });
+    if (!existing) {
+      this.pushFeed({
+        timestamp: now,
+        kind: "join",
+        userId: entry.userId,
+        clientId: entry.clientId,
+      });
+    }
+    return true;
   }
 
   private pushFeed(entry: PresenceFeedEntry) {

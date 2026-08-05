@@ -221,7 +221,7 @@ describe("can encode and decode", () => {
           data: new Uint8Array([0x00, 0x01, 0x02, 0x03]) as Update,
         } as VersionedUpdate,
       }).id,
-    ).toMatchInlineSnapshot(`"fbfcdc5a5765270c"`);
+    ).toMatchInlineSnapshot(`"761bf76deeea1647"`);
   });
 
   it("ack message gets it's id", () => {
@@ -634,9 +634,11 @@ describe("custom serialization", () => {
     decoding.readUint8(decoder); // version
     decoding.readVarString(decoder); // document
     decoding.readUint8(decoder); // encrypted
+    decoding.readUint8(decoder); // best-effort
     decoding.readUint8(decoder); // message type (4 = rpc)
     decoding.readVarString(decoder); // method
     decoding.readUint8(decoder); // request type (2 = response)
+    decoding.readUint8(decoder); // has originalRequestId
     decoding.readVarString(decoder); // originalRequestId
     decoding.readUint8(decoder); // isSuccess
     const payloadBytes = decoding.readVarUint8Array(decoder);
@@ -673,9 +675,11 @@ describe("custom serialization", () => {
     decoding.readUint8(decoder); // version
     decoding.readVarString(decoder); // document
     decoding.readUint8(decoder); // encrypted
+    decoding.readUint8(decoder); // best-effort
     decoding.readUint8(decoder); // message type
     decoding.readVarString(decoder); // method
     decoding.readUint8(decoder); // request type
+    decoding.readUint8(decoder); // has originalRequestId
     decoding.readVarString(decoder); // originalRequestId
     decoding.readUint8(decoder); // isSuccess
     const payloadBytes = decoding.readVarUint8Array(decoder);
@@ -1046,5 +1050,99 @@ describe("edge cases", () => {
   it("encoding an unknown awareness payload type throws", () => {
     const msg = new AwarenessMessage("test", { type: "not-a-real-type" } as any);
     expect(() => msg.encoded).toThrow("Failed to encode message");
+  });
+});
+
+describe("delivery QoS", () => {
+  it("round-trips the best-effort flag for every message type", () => {
+    const update: VersionedUpdate = {
+      version: 2,
+      data: new Uint8Array([1, 2, 3]) as Update,
+    } as VersionedUpdate;
+
+    const doc = new DocMessage("d", { type: "update", update });
+    const awareness = new AwarenessMessage("d", {
+      type: "awareness-update",
+      update: new Uint8Array([1]) as AwarenessUpdateMessage,
+    });
+    const ackedRpc = new RpcMessage(
+      "d",
+      { type: "success", payload: {} },
+      "m",
+      "request",
+      undefined,
+    );
+    const bestEffortRpc = new RpcMessage(
+      "d",
+      { type: "success", payload: {} },
+      "m",
+      "request",
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      { ack: false },
+    );
+
+    // Class-declared policy survives encode/decode.
+    expect(decodeMessage(doc.encoded).requiresAck).toBe(true);
+    expect(decodeMessage(awareness.encoded).requiresAck).toBe(false);
+    // Method-declared rpc policy travels via the wire byte.
+    expect(ackedRpc.requiresAck).toBe(true);
+    expect(decodeMessage(ackedRpc.encoded).requiresAck).toBe(true);
+    expect(bestEffortRpc.requiresAck).toBe(false);
+    expect(decodeMessage(bestEffortRpc.encoded).requiresAck).toBe(false);
+  });
+
+  it("acks themselves are never acked", () => {
+    const ack = new AckMessage({ type: "ack", messageId: "x" });
+    expect(ack.requiresAck).toBe(false);
+    expect(decodeMessage(ack.encoded).requiresAck).toBe(false);
+  });
+
+  it("round-trips a push (response with no originalRequestId)", () => {
+    const push = new RpcMessage(
+      "d",
+      { type: "success", payload: { n: 1 } },
+      "somePush",
+      "response",
+      undefined,
+    );
+    const decoded = decodeMessage(push.encoded) as RpcMessage<any>;
+    expect(decoded.type).toBe("rpc");
+    expect(decoded.requestType).toBe("response");
+    expect(decoded.originalRequestId).toBeUndefined();
+    expect(decoded.payload).toEqual({ type: "success", payload: { n: 1 } });
+  });
+
+  it("round-trips a correlated response", () => {
+    const response = new RpcMessage(
+      "d",
+      { type: "success", payload: { n: 1 } },
+      "someMethod",
+      "response",
+      "req-1",
+    );
+    const decoded = decodeMessage(response.encoded) as RpcMessage<any>;
+    expect(decoded.originalRequestId).toBe("req-1");
+  });
+
+  it("rpc durability is a sender-side override, defaulting to durable", () => {
+    const plain = new RpcMessage("d", { type: "success", payload: {} }, "m", "request", undefined);
+    expect(plain.durability).toBe("durable");
+    const ephemeral = new RpcMessage(
+      "d",
+      { type: "success", payload: {} },
+      "m",
+      "response",
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      { durability: "ephemeral" },
+    );
+    expect(ephemeral.durability).toBe("ephemeral");
   });
 });

@@ -21,9 +21,10 @@ import { Client } from "./client";
 import type {
   AttributionConfig,
   ClientDisconnectReason,
-  PresenceConfig,
+  LivenessConfig,
   ServerEvents,
 } from "./events";
+import { getPresenceRpcHandlers, type PresenceProtocolConfig } from "../protocols/presence/server";
 import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -79,10 +80,17 @@ export type ServerOptions<Context extends ServerContext> = {
   };
 
   /**
-   * Configuration for client presence (join/leave) notifications broadcast to
-   * a session's peers.
+   * Configuration for the built-in presence protocol (who is in a document),
+   * registered by default as RPC handlers. Pass `false` to opt out — e.g. to
+   * register your own implementation via `rpcHandlers`.
    */
-  presenceConfig?: PresenceConfig<NoInfer<Context>>;
+  presence?: PresenceProtocolConfig<NoInfer<Context>> | false;
+
+  /**
+   * Configuration for transport-level client liveness (the ping sweep that
+   * kills half-open connections).
+   */
+  livenessConfig?: LivenessConfig;
 
   /**
    * Configuration for custom attribution metadata on document updates.
@@ -270,6 +278,8 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * Cleanup functions returned by handler init() methods.
    */
   #handlerCleanups: (() => void)[] = [];
+  /** Effective handler registry: default protocols (presence) + user-supplied. */
+  #rpcHandlers: RpcHandlerRegistry;
   /**
    * Per-client liveness used to kill the presence of dead connections: a
    * wedged (half-open) socket never emits a close event, so without this its
@@ -277,7 +287,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * decoded inbound message and by protocol pings (via {@link markClientAlive});
    * `pingCapable` latches once the client demonstrates it heartbeats, and only
    * ping-capable clients are ever presumed dead (see
-   * {@link PresenceConfig.clientTtlMs}). `close` tears down the transport so a
+   * {@link LivenessConfig.clientTtlMs}). `close` tears down the transport so a
    * client that was wrongly presumed dead reconnects cleanly instead of
    * lingering on a connection the server no longer services.
    */
@@ -296,7 +306,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
     this.#metrics = new MetricsCollector(register);
-    this.#clientTtlMs = options.presenceConfig?.clientTtlMs ?? 60_000;
+    this.#clientTtlMs = options.livenessConfig?.clientTtlMs ?? 60_000;
     if (this.#clientTtlMs > 0) {
       this.#clientLivenessTimer = setInterval(
         () => this.sweepDeadClients(),
@@ -306,14 +316,20 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       (this.#clientLivenessTimer as { unref?: () => void }).unref?.();
     }
 
+    // Presence is a default-on RPC protocol: core contains zero presence
+    // logic, and swapping the implementation = `presence: false` plus your own
+    // handlers (user-supplied entries win on method-name collisions).
+    this.#rpcHandlers = {
+      ...(options.presence === false ? {} : getPresenceRpcHandlers(options.presence ?? {})),
+      ...options.rpcHandlers,
+    };
+
     // Initialize RPC handlers
-    if (options.rpcHandlers) {
-      for (const handler of Object.values(options.rpcHandlers)) {
-        if (handler.init) {
-          const cleanup = handler.init(this);
-          if (cleanup) {
-            this.#handlerCleanups.push(cleanup);
-          }
+    for (const handler of Object.values(this.#rpcHandlers)) {
+      if (handler.init) {
+        const cleanup = handler.init(this);
+        if (cleanup) {
+          this.#handlerCleanups.push(cleanup);
         }
       }
     }
@@ -489,9 +505,8 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
           metricsCollector: this.#metrics,
           documentSizeConfig: this.#options.documentSizeConfig,
-          presenceConfig: this.#options.presenceConfig,
           attributionConfig: this.#options.attributionConfig,
-          rpcHandlers: this.#options.rpcHandlers,
+          rpcHandlers: this.#rpcHandlers,
           server: this,
         });
 
@@ -778,6 +793,11 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           config.onRateLimitDelay?.(details);
         },
         onRateLimitDrop: (message, exceeded, write) => {
+          // Best-effort traffic is never NACKed — being droppable under pressure without
+          // a retransmit round-trip is exactly what qos.ack: false buys.
+          if (!message.requiresAck) {
+            return;
+          }
           // resetAt is when the next token refills — retryAfter must never
           // fall back to the full window (10s for the default per-document
           // rule), which reads as a multi-second ack stall on the client.
@@ -986,9 +1006,9 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
               client,
               context: message.context,
               // Doc/awareness flags describe the document's content and may
-              // define the session's mode; rpc/presence flags describe only
-              // the message payload and may not.
-              encryptionAuthoritative: message.type !== "presence" && message.type !== "rpc",
+              // define the session's mode; rpc flags describe only the
+              // message payload and may not.
+              encryptionAuthoritative: message.type !== "rpc",
             });
             wideEvent.session_id = session.id;
 
@@ -1004,19 +1024,23 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
               direction: "in",
             });
 
-            const ackMessage = new AckMessage(
-              {
-                type: "ack",
-                messageId: message.id,
-              },
-              message.context,
-            );
-            await client.send(ackMessage);
-            await this.pubSub.publish(
-              `ack/${client.id}` as const,
-              ackMessage.encoded,
-              `server-${client.id}`,
-            );
+            // Best-effort messages (awareness, rpc pushes with qos.ack: false) are never
+            // acked — the sender does not track them in flight.
+            if (message.requiresAck) {
+              const ackMessage = new AckMessage(
+                {
+                  type: "ack",
+                  messageId: message.id,
+                },
+                message.context,
+              );
+              await client.send(ackMessage);
+              await this.pubSub.publish(
+                `ack/${client.id}` as const,
+                ackMessage.encoded,
+                `server-${client.id}`,
+              );
+            }
 
             wideEvent.outcome = "success";
             wideEvent.status_code = 200;
@@ -1101,6 +1125,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * loop's stream error handling closes the connection.
    */
   async #nackFailedMessage(client: Client<Context>, message: Message<Context>, error: unknown) {
+    // Best-effort senders track nothing in flight — a NACK would go nowhere.
+    if (!message.requiresAck) {
+      return;
+    }
     const nack = new AckMessage(
       {
         type: "ack",
@@ -1121,7 +1149,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * Record proof of life for a client's connection: called by transports when
    * a protocol ping arrives (decoded messages refresh liveness in the consume
    * loop directly). The first ping also marks the client ping-capable, opting
-   * it into dead-client sweeping — see {@link PresenceConfig.clientTtlMs}.
+   * it into dead-client sweeping — see {@link LivenessConfig.clientTtlMs}.
    */
   markClientAlive(clientId: string): void {
     const liveness = this.#clientLiveness.get(clientId);
@@ -1134,7 +1162,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
   /**
    * One dead-client sweep tick (driven by the interval): disconnect every
    * ping-capable client whose last sign of life is older than
-   * {@link PresenceConfig.clientTtlMs}. Disconnecting removes the client from
+   * {@link LivenessConfig.clientTtlMs}. Disconnecting removes the client from
    * all sessions, which broadcasts presence-leave for its awareness entries —
    * so peers stop seeing ghosts of dead connections. Public so it can be
    * driven deterministically in tests.

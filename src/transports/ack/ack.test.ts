@@ -381,6 +381,42 @@ describe("withAckTrackingSink", () => {
     await trackedSink.unsubscribe();
   });
 
+  it("does not track best-effort messages that the receiver will never ACK", async () => {
+    const context: TestContext = {
+      clientId: "test-client",
+      userId: "test-user",
+      room: "test-room",
+    };
+    const ackTopic: PubSubTopic = "ack/test-client";
+
+    const trackedSink = withAckTrackingSink(baseSink, {
+      pubSub,
+      ackTopic,
+      sourceId: "test-source",
+      ackTimeout: 5,
+    });
+
+    // Awareness is `requiresAck: false`, so the server never publishes an ACK
+    // for it. Tracking it would stall `waitForAcks()` for the full timeout —
+    // which made every HTTP POST carrying awareness return 504.
+    const awareness = new AwarenessMessage(
+      "test-doc",
+      {
+        type: "awareness-update",
+        update: new Uint8Array([0x00, 0x01]) as AwarenessUpdateMessage,
+      },
+      context,
+    );
+
+    await trackedSink.write(awareness);
+    await trackedSink.waitForAcks();
+
+    expect(writtenMessages).toHaveLength(1);
+    expect(writtenMessages[0]).toBe(awareness);
+
+    await trackedSink.unsubscribe();
+  });
+
   it("should handle multiple messages and wait for all ACKs", async () => {
     const context: TestContext = {
       clientId: "test-client",

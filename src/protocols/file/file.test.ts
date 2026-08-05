@@ -60,7 +60,7 @@ describe("File RPC Methods", () => {
 
         expect(handler).toBeDefined();
 
-        const result = await handler!.handler(
+        const result = await handler!.handler!(
           {
             fileId: "file-1",
             filename: "test.txt",
@@ -89,7 +89,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(mockStorage, options);
         const handler = registry["fileUpload"];
 
-        const result = await handler!.handler(
+        const result = await handler!.handler!(
           {
             fileId: "file-1",
             filename: "test.txt",
@@ -121,7 +121,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(mockStorage, options);
         const handler = registry["fileUpload"];
 
-        const result = await handler!.handler(
+        const result = await handler!.handler!(
           {
             fileId: "file-1",
             filename: "test.txt",
@@ -154,7 +154,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(mockStorage, options);
         const handler = registry["fileUpload"];
 
-        const result = await handler!.handler(
+        const result = await handler!.handler!(
           {
             fileId: "file-1",
             filename: "test.txt",
@@ -199,7 +199,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(storageWithFile);
         const handler = registry["fileDownload"];
 
-        const result = await handler!.handler({ fileId: "file-1" }, context);
+        const result = await handler!.handler!({ fileId: "file-1" }, context);
 
         expect(result.response).not.toHaveProperty("type", "error");
         const response = result.response as {
@@ -227,7 +227,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(mockStorage, options);
         const handler = registry["fileDownload"];
 
-        const result = await handler!.handler({ fileId: "file-1" }, context);
+        const result = await handler!.handler!({ fileId: "file-1" }, context);
 
         expect(result.response).not.toHaveProperty("type", "error");
         const response = result.response as {
@@ -253,7 +253,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(mockStorage, options);
         const handler = registry["fileDownload"];
 
-        const result = await handler!.handler({ fileId: "file-999" }, context);
+        const result = await handler!.handler!({ fileId: "file-999" }, context);
 
         expect(result.response).not.toHaveProperty("type", "error");
         const response = result.response as {
@@ -276,7 +276,7 @@ describe("File RPC Methods", () => {
         const registry = getFileRpcHandlers(mockStorage, options);
         const handler = registry["fileDownload"];
 
-        const result = await handler!.handler({ fileId: "file-1" }, context);
+        const result = await handler!.handler!({ fileId: "file-1" }, context);
 
         expect(result.response).toHaveProperty("type", "error");
         const response = result.response as { statusCode: number };

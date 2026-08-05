@@ -1,5 +1,5 @@
 import { decodeMessage } from "teleportal/protocol";
-import { PresenceMessage, type BinaryMessage, type Message } from "teleportal";
+import { RpcMessage, type BinaryMessage, type Message } from "teleportal";
 import type { ConnectionTransport } from "../transports/types";
 import { DirectConnection } from "../connection";
 import { RpcClient } from "../rpc-client";
@@ -102,12 +102,18 @@ export class ConnectionWorkerManager {
         const conn = portState.managedConnection;
         if (!conn) return;
         const decoded = decodeMessage(msg.encoded as BinaryMessage);
-        if (decoded.type === "presence") {
-          const payload = decoded.payload;
-          if (payload.type === "presence-announce") {
-            portState.trackAnnounce(decoded.document, payload.awarenessId);
-          } else if (payload.type === "presence-unannounce") {
-            portState.trackUnannounce(decoded.document, payload.awarenessId);
+        // Presence is an RPC protocol: sniff announce/unannounce requests so a
+        // dead tab's presence can be retracted when its port is released.
+        if (decoded.type === "rpc" && decoded.payload.type === "success") {
+          const rpc = decoded as RpcMessage<Record<string, unknown>>;
+          const awarenessId = (rpc.payload.payload as { awarenessId?: number } | undefined)
+            ?.awarenessId;
+          if (typeof awarenessId === "number" && rpc.document !== undefined) {
+            if (rpc.rpcMethod === "presenceAnnounce") {
+              portState.trackAnnounce(rpc.document, awarenessId);
+            } else if (rpc.rpcMethod === "presenceUnannounce") {
+              portState.trackUnannounce(rpc.document, awarenessId);
+            }
           }
         }
         conn.connection.send(decoded).catch(() => {});
@@ -345,10 +351,16 @@ export class ConnectionWorkerManager {
   #sendPendingUnannounces(portState: PortState, conn: ManagedConnection): void {
     for (const [document, ids] of portState.announcedPresence) {
       for (const awarenessId of ids) {
-        const msg = new PresenceMessage(document, {
-          type: "presence-unannounce",
-          awarenessId,
-        });
+        // Fire-and-forget unannounce request: no response is awaited (the tab
+        // is gone) and the server handler is idempotent. The nonce keeps rapid
+        // identical retractions content-unique for ack correlation.
+        const msg = new RpcMessage(
+          document,
+          { type: "success", payload: { awarenessId, nonce: Date.now() } },
+          "presenceUnannounce",
+          "request",
+          undefined,
+        );
         conn.connection.send(msg).catch(() => {});
       }
     }

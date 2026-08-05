@@ -359,10 +359,7 @@ export class DocumentsPanel {
     return fields;
   }
 
-  private patchInspector(
-    doc: DocumentState,
-    f: NonNullable<typeof this.inspectorFields>,
-  ) {
+  private patchInspector(doc: DocumentState, f: NonNullable<typeof this.inspectorFields>) {
     f.titleEl.textContent = doc.name;
     f.titleEl.title = doc.id;
     f.syncValue.textContent = PHASE_LABEL[doc.syncPhase];

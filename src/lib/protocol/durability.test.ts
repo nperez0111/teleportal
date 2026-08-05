@@ -4,7 +4,6 @@ import {
   AwarenessMessage,
   type AwarenessUpdateMessage,
   DocMessage,
-  PresenceMessage,
   RpcMessage,
   type StateVector,
   type SyncStep2Update,
@@ -61,13 +60,24 @@ describe("message durability classification", () => {
     expect(m.durability).toBe("ephemeral");
   });
 
-  it("PresenceMessage is ephemeral", () => {
-    const m = new PresenceMessage("doc", { type: "presence-announce", awarenessId: 1 });
+  it("AckMessage is ephemeral", () => {
+    const m = new AckMessage({ type: "ack", messageId: "dGVzdA==" });
     expect(m.durability).toBe("ephemeral");
   });
 
-  it("AckMessage is ephemeral", () => {
-    const m = new AckMessage({ type: "ack", messageId: "dGVzdA==" });
+  it("RpcMessage can declare per-message ephemeral durability", () => {
+    const m = new RpcMessage(
+      "doc",
+      { type: "success", payload: { data: "x" } },
+      "presenceRoster",
+      "response",
+      undefined,
+      {},
+      false,
+      undefined,
+      undefined,
+      { durability: "ephemeral" },
+    );
     expect(m.durability).toBe("ephemeral");
   });
 
@@ -90,11 +100,10 @@ describe("message durability classification", () => {
    * without being reviewed against that invariant fails here.
    */
   it("only known order-independent types are ephemeral", () => {
-    const ephemeralByDesign = new Set<string>(["awareness", "presence", "ack"]);
+    const ephemeralByDesign = new Set<string>(["awareness", "ack"]);
 
     const cases: Array<{ label: string; type: string; ephemeral: boolean }> = [
       { label: "awareness", type: "awareness", ephemeral: true },
-      { label: "presence", type: "presence", ephemeral: true },
       { label: "ack", type: "ack", ephemeral: true },
       { label: "rpc", type: "rpc", ephemeral: false },
       { label: "doc:update", type: "doc", ephemeral: false },

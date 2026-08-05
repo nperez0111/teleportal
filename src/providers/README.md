@@ -334,13 +334,15 @@ The `Provider` class extends `Observable` and emits the following events:
 
 #### Presence roster (`provider.peers`)
 
+Presence is driven by the presence RPC protocol (`teleportal/protocols/presence`): the provider auto-registers `createPresenceExtension` under `rpc.presence` (a user-supplied `"presence"` key in the `rpc` map wins), and `provider.peers` plus the `peer-join`/`peer-leave` events delegate to it. The extension announces this provider's awareness clientID on every (re)connect via its `onConnect` hook (after the doc sync handshake) and retracts it (`presenceUnannounce`) on destroy.
+
 `provider.peers` is a `ReadonlyMap<number, PresenceEvent>` (keyed by awareness clientID) of the peers currently believed present. It is kept accurate by three mechanisms:
 
-- **Join/leave messages** from the server maintain it incrementally.
-- **Roster heartbeats**: the server sends the full roster after every announce and periodically (`presenceConfig.heartbeatIntervalMs`, 30s default); the provider reconciles against it, so a lost join/leave self-heals within one heartbeat instead of persisting forever.
+- **`presenceJoin`/`presenceLeave` pushes** from the server maintain it incrementally.
+- **Roster snapshots**: the server pushes the full roster (`presenceRoster`) after every announce and periodically (the presence protocol's `heartbeatIntervalMs`, 30s default); the provider reconciles against it, so a lost join/leave self-heals within one heartbeat instead of persisting forever. A freshly-joined peer is protected from a stale snapshot for `presenceJoinGraceMs`.
 - **Offline honesty**: after `offlineTimeoutMs` without a connection, the provider clears all peers and remote awareness states (emitting `peer-leave` for each) — an offline client reports _no_ peers rather than a stale roster. On reconnect the provider re-announces, rebuilds the roster from the server's reply, re-broadcasts its own awareness state, and sends an `awareness-request` so peers' cursor states reappear immediately.
 
-Server-side, the presence of a dead connection (e.g. a wedged socket that never fires `close`) is killed by the server's client-liveness sweep: clients heartbeat over the websocket transport every 15s by default, and a ping-capable client that goes silent past `presenceConfig.clientTtlMs` (60s default) is disconnected and its presence broadcast as left.
+Server-side, the presence of a dead connection (e.g. a wedged socket that never fires `close`) is killed by the server's client-liveness sweep: clients heartbeat over the websocket transport every 15s by default, and a ping-capable client that goes silent past `livenessConfig.clientTtlMs` (60s default) is disconnected; the presence protocol consumes the resulting `client-leave` event and broadcasts its presence as left.
 
 ### Provider Options
 

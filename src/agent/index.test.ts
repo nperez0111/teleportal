@@ -417,7 +417,9 @@ describe("createAgent — presence", () => {
     const idA = a.awareness.clientID;
     a.awareness.setLocalState({ cursor: 42 });
 
-    await waitFor(() => b.awareness.getStates().has(idA));
+    // The presence roster surfaces a peer's clientID (with an empty state) as
+    // soon as it joins, so wait for the awareness payload itself to land.
+    await waitFor(() => (b.awareness.getStates().get(idA) as { cursor?: number })?.cursor === 42);
     expect(b.awareness.getStates().get(idA)).toEqual({ cursor: 42 });
 
     a.destroy();
@@ -465,5 +467,34 @@ describe("createAgent — encryption", () => {
 
     a.destroy();
     b.destroy();
+  });
+
+  it("tears the agent down when it holds the wrong key", async () => {
+    const key = await generateEncryptionKey();
+    const wrongKey = await generateEncryptionKey();
+
+    const owner = await createAgent(server, {
+      document: "wrong-key-doc",
+      context: ctx({ clientId: "agent-owner", userId: "user-owner" }),
+      encryptionKey: key,
+    });
+    owner.doc.getText("secret").insert(0, "classified");
+    await owner.flush();
+
+    // A failed agent must not leave its client attached to the session, nor
+    // leak the Provider it had already built (Y.Doc, listeners, timers).
+    await expect(
+      createAgent(server, {
+        document: "wrong-key-doc",
+        context: ctx({ clientId: "agent-intruder", userId: "user-intruder" }),
+        encryptionKey: wrongKey,
+      }),
+    ).rejects.toThrow();
+
+    const session = server.getSession("test-room/wrong-key-doc")!;
+    expect(session).toBeDefined();
+    await waitFor(() => !session.hasClient("agent-intruder"));
+
+    owner.destroy();
   });
 });

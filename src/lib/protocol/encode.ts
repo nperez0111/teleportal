@@ -31,12 +31,15 @@ export function encodeMessage(
     // S
     encoding.writeUint8(encoder, 0x53);
     // version
-    encoding.writeUint8(encoder, 0x01);
+    encoding.writeUint8(encoder, 0x02);
     // document name (empty string for file messages)
     encoding.writeVarString(encoder, message.document ?? "");
 
     // encrypted or not
     encoding.writeUint8(encoder, message.encrypted ? 1 : 0);
+
+    // best-effort (1 = receivers must not ack; senders do not retransmit)
+    encoding.writeUint8(encoder, message.requiresAck ? 0 : 1);
 
     switch (message.type) {
       case "awareness": {
@@ -125,48 +128,6 @@ export function encodeMessage(
         }
         break;
       }
-      case "presence": {
-        // message type
-        encoding.writeUint8(encoder, 3);
-
-        switch (message.payload.type) {
-          case "presence-announce":
-          case "presence-unannounce": {
-            // sub-type: 0 = announce, 4 = unannounce
-            encoding.writeUint8(encoder, message.payload.type === "presence-announce" ? 0 : 4);
-            encoding.writeVarUint(encoder, message.payload.awarenessId);
-            break;
-          }
-          case "presence-join":
-          case "presence-leave": {
-            // sub-type
-            encoding.writeUint8(encoder, message.payload.type === "presence-join" ? 1 : 2);
-            encoding.writeVarUint(encoder, message.payload.awarenessId);
-            encoding.writeVarString(encoder, message.payload.clientId);
-            encoding.writeVarString(encoder, message.payload.userId);
-            encoding.writeAny(encoder, message.payload.data as encoding.AnyEncodable);
-            break;
-          }
-          case "presence-heartbeat": {
-            // sub-type
-            encoding.writeUint8(encoder, 3);
-            encoding.writeVarUint(encoder, message.payload.clients.length);
-            for (const peer of message.payload.clients) {
-              encoding.writeVarUint(encoder, peer.awarenessId);
-              encoding.writeVarString(encoder, peer.clientId);
-              encoding.writeVarString(encoder, peer.userId);
-              encoding.writeAny(encoder, peer.data as encoding.AnyEncodable);
-            }
-            break;
-          }
-          default: {
-            throw new Error("Invalid presence payload.type", {
-              cause: { message },
-            });
-          }
-        }
-        break;
-      }
       case "rpc": {
         encoding.writeUint8(encoder, 4);
 
@@ -182,14 +143,14 @@ export function encodeMessage(
         // request type
         encoding.writeUint8(encoder, requestTypeIndex);
 
-        // original request id
+        // original request id — absent for pushes (a "response" correlated to no request)
         if (message.requestType === "response" || message.requestType === "stream") {
-          if (!message.originalRequestId) {
-            throw new Error("Original request ID is required for response or stream messages", {
-              cause: { message },
-            });
+          if (message.originalRequestId) {
+            encoding.writeUint8(encoder, 1);
+            encoding.writeVarString(encoder, message.originalRequestId);
+          } else {
+            encoding.writeUint8(encoder, 0);
           }
-          encoding.writeVarString(encoder, message.originalRequestId);
         }
 
         // is error or success

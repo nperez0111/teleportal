@@ -82,7 +82,7 @@ export type BinaryTransport<AdditionalProperties extends Record<string, unknown>
  */
 export interface PublishOptions {
   /**
-   * Ephemeral messages (presence/awareness/ack) skip the durable log and travel over the
+   * Ephemeral messages (awareness/ack/ephemeral rpc pushes) skip the durable log and travel over the
    * backend's plain fire-and-forget channel. Plain (non-durable) backends ignore this flag —
    * everything is fire-and-forget for them anyway.
    */

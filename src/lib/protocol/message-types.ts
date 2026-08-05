@@ -6,12 +6,6 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
-  DecodedPresenceAnnounce,
-  DecodedPresenceHeartbeat,
-  DecodedPresenceJoin,
-  DecodedPresenceLeave,
-  DecodedPresenceUnannounce,
-  PresenceMessageBinary,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -33,7 +27,6 @@ export type BinaryMessage =
   | AwarenessUpdateMessage
   | AwarenessRequestMessage
   | EncodedAckMessage
-  | PresenceMessageBinary
   | EncodedRpcMessage;
 
 /**
@@ -44,7 +37,6 @@ export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>
   | AckMessage<Context>
-  | PresenceMessage<Context>
   | RpcMessage<Context>;
 
 /**
@@ -111,12 +103,26 @@ export abstract class CustomMessage<
    * INVARIANT: a message may return `"ephemeral"` only if its effect is **order-independent
    * relative to durable traffic** AND it **self-heals if dropped**. This is what makes it safe
    * for a durable backend to deliver ephemeral traffic over a separate, uncoordinated channel
-   * from the durable stream (the two paths have no mutual ordering guarantee). Presence
-   * (heartbeats + TTL), awareness (client-side clock guards), and acks (worthless after the
-   * sender's retry timeout) all satisfy this.
+   * from the durable stream (the two paths have no mutual ordering guarantee). Awareness
+   * (client-side clock guards), acks (worthless after the sender's retry timeout), and
+   * ephemeral rpc pushes (e.g. presence, which self-heals via rosters + TTL) all satisfy this.
    */
   public get durability(): "durable" | "ephemeral" {
     return "durable";
+  }
+
+  /**
+   * Whether receivers must acknowledge this message (and senders track it in-flight with NACK
+   * retransmit). Defaults to `true` — acking is the default delivery mode.
+   *
+   * `false` marks the message best-effort: receivers do not ack it, senders do not retransmit
+   * it, and the server may drop (rather than hold/NACK) it under rate-limit pressure. Carried
+   * on the wire as the `bestEffort` header byte so the policy is self-describing. Only safe
+   * for high-churn traffic that self-heals if dropped (e.g. awareness, which is clock-guarded
+   * and re-announced).
+   */
+  public get requiresAck(): boolean {
+    return true;
   }
 
   public toJSON(): Record<string, unknown> {
@@ -166,6 +172,14 @@ export class AwarenessMessage<Context extends Record<string, unknown>> extends C
   /** Awareness is idempotent and clock-guarded client-side → ephemeral. */
   public override get durability(): "durable" | "ephemeral" {
     return "ephemeral";
+  }
+
+  /**
+   * Awareness is the highest-frequency traffic (every cursor move) and self-heals via
+   * clock-guarded re-announcement → best-effort, never acked.
+   */
+  public override get requiresAck(): boolean {
+    return false;
   }
 }
 
@@ -240,43 +254,22 @@ export class AckMessage<Context extends Record<string, unknown>> extends CustomM
   public override get durability(): "durable" | "ephemeral" {
     return "ephemeral";
   }
+
+  /** Acks are never themselves acked. */
+  public override get requiresAck(): boolean {
+    return false;
+  }
 }
 
 /**
- * A presence message announcing that a client joined or left a session.
- *
- * Presence is always cleartext (it carries no document content), so it conveys a
- * client's awareness clientID to the server even for end-to-end encrypted
- * documents — where the awareness payload itself is opaque to the server.
+ * Per-message delivery QoS for an {@link RpcMessage}, resolved from the method definition by
+ * the sender. `durability` picks the pub/sub lane if the message is replicated; `ack: false`
+ * marks it best-effort (see {@link CustomMessage.requiresAck}).
  */
-export class PresenceMessage<Context extends Record<string, unknown>> extends CustomMessage<
-  Context,
-  PresenceMessageBinary
-> {
-  public type = "presence" as const;
-  public context: Context;
-  public encrypted: boolean = false;
-
-  constructor(
-    public document: string,
-    public payload:
-      | DecodedPresenceAnnounce
-      | DecodedPresenceUnannounce
-      | DecodedPresenceJoin
-      | DecodedPresenceLeave
-      | DecodedPresenceHeartbeat,
-    context?: Context,
-    encoded?: PresenceMessageBinary,
-  ) {
-    super(encoded);
-    this.context = context ?? ({} as Context);
-  }
-
-  /** Presence self-heals via heartbeats + TTL → ephemeral. */
-  public override get durability(): "durable" | "ephemeral" {
-    return "ephemeral";
-  }
-}
+export type RpcMessageQos = {
+  durability?: "durable" | "ephemeral";
+  ack?: boolean;
+};
 
 /**
  * An RPC message for remote procedure calls.
@@ -288,6 +281,7 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
   public type = "rpc" as const;
   public context: Context;
   #serializer?: (context: SerializerContext) => Uint8Array | undefined;
+  #qos?: RpcMessageQos;
 
   constructor(
     public document: string | undefined,
@@ -299,10 +293,25 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
     public encrypted: boolean = false,
     encoded?: EncodedRpcMessage,
     serializer?: (context: SerializerContext) => Uint8Array | undefined,
+    qos?: RpcMessageQos,
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
     this.#serializer = serializer;
+    this.#qos = qos;
+  }
+
+  /**
+   * RPC delivery QoS is declared per method (see `definePush`); the sender stamps it onto the
+   * message here. Defaults stay conservative: durable (only consulted if the message is ever
+   * published over pub/sub) and acked.
+   */
+  public override get durability(): "durable" | "ephemeral" {
+    return this.#qos?.durability ?? "durable";
+  }
+
+  public override get requiresAck(): boolean {
+    return this.#qos?.ack ?? true;
   }
 
   public override encode(): EncodedRpcMessage {

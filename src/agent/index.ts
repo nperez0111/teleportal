@@ -80,8 +80,10 @@ export async function createAgent<R extends RpcExtensionMap = {}>(
   };
 
   // Resources created before sync completes. If any step throws we must tear
-  // the connection down or we leak the client's background consume loop.
+  // these down or we leak the client's background consume loop, and — once the
+  // Provider exists — its Y.Doc, subdoc listener, and presence timers too.
   let connection: DirectConnection | undefined;
+  let provider: Provider<Transport<ClientContext, DefaultTransportProperties>, R> | undefined;
   try {
     connection = new DirectConnection({
       transports: [serverTransport(server, { id: clientId, context: options.context })],
@@ -95,17 +97,15 @@ export async function createAgent<R extends RpcExtensionMap = {}>(
     // connection itself — establish the in-process link first.
     await connection.connect();
 
-    const provider = await Provider.create<Transport<ClientContext, DefaultTransportProperties>, R>(
-      {
-        connection,
-        document: options.document,
-        encryptionKey: options.encryptionKey,
-        // Server processes have no IndexedDB, and the document is already
-        // durable in the server's own storage — never persist offline.
-        enableOfflinePersistence: false,
-        rpc: options.rpc,
-      },
-    );
+    provider = await Provider.create<Transport<ClientContext, DefaultTransportProperties>, R>({
+      connection,
+      document: options.document,
+      encryptionKey: options.encryptionKey,
+      // Server processes have no IndexedDB, and the document is already
+      // durable in the server's own storage — never persist offline.
+      enableOfflinePersistence: false,
+      rpc: options.rpc,
+    });
 
     await provider.synced;
 
@@ -114,9 +114,18 @@ export async function createAgent<R extends RpcExtensionMap = {}>(
   } catch (error) {
     wideEvent.outcome = "error";
     wideEvent.error = error;
-    // Tear down the partially-created agent so we don't leak the client's
-    // background consume loop. destroy() is safe on a half-open connection.
-    connection?.destroy();
+    // Tear down the partially-created agent. Once the Provider exists it owns
+    // the connection, so destroying it is what releases everything — the Y.Doc,
+    // the subdoc listener, the presence extension's timers, and the connection
+    // (and with it the client's background consume loop). This path is reached
+    // in practice: `synced` rejects when the agent holds the wrong encryption
+    // key for the document. Before the Provider exists, the connection is all
+    // there is; destroy() is safe on a half-open one.
+    if (provider) {
+      provider.destroy();
+    } else {
+      connection?.destroy();
+    }
     throw error;
   } finally {
     wideEvent.duration_ms = Date.now() - startTime;

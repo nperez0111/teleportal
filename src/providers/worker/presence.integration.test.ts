@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { InMemoryPubSub, type Message, type ServerContext } from "teleportal";
 import { MemoryDocumentStorage } from "../../storage/in-memory/document-storage";
+import { getPresenceRpcHandlers } from "../../protocols/presence/server";
 import { Session } from "../../server/session";
 import { Server } from "../../server/server";
 import { DirectConnection } from "../connection";
@@ -28,6 +29,17 @@ async function waitFor(condition: () => boolean, timeoutMs = 1000): Promise<void
 }
 
 function createSession() {
+  // Presence is an RPC protocol: the session needs the handler registry, and
+  // the registry's init (wired through the server) needs a session-open to
+  // attach its client-leave/dispose listeners — as in production.
+  const registry = getPresenceRpcHandlers<ServerContext>();
+  const server = new Server<ServerContext>({
+    storage: async () => {
+      throw new Error("not used");
+    },
+    presence: false,
+    rpcHandlers: registry,
+  });
   const session = new Session<ServerContext>({
     documentId: DOC,
     namespacedDocumentId: DOC,
@@ -37,11 +49,15 @@ function createSession() {
     pubSub: new InMemoryPubSub(),
     nodeId: "test-node",
     onCleanupScheduled: () => {},
-    server: new Server<ServerContext>({
-      storage: async () => {
-        throw new Error("not used");
-      },
-    }),
+    rpcHandlers: registry,
+    server,
+  });
+  void server.call("session-open", {
+    session,
+    documentId: DOC,
+    namespacedDocumentId: DOC,
+    encrypted: false,
+    context: {} as ServerContext,
   });
   return session;
 }

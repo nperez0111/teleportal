@@ -195,7 +195,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["ping"].handler({ msg: "hello" }, mockContext());
+    const result = await registry["ping"].handler!({ msg: "hello" }, mockContext());
     expect(result).toEqual({ response: { reply: "pong: hello" }, encrypted: undefined });
   });
 
@@ -211,7 +211,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["fail"].handler({}, mockContext());
+    const result = await registry["fail"].handler!({}, mockContext());
     expect(result.response).toEqual({
       type: "error",
       statusCode: 404,
@@ -234,7 +234,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["boom"].handler({}, mockContext());
+    const result = await registry["boom"].handler!({}, mockContext());
     expect(result.response).toEqual({
       type: "error",
       statusCode: 500,
@@ -256,7 +256,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["boom"].handler({}, mockContext());
+    const result = await registry["boom"].handler!({}, mockContext());
     expect(result.response).toEqual({
       type: "error",
       statusCode: 500,
@@ -276,7 +276,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["enc"].handler({}, mockContext());
+    const result = await registry["enc"].handler!({}, mockContext());
     expect(result.encrypted).toBe(true);
     expect(result.response).toEqual({ data: "secret" });
   });
@@ -293,7 +293,7 @@ describe("createHandlers", () => {
           ok({ message: `${prefix}, ${payload.name}!` }),
     });
 
-    const result = await registry["greet"].handler({ name: "World" }, mockContext());
+    const result = await registry["greet"].handler!({ name: "World" }, mockContext());
     expect(result.response).toEqual({ message: "Hello, World!" });
   });
 
@@ -345,7 +345,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["validated"].handler({}, mockContext());
+    const result = await registry["validated"].handler!({}, mockContext());
     expect(handlerFn).not.toHaveBeenCalled();
     expect(result.response).toEqual({
       type: "error",
@@ -377,7 +377,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["validated"].handler({ id: "abc" }, mockContext());
+    const result = await registry["validated"].handler!({ id: "abc" }, mockContext());
     expect(result.response).toEqual({ name: "found: abc" });
   });
 
@@ -405,7 +405,7 @@ describe("createHandlers", () => {
       },
     );
 
-    await registry["coerce"].handler({ id: "test" }, mockContext());
+    await registry["coerce"].handler!({ id: "test" }, mockContext());
     expect(receivedPayload).toEqual({ id: "test", normalized: true });
   });
 

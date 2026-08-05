@@ -83,7 +83,7 @@ const server = new Server({
 
 Trade-offs to be aware of:
 
-- `RedisPubSub` is **durable by default**: document updates are persisted to a per-topic Redis Stream (`XADD`), and a node that briefly disconnects resumes its `XREAD` from the last-read id and catches up on everything it missed — so it no longer silently serves stale state after a blip. Ephemeral traffic (presence, awareness, acks) still uses plain fire-and-forget `PUBLISH` so it doesn't consume stream retention.
+- `RedisPubSub` is **durable by default**: document updates are persisted to a per-topic Redis Stream (`XADD`), and a node that briefly disconnects resumes its `XREAD` from the last-read id and catches up on everything it missed — so it no longer silently serves stale state after a blip. Ephemeral traffic (awareness, acks, presence RPC pushes) still uses plain fire-and-forget `PUBLISH` so it doesn't consume stream retention.
 - Retention is bounded by `stream.maxLen` (approximate `MAXLEN`, default 10_000) and an optional rolling `stream.ttlMs`. If a node is disconnected long enough that its resume position is trimmed out of retention, the backend reports a gap and the session heals by re-syncing its local clients from storage (see [PubSub durability](/guides/pub-sub/)).
 - Set `stream: { isDurableTopic: () => false }` to fully restore the old fire-and-forget behavior with zero stream overhead.
 - Fan-out to many subscribers on a single Redis instance can add latency under high load.

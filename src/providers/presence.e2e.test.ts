@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Message, ServerContext, Transport } from "teleportal";
-import { PresenceMessage } from "teleportal";
 import { createChannel } from "../lib/iter";
+import { getPresenceRpcHandlers, runPresenceMaintenance } from "../protocols/presence/server";
 import { Server } from "../server/server";
 import { MemoryDocumentStorage } from "../storage/in-memory/document-storage";
 import { DirectConnection } from "./connection";
@@ -164,14 +164,19 @@ async function connectProvider(
   return { provider, connection, transport };
 }
 
-function makeServer(presenceConfig?: { clientTtlMs?: number }) {
-  return new Server<ServerContext>({
-    storage: new MemoryDocumentStorage(),
-    presenceConfig: {
-      getPresenceData: (context) => ({ name: `name:${context.userId}` }),
-      ...presenceConfig,
-    },
+function makeServer(livenessConfig?: { clientTtlMs?: number }) {
+  // The registry is built explicitly (instead of the default-on `presence`
+  // option) so tests can drive maintenance ticks via runPresenceMaintenance.
+  const registry = getPresenceRpcHandlers<ServerContext>({
+    getPresenceData: (context) => ({ name: `name:${context.userId}` }),
   });
+  const server = new Server<ServerContext>({
+    storage: new MemoryDocumentStorage(),
+    presence: false,
+    rpcHandlers: registry,
+    livenessConfig,
+  });
+  return Object.assign(server, { presenceRegistry: registry });
 }
 
 describe("presence end-to-end (Provider ↔ Server)", () => {
@@ -346,15 +351,12 @@ describe("presence end-to-end (Provider ↔ Server)", () => {
     // ghost from the client's perspective).
     const session = server.getSession(`room/${DOC}`)!;
     expect(session).toBeDefined();
-    await session.apply(
-      new PresenceMessage(DOC, {
-        type: "presence-join",
-        awarenessId: 424242,
-        clientId: "ghost",
-        userId: "user-ghost",
-        data: {},
-      }) as never,
-    );
+    await session.broadcastRpc("presenceJoin", {
+      awarenessId: 424242,
+      clientId: "ghost",
+      userId: "user-ghost",
+      data: {},
+    });
     await waitFor(() => a.provider.peers.has(424242));
     a.provider.awareness.states.set(424242, { user: { name: "Ghost" } });
 
@@ -363,7 +365,7 @@ describe("presence end-to-end (Provider ↔ Server)", () => {
 
     // One maintenance tick: the roster heartbeat carries the truth (no
     // ghost), and the client reconciles it away.
-    await session.runPresenceMaintenance();
+    await runPresenceMaintenance(server.presenceRegistry, session);
     await waitFor(() => !a.provider.peers.has(424242));
 
     expect(leaves.map((p) => p.awarenessId)).toEqual([424242]);

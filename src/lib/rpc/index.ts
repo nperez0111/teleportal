@@ -2,6 +2,8 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type {
   RpcError,
   RpcHandlerRegistry,
+  RpcMethodQos,
+  RpcPushContext,
   RpcServerContext,
   RpcServerRequestHandler,
   Message,
@@ -13,7 +15,7 @@ import type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-exte
 // MethodDef — method contract (single source of truth)
 // ---------------------------------------------------------------------------
 
-export type MethodKind = "request-response" | "multipart";
+export type MethodKind = "request-response" | "multipart" | "push";
 
 export interface Codec<T> {
   encode: (payload: T) => Uint8Array;
@@ -41,6 +43,8 @@ export interface MethodDef<
   readonly requestCodec?: Codec<any>;
   readonly responseCodec?: Codec<any>;
   readonly streamCodec?: Codec<any>;
+  /** Delivery QoS, resolved with defaults at definition time. Only set for push methods. */
+  readonly qos?: RpcMethodQos;
 }
 
 interface CodecOptions<Req = unknown, Res = unknown, Stream = unknown> {
@@ -139,6 +143,60 @@ export function defineMethod(
 }
 
 // ---------------------------------------------------------------------------
+// definePush — unsolicited notification methods (server→client and node→node)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-push QoS overrides. Push defaults: ephemeral, replicated, acked, deduped —
+ * see {@link RpcMethodQos} for what each knob means.
+ */
+export type PushQosOptions = Partial<RpcMethodQos>;
+
+const PUSH_QOS_DEFAULTS: RpcMethodQos = {
+  durability: "ephemeral",
+  replicate: true,
+  ack: true,
+  dedupe: true,
+};
+
+// Overload 1: schema-first
+export function definePush<Name extends string, PayloadSchema extends StandardSchemaV1>(
+  name: Name,
+  options: {
+    payload: PayloadSchema;
+    qos?: PushQosOptions;
+    payloadCodec?: Codec<StandardSchemaV1.InferOutput<PayloadSchema>>;
+  },
+): MethodDef<Name, StandardSchemaV1.InferOutput<PayloadSchema>, void, never, "push">;
+
+// Overload 2: type-first
+export function definePush<Name extends string, Payload>(
+  name: Name,
+  options?: { qos?: PushQosOptions; payloadCodec?: Codec<Payload> },
+): MethodDef<Name, Payload, void, never, "push">;
+
+// Implementation
+export function definePush(
+  name: string,
+  options?: {
+    payload?: StandardSchemaV1;
+    qos?: PushQosOptions;
+    payloadCodec?: Codec<any>;
+  },
+): MethodDef<string, unknown, void, never, "push"> {
+  return {
+    name,
+    kind: "push",
+    _request: undefined as never,
+    _response: undefined as never,
+    _stream: undefined as never,
+    requestSchema: options?.payload,
+    requestCodec: options?.payloadCodec,
+    qos: { ...PUSH_QOS_DEFAULTS, ...options?.qos },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // ProtocolDef — groups related methods under ergonomic keys
 // ---------------------------------------------------------------------------
 
@@ -232,6 +290,14 @@ type StreamingHandlerDef<Request, Response, Stream> = {
   ) => Promise<void>;
 };
 
+type PushHandlerFn<Payload> = (
+  payload: Payload,
+  context: RpcPushContext,
+) =>
+  | Promise<{ forwardToLocalClients?: boolean; replicate?: boolean } | void>
+  | { forwardToLocalClients?: boolean; replicate?: boolean }
+  | void;
+
 type HandlersFor<P extends ProtocolDef<any>, Deps> = {
   [K in keyof P["methods"]]: P["methods"][K]["kind"] extends "multipart"
     ? (
@@ -241,7 +307,9 @@ type HandlersFor<P extends ProtocolDef<any>, Deps> = {
         P["methods"][K]["_response"],
         P["methods"][K]["_stream"]
       >
-    : (deps: Deps) => HandlerFn<P["methods"][K]["_request"], P["methods"][K]["_response"]>;
+    : P["methods"][K]["kind"] extends "push"
+      ? (deps: Deps) => PushHandlerFn<P["methods"][K]["_request"]>
+      : (deps: Deps) => HandlerFn<P["methods"][K]["_request"], P["methods"][K]["_response"]>;
 };
 
 interface CreateHandlersOptions<Deps> {
@@ -307,7 +375,34 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
     const methodDef: MethodDef = protocol.methods[key];
     const factory = handlers[key] as (deps: Deps) => any;
 
-    if (methodDef.kind === "multipart") {
+    if (methodDef.kind === "push") {
+      const pushHandlerFn = factory(deps) as PushHandlerFn<unknown>;
+
+      const entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext> = {
+        pushHandler: async (payload, context) => {
+          if (methodDef.requestSchema) {
+            const v = await validatePayload(methodDef.requestSchema, payload);
+            // A push has no reply channel — an invalid payload is dropped, not
+            // answered. `replicate: false` is explicit even though client pushes
+            // no longer replicate by default: an invalid payload must never be
+            // vouched into the node-to-node plane.
+            if (!v.ok) return { forwardToLocalClients: false, replicate: false };
+            payload = v.value;
+          }
+          return pushHandlerFn(payload, context);
+        },
+        qos: methodDef.qos,
+      };
+
+      if (methodDef.requestCodec) entry.request = methodDef.requestCodec;
+
+      if (!initAttached && options?.init) {
+        initAttached = true;
+        entry.init = (server) => options.init!(server, deps);
+      }
+
+      registry[methodDef.name] = entry;
+    } else if (methodDef.kind === "multipart") {
       const { handler, streamHandler } = factory(deps) as StreamingHandlerDef<
         unknown,
         unknown,
@@ -417,7 +512,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
 // ---------------------------------------------------------------------------
 
 type ClientMethodsFor<P extends ProtocolDef<any>> = {
-  [K in keyof P["methods"] as P["methods"][K]["kind"] extends "multipart" ? never : K]: (
+  [K in keyof P["methods"] as P["methods"][K]["kind"] extends "multipart" | "push" ? never : K]: (
     payload: P["methods"][K]["_request"],
     options?: { encrypted?: boolean; timeout?: number },
   ) => Promise<P["methods"][K]["_response"]>;
@@ -428,6 +523,12 @@ interface ClientExtensionOptions<P extends ProtocolDef<any>, PublicApi> {
   build?: (methods: ClientMethodsFor<P>, ctx: RpcExtensionContext) => PublicApi;
   handleMessage?: (message: any) => boolean | Promise<boolean>;
   handleAck?: (message: any) => boolean | Promise<boolean>;
+  /**
+   * Invoked by the provider on every (re)connect, after the doc sync handshake has been
+   * started and before the awareness resync — the deterministic slot for announce-style
+   * traffic that must follow sync-step-1.
+   */
+  onConnect?: () => void | Promise<void>;
   destroy?: () => void;
 }
 
@@ -441,7 +542,7 @@ function buildTypedMethods<P extends ProtocolDef<any>>(
     wrapError ?? ((op: string, error: unknown) => new RpcOperationError(protocol.name, op, error));
   for (const key of Object.keys(protocol.methods)) {
     const methodDef: MethodDef = protocol.methods[key];
-    if (methodDef.kind === "multipart") continue;
+    if (methodDef.kind === "multipart" || methodDef.kind === "push") continue;
     methods[key] = async (
       payload: unknown,
       options?: { encrypted?: boolean; timeout?: number },
@@ -488,6 +589,7 @@ export function createClientExtension<P extends ProtocolDef<any>, PublicApi>(
     destroy: options?.destroy,
     handleMessage: options?.handleMessage,
     handleAck: options?.handleAck,
+    onConnect: options?.onConnect,
   });
 }
 
@@ -496,6 +598,8 @@ export type {
   RpcServerContext,
   RpcHandlerRegistry,
   RpcServerRequestHandler,
+  RpcMethodQos,
+  RpcPushContext,
   RpcError,
 } from "teleportal/protocol";
 export type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";

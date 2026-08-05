@@ -114,14 +114,23 @@ describe("throttle (publish rate limiting)", () => {
 
   it("caps the number of publishes across a fast burst", async () => {
     const calls: number[] = [];
-    const push = throttle((v: number) => calls.push(v), 5);
+    const interval = 5;
+    const push = throttle((v: number) => calls.push(v), interval);
+    const start = performance.now();
     for (let i = 0; i < 20; i++) {
       push(i);
       await sleep(1);
     }
     await sleep(12);
-    // 20 rapid calls over ~20ms must not become 20 publishes at a 5ms interval.
-    expect(calls.length).toBeLessThan(12);
+    const elapsed = performance.now() - start;
+
+    // 20 rapid calls must not become 20 publishes at a 5ms interval. Bound
+    // against the time that ACTUALLY elapsed rather than the ~20ms the sleeps
+    // asked for: on a loaded machine each 1ms sleep overruns, every call then
+    // legitimately lands in its own window, and a fixed cap fails for a
+    // throttle that is behaving perfectly. A broken throttle still trips this —
+    // 20 publishes in ~20ms elapsed allows at most 6.
+    expect(calls.length).toBeLessThanOrEqual(Math.ceil(elapsed / interval) + 2);
     expect(calls[0]).toBe(0); // leading edge
     expect(calls.at(-1)).toBe(19); // final resting value always delivered
   });

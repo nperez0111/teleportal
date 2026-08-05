@@ -69,7 +69,7 @@ Durability closes it as an **optional capability of the `PubSub` interface**. Th
 
 How it works:
 
-- **Per-message classification.** Each message declares `durability: "durable" | "ephemeral"`. Document updates and full-state sync are durable (persisted, replayed after a blip); presence, awareness, acks, and the sync handshake are ephemeral (they self-heal, so they ride a non-persistent channel and don't consume retention). This is automatic — you never tag publishes by hand.
+- **Per-message classification.** Each message declares `durability: "durable" | "ephemeral"`. Document updates and full-state sync are durable (persisted, replayed after a blip); awareness, acks, the sync handshake, and presence RPC pushes are ephemeral (they self-heal, so they ride a non-persistent channel and don't consume retention). This is automatic — you never tag publishes by hand.
 - **Transparent catch-up.** After a reconnect, a durable backend resumes from its last-read position and delivers everything missed, in order. The server core never touches offsets.
 - **Beyond-retention gaps.** If a node is disconnected long enough that its resume position is trimmed out of retention, the backend reports a gap and the session heals by pushing a storage-derived full-state `sync-step-2` to its local clients (a `"replication-gap"` session event fires too). This heals when **storage is shared across nodes** (the standard deployment); with per-node storage, only in-retention durable replay heals cross-node gaps.
 

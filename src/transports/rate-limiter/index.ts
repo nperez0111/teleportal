@@ -703,15 +703,17 @@ export function isFileTransferMessage(message: Message<any>): boolean {
 }
 
 /**
- * Returns true for ephemeral metadata messages (cursor/selection awareness,
- * presence). These fire per keystroke UNBATCHED, so a fast typist emits
- * dozens per second — counting them against the sync budgets lets cursor
- * chatter drain the budget that doc updates need, stalling actual content
- * propagation. They get their own budget instead: dropping one is harmless
- * (the next update supersedes it) and they are never retransmitted.
+ * Returns true for ephemeral metadata messages (cursor/selection awareness and
+ * other best-effort traffic). These fire per keystroke UNBATCHED, so a fast
+ * typist emits dozens per second — counting them against the sync budgets lets
+ * cursor chatter drain the budget that doc updates need, stalling actual
+ * content propagation. They get their own budget instead: dropping one is
+ * harmless (the next update supersedes it) and they are never retransmitted.
+ * Keyed off the message's ack policy: best-effort (`requiresAck: false`) is
+ * exactly the self-healing, never-retransmitted class this budget exists for.
  */
 export function isEphemeralMetadataMessage(message: Message<any>): boolean {
-  return message.type === "awareness" || message.type === "presence";
+  return message.requiresAck === false && message.type !== "ack";
 }
 
 /**

@@ -198,12 +198,13 @@ need it take on no complexity:
   external replay consumers (cross-restart resume, tailing).
 - **Which traffic is durable is declared per message type**, not per call site. `CustomMessage`
   (in `teleportal/protocol`) exposes `durability: "durable" | "ephemeral"` (default `durable`;
-  `DocMessage` update/sync-step-2 durable, sync handshake ephemeral; presence/awareness/ack
-  ephemeral). The server publishes with `{ ephemeral: message.durability === "ephemeral" }` from
-  one helper, so ephemeral traffic (presence heartbeats, awareness) rides the backend's
-  non-persistent channel and never consumes durable-log retention. **Invariant:** a type may be
-  `ephemeral` only if it is order-independent w.r.t. durable traffic _and_ self-heals if dropped
-  (the two paths have no mutual ordering guarantee).
+  `DocMessage` update/sync-step-2 durable, sync handshake ephemeral; awareness/ack ephemeral;
+  RPC per-method via its declared QoS — presence pushes are ephemeral RPC). The server publishes
+  with `{ ephemeral: message.durability === "ephemeral" }` from one helper, so ephemeral traffic
+  (awareness, presence roster pushes) rides the backend's non-persistent channel and never
+  consumes durable-log retention. **Invariant:** a type may be `ephemeral` only if it is
+  order-independent w.r.t. durable traffic _and_ self-heals if dropped (the two paths have no
+  mutual ordering guarantee).
 - **Beyond-retention gaps** (resume position trimmed out) are surfaced via `onGap`; the server
   session heals by re-syncing its local clients from storage (fires a `replication-gap` session
   event). This heals when storage is shared across nodes (the standard deployment).
@@ -345,7 +346,8 @@ Inbound-only token-bucket rate limiting with **flow-control-by-delay**.
   transport; the inbound `source` is rate limited, the outbound `write` is
   **passed through untouched**.
 - **`defaultRateLimitRules()`** — separate budgets: sync (300/s per user,
-  1500/10s per document), awareness/presence (120/s per user), file-transfer
+  1500/10s per document), best-effort metadata such as awareness and best-effort
+  RPC pushes (120/s per user, keyed off `requiresAck === false`), file-transfer
   chunks (5000/s per user).
 - Helpers: **`isFileTransferMessage`**, **`isEphemeralMetadataMessage`**.
 

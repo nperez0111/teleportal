@@ -13,7 +13,13 @@ import {
  * Integration test against real workerd: spawns `wrangler dev` (runs fully
  * offline — the workerd binary ships with the wrangler dependency) and
  * exercises the example end to end.
+ *
+ * Spawning workerd costs ~2s of process startup, which is most of a `bun test`
+ * run on its own, so this suite is opt-in rather than part of the default
+ * sweep. Run it with `bun run test:workerd` (CI does this on every push).
  */
+const RUN_WORKERD = process.env.TELEPORTAL_WORKERD === "1";
+
 const PORT = 8790;
 const BASE = `http://localhost:${PORT}`;
 const URL_ = `${BASE}/api`;
@@ -38,6 +44,12 @@ async function waitForHealthy(timeoutMs: number): Promise<void> {
 }
 
 beforeAll(async () => {
+  if (!RUN_WORKERD) {
+    // Say so out loud, matching how the postgres/redis/s3 suites announce a
+    // skip — a silently absent integration suite reads as passing coverage.
+    console.log("Skipping workerd integration tests (set TELEPORTAL_WORKERD=1 to run)");
+    return;
+  }
   rmSync(PERSIST_DIR, { recursive: true, force: true });
   wranglerDev = Bun.spawn(
     [
@@ -62,11 +74,12 @@ beforeAll(async () => {
 }, 90_000);
 
 afterAll(() => {
+  if (!RUN_WORKERD) return;
   wranglerDev?.kill();
   rmSync(PERSIST_DIR, { recursive: true, force: true });
 });
 
-describe("teleportal on workerd", () => {
+describe.skipIf(!RUN_WORKERD)("teleportal on workerd", () => {
   it("serves SSE as a binary event-stream with a client-id frame", async () => {
     const res = await fetch(`${BASE}/api/sse`);
     expect(res.status).toBe(200);

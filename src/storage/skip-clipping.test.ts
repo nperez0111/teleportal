@@ -99,10 +99,7 @@ describe("serving documents with lost-update gaps", () => {
     const upToDate = new Y.Doc();
     Y.applyUpdateV2(upToDate, Y.mergeUpdatesV2([updates[0]!, updates[1]!, updates[2]!]));
 
-    const served = await storage.handleSyncStep1(
-      DOC,
-      Y.encodeStateVector(upToDate) as StateVector,
-    );
+    const served = await storage.handleSyncStep1(DOC, Y.encodeStateVector(upToDate) as StateVector);
     Y.applyUpdateV2(
       upToDate,
       decodeContentEncryptedPayload(served.content.update as EncryptedUpdatePayload)
@@ -128,6 +125,67 @@ describe("serving documents with lost-update gaps", () => {
     expect(pendingStructs(receiver)).toBeNull();
     expect(receiver.getArray("tree").length).toBe(10);
     expect(Y.decodeStateVector(healed.content.stateVector).get(SENDER)).toBe(10);
+  });
+
+  // KNOWN GAP, but a narrow one — a `todo` rather than a red test.
+  //
+  // A client that handshakes while the log is gappy is served the clipped
+  // prefix, and the withheld tail was broadcast before it joined, so it holds
+  // neither. Because the clipped prefix integrates cleanly it is NOT parked,
+  // so the parked-structs watchdog never fires: the shortfall is silent.
+  //
+  // It is not normally permanent, though. The heal path retransmits from the
+  // served state vector *forward*, which covers the tail as well as the missing
+  // middle, and that retransmit is broadcast to everyone connected — the joiner
+  // included. So the joiner recovers along with the rest. It stays short only
+  // if the sender never returns, and then the tail is unrecoverable for every
+  // client regardless of clipping.
+  //
+  // The reachable window also shrank a lot once the ydoc source began emitting
+  // in clock order (see `src/transports/ydoc/index.ts`). A single client's
+  // burst used to arrive shuffled — 0→1, 21→23, 7→21, then 4→7, 2→4, 1→2 —
+  // leaving the log gappy for most of every burst. Now one connection's updates
+  // arrive in order, so its gaps can only sit at the tail, and a tail gap fills
+  // forward by definition. Producing the middle-hole shape below takes
+  // reordering between client and storage, i.e. multi-node pubsub replication.
+  //
+  // Closing it properly means tracking that a client was served a clipped state
+  // and re-syncing it once the log goes gap-free — a session-layer change, and
+  // not worth it until the multi-node case actually bites.
+  it.todo("a client joining while the log is gappy still converges", async () => {
+    const { updates } = makeSenderUpdates(10);
+
+    // Clocks 1-5 are still in flight; 6-9 have already been appended AND
+    // broadcast to everyone connected at the time (the joiner is not yet).
+    for (const i of [0, 6, 7, 8, 9]) {
+      await storage.handleUpdate(DOC, envelope(updates[i]!));
+    }
+
+    // The joiner handshakes inside that window. It is served the clipped
+    // prefix and — critically — is NOT parked, so the provider's
+    // parked-structs watchdog will never fire to rescue it.
+    const served = await storage.handleSyncStep1(DOC, getEmptyStateVector());
+    const receiver = applyServed(served.content.update);
+    expect(pendingStructs(receiver)).toBeNull();
+    expect(receiver.getArray("tree").length).toBe(1);
+
+    // The late updates land and are broadcast live to the now-joined client.
+    for (const i of [1, 2, 3, 4, 5]) {
+      await storage.handleUpdate(DOC, envelope(updates[i]!));
+      Y.applyUpdateV2(receiver, updates[i]!);
+    }
+
+    // The server's document is whole again...
+    const full = await storage.handleSyncStep1(DOC, getEmptyStateVector());
+    expect(applyServed(full.content.update).getArray("tree").length).toBe(10);
+
+    // ...so the client must not be silently short of it. It integrated
+    // everything it was sent and is not parked, so nothing else will ever
+    // prompt it to ask for clocks 6-9.
+    expect(pendingStructs(receiver)).toBeNull();
+    expect(receiver.getArray("tree").toArray()).toEqual(
+      Array.from({ length: 10 }, (_, i) => `item-${i}`),
+    );
   });
 
   it("gap-free documents are served byte-identically (no clipping overhead path)", async () => {

@@ -23,6 +23,7 @@ There are several sub-packages built with documentation:
 - [`teleportal/protocol/encryption`](./src/lib/protocol/encryption/README.md) - Encryption protocol
 - [`teleportal/attribution`](./src/lib/attribution/README.md) - Attribution data model, set operations, and encoding
 - [`teleportal/protocols/attribution`](./src/protocols/attribution/README.md) - Attribution (authorship) read RPC methods
+- [`teleportal/protocols/presence`](./src/protocols/presence/README.md) - Presence RPC protocol (who is in a document)
 - [`teleportal/providers`](./src/providers/README.md) - Provider and connection architecture
 - [`teleportal/transports`](./src/transports/README.md) - Transport middleware
 - [`teleportal/cursors`](./src/cursors/README.md) - Spring-smoothed multiplayer cursors driven by Y.js awareness

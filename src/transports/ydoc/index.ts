@@ -119,6 +119,7 @@ export function getYDocSource<Context extends ClientContext>({
     ydoc: Y.Doc;
     awareness: Awareness;
     handler: YDocSourceHandler;
+    drainPendingUpdates: () => Promise<void>;
   }
 > {
   const channel = createChannel<Message<Context>>();
@@ -134,6 +135,31 @@ export function getYDocSource<Context extends ClientContext>({
     }
   }
 
+  // Y.js emits `update` synchronously in clock order, but `handler.onUpdate` is
+  // async — for an encrypted document it is an off-thread WebCrypto call. So
+  // awaiting it inline lets a later update finish encrypting first and reach the
+  // channel ahead of an earlier one. The server appends updates in the order it
+  // receives them, so a shuffled burst leaves its pending log transiently gappy;
+  // a client that handshakes inside that window is served a gap-clipped prefix
+  // and silently loses the tail forever (it is not left parked, so no watchdog
+  // ever rescues it).
+  //
+  // Keep the encryption concurrent — start the work immediately — but release
+  // the results onto the channel strictly in the order they were produced.
+  let sendChain: Promise<void> = Promise.resolve();
+  function sendInOrder(pending: Promise<Message<Context>>): Promise<void> {
+    // Mark `pending` handled now: it may reject long before the chain reaches
+    // it, which would otherwise surface as an unhandled rejection.
+    pending.catch(() => {});
+    const settled = sendChain.then(async () => {
+      channel.trySend(await pending);
+    });
+    // Callers observe failures through `settled`; the chain itself continues
+    // clean so one bad update cannot poison every later send.
+    sendChain = settled.catch(() => {});
+    return settled;
+  }
+
   async function flushBatch() {
     clearBatchTimer();
     const updates = pendingUpdates;
@@ -144,7 +170,7 @@ export function getYDocSource<Context extends ClientContext>({
       version: 2,
       data: updates.length === 1 ? updates[0] : mergeUpdates(updates),
     };
-    channel.trySend(await handler.onUpdate(merged));
+    await sendInOrder(handler.onUpdate(merged));
   }
 
   const onUpdate = ydoc.on("update", async (update: Uint8Array, origin: any) => {
@@ -154,7 +180,7 @@ export function getYDocSource<Context extends ClientContext>({
 
     if (updateBatchIntervalMs <= 0) {
       const versioned: VersionedUpdate = { version: 1, data: update as UpdateV1 };
-      channel.trySend(await handler.onUpdate(versioned));
+      await sendInOrder(handler.onUpdate(versioned));
       return;
     }
 
@@ -173,6 +199,10 @@ export function getYDocSource<Context extends ClientContext>({
     if (isDestroyed) return;
     isDestroyed = true;
     await flushBatch();
+    // Sends are queued rather than awaited inline, so drain the queue before
+    // closing — otherwise a `destroy()` right after an edit closes the channel
+    // out from under updates that were already produced, and they are lost.
+    await sendChain;
     if (handler.destroy) await handler.destroy();
     channel.close();
   }
@@ -214,6 +244,23 @@ export function getYDocSource<Context extends ClientContext>({
     ydoc,
     awareness,
     handler,
+    /**
+     * Resolve once every update produced so far has been handed to the channel.
+     *
+     * A local edit reaches the wire asynchronously — `handler.onUpdate` encrypts
+     * off-thread — so for a window after `ydoc` mutates there is an update that
+     * no downstream component can see yet: it is not in the channel, so the
+     * connection does not count it in flight, so `Provider.flush()` considers
+     * there to be nothing to wait for and resolves while the edit is still in
+     * this source. Callers that need "everything I wrote is really on its way"
+     * must drain here first.
+     */
+    async drainPendingUpdates() {
+      // A batched update may still be sitting in `pendingUpdates` behind its
+      // timer; send it now rather than waiting the interval out.
+      await flushBatch();
+      await sendChain;
+    },
     source: sourceWithCleanup(),
   };
 }
@@ -332,7 +379,11 @@ export function getYDocSink<Context extends ClientContext>({
           case "awareness": {
             switch (chunk.payload.type) {
               case "awareness-update": {
-                handler.handleAwarenessUpdate(chunk.payload.update);
+                // Awareness is best-effort: a peer state we cannot apply (e.g.
+                // an encrypted document where this client holds the wrong key)
+                // must be ignored rather than tear down the stream — and must
+                // never escape as an unhandled rejection.
+                await handler.handleAwarenessUpdate(chunk.payload.update).catch(() => {});
                 break;
               }
               case "awareness-request": {
@@ -387,7 +438,6 @@ export function getYDocSink<Context extends ClientContext>({
           }
           case "rpc":
           case "ack":
-          case "presence":
             break;
           default: {
             const _exhaustive: never = chunk;

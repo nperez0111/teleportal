@@ -134,6 +134,40 @@ export class RpcClient {
   }
 
   /**
+   * Send an RPC request as fire-and-forget: no response tracking and, crucially,
+   * no `await connection.connected` gate. Awaiting `connected` defers the send to
+   * a microtask, which is unsafe during teardown — the connection may be destroyed
+   * before the microtask runs, silently dropping the message (e.g. a presence
+   * unannounce on `provider.destroy()`). This sends synchronously so the message
+   * hits the transport before the connection is torn down.
+   */
+  sendFireAndForget(
+    document: string,
+    method: string,
+    payload: Record<string, unknown>,
+    options?: { encrypted?: boolean; context?: Record<string, unknown> },
+  ): void {
+    const requestPayload: Record<string, unknown> = { method };
+    if (payload && typeof payload === "object") {
+      for (const [key, value] of Object.entries(payload)) {
+        requestPayload[key] = value;
+      }
+    }
+    const request = new RpcMessage(
+      document,
+      { type: "success", payload: requestPayload },
+      method,
+      "request",
+      undefined,
+      options?.context ?? {},
+      options?.encrypted ?? false,
+    );
+    void this.#connection.send(request).catch(() => {
+      // Best-effort: the server clears our presence on disconnect anyway.
+    });
+  }
+
+  /**
    * Send an RPC stream message (for file chunks, etc.).
    */
   sendStream(message: RpcMessage<any>): void {

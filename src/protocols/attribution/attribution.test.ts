@@ -139,7 +139,7 @@ describe("getAttributionRpcHandlers", () => {
       const encoded = encodeContentMap(map);
       const handler = getAttributionRpcHandlers().attributionActivity;
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         {},
         mockContext(async () => encoded),
       )) as { response: { activity: { userId: string | null }[] } };
@@ -153,7 +153,7 @@ describe("getAttributionRpcHandlers", () => {
       const encoded = encodeContentMap(map);
       const handler = getAttributionRpcHandlers().attributionActivity;
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         { userId: "user-2" },
         mockContext(async () => encoded),
       )) as { response: { activity: { userId: string | null }[] } };
@@ -163,7 +163,7 @@ describe("getAttributionRpcHandlers", () => {
 
     it("returns an empty timeline when the storage has no attribution", async () => {
       const handler = getAttributionRpcHandlers().attributionActivity;
-      const { response } = (await handler.handler({}, mockContext())) as {
+      const { response } = (await handler.handler!({}, mockContext())) as {
         response: { activity: unknown[] };
       };
       expect(response.activity).toEqual([]);
@@ -180,7 +180,7 @@ describe("getAttributionRpcHandlers", () => {
       const encoded = encodeContentMap(map);
       const handler = getAttributionRpcHandlers().attributionActivity;
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         {},
         mockContext(async () => encoded),
       )) as { response: { activity: { userId: string | null }[] } };
@@ -195,7 +195,7 @@ describe("getAttributionRpcHandlers", () => {
       const encoded = encodeContentMap(map);
       const handler = getAttributionRpcHandlers().attributionGet;
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         {},
         mockContext(async () => encoded),
       )) as { response: { contentMap: EncodedContentMap | null } };
@@ -208,7 +208,7 @@ describe("getAttributionRpcHandlers", () => {
       const encoded = encodeContentMap(map);
       const handler = getAttributionRpcHandlers().attributionGet;
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         { filter: { userId: "user-1" } },
         mockContext(async () => encoded),
       )) as { response: { contentMap: EncodedContentMap | null } };
@@ -227,7 +227,7 @@ describe("getAttributionRpcHandlers", () => {
 
     it("returns null when the storage has no attribution", async () => {
       const handler = getAttributionRpcHandlers().attributionGet;
-      const { response } = (await handler.handler({}, mockContext())) as {
+      const { response } = (await handler.handler!({}, mockContext())) as {
         response: { contentMap: EncodedContentMap | null };
       };
       expect(response.contentMap).toBeNull();
@@ -254,7 +254,7 @@ describe("getAttributionRpcHandlers", () => {
       const encoded = encodeContentMap(merged);
       const handler = getAttributionRpcHandlers().attributionGet;
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         { filter: { attributes: { source: "ai" } } },
         mockContext(async () => encoded),
       )) as { response: { contentMap: EncodedContentMap | null } };
@@ -492,7 +492,7 @@ describe("incremental ContentMap sync", () => {
     ids1.inserts.add(map.inserts.clients.keys().next().value!, 0, 6);
     const knownIds = encodeContentIds(ids1);
 
-    const { response } = (await handler.handler(
+    const { response } = (await handler.handler!(
       { knownIds },
       mockContext(async () => encoded),
     )) as { response: { contentMap: EncodedContentMap | null } };
@@ -516,7 +516,7 @@ describe("incremental ContentMap sync", () => {
     const handler = getAttributionRpcHandlers().attributionGetIncremental;
     const knownIds = encodeContentIds(createContentIds());
 
-    const { response } = (await handler.handler(
+    const { response } = (await handler.handler!(
       { knownIds },
       mockContext(async () => null),
     )) as { response: { contentMap: EncodedContentMap | null } };

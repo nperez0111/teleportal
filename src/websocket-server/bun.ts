@@ -3,7 +3,9 @@ import { uuidv4 } from "lib0/random";
 import {
   type BinaryMessage,
   type BinaryTransport,
+  encodePongMessage,
   isBinaryMessage,
+  isPingMessage,
   type ServerContext,
 } from "teleportal";
 import type { Client, Server } from "teleportal/server";
@@ -142,6 +144,10 @@ export function getBunWebsocketHandler<T extends ServerContext>({
             transport: fromBinaryTransport(
               ws.data.transport,
               Object.assign({ clientId }, ws.data) as unknown as T,
+              // Protocol pings are answered before decoding, so without this
+              // hook an idle-but-alive client would look dead to the server's
+              // client-liveness sweep and get its presence killed.
+              { onPing: () => server.markClientAlive(clientId) },
             ),
             id: clientId,
           })) as unknown as Client<ServerContext>;
@@ -166,7 +172,7 @@ export function getBunWebsocketHandler<T extends ServerContext>({
       },
 
       message(
-        ws: { data: BunWebSocketData; close: Function },
+        ws: { data: BunWebSocketData; send: Function; close: Function },
         msg: ArrayBuffer | Uint8Array | string,
       ) {
         if (!ws.data.channel?.send || !ws.data.client) {
@@ -185,6 +191,19 @@ export function getBunWebsocketHandler<T extends ServerContext>({
         const message = msg instanceof Uint8Array ? msg : new Uint8Array(msg as ArrayBuffer);
         if (!isBinaryMessage(message)) {
           throw new Error("Invalid message");
+        }
+        // Answer pings here, before the inbound queue: routing them through the
+        // channel would defer the pong (and the liveness refresh) behind every
+        // buffered message, so one slow apply could stall a client's only
+        // proof-of-life past the dead-client TTL.
+        if (isPingMessage(message)) {
+          try {
+            ws.send(encodePongMessage());
+          } catch {
+            // ignore — the socket may be closing; its close hook cleans up
+          }
+          server.markClientAlive(ws.data.clientId);
+          return;
         }
         ws.data.channel.send(message);
       },

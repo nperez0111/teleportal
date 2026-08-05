@@ -235,7 +235,18 @@ export class RedisPubSub implements DurablePubSub {
           return;
         }
         for (const cb of Array.from(set)) {
-          cb(decoded.message, decoded.sourceId);
+          try {
+            cb(decoded.message, decoded.sourceId);
+          } catch (error) {
+            // Don't let a throwing callback surface as an uncaught exception
+            // inside ioredis's event emitter.
+            emitWideEvent("error", {
+              event_type: "redis_plain_callback_error",
+              timestamp: new Date().toISOString(),
+              topic: channel,
+              error,
+            });
+          }
         }
       });
       this.#plainHandlerInstalled = true;
@@ -284,6 +295,16 @@ export class RedisPubSub implements DurablePubSub {
   }
 
   async #readLoop(): Promise<void> {
+    try {
+      await this.#runReadLoop();
+    } finally {
+      // Always clear the flag, even if a callback threw, so `#ensureReadLoop`
+      // can restart the loop instead of seeing it stuck as running forever.
+      this.#readLoopRunning = false;
+    }
+  }
+
+  async #runReadLoop(): Promise<void> {
     while (!this.#stopped && this.#streamState.size > 0) {
       // On the first successful read after a reconnect, check whether our resume position was
       // trimmed out of retention while we were disconnected.
@@ -350,12 +371,23 @@ export class RedisPubSub implements DurablePubSub {
             continue;
           }
           for (const cb of Array.from(state.callbacks)) {
-            cb(decoded.message, decoded.sourceId, id);
+            try {
+              cb(decoded.message, decoded.sourceId, id);
+            } catch (error) {
+              // A throwing callback must not escape the read loop: that would
+              // leave `#readLoopRunning` stuck true and permanently halt
+              // durable delivery for every stream on this node.
+              emitWideEvent("error", {
+                event_type: "redis_durable_callback_error",
+                timestamp: new Date().toISOString(),
+                topic,
+                error,
+              });
+            }
           }
         }
       }
     }
-    this.#readLoopRunning = false;
   }
 
   /** Extract the `d` field (envelope bytes) from an XREAD field/value list. */

@@ -346,7 +346,8 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
             }
           }
         }
-      } else {
+      } else if (message.requiresAck) {
+        // Best-effort messages are never acked — the sender tracks nothing in flight.
         const ackMessage = new AckMessage({ type: "ack", messageId: message.id }, undefined);
         queueMicrotask(() => {
           if (this.destroyed) return;
@@ -1064,8 +1065,12 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
       return;
     }
 
+    // Best-effort messages (requiresAck false: awareness, acks themselves, rpc pushes with
+    // qos.ack: false) are fire-and-forget — no in-flight tracking, no retransmit.
+    const trackInFlight = message.requiresAck;
+
     if (this.#state.type === "connected" && this.#activeTransport) {
-      if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
+      if (trackInFlight) {
         const wasEmpty = this.#inFlightMessages.size === 0;
         this.#inFlightMessages.set(message.id, {
           message,
@@ -1080,7 +1085,7 @@ export class DirectConnection extends Observable<ConnectionEvents> implements Co
         await this.#activeTransport.send(message);
         this.call("sent-message", message);
       } catch (err) {
-        if (message.type !== "ack" && message.type !== "awareness" && message.type !== "presence") {
+        if (trackInFlight) {
           const entry = this.#inFlightMessages.get(message.id);
           if (entry?.timer) this.#timerManager.clearTimeout(entry.timer);
           this.#inFlightMessages.delete(message.id);

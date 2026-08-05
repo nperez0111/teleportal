@@ -56,6 +56,76 @@ describe("ydoc source", () => {
     }
   });
 
+  it("emits updates in clock order even when the handler resolves out of order", async () => {
+    // Regression: `handler.onUpdate` is async — for an encrypted document it is
+    // an off-thread WebCrypto call — so several updates encrypt concurrently and
+    // can resolve in any order. Emitting in resolution order shuffles a client's
+    // burst on the wire; the server then appends it out of clock order, its
+    // pending log goes transiently gappy, and a peer that handshakes in that
+    // window is served a gap-clipped prefix and silently loses the tail.
+    const doc = new Y.Doc();
+    doc.clientID = 200;
+
+    // Resolve each update's "encryption" after a delay that is longest for the
+    // FIRST update, so resolution order is the exact reverse of clock order.
+    const total = 4;
+    let seen = 0;
+    const source = getYDocSource({
+      ydoc: doc,
+      document: "test",
+      handler: {
+        async onUpdate(update: VersionedUpdate) {
+          const index = seen++;
+          await new Promise((resolve) => setTimeout(resolve, (total - index) * 2));
+          const structureUpdate =
+            update.version === 2 ? update.data : Y.convertUpdateFormatV1ToV2(update.data);
+          const payload = encodeContentEncryptedPayload({
+            structureUpdate,
+            encryptedSidecars: [],
+          });
+          return new DocMessage(
+            "test",
+            { type: "update", update: { version: 2, data: payload } as unknown as VersionedUpdate },
+            { clientId: "local" },
+          );
+        },
+        async onAwarenessUpdate() {
+          throw new Error("not used");
+        },
+        async start() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const text = doc.getText("test");
+    for (let i = 0; i < total; i++) {
+      // Separate transactions → one `update` event, and one clock, each.
+      text.insert(text.length, `${i}`);
+    }
+
+    // Replay the emitted updates onto a fresh doc in arrival order. If they are
+    // shuffled, the later ones cannot integrate and Y.js parks them.
+    const receiver = new Y.Doc();
+    const received: string[] = [];
+    for await (const batch of source.source) {
+      for (const chunk of batch) {
+        const payload = chunk.payload as { type: string; update: VersionedUpdate };
+        const decoded = decodeContentEncryptedPayload(payload.update.data as any);
+        Y.applyUpdateV2(receiver, decoded.structureUpdate);
+        received.push(receiver.getText("test").toString());
+        if (received.length === total) break;
+      }
+      if (received.length === total) break;
+    }
+
+    // Each arrival extends the text by exactly one character: nothing arrived
+    // ahead of its predecessor, so nothing was ever parked.
+    expect(received).toEqual(["0", "01", "012", "0123"]);
+    expect(receiver.store.pendingStructs).toBeNull();
+    doc.destroy();
+  });
+
   it("can read a doc's awareness updates", async () => {
     const doc = new Y.Doc();
     doc.clientID = 200;

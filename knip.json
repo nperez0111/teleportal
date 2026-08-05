@@ -14,6 +14,7 @@
         "src/protocols/file/index.ts",
         "src/protocols/attribution/index.ts",
         "src/protocols/key-registry/index.ts",
+        "src/protocols/presence/index.ts",
         "src/providers/index.ts",
         "src/providers/worker/index.ts",
         "src/providers/worker/connection-worker.ts",

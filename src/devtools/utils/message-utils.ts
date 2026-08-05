@@ -41,9 +41,6 @@ export function getMessageTypeLabel(message: MessageType): string {
   if (message.type === "ack") {
     return "ack";
   }
-  if (message.type === "presence") {
-    return message.payload.type;
-  }
   if (message.type === "rpc") {
     const requestType = message.requestType;
     if (requestType === "response") {
@@ -66,7 +63,6 @@ export function getMessageTypeColor(message: MessageType): string {
   }
 
   if (message.type === "ack") return "devtools-bg-gray-500";
-  if (message.type === "presence") return "devtools-bg-purple-500";
 
   const type = getMessageTypeLabel(message);
 
@@ -280,9 +276,6 @@ export async function formatMessagePayload(
   switch (message.type) {
     case "ack": {
       return `ACK(id: ${message.id}, acknowledged: ${message.payload.messageId})`;
-    }
-    case "presence": {
-      return JSON.stringify(message.payload, null, 2);
     }
     case "awareness": {
       switch (message.payload.type) {

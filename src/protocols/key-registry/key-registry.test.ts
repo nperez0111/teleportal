@@ -223,7 +223,7 @@ describe("Key Registry — RPC server handlers", () => {
       server: {} as any,
     };
 
-    const result = await handler.handler({}, context);
+    const result = await handler.handler!({}, context);
     expect(result.response).toEqual({
       type: "error",
       statusCode: 401,
@@ -244,7 +244,7 @@ describe("Key Registry — RPC server handlers", () => {
       server: {} as any,
     };
 
-    const result = await handler.handler({}, context);
+    const result = await handler.handler!({}, context);
     expect(result.response).toEqual({
       type: "error",
       statusCode: 404,
@@ -268,7 +268,7 @@ describe("Key Registry — RPC server handlers", () => {
       server: {} as any,
     };
 
-    const result = await handler.handler({}, context);
+    const result = await handler.handler!({}, context);
     expect(result.response).toEqual({
       wrappedKey,
       generation: 0,
@@ -292,7 +292,7 @@ describe("Key Registry — RPC server handlers", () => {
       server: {} as any,
     };
 
-    const result = await handler.handler(
+    const result = await handler.handler!(
       { entries: [{ userId: "alice", wrappedKey: new Uint8Array([7, 8]) }], expectedGeneration: 0 },
       context,
     );

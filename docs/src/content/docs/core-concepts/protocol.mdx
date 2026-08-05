@@ -3,7 +3,7 @@ title: Protocol
 description: Why the Teleportal synchronization protocol is designed the way it is
 ---
 
-The Teleportal protocol is a binary protocol built on top of Y.js. It defines five wire message types — document sync, awareness, ack, presence, and RPC — where higher-level features like file transfers and milestones ride on top of RPC. This document explains the design decisions and rationale behind the protocol's architecture.
+The Teleportal protocol is a binary protocol built on top of Y.js. It defines four wire message types — document sync, awareness, ack, and RPC — where higher-level features like presence, file transfers, and milestones ride on top of RPC. This document explains the design decisions and rationale behind the protocol's architecture.
 
 ## Multiplexing Multiple Documents
 
@@ -155,8 +155,8 @@ Binary encoding provides:
 
 The protocol uses a structured binary format with:
 
-- **Header**: magic (`YJS`), version, document name, encryption flag, and the 1-byte message type
-- **Payload**: Type-specific binary data (Y.js updates, awareness states, presence, RPC data, etc.)
+- **Header**: magic (`YJS`), version, document name, encryption flag, best-effort flag, and the 1-byte message type
+- **Payload**: Type-specific binary data (Y.js updates, awareness states, RPC data, etc.)
 
 This binary format is optimized for the specific needs of document synchronization, where you're frequently sending Y.js updates that are already in binary format.
 

@@ -255,7 +255,7 @@ export class NatsJetStreamPubSub implements DurablePubSub {
   async #ensureLiveConsumer(): Promise<void> {
     if (this.#liveMessages) return;
     if (this.#liveStarting) return this.#liveStarting;
-    this.#liveStarting = (async () => {
+    const starting = (async () => {
       const consumer = await this.#js.consumers.get(this.streamName, {
         filter_subjects: [`${this.#subjectPrefix}.>`],
         deliver_policy: DeliverPolicy.New,
@@ -264,7 +264,16 @@ export class NatsJetStreamPubSub implements DurablePubSub {
         callback: (msg) => this.#dispatchLive(msg),
       });
     })();
-    return this.#liveStarting;
+    // Clear the cached promise if setup fails (e.g. a connection blip) so a
+    // later call can retry instead of forever re-returning a rejected promise,
+    // which would leave live durable delivery permanently dead on this node.
+    starting.catch(() => {
+      if (this.#liveStarting === starting) {
+        this.#liveStarting = undefined;
+      }
+    });
+    this.#liveStarting = starting;
+    return starting;
   }
 
   #dispatchLive(msg: JsMsg): void {

@@ -1,29 +1,21 @@
 import { describe, expect, it } from "bun:test";
-import { PresenceMessage } from "teleportal";
+import { RpcMessage } from "teleportal";
 import { PresenceTracker } from "./presence-tracker";
 
-function join(clientId: string, userId: string, awarenessId = 1): PresenceMessage<any> {
-  return new PresenceMessage("doc-1", {
-    type: "presence-join",
-    awarenessId,
-    clientId,
-    userId,
-    data: { cursor: null },
-  });
+function push(method: string, payload: unknown): RpcMessage<any> {
+  return new RpcMessage("doc-1", { type: "success", payload }, method, "response", undefined);
 }
 
-function leave(clientId: string, userId: string): PresenceMessage<any> {
-  return new PresenceMessage("doc-1", {
-    type: "presence-leave",
-    awarenessId: 1,
-    clientId,
-    userId,
-    data: {},
-  });
+function join(clientId: string, userId: string, awarenessId = 1): RpcMessage<any> {
+  return push("presenceJoin", { awarenessId, clientId, userId, data: { cursor: null } });
+}
+
+function leave(clientId: string, userId: string): RpcMessage<any> {
+  return push("presenceLeave", { awarenessId: 1, clientId, userId, data: {} });
 }
 
 describe("PresenceTracker", () => {
-  it("builds a roster from join/leave messages", () => {
+  it("builds a roster from join/leave pushes", () => {
     const tracker = new PresenceTracker();
     expect(tracker.recordMessage(join("conn-1", "alice"))).toBe(true);
     expect(tracker.recordMessage(join("conn-2", "bob"))).toBe(true);
@@ -48,17 +40,16 @@ describe("PresenceTracker", () => {
     expect(tracker.getFeed()).toHaveLength(1);
   });
 
-  it("upserts peers from heartbeat rosters without removing absent ones", () => {
+  it("upserts peers from roster snapshots without removing absent ones", () => {
     const tracker = new PresenceTracker();
     tracker.recordMessage(join("conn-1", "alice"));
 
-    const heartbeat = new PresenceMessage("doc-1", {
-      type: "presence-heartbeat",
+    const roster = push("presenceRoster", {
       clients: [{ awarenessId: 2, clientId: "conn-2", userId: "bob", data: {} }],
     });
-    tracker.recordMessage(heartbeat);
+    tracker.recordMessage(roster);
 
-    // alice (other node) survives; bob added from the heartbeat.
+    // alice (other node) survives; bob added from the roster.
     expect(tracker.getPeers().map((p) => p.userId)).toEqual(["alice", "bob"]);
   });
 
@@ -70,13 +61,27 @@ describe("PresenceTracker", () => {
     expect(tracker.getFeed()).toHaveLength(1);
   });
 
-  it("ignores non-presence and announce messages", () => {
+  it("ignores announce requests, correlated responses, and other rpc methods", () => {
     const tracker = new PresenceTracker();
-    const announce = new PresenceMessage("doc-1", {
-      type: "presence-announce",
-      awarenessId: 42,
-    });
+    const announce = new RpcMessage(
+      "doc-1",
+      { type: "success", payload: { awarenessId: 42 } },
+      "presenceAnnounce",
+      "request",
+      undefined,
+    );
     expect(tracker.recordMessage(announce)).toBe(false);
+    // A response correlated to a request is not a push.
+    const response = new RpcMessage(
+      "doc-1",
+      { type: "success", payload: { awarenessId: 1, clientId: "c", userId: "u", data: {} } },
+      "presenceJoin",
+      "response",
+      "req-1",
+    );
+    expect(tracker.recordMessage(response)).toBe(false);
+    const other = push("attributionPush", { contentMap: "x" });
+    expect(tracker.recordMessage(other)).toBe(false);
     expect(tracker.getPeers()).toHaveLength(0);
   });
 });

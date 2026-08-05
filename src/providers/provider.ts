@@ -1,5 +1,5 @@
 import { DevtoolsEventClient } from "./devtools-events";
-import { Awareness, removeAwarenessStates } from "y-protocols/awareness";
+import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 
 import {
@@ -7,13 +7,17 @@ import {
   DocMessage,
   Message,
   Observable,
-  PresenceMessage,
   RawReceivedMessage,
   type ClientContext,
-  type PresenceHeartbeatClient,
   type Transport,
   type VersionedUpdate,
 } from "teleportal";
+import {
+  createPresenceExtension,
+  type PresenceApi,
+  type PresenceEvent,
+  type PresenceExtensionOptions,
+} from "../protocols/presence/client";
 import {
   getYTransportFromYDoc,
   getEncryptedTransport,
@@ -39,27 +43,20 @@ import type {
 } from "./rpc-extension";
 import type { KeyResolver } from "teleportal/encryption-key";
 
-export type PresenceEvent = {
-  awarenessId: number;
-  clientId: string;
-  userId: string;
-  data: Record<string, unknown>;
-};
-
-/**
- * How recently a peer must have joined for a roster-heartbeat reconcile to
- * spare it from removal (see `Provider.#peerJoinedAt`). Long enough to cover
- * announce/heartbeat write interleaving on the server, short relative to the
- * server's heartbeat interval (30s) so real ghosts still heal on the next
- * heartbeat.
- */
-const DEFAULT_PRESENCE_JOIN_GRACE_MS = 5_000;
+export type { PresenceEvent };
 
 export type DefaultTransportProperties = {
   synced: Promise<void>;
   handler: {
     start: () => Promise<Message>;
   };
+  /**
+   * Optional: resolve once every locally-produced update has been handed to the
+   * connection. Transports that turn local edits into messages asynchronously
+   * expose this so {@link Provider.flush} can wait for them; a transport without
+   * that gap may omit it.
+   */
+  drainPendingUpdates?: () => Promise<void>;
 };
 
 type TeleportalEventMap = {
@@ -225,35 +222,13 @@ export class Provider<
   #initInProgress = false;
   #syncBridgeRegistered = false;
 
-  // Presence roster (peers learned via presence-join/heartbeat)
-  #peers = new Map<number, PresenceEvent>();
   /**
-   * When each peer joined, for reconcile join-protection: a roster heartbeat
-   * is a snapshot, so a join that raced past the snapshot's construction
-   * (two clients announcing simultaneously) may legitimately be missing from
-   * it. Removals therefore don't apply to peers joined within
-   * {@link RECENT_JOIN_GRACE_MS} — a genuinely-gone peer is confirmed absent
-   * by the next heartbeat and removed then.
+   * The built-in presence extension (roster, reconcile, offline clearing).
+   * Auto-registered under `rpc.presence`; `peers` and the peer-join/leave
+   * events delegate to it.
    */
-  #peerJoinedAt = new Map<number, number>();
-  /**
-   * Every awarenessId that was ever part of THIS document's roster (via a
-   * presence-join or a roster snapshot). Scopes the ghost-state sweep in
-   * `#reconcilePeers`: awareness states are reconciled only for ids that
-   * were rostered here, because the Awareness instance may be SHARED across
-   * providers (subdocs reuse the parent's awareness) — sweeping a state that
-   * belongs to another document's roster would delete a live peer's cursor.
-   */
-  #everRosteredIds = new Set<number>();
-  /**
-   * When an awareness state was first observed without roster backing, so
-   * the ghost-state sweep applies the same join-grace as peer removals (an
-   * awareness update can legitimately race ahead of its presence-join).
-   */
-  #unrosteredStateSince = new Map<number, number>();
-  #presenceJoinGraceMs: number;
-  #offlineTimeoutMs: number;
-  #offlineClearTimer: ReturnType<typeof setTimeout> | null = null;
+  #presence: PresenceApi | undefined;
+  #presenceOptions: PresenceExtensionOptions;
 
   // Pending-structs detector state (self-healing resync)
   #pendingStructsParked = false;
@@ -270,8 +245,8 @@ export class Provider<
     offlineStorage,
     encryptionKey,
     rpc,
-    offlineTimeoutMs = 30_000,
-    presenceJoinGraceMs = DEFAULT_PRESENCE_JOIN_GRACE_MS,
+    offlineTimeoutMs,
+    presenceJoinGraceMs,
   }: ProviderOptions<T, R>) {
     super();
     // End-to-end encryption is the default. Omitting `encryptionKey` is almost
@@ -297,8 +272,7 @@ export class Provider<
     this.doc = ydoc;
     this.awareness = awareness;
     this.document = document;
-    this.#offlineTimeoutMs = offlineTimeoutMs;
-    this.#presenceJoinGraceMs = presenceJoinGraceMs;
+    this.#presenceOptions = { offlineTimeoutMs, presenceJoinGraceMs };
     this.#getTransport = getTransport;
     this.#enableOfflinePersistence = enableOfflinePersistence;
     this.#indexedDBPrefix = indexedDBPrefix;
@@ -331,11 +305,10 @@ export class Provider<
     this.#messageReader = this.#connection.getReader();
     this.#rpcClient = new RpcClient(connection);
 
-    // Initialize RPC extensions
+    // Initialize RPC extensions (always: the built-in presence extension is
+    // auto-registered even when no custom extensions are configured).
     this.rpc = {} as RpcNamespace<R>;
-    if (rpc) {
-      this.#initExtensions(rpc);
-    }
+    this.#initExtensions(rpc ?? ({} as R));
 
     // Pipe transport source → connection (outbound)
     void forEachMessage(this.transport.source, (message) => {
@@ -437,9 +410,6 @@ export class Provider<
             connection,
           });
         }
-        if (message.type === "presence") {
-          this.#handlePresenceMessage(message as PresenceMessage<any>);
-        }
       }),
     );
     signal.addEventListener(
@@ -462,22 +432,6 @@ export class Provider<
           provider: this,
           connection,
         });
-      }),
-    );
-
-    // Presence honesty while offline: once the connection is lost, this
-    // provider can no longer learn about joins/leaves, so after a grace
-    // period stop claiming peers are present. Reconnect within the grace
-    // period cancels the clear; reconnect after it rebuilds the roster from
-    // the server (announce reply + roster heartbeat + awareness-request).
-    signal.addEventListener(
-      "abort",
-      connection.on("update", (state) => {
-        if (state.type === "connected") {
-          this.#cancelOfflineClear();
-        } else if (state.type === "disconnected" || state.type === "errored") {
-          this.#scheduleOfflineClear();
-        }
       }),
     );
 
@@ -517,6 +471,26 @@ export class Provider<
       },
     };
 
+    // The built-in presence protocol is auto-registered (a user-supplied
+    // "presence" key wins). `provider.peers` and the peer-join/peer-leave
+    // events delegate to it.
+    if (!("presence" in rpcMap)) {
+      const extension = createPresenceExtension(this.#presenceOptions)();
+      const api = extension.create(ctx);
+      (this.rpc as any).presence = api;
+      this.#extensions.push(extension);
+      this.#presence = api;
+      const signal = this.#abortController.signal;
+      signal.addEventListener(
+        "abort",
+        api.on("peer-join", (peer) => this.call("peer-join", peer)),
+      );
+      signal.addEventListener(
+        "abort",
+        api.on("peer-leave", (peer) => this.call("peer-leave", peer)),
+      );
+    }
+
     for (const [name, factory] of Object.entries(rpcMap)) {
       const extension = factory();
       const api = extension.create(ctx);
@@ -535,165 +509,7 @@ export class Provider<
    * provider reports no peers rather than a stale roster.
    */
   public get peers(): ReadonlyMap<number, PresenceEvent> {
-    return this.#peers;
-  }
-
-  #handlePresenceMessage(message: PresenceMessage<any>) {
-    // A connection multiplexes many documents (subdocs, SharedWorker tabs);
-    // presence for another document must not touch this provider's roster.
-    if (message.document !== this.document) return;
-
-    const payload = message.payload;
-    // announce/unannounce are client→server only.
-    if (payload.type === "presence-announce" || payload.type === "presence-unannounce") {
-      return;
-    }
-    // The server's roster heartbeat is the full truth at a point in time:
-    // reconcile against it so any join/leave this client missed (dropped
-    // message, brief offline window) heals instead of persisting forever.
-    if (payload.type === "presence-heartbeat") {
-      this.#reconcilePeers(payload.clients);
-      return;
-    }
-    if (payload.awarenessId === this.awareness.clientID) return;
-
-    const peer: PresenceEvent = {
-      awarenessId: payload.awarenessId,
-      clientId: payload.clientId,
-      userId: payload.userId,
-      data: payload.data,
-    };
-    if (payload.type === "presence-leave") {
-      this.#peers.delete(payload.awarenessId);
-      this.#peerJoinedAt.delete(payload.awarenessId);
-      this.#forgetAwarenessStates([payload.awarenessId], "presence");
-      this.call("peer-leave", peer);
-    } else {
-      const isNew = !this.#peers.has(payload.awarenessId);
-      this.#peers.set(payload.awarenessId, peer);
-      this.#everRosteredIds.add(payload.awarenessId);
-      this.#unrosteredStateSince.delete(payload.awarenessId);
-      if (isNew) {
-        this.#peerJoinedAt.set(payload.awarenessId, Date.now());
-      }
-      this.call("peer-join", peer);
-    }
-  }
-
-  /**
-   * Remove remote awareness states AND their clock meta. Dropping the meta
-   * matters: y-protocols rejects an incoming non-null state whose clock
-   * hasn't advanced, so a peer's re-sent (unchanged) state — e.g. its reply
-   * to our reconnect awareness-request — would otherwise be ignored and its
-   * cursor would stay invisible until it next moved.
-   */
-  #forgetAwarenessStates(awarenessIds: number[], origin: string) {
-    removeAwarenessStates(this.awareness, awarenessIds, origin);
-    for (const id of awarenessIds) {
-      this.awareness.meta.delete(id);
-      this.#unrosteredStateSince.delete(id);
-    }
-  }
-
-  /**
-   * Replace the peer roster with the server's snapshot: join newly-seen
-   * peers, leave (and clear awareness for) peers absent from the snapshot,
-   * silently refresh the rest.
-   */
-  #reconcilePeers(clients: PresenceHeartbeatClient[]) {
-    const now = Date.now();
-    const seen = new Set<number>();
-    for (const entry of clients) {
-      if (entry.awarenessId === this.awareness.clientID) continue;
-      seen.add(entry.awarenessId);
-      this.#everRosteredIds.add(entry.awarenessId);
-      this.#unrosteredStateSince.delete(entry.awarenessId);
-      const peer: PresenceEvent = {
-        awarenessId: entry.awarenessId,
-        clientId: entry.clientId,
-        userId: entry.userId,
-        data: entry.data,
-      };
-      const isNew = !this.#peers.has(entry.awarenessId);
-      this.#peers.set(entry.awarenessId, peer);
-      if (isNew) {
-        this.#peerJoinedAt.set(entry.awarenessId, now);
-        this.call("peer-join", peer);
-      }
-    }
-    for (const [awarenessId, peer] of this.#peers) {
-      if (seen.has(awarenessId)) continue;
-      // Join-protection: a snapshot built just before this peer's join
-      // legitimately lacks it — don't drop a fresh join over a stale
-      // snapshot. If the peer is truly gone, the next heartbeat (or its
-      // presence-leave) removes it.
-      const joinedAt = this.#peerJoinedAt.get(awarenessId) ?? 0;
-      if (now - joinedAt < this.#presenceJoinGraceMs) continue;
-      this.#peers.delete(awarenessId);
-      this.#peerJoinedAt.delete(awarenessId);
-      this.#forgetAwarenessStates([awarenessId], "presence");
-      this.call("peer-leave", peer);
-    }
-
-    // Ghost-state sweep: an awareness state can outlive its presence — a
-    // departing peer's final update may arrive AFTER its presence-leave (it
-    // was already buffered when the socket closed) and re-add the state
-    // without any roster entry, where the #peers loop above can't see it.
-    // The roster snapshot is the truth: forget states whose owner is absent
-    // from it. Scoped to ids ever rostered on THIS document (shared-awareness
-    // safety, see #everRosteredIds) and grace-timed like peer removals.
-    for (const awarenessId of this.awareness.getStates().keys()) {
-      if (awarenessId === this.awareness.clientID) continue;
-      if (seen.has(awarenessId) || this.#peers.has(awarenessId)) continue;
-      if (!this.#everRosteredIds.has(awarenessId)) continue;
-      const since = this.#unrosteredStateSince.get(awarenessId) ?? now;
-      this.#unrosteredStateSince.set(awarenessId, since);
-      if (now - since < this.#presenceJoinGraceMs) continue;
-      this.#unrosteredStateSince.delete(awarenessId);
-      this.#forgetAwarenessStates([awarenessId], "presence");
-    }
-  }
-
-  #scheduleOfflineClear() {
-    if (this.#offlineClearTimer !== null) return;
-    if (!Number.isFinite(this.#offlineTimeoutMs)) return;
-    if (this.#offlineTimeoutMs <= 0) {
-      this.#clearRemotePresence();
-      return;
-    }
-    this.#offlineClearTimer = setTimeout(() => {
-      this.#offlineClearTimer = null;
-      this.#clearRemotePresence();
-    }, this.#offlineTimeoutMs);
-    (this.#offlineClearTimer as unknown as { unref?: () => void }).unref?.();
-  }
-
-  #cancelOfflineClear() {
-    if (this.#offlineClearTimer !== null) {
-      clearTimeout(this.#offlineClearTimer);
-      this.#offlineClearTimer = null;
-    }
-  }
-
-  /**
-   * Forget every remote peer: remove all remote awareness states (not just
-   * announced peers, so an awareness state whose presence-join we never saw
-   * is cleared too) and emit `peer-leave` for each known peer.
-   */
-  #clearRemotePresence() {
-    const remoteAwarenessIds = [...this.awareness.getStates().keys()].filter(
-      (id) => id !== this.awareness.clientID,
-    );
-    if (remoteAwarenessIds.length > 0) {
-      this.#forgetAwarenessStates(remoteAwarenessIds, "offline");
-    }
-    const peers = [...this.#peers.values()];
-    this.#peers.clear();
-    this.#peerJoinedAt.clear();
-    this.#unrosteredStateSince.clear();
-    for (const peer of peers) {
-      this.call("peer-leave", peer);
-    }
+    return this.#presence?.peers ?? new Map();
   }
 
   // --- Pending-structs detector + self-healing resync ---
@@ -821,12 +637,19 @@ export class Provider<
         await Promise.race([this.#localReplayed, new Promise<void>((r) => setTimeout(r, 5000))]);
       }
       this.#connection.send(await this.transport.handler.start());
-      this.#connection.send(
-        new PresenceMessage(this.document, {
-          type: "presence-announce",
-          awarenessId: this.awareness.clientID,
-        }),
-      );
+
+      // Extension announce slot (presence announces here): after the doc handshake has
+      // been started, before the awareness resync — deterministic ordering for
+      // announce-style traffic. Failures must not abort the reconnect sequence.
+      for (const ext of this.#extensions) {
+        if (ext.onConnect) {
+          try {
+            await ext.onConnect();
+          } catch {
+            // Extension connect hooks are best-effort; the protocol self-heals.
+          }
+        }
+      }
 
       // Awareness resync. The doc handshake above only heals document state;
       // awareness is not stored server-side, so both directions must be
@@ -1035,12 +858,22 @@ export class Provider<
    * ```
    */
   public async flush(timeout: number = 500): Promise<void> {
-    const flushPromise = Promise.all([
-      // Flush batched updates and wait for them to be acknowledged
-      this.#connection.flushAsync(),
-      // Wait for the apply queue to drain
-      this.#waitForApplyQueue(),
-    ]).then(() => {});
+    const flushPromise = (async () => {
+      // A local edit becomes a message asynchronously (encrypting content is an
+      // off-thread call), so an update written moments ago may not have reached
+      // the connection yet. Until it does, the connection has nothing in flight
+      // and would report itself flushed while the edit is still in the
+      // transport — `flush()` would then resolve before the server had even
+      // seen the write, let alone applied it. Push those updates out first, and
+      // only then wait for their acks.
+      await this.transport.drainPendingUpdates?.();
+      await Promise.all([
+        // Flush batched updates and wait for them to be acknowledged
+        this.#connection.flushAsync(),
+        // Wait for the apply queue to drain
+        this.#waitForApplyQueue(),
+      ]);
+    })();
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<void>((_, reject) => {
@@ -1080,8 +913,8 @@ export class Provider<
       encryptionKey: (options.encryptionKey ?? this.encryptionKey) as CryptoKey | false | undefined,
       rpc: options.rpc ?? this.#rpcOptions,
       document: options.document,
-      offlineTimeoutMs: options.offlineTimeoutMs ?? this.#offlineTimeoutMs,
-      presenceJoinGraceMs: options.presenceJoinGraceMs ?? this.#presenceJoinGraceMs,
+      offlineTimeoutMs: options.offlineTimeoutMs ?? this.#presenceOptions.offlineTimeoutMs,
+      presenceJoinGraceMs: options.presenceJoinGraceMs ?? this.#presenceOptions.presenceJoinGraceMs,
     });
   }
 
@@ -1121,8 +954,8 @@ export class Provider<
       encryptionKey: resolvedKey,
       rpc: options.rpc ?? this.#rpcOptions,
       document: options.document,
-      offlineTimeoutMs: options.offlineTimeoutMs ?? this.#offlineTimeoutMs,
-      presenceJoinGraceMs: options.presenceJoinGraceMs ?? this.#presenceJoinGraceMs,
+      offlineTimeoutMs: options.offlineTimeoutMs ?? this.#presenceOptions.offlineTimeoutMs,
+      presenceJoinGraceMs: options.presenceJoinGraceMs ?? this.#presenceOptions.presenceJoinGraceMs,
     });
     if (this._keyResolver) provider._keyResolver = this._keyResolver;
     return provider;
@@ -1137,23 +970,9 @@ export class Provider<
     destroyConnection?: boolean;
     destroyDoc?: boolean;
   } = {}) {
-    // Best-effort: retract our awareness presence so the server can notify
-    // peers immediately instead of waiting for the connection to close.
-    // send() is async, so guard against both synchronous throws and async
-    // rejections (the connection may already be torn down).
-    try {
-      void this.#connection
-        .send(
-          new PresenceMessage(this.document, {
-            type: "presence-unannounce",
-            awarenessId: this.awareness.clientID,
-          }),
-        )
-        .catch(() => {});
-    } catch {
-      // Connection may already be torn down
-    }
-
+    // The presence extension's destroy() retracts our presence (best-effort
+    // unannounce) so the server can notify peers immediately instead of
+    // waiting for the connection to close.
     this.doc.off("subdocs", this.#subdocListener);
 
     // Tear down subdocument providers. Yjs will cascade `doc.destroy()` to the
@@ -1178,11 +997,6 @@ export class Provider<
       clearInterval(this.#pendingStructsTimer);
       this.#pendingStructsTimer = null;
     }
-    this.#cancelOfflineClear();
-    this.#peers.clear();
-    this.#peerJoinedAt.clear();
-    this.#everRosteredIds.clear();
-    this.#unrosteredStateSince.clear();
     super.destroy();
 
     if (this.#localStorage) {

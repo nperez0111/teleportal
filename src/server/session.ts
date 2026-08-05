@@ -1,12 +1,8 @@
 import {
   decodeMessage,
-  type DecodedPresenceHeartbeat,
-  type DecodedPresenceJoin,
-  type DecodedPresenceLeave,
   DocMessage,
   getEmptyStateVector,
   type Message,
-  PresenceMessage,
   type PubSub,
   type ServerContext,
   type SyncStep2UpdateV2,
@@ -18,6 +14,7 @@ import {
   RpcMessage,
   type RpcError,
   type RpcHandlerRegistry,
+  type RpcMethodQos,
   type RpcServerContext,
   type RpcSuccess,
 } from "teleportal/protocol";
@@ -36,12 +33,7 @@ import {
 import { Observable } from "../lib/utils";
 import { Client } from "./client";
 import { TtlDedupe } from "./dedupe";
-import type {
-  AttributionConfig,
-  DocumentMessageSource,
-  PresenceConfig,
-  SessionEvents,
-} from "./events";
+import type { AttributionConfig, DocumentMessageSource, SessionEvents } from "./events";
 import { emitWideEvent } from "./logger";
 import type { Server } from "./server";
 
@@ -83,41 +75,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   readonly #cleanupDelayMs: number;
   #rpcHandlers: RpcHandlerRegistry;
   #server: Server<Context>;
-  #presenceConfig: PresenceConfig<Context> | undefined;
   #attributionConfig: AttributionConfig<Context> | undefined;
-  /**
-   * The presence of each connected (local) client, keyed by session client id,
-   * then by announced awareness clientID. A client can hold *multiple*
-   * awarenessIds at once: a SharedWorker multiplexes many tabs (each with its
-   * own Y.Doc and awareness clientID) over one server connection. Entries are
-   * removed one at a time via presence-unannounce, or all at once when the
-   * client disconnects.
-   */
-  #clientPresence = new Map<
-    string,
-    Map<number, { context: Context; data: Record<string, unknown> }>
-  >();
-  /**
-   * Presence of clients connected to *other* nodes, keyed by node id, then by
-   * `clientId:awarenessId` (a client can hold multiple awarenessIds — see
-   * `#clientPresence`). Built from pub/sub presence join/leave and heartbeat
-   * snapshots, so a newcomer learns about cross-node peers. Each node carries a
-   * `lastSeen` timestamp; a node whose heartbeats stop is TTL-expired and its
-   * clients are cleared from local peers (self-healing across node crashes).
-   */
-  #remotePresence = new Map<
-    string,
-    {
-      lastSeen: number;
-      clients: Map<
-        string,
-        { clientId: string; awarenessId: number; userId: string; data: Record<string, unknown> }
-      >;
-    }
-  >();
-  #heartbeatIntervalMs: number;
-  #presenceTtlMs: number;
-  #presenceTimerId: ReturnType<typeof setInterval> | undefined;
 
   constructor(args: {
     documentId: string;
@@ -131,7 +89,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     onCleanupScheduled: (session: Session<Context>) => void;
     metricsCollector?: MetricsCollector;
     documentSizeConfig?: { warningThreshold?: number; limit?: number };
-    presenceConfig?: PresenceConfig<Context>;
     attributionConfig?: AttributionConfig<Context>;
     rpcHandlers?: RpcHandlerRegistry;
     server: Server<Context>;
@@ -153,10 +110,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     this.#nodeId = args.nodeId;
     this.#metrics = args.metricsCollector;
     this.#documentSizeConfig = args.documentSizeConfig;
-    this.#presenceConfig = args.presenceConfig;
     this.#attributionConfig = args.attributionConfig;
-    this.#heartbeatIntervalMs = args.presenceConfig?.heartbeatIntervalMs ?? 30_000;
-    this.#presenceTtlMs = args.presenceConfig?.presenceTtlMs ?? 90_000;
     this.#rpcHandlers = args.rpcHandlers ?? {};
     this.#server = args.server;
     this.#dedupe = args.dedupe ?? new TtlDedupe();
@@ -211,12 +165,14 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
           }
 
           try {
-            // Presence messages skip dedup: heartbeats are periodic and
-            // content-hashed, so identical snapshots would collide inside the
-            // dedup TTL window and be dropped. Presence handlers are idempotent
-            // (join upserts, leave removes, heartbeat replaces), so re-applying
-            // is safe.
-            if (message.type !== "presence") {
+            // Push methods declaring `qos.dedupe: false` skip dedup: periodic snapshots
+            // (e.g. the presence roster) are content-hashed, so identical payloads would
+            // collide inside the dedup TTL window and be dropped. Their handlers are
+            // idempotent (upsert/remove/replace), so re-applying is safe.
+            const skipDedupe =
+              message.type === "rpc" &&
+              this.#rpcHandlers[(message as RpcMessage<Context>).rpcMethod]?.qos?.dedupe === false;
+            if (!skipDedupe) {
               const shouldAccept = this.#dedupe.shouldAccept(this.namespacedDocumentId, message.id);
 
               if (!shouldAccept) {
@@ -256,23 +212,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
       });
       throw error;
     }
-
-    this.#startPresenceMaintenance();
-  }
-
-  /**
-   * Periodically (a) advertise this node's local clients to other nodes and
-   * (b) expire remote nodes that have gone silent. Idempotent.
-   */
-  #startPresenceMaintenance() {
-    if (this.#presenceTimerId !== undefined || this.#heartbeatIntervalMs <= 0) {
-      return;
-    }
-    this.#presenceTimerId = setInterval(() => {
-      void this.runPresenceMaintenance();
-    }, this.#heartbeatIntervalMs);
-    // Don't keep the process alive solely for presence heartbeats.
-    (this.#presenceTimerId as { unref?: () => void }).unref?.();
   }
 
   /**
@@ -306,8 +245,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     this.#clients.delete(id);
 
     if (client) {
-      this.#broadcastClientLeave(id);
-
       this.call("client-leave", {
         clientId: id,
         documentId: this.documentId,
@@ -322,416 +259,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
       client.destroy();
     }
-  }
-
-  /**
-   * Resolve the integrator-configured presence `data` for a client context,
-   * tolerating a throwing or rejecting projection.
-   */
-  async #getPresenceData(context: Context): Promise<Record<string, unknown>> {
-    if (!this.#presenceConfig?.getPresenceData) {
-      return {};
-    }
-    try {
-      return await this.#presenceConfig.getPresenceData(context);
-    } catch (error) {
-      emitWideEvent("error", {
-        event_type: "presence_data_failed",
-        timestamp: new Date().toISOString(),
-        document_id: this.documentId,
-        session_id: this.id,
-        client_id: context.clientId,
-        error,
-      });
-      return {};
-    }
-  }
-
-  /**
-   * Record a client's announced awareness clientID and tell peers it joined.
-   *
-   * The announce is the only cleartext channel carrying the numeric awareness
-   * clientID, so this is what makes presence (and awareness clearing) work for
-   * end-to-end encrypted documents. The announcing client is also sent the
-   * current same-node roster so it learns existing peers' presence data.
-   */
-  async #handlePresenceAnnounce(
-    client: { id: string; send: (m: Message<Context>) => Promise<void> },
-    awarenessId: number,
-    context: Context,
-  ) {
-    const data = await this.#getPresenceData(context);
-
-    // An awarenessId is bound to one Y.Doc instance, so an announce from a
-    // different client means that doc reconnected on a new connection while
-    // the old one is still lingering. Transfer ownership silently — no leave,
-    // the awareness never died — so the old connection's eventual disconnect
-    // doesn't clobber the live presence.
-    for (const [otherId, otherEntries] of this.#clientPresence) {
-      if (otherId !== client.id && otherEntries.delete(awarenessId) && otherEntries.size === 0) {
-        this.#clientPresence.delete(otherId);
-      }
-    }
-
-    // A client can announce several awarenessIds (one per SharedWorker tab);
-    // each gets its own entry. Re-announcing an existing id (e.g. after a
-    // reconnect) just refreshes its data.
-    let entries = this.#clientPresence.get(client.id);
-    if (!entries) {
-      entries = new Map();
-      this.#clientPresence.set(client.id, entries);
-    }
-    entries.set(awarenessId, { context, data });
-
-    // Tell the newcomer about everyone already present (same node). The
-    // client's own entries are included on purpose: a SharedWorker fans this
-    // reply out to every sibling tab on the connection, which is the only way
-    // those tabs learn about each other (the server excludes the shared
-    // connection from peer broadcasts). Each tab drops its own awarenessId
-    // client-side (see Provider#handlePresenceMessage).
-    for (const [otherId, otherEntries] of this.#clientPresence) {
-      for (const [otherAwarenessId, other] of otherEntries) {
-        const message = new PresenceMessage<Context>(this.documentId, {
-          type: "presence-join",
-          awarenessId: otherAwarenessId,
-          clientId: otherId,
-          userId: other.context.userId,
-          data: other.data,
-        });
-        await client.send(message).catch(() => {});
-      }
-    }
-
-    // ...and about peers on other nodes (learned via pub/sub join/heartbeat).
-    for (const node of this.#remotePresence.values()) {
-      for (const other of node.clients.values()) {
-        const message = new PresenceMessage<Context>(this.documentId, {
-          type: "presence-join",
-          awarenessId: other.awarenessId,
-          clientId: other.clientId,
-          userId: other.userId,
-          data: other.data,
-        });
-        await client.send(message).catch(() => {});
-      }
-    }
-
-    // Tell already-announced peers that the newcomer joined. Peers that have
-    // not announced yet are skipped — they will receive the newcomer in their
-    // own roster when they announce, which avoids a duplicate join. Other nodes
-    // get the join via pub/sub.
-    const joinMessage = new PresenceMessage<Context>(this.documentId, {
-      type: "presence-join",
-      awarenessId,
-      clientId: client.id,
-      userId: context.userId,
-      data,
-    });
-    const sends: Promise<unknown>[] = [];
-    for (const otherId of this.#clientPresence.keys()) {
-      if (otherId === client.id) {
-        continue;
-      }
-      const peer = this.#clients.get(otherId);
-      if (peer) {
-        sends.push(peer.send(joinMessage));
-      }
-    }
-    sends.push(this.#publishDocumentMessage(joinMessage));
-
-    // Close the roster exchange with a full snapshot (local + cross-node).
-    // The joins above tell the newcomer who is present; the snapshot lets it
-    // RECONCILE — dropping any peer it still remembers from before a
-    // reconnect that is no longer present (whose presence-leave it missed
-    // while offline). Sent after the joins so it reflects everything above.
-    sends.push(
-      client
-        .send(
-          new PresenceMessage<Context>(this.documentId, {
-            type: "presence-heartbeat",
-            clients: this.#combinedPresenceSnapshot(),
-          }),
-        )
-        .catch(() => {}),
-    );
-
-    await Promise.all(sends).catch((error) => {
-      emitWideEvent("error", {
-        event_type: "presence_join_broadcast_failed",
-        timestamp: new Date().toISOString(),
-        document_id: this.documentId,
-        session_id: this.id,
-        client_id: client.id,
-        error,
-      });
-    });
-  }
-
-  /**
-   * Tell peers a client left so they clear its awareness locally. Works for
-   * encrypted documents because the awareness clientID travels in cleartext.
-   */
-  #broadcastClientLeave(clientId: string) {
-    const entries = this.#clientPresence.get(clientId);
-    this.#clientPresence.delete(clientId);
-    if (!entries) {
-      return;
-    }
-    const sends: Promise<unknown>[] = [];
-    for (const [awarenessId, presence] of entries) {
-      const message = new PresenceMessage<Context>(this.documentId, {
-        type: "presence-leave",
-        awarenessId,
-        clientId,
-        userId: presence.context.userId,
-        data: presence.data,
-      });
-      sends.push(this.broadcast(message, clientId), this.#publishDocumentMessage(message));
-    }
-    void Promise.all(sends).catch((error) => {
-      emitWideEvent("error", {
-        event_type: "presence_leave_broadcast_failed",
-        timestamp: new Date().toISOString(),
-        document_id: this.documentId,
-        session_id: this.id,
-        client_id: clientId,
-        error,
-      });
-    });
-  }
-
-  /**
-   * Retract a single awarenessId for a client (e.g. one tab in a SharedWorker
-   * destroyed its Provider). Broadcasts presence-leave for that awarenessId.
-   */
-  #handlePresenceUnannounce(clientId: string, awarenessId: number) {
-    const entries = this.#clientPresence.get(clientId);
-    const presence = entries?.get(awarenessId);
-    if (!entries || !presence) return;
-    entries.delete(awarenessId);
-    if (entries.size === 0) {
-      this.#clientPresence.delete(clientId);
-    }
-    const message = new PresenceMessage<Context>(this.documentId, {
-      type: "presence-leave",
-      awarenessId,
-      clientId,
-      userId: presence.context.userId,
-      data: presence.data,
-    });
-    // Not excluding the sender: sibling tabs on the same SharedWorker
-    // connection need the leave too (the retracting tab is gone or drops its
-    // own awarenessId client-side).
-    void Promise.all([this.broadcast(message), this.#publishDocumentMessage(message)]).catch(
-      (error) => {
-        emitWideEvent("error", {
-          event_type: "presence_leave_broadcast_failed",
-          timestamp: new Date().toISOString(),
-          document_id: this.documentId,
-          session_id: this.id,
-          client_id: clientId,
-          error,
-        });
-      },
-    );
-  }
-
-  /**
-   * Locally fan out a server-authored presence-join/leave (clearing the peer's
-   * awareness on leave is done client-side from this message).
-   */
-  #broadcastPresence(payload: DecodedPresenceJoin | DecodedPresenceLeave): Promise<void> {
-    return this.broadcast(new PresenceMessage<Context>(this.documentId, payload));
-  }
-
-  /**
-   * Record/refresh a single remote client (from a pub/sub presence-join), so the
-   * cross-node roster stays current between heartbeats.
-   */
-  #upsertRemoteClient(nodeId: string, payload: DecodedPresenceJoin) {
-    const node = this.#remotePresence.get(nodeId) ?? {
-      lastSeen: Date.now(),
-      clients: new Map<
-        string,
-        { clientId: string; awarenessId: number; userId: string; data: Record<string, unknown> }
-      >(),
-    };
-    node.lastSeen = Date.now();
-    node.clients.set(`${payload.clientId}:${payload.awarenessId}`, {
-      clientId: payload.clientId,
-      awarenessId: payload.awarenessId,
-      userId: payload.userId,
-      data: payload.data,
-    });
-    this.#remotePresence.set(nodeId, node);
-  }
-
-  /**
-   * Forget a single remote awarenessId (from a pub/sub presence-leave).
-   */
-  #removeRemoteClient(nodeId: string, clientId: string, awarenessId: number) {
-    const node = this.#remotePresence.get(nodeId);
-    if (!node) {
-      return;
-    }
-    node.lastSeen = Date.now();
-    node.clients.delete(`${clientId}:${awarenessId}`);
-    if (node.clients.size === 0) {
-      this.#remotePresence.delete(nodeId);
-    }
-  }
-
-  /**
-   * Reconcile a node's full roster snapshot (from a pub/sub presence-heartbeat)
-   * against what we last knew for it: fan out joins for newly-seen clients,
-   * leaves for clients that disappeared, then store the snapshot and refresh the
-   * node's liveness. Self-heals any join/leave message that was lost.
-   */
-  async #reconcileRemoteSnapshot(nodeId: string, clients: DecodedPresenceHeartbeat["clients"]) {
-    const previous = this.#remotePresence.get(nodeId)?.clients ?? new Map();
-    const next = new Map<
-      string,
-      { clientId: string; awarenessId: number; userId: string; data: Record<string, unknown> }
-    >();
-    const sends: Promise<void>[] = [];
-
-    for (const peer of clients) {
-      const key = `${peer.clientId}:${peer.awarenessId}`;
-      next.set(key, {
-        clientId: peer.clientId,
-        awarenessId: peer.awarenessId,
-        userId: peer.userId,
-        data: peer.data,
-      });
-      if (!previous.has(key)) {
-        sends.push(
-          this.#broadcastPresence({
-            type: "presence-join",
-            awarenessId: peer.awarenessId,
-            clientId: peer.clientId,
-            userId: peer.userId,
-            data: peer.data,
-          }),
-        );
-      }
-    }
-
-    for (const [key, peer] of previous) {
-      if (!next.has(key)) {
-        sends.push(
-          this.#broadcastPresence({
-            type: "presence-leave",
-            awarenessId: peer.awarenessId,
-            clientId: peer.clientId,
-            userId: peer.userId,
-            data: peer.data,
-          }),
-        );
-      }
-    }
-
-    this.#remotePresence.set(nodeId, { lastSeen: Date.now(), clients: next });
-    await Promise.all(sends);
-  }
-
-  /**
-   * Build a heartbeat snapshot of this node's local clients.
-   */
-  #localPresenceSnapshot(): DecodedPresenceHeartbeat["clients"] {
-    return [...this.#clientPresence.entries()].flatMap(([clientId, entries]) =>
-      [...entries.entries()].map(([awarenessId, presence]) => ({
-        awarenessId,
-        clientId,
-        userId: presence.context.userId,
-        data: presence.data,
-      })),
-    );
-  }
-
-  /**
-   * Build the full roster (this node's local clients + clients on other
-   * nodes) as a heartbeat snapshot. This is what clients reconcile against —
-   * unlike the node-to-node heartbeat, which carries only local clients.
-   */
-  #combinedPresenceSnapshot(): DecodedPresenceHeartbeat["clients"] {
-    const snapshot = this.#localPresenceSnapshot();
-    for (const node of this.#remotePresence.values()) {
-      for (const peer of node.clients.values()) {
-        snapshot.push({
-          awarenessId: peer.awarenessId,
-          clientId: peer.clientId,
-          userId: peer.userId,
-          data: peer.data,
-        });
-      }
-    }
-    return snapshot;
-  }
-
-  /**
-   * One presence-maintenance tick (driven by the interval): advertise this
-   * node's local clients to other nodes, then expire any remote node that has
-   * stopped sending heartbeats (e.g. crashed) and clear its clients locally.
-   * Public so it can be driven deterministically in tests.
-   */
-  async runPresenceMaintenance() {
-    const sends: Promise<unknown>[] = [];
-
-    const snapshot = this.#localPresenceSnapshot();
-    if (snapshot.length > 0) {
-      const heartbeat = new PresenceMessage<Context>(this.documentId, {
-        type: "presence-heartbeat",
-        clients: snapshot,
-      });
-      sends.push(this.#publishDocumentMessage(heartbeat));
-    }
-
-    const now = Date.now();
-    for (const [nodeId, node] of this.#remotePresence) {
-      if (now - node.lastSeen <= this.#presenceTtlMs) {
-        continue;
-      }
-      this.#remotePresence.delete(nodeId);
-      for (const peer of node.clients.values()) {
-        sends.push(
-          this.#broadcastPresence({
-            type: "presence-leave",
-            awarenessId: peer.awarenessId,
-            clientId: peer.clientId,
-            userId: peer.userId,
-            data: peer.data,
-          }),
-        );
-      }
-    }
-
-    // Also push the FULL roster (local + cross-node) to this node's own
-    // clients. Clients reconcile their peer set against it, so any lost
-    // join/leave (dropped message, missed while briefly offline) self-heals
-    // within one heartbeat interval instead of persisting forever. Sent even
-    // when empty — an empty roster is exactly what tells a client its last
-    // remaining peer is gone. Built after the TTL expiry above so it never
-    // resurrects clients of a node that was just expired.
-    if (this.#clients.size > 0) {
-      sends.push(
-        this.broadcast(
-          new PresenceMessage<Context>(this.documentId, {
-            type: "presence-heartbeat",
-            clients: this.#combinedPresenceSnapshot(),
-          }),
-        ),
-      );
-    }
-
-    await Promise.all(sends).catch((error) => {
-      emitWideEvent("error", {
-        event_type: "presence_maintenance_failed",
-        timestamp: new Date().toISOString(),
-        document_id: this.documentId,
-        session_id: this.id,
-        error,
-      });
-    });
   }
 
   /**
@@ -760,6 +287,191 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
   }
 
   /**
+   * Resolve the delivery QoS for an RPC method from the handler registry. Methods defined via
+   * `definePush` carry their declared QoS; unregistered methods get push defaults (ephemeral,
+   * replicated, acked, deduped).
+   */
+  #resolveRpcQos(method: string, override?: Partial<RpcMethodQos>): RpcMethodQos {
+    return {
+      durability: "ephemeral",
+      replicate: true,
+      ack: true,
+      dedupe: true,
+      ...this.#rpcHandlers[method]?.qos,
+      ...override,
+    };
+  }
+
+  /**
+   * Build a server-authored RPC push: an unsolicited notification shaped as a response to no
+   * request (`requestType: "response"`, `originalRequestId: undefined`), stamped with the
+   * method's QoS. Pushes default to cleartext — they typically carry routing/roster metadata
+   * the server must read; pass `encrypted: true` only for opaque payloads.
+   */
+  #buildRpcPush(
+    method: string,
+    payload: unknown,
+    opts?: { encrypted?: boolean; qos?: Partial<RpcMethodQos> },
+  ): { message: RpcMessage<Context>; qos: RpcMethodQos } {
+    const qos = this.#resolveRpcQos(method, opts?.qos);
+    const handler = this.#rpcHandlers[method];
+    const serializer = handler?.response?.encode
+      ? (ctx: { type: string }) =>
+          ctx.type === "rpc" ? handler.response!.encode(payload as any) : undefined
+      : undefined;
+    const message = new RpcMessage<Context>(
+      this.documentId,
+      { type: "success", payload } as RpcSuccess,
+      method,
+      "response",
+      undefined,
+      {} as Context,
+      opts?.encrypted ?? false,
+      undefined,
+      serializer,
+      { durability: qos.durability, ack: qos.ack },
+    );
+    return { message, qos };
+  }
+
+  /**
+   * Send a server-authored RPC push to a single local client.
+   */
+  async sendRpcToClient(
+    clientOrId: string | { id: string; send: (m: Message<Context>) => Promise<void> },
+    method: string,
+    payload: unknown,
+    opts?: { encrypted?: boolean; qos?: Partial<RpcMethodQos> },
+  ): Promise<void> {
+    const client = typeof clientOrId === "string" ? this.#clients.get(clientOrId) : clientOrId;
+    if (!client) {
+      return;
+    }
+    const { message } = this.#buildRpcPush(method, payload, opts);
+    await client.send(message);
+  }
+
+  /**
+   * Push a server-authored RPC notification to all local clients (optionally excluding one)
+   * and, when the method's QoS says `replicate`, publish it to the document topic so other
+   * nodes' sessions receive it too (dispatched to the method's `pushHandler` there).
+   */
+  async broadcastRpc(
+    method: string,
+    payload: unknown,
+    opts?: { excludeClientId?: string; encrypted?: boolean; qos?: Partial<RpcMethodQos> },
+  ): Promise<void> {
+    const { message, qos } = this.#buildRpcPush(method, payload, opts);
+    await this.broadcast(message, opts?.excludeClientId);
+    if (qos.replicate) {
+      await this.#publishRpcMessage(message);
+    }
+  }
+
+  /**
+   * Publish a server-authored RPC push to other nodes only — no local broadcast. For
+   * node-to-node state exchange (e.g. periodic snapshots) whose local effect is produced by
+   * the protocol itself rather than by relaying the raw push.
+   */
+  async publishRpc(
+    method: string,
+    payload: unknown,
+    opts?: { encrypted?: boolean; qos?: Partial<RpcMethodQos> },
+  ): Promise<void> {
+    const { message } = this.#buildRpcPush(method, payload, opts);
+    await this.#publishRpcMessage(message);
+  }
+
+  /**
+   * Dispatch an RPC push. If the method registered a `pushHandler`, it runs first and may
+   * suppress the default relay. Otherwise the push is relayed to local clients as-is — the
+   * behavior unregistered notifications always had via `broadcast`. Pushes authored by a local
+   * client are additionally published to other nodes per the method's QoS; replicated pushes
+   * are never re-published (the pub/sub fan-out already reached every node once).
+   */
+  async #handleRpcPush(
+    rpcMessage: RpcMessage<Context>,
+    client: { id: string; send: (m: Message<Context>) => Promise<void> } | undefined,
+    sourceNodeId: string | undefined,
+  ): Promise<void> {
+    if (rpcMessage.payload.type !== "success") {
+      return;
+    }
+
+    const handler = this.#rpcHandlers[rpcMessage.rpcMethod];
+    let forwardToLocalClients = true;
+    // Replication is a trusted node-to-node plane: receiving nodes apply
+    // replicated pushes as server-authored. A client-authored push therefore
+    // never enters it by default — only a registered pushHandler that has
+    // inspected the payload may vouch for it with `replicate: true`. (Without
+    // this, a node missing a protocol's handlers would launder forged client
+    // pushes into trusted messages on every other node.)
+    let replicate = false;
+
+    if (handler?.pushHandler) {
+      try {
+        const result = await handler.pushHandler(rpcMessage.payload.payload, {
+          server: this.#server as any,
+          documentId: this.namespacedDocumentId,
+          session: this as any,
+          sourceNodeId,
+          clientId: client?.id,
+        });
+        if (result?.forwardToLocalClients === false) {
+          forwardToLocalClients = false;
+        }
+        if (result?.replicate === true) {
+          replicate = true;
+        }
+      } catch (error) {
+        emitWideEvent("error", {
+          event_type: "rpc_push_handler_failed",
+          timestamp: new Date().toISOString(),
+          document_id: this.documentId,
+          session_id: this.id,
+          message_id: rpcMessage.id,
+          method: rpcMessage.rpcMethod,
+          error,
+        });
+        return;
+      }
+    }
+
+    if (forwardToLocalClients) {
+      await this.broadcast(rpcMessage, client?.id);
+    }
+
+    if (client && replicate) {
+      // Durability does not travel the wire, so a decoded client push has none of
+      // its own — re-derive it from the method definition. Without this the push
+      // would fall back to the `RpcMessage` default (`durable`) and a method
+      // declared ephemeral (a periodic roster, say) would be persisted in the
+      // durable log and replayed to reconnecting nodes as stale state.
+      await this.#publishRpcMessage(
+        rpcMessage,
+        this.#resolveRpcQos(rpcMessage.rpcMethod).durability,
+      );
+    }
+  }
+
+  #publishRpcMessage(
+    message: RpcMessage<Context>,
+    durability?: "durable" | "ephemeral",
+  ): Promise<void> {
+    return this.#publishDocumentMessage(message, durability).catch((error) => {
+      emitWideEvent("error", {
+        event_type: "rpc_push_publish_failed",
+        timestamp: new Date().toISOString(),
+        document_id: this.documentId,
+        session_id: this.id,
+        message_id: message.id,
+        method: message.rpcMethod,
+        error,
+      });
+    });
+  }
+
+  /**
    * Publish a message to this document's cross-node fan-out topic.
    *
    * Every document-topic publish goes through here so the message-declared durability
@@ -767,15 +479,23 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
    * are routed over the backend's non-durable channel so they don't consume durable-log
    * retention, while durable types (update/sync-step-2) are persisted for cross-node
    * replay/catch-up. Callers keep their own error handling around the returned promise.
+   *
+   * `durabilityOverride` exists for messages whose own classification is not trustworthy:
+   * a message decoded off the wire carries no durability (it is not encoded), so a relayed
+   * client push must have it re-derived from the method definition by the caller.
    */
-  #publishDocumentMessage(message: Message<Context>): Promise<void> {
+  #publishDocumentMessage(
+    message: Message<Context>,
+    durabilityOverride?: "durable" | "ephemeral",
+  ): Promise<void> {
+    const durability = durabilityOverride ?? message.durability;
     const published = this.#pubSub.publish(
       `document/${this.namespacedDocumentId}` as const,
       message.encoded,
       this.#nodeId,
-      { ephemeral: message.durability === "ephemeral" },
+      { ephemeral: durability === "ephemeral" },
     );
-    if (message.durability === "durable") {
+    if (durability === "durable") {
       // A durable publish that fails means remote nodes never saw this update (their side shows
       // no gap). Remember it so the next resync also republishes full state to them. NOTE: this
       // is flushed on the next resync (i.e. the next inbound gap on this node). If this node's
@@ -903,18 +623,11 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
         });
 
         if (this.#storage.retrieveAttribution && this.#rpcHandlers.attributionGet) {
-          const pushMessage = new RpcMessage(
-            this.documentId,
-            {
-              type: "success",
-              payload: { contentMap: attribution },
-            } as RpcSuccess,
+          this.broadcastRpc(
             "attributionPush",
-            "response",
-            undefined,
-            {} as Context,
-          );
-          this.broadcast(pushMessage, clientId).catch(() => {});
+            { contentMap: attribution },
+            { excludeClientId: clientId },
+          ).catch(() => {});
         }
       }
 
@@ -1192,12 +905,21 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
           }
         }
         case "rpc": {
-          if (!client) {
+          const rpcMessage = message as RpcMessage<Context>;
+          const { requestType, originalRequestId } = rpcMessage;
+
+          // A push is an unsolicited notification: a "response" correlated to no request. It
+          // may arrive from a local client or replicated from another node (client undefined).
+          if (requestType === "response" && originalRequestId === undefined) {
+            await this.#handleRpcPush(rpcMessage, client, replicationMeta?.sourceNodeId);
             return;
           }
 
-          const rpcMessage = message as RpcMessage<Context>;
-          const { requestType, originalRequestId } = rpcMessage;
+          // Everything else (requests, streams, request-correlated responses) is a
+          // conversation with a specific local client; replicated copies are not ours.
+          if (!client) {
+            return;
+          }
 
           switch (requestType) {
             case "request": {
@@ -1212,7 +934,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
               };
 
               const handler = this.#rpcHandlers[method];
-              if (!handler) {
+              if (!handler?.handler) {
                 const errorMessage = new RpcMessage(
                   this.documentId,
                   {
@@ -1238,7 +960,9 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   documentId: this.namespacedDocumentId,
                   session: this as any,
                   userId: rpcMessage.context?.userId,
-                  clientId: rpcMessage.context?.clientId,
+                  // The server-assigned connection id, not the client-supplied context value —
+                  // handlers keying state by clientId must not be spoofable.
+                  clientId: client.id,
                 };
                 const result = (await handler.handler(requestPayload, enrichedContext)) as {
                   response: {
@@ -1351,7 +1075,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                     documentId: this.namespacedDocumentId,
                     session: this as any,
                     userId: rpcMessage.context?.userId,
-                    clientId: rpcMessage.context?.clientId,
+                    clientId: client.id,
                   };
 
                   await handler.streamHandler(
@@ -1404,53 +1128,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
           return;
         }
-        case "presence": {
-          if (message.payload.type === "presence-announce") {
-            if (client) {
-              await this.#handlePresenceAnnounce(
-                client,
-                message.payload.awarenessId,
-                message.context,
-              );
-            }
-            return;
-          }
-
-          if (message.payload.type === "presence-unannounce") {
-            if (client) {
-              this.#handlePresenceUnannounce(client.id, message.payload.awarenessId);
-            }
-            return;
-          }
-
-          // presence-join / presence-leave / presence-heartbeat are
-          // server-authored. They only reach apply via pub/sub replication from
-          // another node (client undefined). Update our cross-node roster for
-          // that node and fan join/leave out to this node's clients.
-          if (client) {
-            return;
-          }
-          const sourceNodeId = replicationMeta?.sourceNodeId;
-          if (message.payload.type === "presence-heartbeat") {
-            if (sourceNodeId) {
-              await this.#reconcileRemoteSnapshot(sourceNodeId, message.payload.clients);
-            }
-            return;
-          }
-          if (sourceNodeId) {
-            if (message.payload.type === "presence-join") {
-              this.#upsertRemoteClient(sourceNodeId, message.payload);
-            } else {
-              this.#removeRemoteClient(
-                sourceNodeId,
-                message.payload.clientId,
-                message.payload.awarenessId,
-              );
-            }
-          }
-          await this.broadcast(message);
-          return;
-        }
         default: {
           await Promise.all([
             this.broadcast(message, client?.id),
@@ -1492,7 +1169,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     });
 
     this.#cancelCleanup();
-    this.#stopPresenceMaintenance();
 
     try {
       if (this.#unsubscribe) {
@@ -1514,9 +1190,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
       namespacedDocumentId: this.namespacedDocumentId,
       sessionId: this.id,
     });
-
-    this.#clientPresence.clear();
-    this.#remotePresence.clear();
 
     this.destroy();
 
@@ -1544,13 +1217,6 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
     }
   }
 
-  #stopPresenceMaintenance() {
-    if (this.#presenceTimerId !== undefined) {
-      clearInterval(this.#presenceTimerId);
-      this.#presenceTimerId = undefined;
-    }
-  }
-
   toJSON() {
     return {
       documentId: this.documentId,
@@ -1575,5 +1241,10 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
   public get clients(): IterableIterator<Client<Context>> {
     return this.#clients.values();
+  }
+
+  /** Whether a client with this id is currently connected to the session. */
+  public hasClient(id: string): boolean {
+    return this.#clients.has(id);
   }
 }

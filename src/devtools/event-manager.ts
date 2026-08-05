@@ -647,8 +647,7 @@ export class EventManager {
 
   toggleConnection(): void {
     const isOnline =
-      this.connectionState?.type === "connected" ||
-      this.connectionState?.type === "connecting";
+      this.connectionState?.type === "connected" || this.connectionState?.type === "connecting";
     if (isOnline) {
       this.disconnectConnection();
     } else {

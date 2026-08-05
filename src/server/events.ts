@@ -18,38 +18,18 @@ export type ClientMessageDirection = "in" | "out";
 export type DocumentMessageSource = "client" | "replication";
 
 /**
- * Configuration for client presence (join/leave) notifications broadcast to a
- * session's peers.
+ * Configuration for transport-level client liveness. This is a socket concern
+ * that stays in the server core: its effect (disconnect → `client-leave`
+ * event) is the seam the presence protocol consumes to broadcast leaves.
+ * Presence-specific knobs (`getPresenceData`, heartbeats, TTLs) live on the
+ * presence protocol's config (`teleportal/protocols/presence`).
  */
-export type PresenceConfig<Context extends ServerContext = ServerContext> = {
-  /**
-   * Project a client's server context into the `data` bag broadcast to peers on
-   * join/leave. Return only what is safe to share (e.g. a display name). May be
-   * async (e.g. to look up a profile). Defaults to `() => ({})`.
-   */
-  getPresenceData?: (
-    context: Context,
-  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-
-  /**
-   * How often (ms) each node re-broadcasts a snapshot of its own local clients
-   * over pub/sub so other nodes can keep a fresh, crash-safe roster. Defaults to
-   * 30_000 (30s).
-   */
-  heartbeatIntervalMs?: number;
-
-  /**
-   * How long (ms) a remote node's presence is trusted without a heartbeat.
-   * When exceeded, the node is presumed gone and its clients are cleared from
-   * peers. Should be a small multiple of `heartbeatIntervalMs`. Defaults to
-   * 90_000 (90s, ~2 missed heartbeats).
-   */
-  presenceTtlMs?: number;
-
+export type LivenessConfig = {
   /**
    * How long (ms) a *local* client's connection is trusted without any inbound
    * traffic (messages or protocol pings) before the server presumes it dead,
-   * disconnects it, and broadcasts presence-leave for its awareness entries.
+   * disconnects it, and (via the presence protocol's `client-leave` listener)
+   * broadcasts a leave for its awareness entries.
    *
    * Liveness is only enforced for clients that have demonstrated they ping
    * (the websocket transport heartbeats by default): a client that has never
