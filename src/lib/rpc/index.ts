@@ -10,6 +10,7 @@ import type {
 } from "teleportal/protocol";
 import type { Server } from "../../server/server";
 import type { Session } from "../../server/session";
+import type { DeliveryCallback } from "../../server/client";
 import type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";
 
 // ---------------------------------------------------------------------------
@@ -223,6 +224,7 @@ export type RpcResult<T> =
       readonly value: T;
       readonly encrypted?: boolean;
       readonly stream?: AsyncIterable<unknown>;
+      readonly onAck?: DeliveryCallback;
     }
   | {
       readonly ok: false;
@@ -235,9 +237,27 @@ export type RpcResult<T> =
 
 export function ok<T>(
   value: T,
-  opts?: { encrypted?: boolean; stream?: AsyncIterable<unknown> },
+  opts?: {
+    encrypted?: boolean;
+    stream?: AsyncIterable<unknown>;
+    /**
+     * Called once the response's fate is known — acknowledged by the client, or one of
+     * the reasons it never will be (see {@link DeliveryResult}).
+     *
+     * Returning from a handler only means the response was produced; the framework
+     * awaiting the send only means it reached the transport. Use this when the handler
+     * is holding something on the response's behalf and needs to know when to let go.
+     */
+    onAck?: DeliveryCallback;
+  },
 ): RpcResult<T> {
-  return { ok: true, value, encrypted: opts?.encrypted, stream: opts?.stream };
+  return {
+    ok: true,
+    value,
+    encrypted: opts?.encrypted,
+    stream: opts?.stream,
+    onAck: opts?.onAck,
+  };
 }
 
 export function err<T = never>(
@@ -364,9 +384,15 @@ function translateResult(result: RpcResult<unknown>): {
   response: unknown | RpcError;
   encrypted?: boolean;
   stream?: AsyncIterable<unknown>;
+  onAck?: DeliveryCallback;
 } {
   if (result.ok) {
-    return { response: result.value, encrypted: result.encrypted, stream: result.stream };
+    return {
+      response: result.value,
+      encrypted: result.encrypted,
+      stream: result.stream,
+      onAck: result.onAck,
+    };
   }
   return {
     response: {
@@ -565,6 +591,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefin
               response: rest,
               stream,
               encrypted: result.encrypted,
+              onAck: result.onAck,
             };
           }
           return translateResult(result);

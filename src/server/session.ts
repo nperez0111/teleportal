@@ -32,7 +32,7 @@ import {
 } from "teleportal/attribution";
 import { attributionProtocol } from "../protocols/attribution/methods";
 import { Observable } from "../lib/utils";
-import { Client } from "./client";
+import { Client, type DeliveryResult } from "./client";
 import { TtlDedupe } from "./dedupe";
 import type { AttributionConfig, DocumentMessageSource, SessionEvents } from "./events";
 import { emitWideEvent } from "./logger";
@@ -337,19 +337,30 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
 
   /**
    * Send a server-authored RPC push to a single local client.
+   *
+   * `onAck` fires once the push's fate is known — acknowledged, or one of the reasons it
+   * never will be. This is the useful case for delivery tracking: unlike a response, a push
+   * has no reply to infer arrival from.
    */
   async sendRpcToClient(
-    clientOrId: string | { id: string; send: (m: Message<Context>) => Promise<void> },
+    clientOrId: string | Client<Context>,
     method: string,
     payload: unknown,
-    opts?: { encrypted?: boolean; qos?: Partial<RpcMethodQos> },
+    opts?: {
+      encrypted?: boolean;
+      qos?: Partial<RpcMethodQos>;
+      onAck?: (result: DeliveryResult) => void;
+    },
   ): Promise<void> {
     const client = typeof clientOrId === "string" ? this.#clients.get(clientOrId) : clientOrId;
     if (!client) {
+      // Nothing was sent, so nothing will ever be acked — tell the caller now rather than
+      // leaving it waiting on a callback that cannot fire.
+      opts?.onAck?.({ delivered: false, reason: "disconnected" });
       return;
     }
     const { message } = this.#buildRpcPush(method, payload, opts);
-    await client.send(message);
+    await client.send(message, { onAck: opts?.onAck });
   }
 
   /**
@@ -392,7 +403,15 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
    */
   async #handleRpcPush(
     rpcMessage: RpcMessage<Context>,
-    client: { id: string; send: (m: Message<Context>) => Promise<void> } | undefined,
+    client:
+      | {
+          id: string;
+          send: (
+            m: Message<Context>,
+            options?: { onAck?: (result: DeliveryResult) => void },
+          ) => Promise<void>;
+        }
+      | undefined,
     sourceNodeId: string | undefined,
   ): Promise<void> {
     if (rpcMessage.payload.type !== "success") {
@@ -763,7 +782,13 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
    */
   async apply(
     message: Message<Context>,
-    client?: { id: string; send: (m: Message<Context>) => Promise<void> },
+    client?: {
+      id: string;
+      send: (
+        m: Message<Context>,
+        options?: { onAck?: (result: DeliveryResult) => void },
+      ) => Promise<void>;
+    },
     replicationMeta?: { sourceNodeId: string; deduped: boolean },
   ) {
     // The `encrypted` flag describes whether the message payload needs
@@ -980,6 +1005,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   };
                   stream?: AsyncIterable<unknown>;
                   encrypted?: boolean;
+                  onAck?: (deliveryResult: DeliveryResult) => void;
                 };
                 const responseEncrypted = result.encrypted ?? rpcMessage.encrypted;
 
@@ -1040,7 +1066,7 @@ export class Session<Context extends ServerContext> extends Observable<SessionEv
                   serializer,
                 );
 
-                await client.send(responseMessage);
+                await client.send(responseMessage, { onAck: result.onAck });
               } catch (error) {
                 emitWideEvent("error", {
                   event_type: "rpc_handler_failed",

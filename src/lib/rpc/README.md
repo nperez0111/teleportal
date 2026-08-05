@@ -162,11 +162,42 @@ In `createHandlers`, a push method's handler is a **`pushHandler(payload, ctx)`*
 
 To author pushes, `Session` exposes:
 
-- **`session.sendRpcToClient(clientOrId, method, payload, opts?)`** — push to one local client.
+- **`session.sendRpcToClient(clientOrId, method, payload, { encrypted?, qos?, onAck? })`** — push to one local client.
 - **`session.broadcastRpc(method, payload, { excludeClientId?, encrypted?, qos? })`** — push to all local clients, plus a pub/sub publish when the method's QoS says `replicate`.
 - **`session.publishRpc(method, payload, opts?)`** — node-to-node only, no local broadcast.
 
 Each resolves the method's declared QoS from the handler registry (a per-call `qos` override is merged on top; unregistered methods get push defaults).
+
+## Knowing whether a message landed
+
+Returning from a handler means the response was _produced_; the framework awaiting the send means it reached the _transport_. Neither says the client got it. When a handler is holding something on the message's behalf and needs to know when to let go, pass **`onAck`**:
+
+```typescript
+create: ({ db }) =>
+  async (payload, ctx) => {
+    const draft = await db.drafts.stage(payload);
+    return ok(
+      { comment: draft.comment },
+      {
+        onAck: (result) => {
+          if (result.delivered) db.drafts.commit(draft.id);
+          else db.drafts.discard(draft.id, result.reason);
+        },
+      },
+    );
+  };
+```
+
+The callback fires **exactly once**, with either `{ delivered: true }` or a reason it never will be:
+
+| `reason`           | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `timeout`          | No ack within `ackTimeoutMs` (default 10s). The client may still have it. |
+| `disconnected`     | The connection went away first (or the target client was already gone).   |
+| `rejected`         | The client refused it — a NACK carrying an error.                         |
+| `not-acknowledged` | The message is best-effort (`qos.ack: false`), so no ack was ever coming. |
+
+`session.sendRpcToClient` takes the same `onAck`, and that is the more useful case: a push has no reply to infer arrival from. Only messages sent _with_ a callback are tracked, so the common path costs nothing.
 
 ### Client side: extension hooks
 

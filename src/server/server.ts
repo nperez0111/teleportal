@@ -954,6 +954,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           }
           if (message.type === "ack") {
             this.#metrics.incrementMessage(message.type);
+            // Settle whatever this acks. Most server→client messages are sent without a
+            // delivery callback, in which case this is a no-op — but a sender that asked
+            // to know whether its message landed learns it here.
+            client.handleAck(message as AckMessage<Context>);
             return;
           }
 
@@ -1253,6 +1257,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
     this.#clientLiveness.delete(clientId);
     this.#connectedClients.delete(clientId);
+
+    // Anything sent to this client that was still awaiting an ack will never get one.
+    // Reporting it now beats making every waiting sender sit out its ack timeout.
+    registered.destroy();
 
     // Remove the exact registered instance from every session. Using `registered`
     // rather than `client` matters when a bare id was passed: it guarantees we

@@ -433,6 +433,14 @@ contains no presence logic.
   ACKs are published over PubSub (`ack/${clientId}`) so they still reach a client whose
   connection is homed on a different node.
 
+Acks flow in both directions. A client acks every server message with `requiresAck`, and
+`Client` correlates those back to the message they refer to, so a sender can learn whether
+its message actually landed — `ok(value, { onAck })` for an RPC response, or the `onAck`
+option on `session.sendRpcToClient` for a push. Only messages sent with a callback are
+tracked. Everything still in flight is reported as `disconnected` when the client goes
+away, so nothing waits out an ack timeout for a connection that is already gone. See the
+[RPC framework docs](../lib/rpc/README.md#knowing-whether-a-message-landed).
+
 ## Rate Limiting
 
 The server supports automatic rate limiting on all client transports when `rateLimitConfig` is provided. Rate limiting uses a rules-based approach where multiple rules can be defined, each with its own limits, tracking mode, and optional storage override.

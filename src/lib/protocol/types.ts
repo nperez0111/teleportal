@@ -213,6 +213,7 @@ export type DecodedRpcMessage<OK = unknown, Error = unknown> = {
 import type { Message, RpcMessage, ServerContext } from "teleportal";
 import type { Server } from "../../server/server";
 import type { Session } from "../../server/session";
+import type { DeliveryResult } from "../../server/client";
 
 /**
  * Base context provided to all RPC handlers on the server.
@@ -291,6 +292,11 @@ export interface RpcServerRequestHandler<
      * snapshot.
      */
     encrypted?: boolean;
+    /**
+     * Called once the response's delivery outcome is known — see `ok()` in
+     * `teleportal/rpc`, which is how handlers normally supply it.
+     */
+    onAck?: (result: DeliveryResult) => void;
   }>;
 
   /**

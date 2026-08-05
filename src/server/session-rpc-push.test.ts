@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Message, ServerContext } from "teleportal";
 import { decodeMessage, InMemoryPubSub, RpcMessage } from "teleportal";
 import type { RpcHandlerRegistry } from "teleportal/protocol";
+import { AckMessage } from "teleportal";
+import { Client, type DeliveryResult } from "./client";
 import { Server } from "./server";
 import { Session } from "./session";
 
@@ -314,6 +316,58 @@ describe("Session RPC push primitives", () => {
       await sessionA.broadcastRpc("rosterPush", { same: true });
 
       await waitFor(() => handled === 2);
+    });
+  });
+
+  describe("delivery tracking", () => {
+    it("reports a push as delivered once the client acks it", async () => {
+      // A push has no reply to infer arrival from, so `onAck` is the only way a sender
+      // learns whether it landed.
+      const session = await makeSession("node-a");
+      const written: Message<ServerContext>[] = [];
+      const client = new Client<ServerContext>({
+        id: "client-a",
+        write: (message) => {
+          written.push(message);
+        },
+      });
+      session.addClient(client);
+
+      const outcomes: DeliveryResult[] = [];
+      await session.sendRpcToClient(
+        client,
+        "trackedPush",
+        { n: 1 },
+        {
+          onAck: (result) => outcomes.push(result),
+        },
+      );
+      expect(written).toHaveLength(1);
+      expect(outcomes).toEqual([]);
+
+      // The client acks by message id, exactly as a real one does over the wire.
+      client.handleAck(
+        new AckMessage({ type: "ack", messageId: written[0].id }, {} as ServerContext),
+      );
+      expect(outcomes).toEqual([{ delivered: true }]);
+    });
+
+    it("reports disconnected when the target client is gone", async () => {
+      // Otherwise a caller waiting on a push to a client that already left would hang
+      // until the ack timeout for a message that was never sent.
+      const session = await makeSession("node-a");
+      const outcomes: DeliveryResult[] = [];
+
+      await session.sendRpcToClient(
+        "nobody",
+        "trackedPush",
+        { n: 1 },
+        {
+          onAck: (result) => outcomes.push(result),
+        },
+      );
+
+      expect(outcomes).toEqual([{ delivered: false, reason: "disconnected" }]);
     });
   });
 
