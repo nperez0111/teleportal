@@ -90,7 +90,6 @@ class PresenceClient extends Observable<{
     this.#ctx.rpcClient
       .sendRequest(this.#ctx.document, "presenceAnnounce", {
         awarenessId: this.#ctx.awareness.clientID,
-        nonce: Date.now(),
       })
       .catch(() => {
         // Best-effort: a lost announce is healed by the next reconnect's
@@ -106,7 +105,6 @@ class PresenceClient extends Observable<{
     // after the connection is destroyed, dropping the unannounce entirely.
     this.#ctx.rpcClient.sendFireAndForget(this.#ctx.document, "presenceUnannounce", {
       awarenessId: this.#ctx.awareness.clientID,
-      nonce: Date.now(),
     });
   }
 

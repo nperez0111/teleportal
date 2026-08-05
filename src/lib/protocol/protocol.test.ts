@@ -636,6 +636,7 @@ describe("custom serialization", () => {
     decoding.readUint8(decoder); // encrypted
     decoding.readUint8(decoder); // best-effort
     decoding.readUint8(decoder); // message type (4 = rpc)
+    decoding.readVarUint(decoder); // nonce
     decoding.readVarString(decoder); // method
     decoding.readUint8(decoder); // request type (2 = response)
     decoding.readUint8(decoder); // has originalRequestId
@@ -677,6 +678,7 @@ describe("custom serialization", () => {
     decoding.readUint8(decoder); // encrypted
     decoding.readUint8(decoder); // best-effort
     decoding.readUint8(decoder); // message type
+    decoding.readVarUint(decoder); // nonce
     decoding.readVarString(decoder); // method
     decoding.readUint8(decoder); // request type
     decoding.readUint8(decoder); // has originalRequestId
@@ -1144,5 +1146,46 @@ describe("delivery QoS", () => {
       { durability: "ephemeral" },
     );
     expect(ephemeral.durability).toBe("ephemeral");
+  });
+});
+
+describe("rpc message identity", () => {
+  const build = (nonce?: number) =>
+    new RpcMessage(
+      "doc-1",
+      { type: "success", payload: { method: "milestoneList" } },
+      "milestoneList",
+      "request",
+      undefined,
+      {},
+      false,
+      undefined,
+      undefined,
+      undefined,
+      nonce,
+    );
+
+  it("gives two separately authored identical-payload messages different ids", () => {
+    // The id stays a hash of the encoded bytes; the nonce is what makes those bytes
+    // differ, so the id can identify a message rather than merely its content.
+    expect(build().id).not.toBe(build().id);
+  });
+
+  it("preserves the id across a decode/re-encode round trip", () => {
+    // This is the property cross-node dedup rests on: a message relayed through pub/sub
+    // must hash the same on the receiving node, or TtlDedupe would stop collapsing
+    // genuine duplicate deliveries.
+    const original = build();
+    const decoded = decodeMessage(original.encoded) as RpcMessage<any>;
+
+    expect(decoded.nonce).toBe(original.nonce);
+    expect(decoded.id).toBe(original.id);
+    // Re-encoding on the relaying node must not mint a fresh nonce either.
+    expect(decoded.encode()).toEqual(original.encoded);
+  });
+
+  it("round-trips an explicit nonce", () => {
+    const decoded = decodeMessage(build(4242).encoded) as RpcMessage<any>;
+    expect(decoded.nonce).toBe(4242);
   });
 });

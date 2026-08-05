@@ -131,6 +131,11 @@ export function encodeMessage(
       case "rpc": {
         encoding.writeUint8(encoder, 4);
 
+        // nonce — uniquifies the frame so the message id identifies this message and not
+        // just its content (see `allocateRpcNonce`). Stamped at authoring time and preserved
+        // across decode/re-encode so a relayed copy keeps its original id.
+        encoding.writeVarUint(encoder, message.nonce);
+
         // method name
         encoding.writeVarString(encoder, message.rpcMethod);
 

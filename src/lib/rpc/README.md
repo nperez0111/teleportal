@@ -145,7 +145,7 @@ import { definePush, defineProtocol } from "teleportal/rpc";
 
 export const presenceRoster = definePush<"presenceRoster", PresenceRosterPayload>(
   "presenceRoster",
-  { qos: { dedupe: false } },
+  { qos: { durability: "durable" } },
 );
 ```
 
@@ -156,7 +156,7 @@ Push defaults: `{ durability: "ephemeral", replicate: true, ack: true, dedupe: t
 - **`durability`** (`"durable" | "ephemeral"`) — which pub/sub lane the message rides when replicated (durable = persisted and replayed after a blip).
 - **`replicate`** — whether the authoring node publishes the push over pub/sub (the document topic) to other nodes at all.
 - **`ack`** — whether receivers ack it and senders retransmit on NACK. `false` = best-effort fire-and-forget, carried on the wire as the `bestEffort` header byte: never acked, never in-flight-tracked, droppable under rate-limit pressure.
-- **`dedupe`** — whether the cross-node replication path runs TTL dedup. Turn off for periodic content-identical messages (identical bytes hash to identical message ids, so a repeated snapshot would otherwise be dropped as a duplicate — presence's roster heartbeat needs `dedupe: false`).
+- **`dedupe`** — whether the cross-node replication path runs TTL dedup, which drops a message whose id was already seen. Every authored `RpcMessage` carries a nonce, so this only ever collapses genuine redeliveries of one message; repeating a payload (a periodic roster snapshot, an empty pull) is fine and needs no opt-out. Turn it off only for a handler that must observe even true duplicate deliveries.
 
 ### Server side: `pushHandler` and the session primitives
 

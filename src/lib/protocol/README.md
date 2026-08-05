@@ -58,12 +58,23 @@ Updates carry a version byte (1 = V1, 2 = V2) so the receiver knows how to apply
 ### RPC message (type 0x04)
 
 ```
+[varUint: nonce]
 [varString: method]
 [uint8: requestType]              0=request, 1=stream, 2=response
 [uint8: hasOriginalRequestId]?    present for stream/response only
 [varString: originalRequestId]?   present if the flag byte is 1
 [uint8: isError]                  0=success, 1=error
 ```
+
+The **nonce** makes each authored RPC message unique on the wire. Without it, two
+separately-authored requests with the same method and payload encode identically and
+therefore share an `id` — which collapses them in the pending-request map (one caller hangs
+until its timeout) and in cross-node dedup (a repeated roster snapshot is swallowed). It is
+stamped once, at authoring time, from a per-process monotonic counter with a random seed
+(the authoring node is not part of the encoded bytes, so two nodes starting at the same
+value would otherwise collide). Decoding carries it through, so a relayed or re-encoded copy
+keeps its original nonce and original `id` — which is what lets dedup still collapse genuine
+duplicate _deliveries_.
 
 A "response" with no `originalRequestId` (flag byte 0) is a **push**: an
 unsolicited notification authored by the server (or replicated from another
@@ -84,6 +95,11 @@ Every decoded message (`DocMessage`, `AwarenessMessage`, `AckMessage`,
   bytes**, rendered as 16 lowercase hex characters. This is a fast content
   fingerprint (not SHA-256, not base64) used for dedup, ack correlation, and
   idempotency. `valueOf()` returns `id`.
+  Because it hashes the bytes, two messages with identical content share an `id`.
+  For `doc` and `awareness` that is what you want — the payloads are idempotent, so
+  collapsing them is harmless. `RpcMessage` instead carries a per-message nonce in
+  its frame, because its `id` also has to answer "which in-flight call does this
+  reply belong to?", and two callers making the same request are two operations.
 - **`resetEncoded()`** — clears the cached `encoded`/`id` after mutating a
   message in place.
 - **`durability`** — `"durable" | "ephemeral"`, driving whether a durable

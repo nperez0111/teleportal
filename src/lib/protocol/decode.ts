@@ -254,6 +254,10 @@ function decodeRpcMessageWithDecoder(
   encoded: EncodedRpcMessage,
   deserializer?: (context: DeserializerContext) => unknown | undefined,
 ): RpcMessage<any> {
+  // nonce — carried so a relayed message keeps the authoring node's value and therefore its
+  // id, which is what lets cross-node dedup still collapse genuine duplicate deliveries.
+  const nonce = decoding.readVarUint(decoder);
+
   // method name
   const rpcMethod = decoding.readVarString(decoder);
 
@@ -325,5 +329,6 @@ function decodeRpcMessageWithDecoder(
     // Durability is only consulted on the authoring node at publish time, so it does not
     // travel the wire; the ack policy must, so receivers know not to ack best-effort pushes.
     { ack: !bestEffort },
+    nonce,
   );
 }

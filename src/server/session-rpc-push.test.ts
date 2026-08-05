@@ -269,8 +269,11 @@ describe("Session RPC push primitives", () => {
     });
   });
 
-  describe("dedup exemption", () => {
-    it("drops a content-identical replicated push by default (TtlDedupe)", async () => {
+  describe("dedup", () => {
+    it("drops a redelivery of the same message (TtlDedupe)", async () => {
+      // What dedup is actually for: one authored message arriving twice, e.g. a durable
+      // backend redelivering after a blip. Both copies carry the same nonce, so they hash
+      // to the same id and the second is dropped.
       let handled = 0;
       const handlers: RpcHandlerRegistry = {
         dedupedPush: {
@@ -280,30 +283,31 @@ describe("Session RPC push primitives", () => {
           },
         },
       };
-      const sessionA = await makeSession("node-a");
       await makeSession("node-b", handlers);
 
-      await sessionA.broadcastRpc("dedupedPush", { same: true });
-      await sessionA.broadcastRpc("dedupedPush", { same: true });
+      const push = rpcPush("dedupedPush", { same: true });
+      await pubSub.publish("document/test-doc", push.encoded, "node-a");
+      await pubSub.publish("document/test-doc", push.encoded, "node-a");
 
       await waitFor(() => handled >= 1);
       await new Promise((resolve) => setTimeout(resolve, 5));
       expect(handled).toBe(1);
     });
 
-    it("re-applies content-identical pushes when the method declares dedupe: false", async () => {
+    it("applies two separately authored pushes with identical payloads", async () => {
+      // These are two distinct events that happen to carry the same payload — a presence
+      // roster republished unchanged, say. Each is authored with its own nonce, so they no
+      // longer collide inside the dedup window and neither needs a `dedupe: false` opt-out.
       let handled = 0;
       const handlers: RpcHandlerRegistry = {
         rosterPush: {
-          qos: { durability: "ephemeral", replicate: true, ack: true, dedupe: false },
           pushHandler: async () => {
             handled++;
             return { forwardToLocalClients: false };
           },
         },
       };
-      // The *receiving* node's registry drives the dedup decision.
-      const sessionA = await makeSession("node-a", handlers);
+      const sessionA = await makeSession("node-a");
       await makeSession("node-b", handlers);
 
       await sessionA.broadcastRpc("rosterPush", { same: true });

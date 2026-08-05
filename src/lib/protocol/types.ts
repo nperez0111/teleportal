@@ -241,9 +241,10 @@ export interface RpcServerContext<Context extends ServerContext = ServerContext>
  * - `replicate`: whether the authoring node publishes it over pub/sub to other nodes at all.
  * - `ack`: whether receivers ack it and senders retransmit on NACK (default delivery mode);
  *   `false` = best-effort fire-and-forget, carried on the wire as the `bestEffort` header byte.
- * - `dedupe`: whether the cross-node replication path runs TtlDedupe. Turn off for periodic
- *   content-identical messages (identical bytes hash to identical message ids, so a repeated
- *   snapshot would otherwise be dropped as a duplicate).
+ * - `dedupe`: whether the cross-node replication path runs TtlDedupe, which drops a message
+ *   whose id was already seen. Every authored `RpcMessage` carries a nonce, so this only ever
+ *   collapses genuine redeliveries of one message — repeating a payload is fine and needs no
+ *   opt-out. Turn it off only for a handler that must see even true duplicate deliveries.
  */
 export type RpcMethodQos = {
   durability: "durable" | "ephemeral";

@@ -47,6 +47,33 @@ export type Message<Context extends Record<string, unknown> = any> =
 export type RawReceivedMessage = Message<any>;
 
 /**
+ * Monotonic source of {@link RpcMessage} nonces.
+ *
+ * `CustomMessage.id` is a hash of the encoded bytes, which is exactly right for asking
+ * "is this the same message?" (dedup, idempotency) but wrong for asking "which in-flight
+ * operation does this reply belong to?". An RPC frame carries no timestamp or counter, so
+ * two separately-authored requests with the same method and payload used to encode
+ * identically — and their pending-request entries collided, hanging one of the two callers
+ * until its timeout. Stamping a nonce into the frame makes each *authored* message unique,
+ * so the content hash can serve both roles.
+ *
+ * The nonce is assigned once, at authoring time, and travels with the message: a relayed or
+ * re-encoded copy keeps its original nonce and therefore its original id, so cross-node
+ * dedup still collapses genuine duplicate deliveries.
+ *
+ * Seeded randomly per process because the authoring node's identity is not part of the
+ * encoded bytes — two nodes starting at the same counter value would otherwise produce
+ * colliding ids for identical payloads.
+ */
+let nextNonce = Math.floor(Math.random() * 0x1_0000_0000);
+function allocateRpcNonce(): number {
+  // Wrap before the varUint encoding would widen past 5 bytes; ids only need to be unique
+  // against messages still inside a dedup/in-flight window, not for all time.
+  nextNonce = (nextNonce + 1) >>> 0;
+  return nextNonce;
+}
+
+/**
  * Base class for message types
  */
 export abstract class CustomMessage<
@@ -294,6 +321,13 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
     encoded?: EncodedRpcMessage,
     serializer?: (context: SerializerContext) => Uint8Array | undefined,
     qos?: RpcMessageQos,
+    /**
+     * Uniquifies this message on the wire so its {@link CustomMessage.id} identifies *this*
+     * message rather than merely its content — see {@link allocateRpcNonce}. Decoding passes
+     * the value read off the wire so a relayed copy keeps the authoring node's nonce; every
+     * other caller lets it default and gets a fresh one.
+     */
+    public nonce: number = allocateRpcNonce(),
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
@@ -328,6 +362,7 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
       rpcMethod: this.rpcMethod,
       requestType: this.requestType,
       originalRequestId: this.originalRequestId,
+      nonce: this.nonce,
       id: this.id,
       encoded: this.encoded,
     };

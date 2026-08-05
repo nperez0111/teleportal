@@ -352,11 +352,10 @@ export class ConnectionWorkerManager {
     for (const [document, ids] of portState.announcedPresence) {
       for (const awarenessId of ids) {
         // Fire-and-forget unannounce request: no response is awaited (the tab
-        // is gone) and the server handler is idempotent. The nonce keeps rapid
-        // identical retractions content-unique for ack correlation.
+        // is gone) and the server handler is idempotent.
         const msg = new RpcMessage(
           document,
-          { type: "success", payload: { awarenessId, nonce: Date.now() } },
+          { type: "success", payload: { awarenessId } },
           "presenceUnannounce",
           "request",
           undefined,
