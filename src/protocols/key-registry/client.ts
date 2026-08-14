@@ -1,4 +1,4 @@
-import { createClientExtension, type RpcExtension } from "teleportal/rpc";
+import { createClientExtension, pushPayload, type RpcExtension } from "teleportal/rpc";
 import { keyRegistryProtocol } from "./methods";
 
 export interface KeyRegistryRpc {
@@ -77,11 +77,10 @@ export const createKeyRegistryRpc = (): RpcExtension<KeyRegistryRpc> => {
     },
 
     handleMessage(message) {
-      if (message.rpcMethod !== "key-registry.rotated") return false;
-      const payload = message.payload?.payload as { generation?: number } | undefined;
-      const generation = payload?.generation;
-      if (generation === undefined) return true;
-      instance?.[notifyRotated](generation);
+      const rotated = pushPayload(keyRegistryProtocol.methods.rotated, message);
+      if (!rotated) return false;
+      if (rotated.generation === undefined) return true;
+      instance?.[notifyRotated](rotated.generation);
       return true;
     },
 

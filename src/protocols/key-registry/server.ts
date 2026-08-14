@@ -76,8 +76,12 @@ export function getKeyRegistryRpcHandlers(storage: KeyRegistryStorage): RpcHandl
         return ok({ generation });
       },
 
-    // Server-authored by the `rotate` handler above, and never replicated, so an inbound
-    // one has no work to do beyond reaching this node's clients.
-    rotated: () => () => {},
+    // The only legitimate `rotated` push is the one the `rotate` handler above sends via
+    // `broadcastRpc`, which reaches local clients directly and never routes through here.
+    // So anything arriving at this handler was authored by a client — and relaying it would
+    // let anyone on the document make every peer discard its key and re-fetch. Drop it.
+    // (`replicate: false` restates this method's QoS: the forgery must not reach the
+    // node-to-node plane, where other nodes would treat it as server-authored.)
+    rotated: () => () => ({ forwardToLocalClients: false, replicate: false }),
   });
 }

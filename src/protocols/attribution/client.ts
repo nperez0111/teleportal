@@ -19,8 +19,7 @@ import {
   type ContentIds,
   type ContentMap,
 } from "teleportal/attribution";
-import type { EncodedContentMap } from "teleportal/storage";
-import { createClientExtension, type RpcExtension } from "teleportal/rpc";
+import { createClientExtension, pushPayload, type RpcExtension } from "teleportal/rpc";
 import type { MilestoneGetResponse } from "../milestone/methods";
 import { resolveDeletedRangeAttribution, resolveRangeAttribution } from "./resolve";
 import {
@@ -285,19 +284,12 @@ export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
     },
 
     handleMessage(message) {
-      if (
-        message.rpcMethod === "attribution.push" &&
-        message.requestType === "response" &&
-        message.payload?.type === "success"
-      ) {
-        const pushPayload = message.payload.payload as Record<string, unknown> | undefined;
-        const encoded = pushPayload?.contentMap as EncodedContentMap | undefined;
-        if (encoded && instance) {
-          instance.mergeIncremental(decodeContentMap(encoded));
-        }
-        return true;
+      const push = pushPayload(attributionProtocol.methods.push, message);
+      if (!push) return false;
+      if (push.contentMap && instance) {
+        instance.mergeIncremental(decodeContentMap(push.contentMap));
       }
-      return false;
+      return true;
     },
 
     destroy() {

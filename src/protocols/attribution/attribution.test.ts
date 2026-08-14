@@ -630,3 +630,29 @@ describe("search marker optimization in collectRangeIds", () => {
     expect(ids[0].contentStart).toBe(0);
   });
 });
+
+describe("attribution.push is server-authored", () => {
+  const pushHandler = () => getAttributionRpcHandlers()["attribution.push"].pushHandler!;
+
+  it("drops a client-authored push instead of relaying it to peers", async () => {
+    // Only `Session` authors this push (via broadcastRpc, on an attributed write). A client
+    // that forges one would inject a bogus ContentMap into every peer's attribution cache.
+    const result = await pushHandler()({ contentMap: {} as any }, {
+      clientId: "client-attacker",
+      sourceNodeId: undefined,
+    } as any);
+
+    expect(result).toEqual({ forwardToLocalClients: false, replicate: false });
+  });
+
+  it("still relays a push replicated from another node", async () => {
+    // This method replicates (push QoS default), so the cross-node copy arriving here is
+    // exactly how peers on this node learn about a remote write.
+    const result = await pushHandler()({ contentMap: {} as any }, {
+      clientId: undefined,
+      sourceNodeId: "node-b",
+    } as any);
+
+    expect(result?.forwardToLocalClients).not.toBe(false);
+  });
+});

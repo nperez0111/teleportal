@@ -2,16 +2,19 @@ import { describe, test, expect, mock } from "bun:test";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
   defineMethod,
+  definePush,
   defineProtocol,
   ok,
   err,
   createHandlers,
   createClientExtension,
   mergeHandlers,
+  pushPayload,
   RpcOperationError,
   type RpcResult,
   type RpcExtensionContext,
 } from "./index";
+import { RpcMessage } from "teleportal/protocol";
 import type { RpcServerContext } from "teleportal/protocol";
 
 // ---------------------------------------------------------------------------
@@ -898,5 +901,75 @@ describe("wire-name collisions", () => {
     );
 
     expect(Object.keys(mergeHandlers(a, b)).sort()).toEqual(["a.list", "b.list"]);
+  });
+});
+
+describe("pushPayload", () => {
+  const proto = defineProtocol("demo", {
+    tick: definePush<{ n: number }>(),
+    other: definePush<{ n: number }>(),
+  });
+
+  /** A push exactly as the server authors it. */
+  function push(method: string, payload: unknown): RpcMessage<any> {
+    return new RpcMessage<any>(
+      "doc",
+      { type: "success", payload },
+      method,
+      "response",
+      undefined,
+      {} as any,
+      false,
+    );
+  }
+
+  test("returns the payload for a matching push", () => {
+    const result = pushPayload(proto.methods.tick, push("demo.tick", { n: 1 }));
+    expect(result).toEqual({ n: 1 });
+    // Typed, not `unknown` — this would not compile against a cast-free `unknown`.
+    expect(result?.n).toBe(1);
+  });
+
+  test("returns undefined for another method's push", () => {
+    expect(pushPayload(proto.methods.other, push("demo.tick", { n: 1 }))).toBeUndefined();
+  });
+
+  test("returns undefined for a request using the same method name", () => {
+    const request = new RpcMessage<any>(
+      "doc",
+      { type: "success", payload: { n: 1 } },
+      "demo.tick",
+      "request",
+      undefined,
+      {} as any,
+      false,
+    );
+    expect(pushPayload(proto.methods.tick, request)).toBeUndefined();
+  });
+
+  test("returns undefined for a response correlated to a request", () => {
+    const response = new RpcMessage<any>(
+      "doc",
+      { type: "success", payload: { n: 1 } },
+      "demo.tick",
+      "response",
+      "some-request-id",
+      {} as any,
+      false,
+    );
+    expect(pushPayload(proto.methods.tick, response)).toBeUndefined();
+  });
+
+  test("returns undefined for an error payload", () => {
+    const errored = new RpcMessage<any>(
+      "doc",
+      { type: "error", statusCode: 500, details: "boom" },
+      "demo.tick",
+      "response",
+      undefined,
+      {} as any,
+      false,
+    );
+    expect(pushPayload(proto.methods.tick, errored)).toBeUndefined();
   });
 });

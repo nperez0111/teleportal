@@ -1,7 +1,12 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { Message, RpcSuccess, ServerContext } from "teleportal";
+import { InMemoryPubSub } from "teleportal";
 import { RpcMessage } from "teleportal/protocol";
+import { Server } from "../../server/server";
+import { Session } from "../../server/session";
 import { InMemoryKeyRegistryStorage } from "../../storage/in-memory/key-registry-storage";
 import { getKeyRegistryHandlers } from "./http";
+import { getKeyRegistryRpcHandlers } from "./server";
 import { createKeyRegistryRpc } from "./client";
 import {
   generateEncryptionKey,
@@ -336,7 +341,7 @@ describe("Key Registry — client rotation notifications", () => {
       "test-doc",
       { type: "success" as const, payload: { generation: 42 } },
       "key-registry.rotated",
-      "request",
+      "response",
       undefined,
       {},
       false,
@@ -346,6 +351,29 @@ describe("Key Registry — client rotation notifications", () => {
     expect(handled).toBe(true);
     expect(receivedGeneration).not.toBeNull();
     expect(receivedGeneration!).toBe(42);
+  });
+
+  it("ignores a request that borrows the push's method name", () => {
+    const ext = createKeyRegistryRpc();
+    const api = ext.create(mockCtx("test-doc"));
+
+    let calls = 0;
+    api.onKeysRotated(() => calls++);
+
+    // Only the server authors `key-registry.rotated`, and it authors it as a push.
+    // A `request` wearing the same method name is not one.
+    const impostor = new RpcMessage(
+      "test-doc",
+      { type: "success" as const, payload: { generation: 42 } },
+      "key-registry.rotated",
+      "request",
+      undefined,
+      {},
+      false,
+    );
+
+    expect(ext.handleMessage!(impostor)).toBe(false);
+    expect(calls).toBe(0);
   });
 
   it("handleMessage ignores unrelated messages", () => {
@@ -387,12 +415,17 @@ describe("Key Registry — client rotation notifications", () => {
     };
   }
 
+  /**
+   * Shaped as the server authors it: a push is a `response` correlated to no request
+   * (see `Session#buildRpcPush`). This fixture used to say `"request"`, which the
+   * extension accepted only because it never checked `requestType`.
+   */
   function rotatedMessage(document: string, generation: number) {
     return new RpcMessage(
       document,
       { type: "success" as const, payload: { generation } },
       "key-registry.rotated",
-      "request",
+      "response",
       undefined,
       {},
       false,
@@ -438,5 +471,143 @@ describe("Key Registry — client rotation notifications", () => {
 
     expect(extA.handleMessage!(rotatedMessage("doc-a", 1))).toBe(true);
     expect(aCalls).toBe(1);
+  });
+});
+
+describe("Key Registry — rotation notifications are server-authored", () => {
+  class MockClient {
+    public sentMessages: Message<ServerContext>[] = [];
+    constructor(public id: string) {}
+    async send(message: Message<ServerContext>) {
+      this.sentMessages.push(message);
+    }
+    destroy() {}
+    /** Rotation pushes this client received. */
+    rotations(): number[] {
+      return this.sentMessages
+        .filter(
+          (m): m is RpcMessage<ServerContext> =>
+            m.type === "rpc" &&
+            (m as RpcMessage<ServerContext>).rpcMethod === "key-registry.rotated" &&
+            (m as RpcMessage<ServerContext>).requestType === "response" &&
+            (m as RpcMessage<ServerContext>).originalRequestId === undefined,
+        )
+        .map((m) => ((m.payload as RpcSuccess).payload as { generation: number }).generation);
+    }
+  }
+
+  const storageStub = {
+    type: "document-storage",
+    storageType: "unencrypted",
+    handleSyncStep1: async () => {
+      throw new Error("not used");
+    },
+    handleSyncStep2: async () => {},
+    handleUpdate: async () => {},
+    getDocument: async () => null,
+    writeDocumentMetadata: async () => {},
+    getDocumentMetadata: async () => ({ createdAt: 0, updatedAt: 0, encrypted: false }),
+    deleteDocument: async () => {},
+    transaction: <T>(_id: string, cb: () => Promise<T>) => cb(),
+    addFileToDocument: async () => {},
+    removeFileFromDocument: async () => {},
+  } as any;
+
+  let pubSub: InMemoryPubSub;
+  let disposables: Array<() => Promise<unknown>>;
+
+  beforeEach(() => {
+    pubSub = new InMemoryPubSub();
+    disposables = [];
+  });
+
+  afterEach(async () => {
+    for (const dispose of disposables.reverse()) await dispose();
+    await pubSub[Symbol.asyncDispose]();
+  });
+
+  async function makeNode(storage: InMemoryKeyRegistryStorage) {
+    const registry = getKeyRegistryRpcHandlers(storage);
+    const server = new Server<ServerContext>({
+      storage: async () => {
+        throw new Error("not used");
+      },
+      rpcHandlers: registry,
+    });
+    const session = new Session<ServerContext>({
+      documentId: "doc-1",
+      namespacedDocumentId: "doc-1",
+      id: "session-a",
+      encrypted: false,
+      storage: storageStub,
+      pubSub,
+      nodeId: "node-a",
+      onCleanupScheduled: () => {},
+      rpcHandlers: registry,
+      server,
+    });
+    await session.load();
+    disposables.push(async () => {
+      await session[Symbol.asyncDispose]();
+      await server[Symbol.asyncDispose]();
+    });
+    return session;
+  }
+
+  /** A push shaped exactly like the server's own, but authored by a client. */
+  function forgedRotated(generation: number): RpcMessage<ServerContext> {
+    return new RpcMessage<ServerContext>(
+      "doc-1",
+      { type: "success", payload: { generation } },
+      "key-registry.rotated",
+      "response",
+      undefined,
+      {} as ServerContext,
+      false,
+    );
+  }
+
+  it("does not relay a client-authored rotation push to peers", async () => {
+    const session = await makeNode(new InMemoryKeyRegistryStorage());
+    const attacker = new MockClient("client-attacker");
+    const victim = new MockClient("client-victim");
+    session.addClient(attacker as any);
+    session.addClient(victim as any);
+
+    await session.apply(forgedRotated(99), attacker as any);
+
+    // A forged rotation would make every peer discard its key and re-fetch.
+    expect(victim.rotations()).toEqual([]);
+  });
+
+  it("still relays the rotation the rotate handler authors", async () => {
+    const storage = new InMemoryKeyRegistryStorage();
+    await storage.set("doc-1", [{ userId: "alice", wrappedKey: new Uint8Array([1, 2, 3]) }]);
+    const session = await makeNode(storage);
+    const rotator = new MockClient("client-rotator");
+    const peer = new MockClient("client-peer");
+    session.addClient(rotator as any);
+    session.addClient(peer as any);
+
+    const rotate = new RpcMessage<ServerContext>(
+      "doc-1",
+      {
+        type: "success",
+        payload: {
+          entries: [{ userId: "alice", wrappedKey: new Uint8Array([4, 5, 6]) }],
+          expectedGeneration: 0,
+        },
+      },
+      "key-registry.rotate",
+      "request",
+      undefined,
+      { userId: "alice" } as ServerContext,
+      false,
+    );
+    await session.apply(rotate, rotator as any);
+
+    expect(peer.rotations()).toEqual([1]);
+    // The rotating client already knows; it is excluded from its own broadcast.
+    expect(rotator.rotations()).toEqual([]);
   });
 });

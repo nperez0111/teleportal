@@ -160,6 +160,15 @@ Push defaults: `{ durability: "ephemeral", replicate: true, ack: true, dedupe: t
 
 In `createHandlers`, a push method's handler is a **`pushHandler(payload, ctx)`**. It runs for pushes authored by a local client _and_ for pushes replicated from another node. Its `RpcPushContext` carries `server`, `session`, `documentId`, `sourceNodeId` (set for replicated pushes; `undefined` for local clients) and `clientId` (the server-assigned connection id of the local sender; `undefined` for replicated pushes). Return `{ forwardToLocalClients: false }` to suppress the default relay to this node's local clients. Client-authored pushes are **never replicated to other nodes by default** — replication is a trusted node-to-node plane (receiving nodes apply replicated pushes as server-authored), so a registered `pushHandler` must explicitly vouch with `{ replicate: true }` after inspecting the payload. Unregistered methods relay client pushes to same-node peers only. (`qos.replicate` governs server-authored pushes sent via the session primitives.)
 
+**A method only the server authors must say so.** `broadcastRpc` reaches local clients directly, so a push arriving at your `pushHandler` came from a client or from another node — never from your own `broadcastRpc` call. If only the server is supposed to author the method, drop the client-authored case explicitly:
+
+```typescript
+rotated: () => (_payload, ctx) =>
+  ctx.clientId !== undefined ? { forwardToLocalClients: false, replicate: false } : undefined,
+```
+
+Without that, `forwardToLocalClients` defaults to `true` and any client on the document can forge the notification to every peer. `presence` wraps this as a `replicatedOnly` helper.
+
 To author pushes, `Session` exposes:
 
 - **`session.sendRpcToClient(clientOrId, method, payload, { encrypted?, qos?, onAck? })`** — push to one local client.
@@ -201,7 +210,22 @@ The callback fires **exactly once**, with either `{ delivered: true }` or a reas
 
 ### Client side: extension hooks
 
-Pushes arrive at the provider as RPC responses with no request to correlate against; a client extension consumes them via the **`handleMessage(message)`** hook (return `true` when consumed). Related hooks on `createClientExtension` / `RpcExtension`:
+Pushes arrive at the provider as RPC responses with no request to correlate against; a client extension consumes them via the **`handleMessage(message)`** hook (return `true` when consumed). Use **`pushPayload`** to test the message against a method definition and get the payload at its declared type:
+
+```typescript
+import { pushPayload } from "teleportal/rpc";
+
+handleMessage(message) {
+  const rotated = pushPayload(keyRegistryProtocol.methods.rotated, message);
+  if (!rotated) return false;
+  instance?.notifyRotated(rotated.generation);
+  return true;
+}
+```
+
+It returns the payload only when the message really is that method's push — right `rpcMethod`, `requestType: "response"`, **no** `originalRequestId`, and a success payload — and `undefined` otherwise. The last two matter: without them a _request_ borrowing the push's method name, or a response correlated to some other request, would be handled as though the server had pushed it.
+
+Related hooks on `createClientExtension` / `RpcExtension`:
 
 - **`handleMessage(message)`** — route incoming RPC messages (pushes) to extension state.
 - **`handleAck(message)`** — observe ack/NACK messages.
@@ -287,6 +311,7 @@ import {
 
   // Client
   createClientExtension,
+  pushPayload,
 
   // Error
   RpcOperationError,

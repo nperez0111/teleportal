@@ -1,8 +1,8 @@
 import { removeAwarenessStates } from "y-protocols/awareness";
 import type { RpcMessage } from "teleportal/protocol";
-import type { RpcExtension, RpcExtensionContext } from "teleportal/rpc";
+import { pushPayload, type RpcExtension, type RpcExtensionContext } from "teleportal/rpc";
 import { Observable } from "../../lib/utils";
-import type { PresenceEntry } from "./methods";
+import { presenceProtocol, type PresenceEntry } from "./methods";
 
 /** A present peer, as surfaced to application code (`provider.peers`). */
 export type PresenceEvent = PresenceEntry;
@@ -30,8 +30,6 @@ export type PresenceApi = Observable<{
 }> & {
   readonly peers: ReadonlyMap<number, PresenceEvent>;
 };
-
-const PUSH_METHODS = new Set(["presence.join", "presence.leave", "presence.roster"]);
 
 class PresenceClient extends Observable<{
   "peer-join": (peer: PresenceEvent) => void;
@@ -110,27 +108,26 @@ class PresenceClient extends Observable<{
 
   /** Route an incoming RPC message; returns true when consumed. */
   handleMessage(message: RpcMessage<any>): boolean {
-    if (message.requestType !== "response" || !PUSH_METHODS.has(message.rpcMethod)) {
-      return false;
-    }
-    if (message.payload.type !== "success") {
-      return true;
-    }
-    const payload = message.payload.payload;
-
     // The server's roster is the full truth at a point in time: reconcile
     // against it so any join/leave this client missed (dropped push, brief
     // offline window) heals instead of persisting forever.
-    if (message.rpcMethod === "presence.roster") {
-      this.#reconcilePeers((payload as { clients: PresenceEntry[] }).clients);
+    const roster = pushPayload(presenceProtocol.methods.roster, message);
+    if (roster) {
+      this.#reconcilePeers(roster.clients);
       return true;
     }
 
-    const entry = payload as PresenceEntry;
+    const leave = pushPayload(presenceProtocol.methods.leave, message);
+    const entry = leave ?? pushPayload(presenceProtocol.methods.join, message);
+    if (!entry) {
+      // `presence.rosterRequest` is node→node and never reaches a client; anything
+      // else belongs to another protocol.
+      return false;
+    }
     if (entry.awarenessId === this.#ctx.awareness.clientID) {
       return true;
     }
-    if (message.rpcMethod === "presence.leave") {
+    if (leave) {
       this.#peers.delete(entry.awarenessId);
       this.#peerJoinedAt.delete(entry.awarenessId);
       this.#forgetAwarenessStates([entry.awarenessId], "presence");

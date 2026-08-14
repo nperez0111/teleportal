@@ -2,6 +2,7 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type {
   RpcError,
   RpcHandlerRegistry,
+  RpcMessage,
   RpcMethodQos,
   RpcPushContext,
   RpcServerContext,
@@ -691,6 +692,46 @@ export function mergeHandlers(...registries: RpcHandlerRegistry[]): RpcHandlerRe
     }
   }
   return merged;
+}
+
+// ---------------------------------------------------------------------------
+// pushPayload — typed access to an incoming push
+// ---------------------------------------------------------------------------
+
+/**
+ * The payload of `message` if it is a push for `method`, otherwise `undefined`.
+ *
+ * A push is an unsolicited notification: a `response` correlated to no request. Extensions
+ * receive them through `handleMessage`, where the wire shape has to be checked by hand —
+ * this does that check once, against the method definition, and hands back the payload at
+ * its declared type instead of a cast:
+ *
+ * ```typescript
+ * handleMessage(message) {
+ *   const rotated = pushPayload(keyRegistryProtocol.methods.rotated, message);
+ *   if (!rotated) return false;
+ *   instance?.notifyRotated(rotated.generation);
+ *   return true;
+ * }
+ * ```
+ *
+ * Checking `requestType`/`originalRequestId` is not optional: without them a *request* named
+ * `key-registry.rotated`, or a response correlated to some other request, would be handled as
+ * though the server had pushed it.
+ *
+ * Push payloads are records (they are `encodeAny`-encoded), so `undefined` unambiguously
+ * means "not this method's push" rather than "a push carrying nothing".
+ */
+export function pushPayload<M extends MethodDef<any, any, any, "push">>(
+  method: M,
+  message: RpcMessage<any>,
+): M["_request"] | undefined {
+  if (message.rpcMethod !== method.name) return undefined;
+  if (message.requestType !== "response" || message.originalRequestId !== undefined) {
+    return undefined;
+  }
+  if (message.payload?.type !== "success") return undefined;
+  return message.payload.payload as M["_request"];
 }
 
 // ---------------------------------------------------------------------------
