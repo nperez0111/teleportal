@@ -78,16 +78,16 @@ describe("buildRpcGroups", () => {
   });
 
   it("marks a lone request as pending", () => {
-    const req = request("keysGet");
+    const req = request("key-registry.get");
     const { groups } = buildRpcGroups([wrap(req)]);
     expect(groups.get(req.id)!.status).toBe("pending");
   });
 
   it("surfaces error responses with statusCode and details", () => {
-    const req = request("keysGet");
+    const req = request("key-registry.get");
     const { groups } = buildRpcGroups([
       wrap(req),
-      wrap(errorResponse("keysGet", req.id, 403, "permission denied")),
+      wrap(errorResponse("key-registry.get", req.id, 403, "permission denied")),
     ]);
     const group = groups.get(req.id)!;
     expect(group.status).toBe("error");
@@ -96,7 +96,7 @@ describe("buildRpcGroups", () => {
   });
 
   it("pairs upload stream parts via the fileId alias and tracks chunk progress", () => {
-    const req = request("fileUpload", {
+    const req = request("file.upload", {
       fileId: "file-abc",
       filename: "design.fig",
       size: 200,
@@ -104,10 +104,10 @@ describe("buildRpcGroups", () => {
       encrypted: false,
     });
     const reqMsg = wrap(req, 1000);
-    const res = wrap(response("fileUpload", req.id, { fileId: "file-abc" }), 1010);
+    const res = wrap(response("file.upload", req.id, { fileId: "file-abc" }), 1010);
     // Upload streams reference the uploadId (fileId), not the request id.
     const part0 = wrap(
-      streamPart("fileUpload", "file-abc", {
+      streamPart("file.upload", "file-abc", {
         fileId: "file-abc",
         chunkIndex: 0,
         totalChunks: 2,
@@ -118,7 +118,7 @@ describe("buildRpcGroups", () => {
     );
     part0.ackedBy = { ackMessageId: "a", ackMessage: null as any, timestamp: 1025 };
     const part1 = wrap(
-      streamPart("fileUpload", "file-abc", {
+      streamPart("file.upload", "file-abc", {
         fileId: "file-abc",
         chunkIndex: 1,
         totalChunks: 2,
@@ -153,10 +153,10 @@ describe("buildRpcGroups", () => {
   });
 
   it("completes a download when all chunks arrive and the response is present", () => {
-    const req = request("fileDownload", { fileId: "file-xyz" });
+    const req = request("file.download", { fileId: "file-xyz" });
     const reqMsg = wrap(req, 1000);
     const resMsg = wrap(
-      response("fileDownload", req.id, {
+      response("file.download", req.id, {
         fileId: "file-xyz",
         filename: "photo.png",
         size: 128,
@@ -166,7 +166,7 @@ describe("buildRpcGroups", () => {
       1010,
     );
     const partMsg = wrap(
-      streamPart("fileDownload", req.id, {
+      streamPart("file.download", req.id, {
         fileId: "file-xyz",
         chunkIndex: 0,
         totalChunks: 1,
@@ -190,8 +190,8 @@ describe("buildRpcGroups", () => {
   });
 
   it("groups orphan stream parts by originalRequestId without a visible request", () => {
-    const a = wrap(streamPart("fileDownload", "gone-request", { fileId: "f", chunkIndex: 0 }));
-    const b = wrap(streamPart("fileDownload", "gone-request", { fileId: "f", chunkIndex: 1 }));
+    const a = wrap(streamPart("file.download", "gone-request", { fileId: "f", chunkIndex: 0 }));
+    const b = wrap(streamPart("file.download", "gone-request", { fileId: "f", chunkIndex: 1 }));
 
     const { groups } = buildRpcGroups([a, b]);
     expect(groups.size).toBe(1);
@@ -204,9 +204,9 @@ describe("buildRpcGroups", () => {
     // Upload chunks never flow through the message pipeline — only the
     // request and response are visible. Progress arrives via the file
     // protocol's progress events, keyed by the request's fileId.
-    const req = request("fileUpload", { fileId: "file-live", filename: "big.bin", size: 1000 });
+    const req = request("file.upload", { fileId: "file-live", filename: "big.bin", size: 1000 });
     const reqMsg = wrap(req, 1000);
-    const resMsg = wrap(response("fileUpload", req.id, { fileId: "file-live" }), 1010);
+    const resMsg = wrap(response("file.upload", req.id, { fileId: "file-live" }), 1010);
 
     const progress = new Map<string, FileTransferProgress>([
       [
@@ -252,7 +252,7 @@ describe("buildRpcGroups", () => {
   });
 
   it("ignores live progress whose direction does not match the group", () => {
-    const req = request("fileUpload", { fileId: "file-x", filename: "a.bin", size: 10 });
+    const req = request("file.upload", { fileId: "file-x", filename: "a.bin", size: 10 });
     const progress = new Map<string, FileTransferProgress>([
       [
         "file-x",
@@ -272,10 +272,10 @@ describe("buildRpcGroups", () => {
   });
 
   it("counts retransmitted chunks once", () => {
-    const req = request("fileUpload", { fileId: "f2", filename: "a.bin", size: 10 });
+    const req = request("file.upload", { fileId: "f2", filename: "a.bin", size: 10 });
     const p = (ts: number) =>
       wrap(
-        streamPart("fileUpload", "f2", {
+        streamPart("file.upload", "f2", {
           fileId: "f2",
           chunkIndex: 0,
           totalChunks: 1,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import {
   createEncryptionKey,
   generateEncryptionKey,
@@ -349,77 +349,75 @@ describe("importEncryptionKey edge cases", () => {
 });
 
 describe("createEncryptionKey", () => {
-  it("should derive a consistent key for the same document (no password)", async () => {
-    const resolver1 = createEncryptionKey();
-    const resolver2 = createEncryptionKey();
+  // A password derivation is PBKDF2 at 600k iterations (~65ms of CPU). Bun runs
+  // `crypto.subtle.deriveKey` off the main thread, so deriving the whole matrix
+  // concurrently once costs about as much as a single derivation — where doing
+  // it lazily per test serialised ~10 of them.
+  const CONN = { connection: {} as any };
+  const noPassword = createEncryptionKey();
+  const noPasswordAgain = createEncryptionKey();
+  const myPassword = createEncryptionKey("my-password");
+  const myPasswordAgain = createEncryptionKey("my-password");
+  const passwordA = createEncryptionKey("password-a");
+  const passwordB = createEncryptionKey("password-b");
 
-    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
-    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
+  /** JWK `k` values, keyed by the same name as the resolver that produced them. */
+  const k: Record<string, string> = {};
 
-    const exported1 = await crypto.subtle.exportKey("jwk", key1);
-    const exported2 = await crypto.subtle.exportKey("jwk", key2);
-    expect(exported1.k).toBe(exported2.k);
+  beforeAll(async () => {
+    const { passwordKey, simpleEncryption } = await import("./key-resolver");
+    const entries = await Promise.all(
+      (
+        [
+          ["noPassword/doc-1", noPassword.resolve({ document: "doc-1", ...CONN })],
+          ["noPasswordAgain/doc-1", noPasswordAgain.resolve({ document: "doc-1", ...CONN })],
+          ["noPassword/doc-2", noPassword.resolve({ document: "doc-2", ...CONN })],
+          ["myPassword/doc-1", myPassword.resolve({ document: "doc-1", ...CONN })],
+          ["myPasswordAgain/doc-1", myPasswordAgain.resolve({ document: "doc-1", ...CONN })],
+          ["passwordA/doc-1", passwordA.resolve({ document: "doc-1", ...CONN })],
+          ["passwordB/doc-1", passwordB.resolve({ document: "doc-1", ...CONN })],
+          ["noPassword/doc-x", createEncryptionKey().resolve({ document: "doc-x", ...CONN })],
+          ["simpleEncryption/doc-x", simpleEncryption().resolve({ document: "doc-x", ...CONN })],
+          ["pw/doc-x", createEncryptionKey("pw").resolve({ document: "doc-x", ...CONN })],
+          ["passwordKey:pw/doc-x", passwordKey("pw").resolve({ document: "doc-x", ...CONN })],
+        ] as const
+      ).map(async ([name, keyPromise]) => {
+        const exported = await crypto.subtle.exportKey("jwk", await keyPromise);
+        return [name, exported.k!] as const;
+      }),
+    );
+    for (const [name, value] of entries) k[name] = value;
   });
 
-  it("should derive different keys for different documents (no password)", async () => {
-    const resolver = createEncryptionKey();
-
-    const key1 = await resolver.resolve({ document: "doc-1", connection: {} as any });
-    const key2 = await resolver.resolve({ document: "doc-2", connection: {} as any });
-
-    const exported1 = await crypto.subtle.exportKey("jwk", key1);
-    const exported2 = await crypto.subtle.exportKey("jwk", key2);
-    expect(exported1.k).not.toBe(exported2.k);
+  it("should derive a consistent key for the same document (no password)", () => {
+    expect(k["noPassword/doc-1"]).toBe(k["noPasswordAgain/doc-1"]!);
   });
 
-  it("should derive a consistent key for the same document and password", async () => {
-    const resolver1 = createEncryptionKey("my-password");
-    const resolver2 = createEncryptionKey("my-password");
-
-    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
-    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
-
-    const exported1 = await crypto.subtle.exportKey("jwk", key1);
-    const exported2 = await crypto.subtle.exportKey("jwk", key2);
-    expect(exported1.k).toBe(exported2.k);
+  it("should derive different keys for different documents (no password)", () => {
+    expect(k["noPassword/doc-1"]).not.toBe(k["noPassword/doc-2"]!);
   });
 
-  it("should derive different keys for different passwords", async () => {
-    const resolver1 = createEncryptionKey("password-a");
-    const resolver2 = createEncryptionKey("password-b");
-
-    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
-    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
-
-    const exported1 = await crypto.subtle.exportKey("jwk", key1);
-    const exported2 = await crypto.subtle.exportKey("jwk", key2);
-    expect(exported1.k).not.toBe(exported2.k);
+  it("should derive a consistent key for the same document and password", () => {
+    expect(k["myPassword/doc-1"]).toBe(k["myPasswordAgain/doc-1"]!);
   });
 
-  it("should derive different keys with and without password", async () => {
-    const resolver1 = createEncryptionKey();
-    const resolver2 = createEncryptionKey("password");
+  it("should derive different keys for different passwords", () => {
+    expect(k["passwordA/doc-1"]).not.toBe(k["passwordB/doc-1"]!);
+  });
 
-    const key1 = await resolver1.resolve({ document: "doc-1", connection: {} as any });
-    const key2 = await resolver2.resolve({ document: "doc-1", connection: {} as any });
-
-    const exported1 = await crypto.subtle.exportKey("jwk", key1);
-    const exported2 = await crypto.subtle.exportKey("jwk", key2);
-    expect(exported1.k).not.toBe(exported2.k);
+  it("should derive different keys with and without password", () => {
+    expect(k["noPassword/doc-1"]).not.toBe(k["myPassword/doc-1"]!);
   });
 
   it("should cache the derived key for repeated resolves", async () => {
-    const resolver = createEncryptionKey("my-password");
-
-    const key1 = await resolver.resolve({ document: "doc-1", connection: {} as any });
-    const key2 = await resolver.resolve({ document: "doc-1", connection: {} as any });
+    const key1 = await myPassword.resolve({ document: "doc-1", ...CONN });
+    const key2 = await myPassword.resolve({ document: "doc-1", ...CONN });
 
     expect(key1).toBe(key2);
   });
 
   it("should produce a usable AES-GCM key", async () => {
-    const resolver = createEncryptionKey("my-password");
-    const key = await resolver.resolve({ document: "doc-1", connection: {} as any });
+    const key = await myPassword.resolve({ document: "doc-1", ...CONN });
 
     expect((key.algorithm as any).name).toBe("AES-GCM");
     expect((key.algorithm as any).length).toBe(256);
@@ -430,25 +428,11 @@ describe("createEncryptionKey", () => {
     expect(decrypted).toEqual(plaintext);
   });
 
-  it("derives the SAME key as simpleEncryption() when no password is given", async () => {
-    const { simpleEncryption } = await import("./key-resolver");
-    const a = await createEncryptionKey().resolve({ document: "doc-x", connection: {} as any });
-    const b = await simpleEncryption().resolve({ document: "doc-x", connection: {} as any });
-    const [ea, eb] = await Promise.all([
-      crypto.subtle.exportKey("jwk", a),
-      crypto.subtle.exportKey("jwk", b),
-    ]);
-    expect(ea.k).toBe(eb.k);
+  it("derives the SAME key as simpleEncryption() when no password is given", () => {
+    expect(k["noPassword/doc-x"]).toBe(k["simpleEncryption/doc-x"]!);
   });
 
-  it("derives the SAME key as passwordKey() when a password is given", async () => {
-    const { passwordKey } = await import("./key-resolver");
-    const a = await createEncryptionKey("pw").resolve({ document: "doc-x", connection: {} as any });
-    const b = await passwordKey("pw").resolve({ document: "doc-x", connection: {} as any });
-    const [ea, eb] = await Promise.all([
-      crypto.subtle.exportKey("jwk", a),
-      crypto.subtle.exportKey("jwk", b),
-    ]);
-    expect(ea.k).toBe(eb.k);
+  it("derives the SAME key as passwordKey() when a password is given", () => {
+    expect(k["pw/doc-x"]).toBe(k["passwordKey:pw/doc-x"]!);
   });
 });

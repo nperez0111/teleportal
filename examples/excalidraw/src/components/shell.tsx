@@ -22,7 +22,7 @@ export const userColor = usercolors[random.uint32() % usercolors.length];
 const tokenManager = createTokenManager({
   secret: "your-secret-key-here", // In production, use a strong secret
   expiresIn: 3600, // 1 hour
-  issuer: "my-collaborative-app",
+  issuer: "excalidraw-example",
 });
 
 export default function Shell() {
@@ -40,7 +40,7 @@ export default function Shell() {
         );
 
         const websocketProvider = await Provider.create({
-          url: `${window.location.origin}/?token=${token}`,
+          url: `${new URL("./", window.location.href).href}?token=${token}`,
           document: "whiteboard",
           encryptionKey: await createEncryptionKey(),
         });

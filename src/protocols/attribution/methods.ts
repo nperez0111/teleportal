@@ -1,4 +1,4 @@
-import { defineMethod, defineProtocol } from "teleportal/rpc";
+import { defineMethod, definePush, defineProtocol } from "teleportal/rpc";
 import type { ActivityEntry, EncodedContentIds } from "teleportal/attribution";
 import type { EncodedContentMap } from "teleportal/storage";
 
@@ -59,23 +59,27 @@ export type AttributedSegment = {
 // Method contracts
 // ---------------------------------------------------------------------------
 
-export const attributionActivity = defineMethod<
-  "attributionActivity",
-  AttributionFilter,
-  { activity: ActivityEntry[] }
->("attributionActivity");
+export const attributionActivity = defineMethod<AttributionFilter, { activity: ActivityEntry[] }>();
 
 export const attributionGet = defineMethod<
-  "attributionGet",
   { filter?: AttributionFilter },
   { contentMap: EncodedContentMap | null }
->("attributionGet");
+>();
 
 export const attributionGetIncremental = defineMethod<
-  "attributionGetIncremental",
   { knownIds: EncodedContentIds },
   { contentMap: EncodedContentMap | null }
->("attributionGetIncremental");
+>();
+
+/**
+ * Pushes newly attributed content to clients following the document, so their cached
+ * content map stays current without re-fetching it.
+ *
+ * Sent by `Session` on every attributed write. It predates `definePush` and used to have no
+ * method definition at all, which meant it silently ran on the push defaults; declaring it
+ * here keeps exactly that QoS while making the method discoverable.
+ */
+export const attributionPush = definePush<{ contentMap: EncodedContentMap }>();
 
 // ---------------------------------------------------------------------------
 // Protocol
@@ -85,4 +89,5 @@ export const attributionProtocol = defineProtocol("attribution", {
   activity: attributionActivity,
   get: attributionGet,
   getIncremental: attributionGetIncremental,
+  push: attributionPush,
 });

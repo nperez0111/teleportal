@@ -20,7 +20,9 @@
     "mermaid": "11.16.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "starlight-llms-txt": "0.11.0"
+    "starlight-llms-txt": "0.11.0",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.29"
   },
   "devDependencies": {}
 }

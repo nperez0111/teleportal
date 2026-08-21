@@ -271,3 +271,208 @@ describe("Redis Transport", () => {
     );
   });
 });
+
+async function pollUntil(fn: () => boolean, timeoutMs = 3000, intervalMs = 10): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fn()) return;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error("pollUntil timed out");
+}
+
+const STREAM_PREFIX = "teleportal:stream:";
+
+describe("Redis durable streams", () => {
+  let redisAvailable: boolean;
+  let inspect: Redis;
+
+  beforeAll(async () => {
+    redisAvailable = await isRedisAvailable();
+    if (redisAvailable) {
+      inspect = new Redis(REDIS_URL);
+      inspect.on("error", () => {});
+    }
+  });
+
+  test(
+    "advertises durability",
+    async () => {
+      if (!redisAvailable) return;
+      const pubSub = new RedisPubSub({ path: REDIS_URL });
+      expect(pubSub.durable).toBe(true);
+      await pubSub[Symbol.asyncDispose]();
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "replays messages after an offset (cold catch-up), in order",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `document/replay-${Date.now()}`;
+      const pub = new RedisPubSub({ path: REDIS_URL });
+      const sub = new RedisPubSub({ path: REDIS_URL });
+      try {
+        // Live consumer captures the offset of message A.
+        const liveOffsets: (string | undefined)[] = [];
+        const unsubLive = await sub.subscribeDurable(topic, (_m, _s, offset) =>
+          liveOffsets.push(offset),
+        );
+        await pub.publish(topic, new Uint8Array([1]) as any, "pub");
+        await pollUntil(() => liveOffsets.length >= 1);
+        const afterA = liveOffsets[0]!;
+        await unsubLive();
+
+        // Messages published while nobody actively reads them.
+        await pub.publish(topic, new Uint8Array([2]) as any, "pub");
+        await pub.publish(topic, new Uint8Array([3]) as any, "pub");
+
+        // A fresh consumer resuming after A replays B and C in order.
+        const got: number[] = [];
+        const gaps: string[] = [];
+        const unsub = await sub.subscribeDurable(topic, (m) => got.push((m as Uint8Array)[0]), {
+          start: { after: afterA },
+          onGap: (t) => gaps.push(t),
+        });
+        await pollUntil(() => got.length >= 2);
+        expect(got).toEqual([2, 3]);
+        expect(gaps).toHaveLength(0); // A still retained → no gap
+        await unsub();
+      } finally {
+        await pub[Symbol.asyncDispose]();
+        await sub[Symbol.asyncDispose]();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "resumes and catches up after the stream connection drops",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `document/reconnect-${Date.now()}`;
+      const sub = new RedisPubSub({ path: REDIS_URL });
+      const pub = new RedisPubSub({ path: REDIS_URL });
+      try {
+        const got: number[] = [];
+        await sub.subscribeDurable(topic, (m) => got.push((m as Uint8Array)[0]));
+        await pub.publish(topic, new Uint8Array([1]) as any, "pub");
+        await pollUntil(() => got.includes(1));
+
+        // Drop the subscriber's blocking read connection; ioredis auto-reconnects.
+        sub.disconnectStreamReaderForTest();
+        // Publish during the outage via a separate instance.
+        await pub.publish(topic, new Uint8Array([2]) as any, "pub");
+        await pub.publish(topic, new Uint8Array([3]) as any, "pub");
+
+        // After reconnect, XREAD resumes from the last id and returns the misses in order.
+        await pollUntil(() => got.length >= 3);
+        expect(got).toEqual([1, 2, 3]);
+      } finally {
+        await pub[Symbol.asyncDispose]();
+        await sub[Symbol.asyncDispose]();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "trims the stream toward maxLen",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `document/trim-${Date.now()}`;
+      const key = STREAM_PREFIX + topic;
+      const pub = new RedisPubSub({ path: REDIS_URL, stream: { maxLen: 50 } });
+      try {
+        for (let i = 0; i < 300; i++) {
+          await pub.publish(topic, new Uint8Array([i & 0xff]) as any, "pub");
+        }
+        const len = await inspect.xlen(key);
+        expect(len).toBeLessThan(300); // trimming happened
+        expect(len).toBeGreaterThanOrEqual(50); // didn't over-trim below the bound
+      } finally {
+        await inspect.del(key);
+        await pub[Symbol.asyncDispose]();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "ephemeral publishes never hit the stream",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `document/ephemeral-${Date.now()}`;
+      const key = STREAM_PREFIX + topic;
+      const pub = new RedisPubSub({ path: REDIS_URL });
+      try {
+        await pub.publish(topic, new Uint8Array([1]) as any, "pub", { ephemeral: true });
+        // Give any (erroneous) XADD time to land.
+        await new Promise((r) => setTimeout(r, 20));
+        expect(await inspect.exists(key)).toBe(0);
+      } finally {
+        await inspect.del(key);
+        await pub[Symbol.asyncDispose]();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "non-durable topics (ack/*) create no stream keys",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `ack/no-stream-${Date.now()}`;
+      const key = STREAM_PREFIX + topic;
+      const pub = new RedisPubSub({ path: REDIS_URL });
+      try {
+        await pub.publish(topic, new Uint8Array([1]) as any, "pub");
+        await new Promise((r) => setTimeout(r, 20));
+        expect(await inspect.exists(key)).toBe(0);
+      } finally {
+        await inspect.del(key);
+        await pub[Symbol.asyncDispose]();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "isDurableTopic:() => false disables streams entirely",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `document/plainmode-${Date.now()}`;
+      const key = STREAM_PREFIX + topic;
+      const pub = new RedisPubSub({ path: REDIS_URL, stream: { isDurableTopic: () => false } });
+      const sub = new RedisPubSub({ path: REDIS_URL, stream: { isDurableTopic: () => false } });
+      try {
+        const got: number[] = [];
+        await sub.subscribe(topic, (m) => got.push((m as Uint8Array)[0]));
+        await new Promise((r) => setTimeout(r, 20));
+        await pub.publish(topic, new Uint8Array([7]) as any, "pub");
+        await pollUntil(() => got.includes(7));
+        expect(await inspect.exists(key)).toBe(0); // delivered over plain pub/sub, no stream
+      } finally {
+        await inspect.del(key);
+        await pub[Symbol.asyncDispose]();
+        await sub[Symbol.asyncDispose]();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "dispose during a blocked read exits cleanly",
+    async () => {
+      if (!redisAvailable) return;
+      const topic: PubSubTopic = `document/dispose-${Date.now()}`;
+      const pub = new RedisPubSub({ path: REDIS_URL, stream: { blockMs: 1000 } });
+      await pub.subscribe(topic, () => {});
+      // Subscriber is now blocked on XREAD; dispose should not hang.
+      await pub[Symbol.asyncDispose]();
+      expect(true).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+});

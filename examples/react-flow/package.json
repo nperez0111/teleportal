@@ -1,0 +1,32 @@
+{
+  "name": "react-flow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Collaborative React Flow diagram powered by Teleportal",
+  "keywords": [],
+  "license": "MPL-2.0",
+  "author": "Nick the Sick",
+  "type": "module",
+  "main": "index.js",
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "scripts": {
+    "dev": "PORT=1239 bun run --watch ./server.ts",
+    "build": "bun run build.ts --target browser"
+  },
+  "dependencies": {
+    "@tanstack/react-devtools": "0.10.8",
+    "@xyflow/react": "^12.6.6",
+    "bun-plugin-tailwind": "latest",
+    "crossws": "^0.4.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwindcss": "^4",
+    "yjs": "^13.6.29"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3"
+  }
+}

@@ -129,17 +129,17 @@ function twoUserDoc() {
 describe("getAttributionRpcHandlers", () => {
   it("registers both read methods", () => {
     const handlers = getAttributionRpcHandlers();
-    expect("attributionActivity" in handlers).toBe(true);
-    expect("attributionGet" in handlers).toBe(true);
+    expect("attribution.activity" in handlers).toBe(true);
+    expect("attribution.get" in handlers).toBe(true);
   });
 
-  describe("attributionActivity", () => {
+  describe("attribution.activity", () => {
     it("returns a timeline from stored attribution", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         {},
         mockContext(async () => encoded),
       )) as { response: { activity: { userId: string | null }[] } };
@@ -151,9 +151,9 @@ describe("getAttributionRpcHandlers", () => {
     it("applies the userId filter", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         { userId: "user-2" },
         mockContext(async () => encoded),
       )) as { response: { activity: { userId: string | null }[] } };
@@ -162,8 +162,8 @@ describe("getAttributionRpcHandlers", () => {
     });
 
     it("returns an empty timeline when the storage has no attribution", async () => {
-      const handler = getAttributionRpcHandlers().attributionActivity;
-      const { response } = (await handler.handler({}, mockContext())) as {
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
+      const { response } = (await handler.handler!({}, mockContext())) as {
         response: { activity: unknown[] };
       };
       expect(response.activity).toEqual([]);
@@ -178,9 +178,9 @@ describe("getAttributionRpcHandlers", () => {
         [createContentAttribute("delete", "enc-user"), createContentAttribute("deleteAt", 5000)],
       );
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionActivity;
+      const handler = getAttributionRpcHandlers()["attribution.activity"];
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         {},
         mockContext(async () => encoded),
       )) as { response: { activity: { userId: string | null }[] } };
@@ -189,13 +189,13 @@ describe("getAttributionRpcHandlers", () => {
     });
   });
 
-  describe("attributionGet", () => {
+  describe("attribution.get", () => {
     it("returns the stored ContentMap unchanged when unfiltered", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         {},
         mockContext(async () => encoded),
       )) as { response: { contentMap: EncodedContentMap | null } };
@@ -206,9 +206,9 @@ describe("getAttributionRpcHandlers", () => {
     it("narrows the ContentMap by filter", async () => {
       const { map } = twoUserDoc();
       const encoded = encodeContentMap(map);
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         { filter: { userId: "user-1" } },
         mockContext(async () => encoded),
       )) as { response: { contentMap: EncodedContentMap | null } };
@@ -226,8 +226,8 @@ describe("getAttributionRpcHandlers", () => {
     });
 
     it("returns null when the storage has no attribution", async () => {
-      const handler = getAttributionRpcHandlers().attributionGet;
-      const { response } = (await handler.handler({}, mockContext())) as {
+      const handler = getAttributionRpcHandlers()["attribution.get"];
+      const { response } = (await handler.handler!({}, mockContext())) as {
         response: { contentMap: EncodedContentMap | null };
       };
       expect(response.contentMap).toBeNull();
@@ -252,9 +252,9 @@ describe("getAttributionRpcHandlers", () => {
 
       const merged = mergeContentMaps([map1, map2]);
       const encoded = encodeContentMap(merged);
-      const handler = getAttributionRpcHandlers().attributionGet;
+      const handler = getAttributionRpcHandlers()["attribution.get"];
 
-      const { response } = (await handler.handler(
+      const { response } = (await handler.handler!(
         { filter: { attributes: { source: "ai" } } },
         mockContext(async () => encoded),
       )) as { response: { contentMap: EncodedContentMap | null } };
@@ -486,13 +486,13 @@ describe("incremental ContentMap sync", () => {
   it("attributionGetIncremental returns only new ranges", async () => {
     const { map } = twoUserDoc();
     const encoded = encodeContentMap(map);
-    const handler = getAttributionRpcHandlers().attributionGetIncremental;
+    const handler = getAttributionRpcHandlers()["attribution.getIncremental"];
 
     const ids1 = createContentIds();
     ids1.inserts.add(map.inserts.clients.keys().next().value!, 0, 6);
     const knownIds = encodeContentIds(ids1);
 
-    const { response } = (await handler.handler(
+    const { response } = (await handler.handler!(
       { knownIds },
       mockContext(async () => encoded),
     )) as { response: { contentMap: EncodedContentMap | null } };
@@ -513,10 +513,10 @@ describe("incremental ContentMap sync", () => {
   });
 
   it("returns null when storage has no attribution", async () => {
-    const handler = getAttributionRpcHandlers().attributionGetIncremental;
+    const handler = getAttributionRpcHandlers()["attribution.getIncremental"];
     const knownIds = encodeContentIds(createContentIds());
 
-    const { response } = (await handler.handler(
+    const { response } = (await handler.handler!(
       { knownIds },
       mockContext(async () => null),
     )) as { response: { contentMap: EncodedContentMap | null } };
@@ -628,5 +628,31 @@ describe("search marker optimization in collectRangeIds", () => {
     expect(ids.length).toBe(1);
     expect(ids[0].len).toBe(5);
     expect(ids[0].contentStart).toBe(0);
+  });
+});
+
+describe("attribution.push is server-authored", () => {
+  const pushHandler = () => getAttributionRpcHandlers()["attribution.push"].pushHandler!;
+
+  it("drops a client-authored push instead of relaying it to peers", async () => {
+    // Only `Session` authors this push (via broadcastRpc, on an attributed write). A client
+    // that forges one would inject a bogus ContentMap into every peer's attribution cache.
+    const result = await pushHandler()({ contentMap: {} as any }, {
+      clientId: "client-attacker",
+      sourceNodeId: undefined,
+    } as any);
+
+    expect(result).toEqual({ forwardToLocalClients: false, replicate: false });
+  });
+
+  it("still relays a push replicated from another node", async () => {
+    // This method replicates (push QoS default), so the cross-node copy arriving here is
+    // exactly how peers on this node learn about a remote write.
+    const result = await pushHandler()({ contentMap: {} as any }, {
+      clientId: undefined,
+      sourceNodeId: "node-b",
+    } as any);
+
+    expect(result?.forwardToLocalClients).not.toBe(false);
   });
 });

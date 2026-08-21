@@ -2,15 +2,19 @@ import { describe, test, expect, mock } from "bun:test";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
   defineMethod,
+  definePush,
   defineProtocol,
   ok,
   err,
   createHandlers,
   createClientExtension,
+  mergeHandlers,
+  pushPayload,
   RpcOperationError,
   type RpcResult,
   type RpcExtensionContext,
 } from "./index";
+import { RpcMessage } from "teleportal/protocol";
 import type { RpcServerContext } from "teleportal/protocol";
 
 // ---------------------------------------------------------------------------
@@ -87,30 +91,28 @@ describe("ok / err", () => {
 
 describe("defineMethod", () => {
   test("type-first creates method with correct name and kind", () => {
-    const method = defineMethod<"testMethod", { id: string }, { name: string }>("testMethod");
-    expect(method.name).toBe("testMethod");
+    const method = defineMethod<{ id: string }, { name: string }>();
+    // Unnamed until `defineProtocol` assigns the wire name.
+    expect(method.name).toBe("");
     expect(method.kind).toBe("request-response");
     expect(method.requestSchema).toBeUndefined();
     expect(method.responseSchema).toBeUndefined();
   });
 
   test("type-first streaming", () => {
-    const method = defineMethod<"upload", { file: string }, { ok: boolean }, { chunk: number }>(
-      "upload",
-      { kind: "multipart" },
-    );
-    expect(method.name).toBe("upload");
+    const method = defineMethod<{ file: string }, { ok: boolean }, { chunk: number }>({
+      kind: "multipart",
+    });
     expect(method.kind).toBe("multipart");
   });
 
   test("schema-first stores schemas", () => {
     const reqSchema = objectSchema<{ id: string }>();
     const resSchema = objectSchema<{ name: string }>();
-    const method = defineMethod("testMethod", {
+    const method = defineMethod({
       request: reqSchema,
       response: resSchema,
     });
-    expect(method.name).toBe("testMethod");
     expect(method.kind).toBe("request-response");
     expect(method.requestSchema).toBe(reqSchema);
     expect(method.responseSchema).toBe(resSchema);
@@ -120,7 +122,7 @@ describe("defineMethod", () => {
     const reqSchema = objectSchema<{ fileId: string }>();
     const resSchema = objectSchema<{ allowed: boolean }>();
     const streamSchema = objectSchema<{ chunk: Uint8Array }>();
-    const method = defineMethod("upload", {
+    const method = defineMethod({
       request: reqSchema,
       response: resSchema,
       stream: streamSchema,
@@ -137,15 +139,17 @@ describe("defineMethod", () => {
 
 describe("defineProtocol", () => {
   test("groups methods under a protocol name", () => {
-    const list = defineMethod<"itemList", {}, { items: string[] }>("itemList");
-    const get = defineMethod<"itemGet", { id: string }, { item: string }>("itemGet");
+    const list = defineMethod<{}, { items: string[] }>();
+    const get = defineMethod<{ id: string }, { item: string }>();
     const protocol = defineProtocol("items", { list, get });
 
     expect(protocol.name).toBe("items");
-    expect(protocol.methods.list).toBe(list);
-    expect(protocol.methods.get).toBe(get);
-    expect(protocol.methods.list.name).toBe("itemList");
-    expect(protocol.methods.get.name).toBe("itemGet");
+    // Namespacing is what makes a wire name unique across protocols, so the method a
+    // protocol exposes is a renamed copy rather than the definition passed in.
+    expect(protocol.methods.list.name).toBe("items.list");
+    expect(protocol.methods.get.name).toBe("items.get");
+    expect(protocol.methods.list.kind).toBe(list.kind);
+    expect(protocol.methods.get.kind).toBe(get.kind);
   });
 });
 
@@ -165,8 +169,8 @@ function mockContext(overrides: Partial<RpcServerContext> = {}): RpcServerContex
 
 describe("createHandlers", () => {
   test("produces RpcHandlerRegistry keyed by wire names", () => {
-    const list = defineMethod<"testList", {}, { items: string[] }>("testList");
-    const get = defineMethod<"testGet", { id: string }, { item: string }>("testGet");
+    const list = defineMethod<{}, { items: string[] }>();
+    const get = defineMethod<{ id: string }, { item: string }>();
     const protocol = defineProtocol("test", { list, get });
 
     const registry = createHandlers(
@@ -178,13 +182,13 @@ describe("createHandlers", () => {
       },
     );
 
-    expect(Object.keys(registry)).toEqual(["testList", "testGet"]);
-    expect(typeof registry["testList"].handler).toBe("function");
-    expect(typeof registry["testGet"].handler).toBe("function");
+    expect(Object.keys(registry)).toEqual(["test.list", "test.get"]);
+    expect(typeof registry["test.list"].handler).toBe("function");
+    expect(typeof registry["test.get"].handler).toBe("function");
   });
 
   test("handler returns translated success", async () => {
-    const method = defineMethod<"ping", { msg: string }, { reply: string }>("ping");
+    const method = defineMethod<{ msg: string }, { reply: string }>();
     const protocol = defineProtocol("test", { ping: method });
 
     const registry = createHandlers(
@@ -195,12 +199,12 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["ping"].handler({ msg: "hello" }, mockContext());
+    const result = await registry["test.ping"].handler!({ msg: "hello" }, mockContext());
     expect(result).toEqual({ response: { reply: "pong: hello" }, encrypted: undefined });
   });
 
   test("handler returns translated error", async () => {
-    const method = defineMethod<"fail", {}, {}>("fail");
+    const method = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { fail: method });
 
     const registry = createHandlers(
@@ -211,7 +215,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["fail"].handler({}, mockContext());
+    const result = await registry["test.fail"].handler!({}, mockContext());
     expect(result.response).toEqual({
       type: "error",
       statusCode: 404,
@@ -221,7 +225,7 @@ describe("createHandlers", () => {
   });
 
   test("handler catches thrown errors and returns 500", async () => {
-    const method = defineMethod<"boom", {}, {}>("boom");
+    const method = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { boom: method });
 
     const registry = createHandlers(
@@ -234,7 +238,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["boom"].handler({}, mockContext());
+    const result = await registry["test.boom"].handler!({}, mockContext());
     expect(result.response).toEqual({
       type: "error",
       statusCode: 500,
@@ -243,7 +247,7 @@ describe("createHandlers", () => {
   });
 
   test("handler catches non-Error throws", async () => {
-    const method = defineMethod<"boom", {}, {}>("boom");
+    const method = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { boom: method });
 
     const registry = createHandlers(
@@ -256,7 +260,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["boom"].handler({}, mockContext());
+    const result = await registry["test.boom"].handler!({}, mockContext());
     expect(result.response).toEqual({
       type: "error",
       statusCode: 500,
@@ -265,7 +269,7 @@ describe("createHandlers", () => {
   });
 
   test("encrypted flag is preserved through translation", async () => {
-    const method = defineMethod<"enc", {}, { data: string }>("enc");
+    const method = defineMethod<{}, { data: string }>();
     const protocol = defineProtocol("test", { enc: method });
 
     const registry = createHandlers(
@@ -276,13 +280,13 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["enc"].handler({}, mockContext());
+    const result = await registry["test.enc"].handler!({}, mockContext());
     expect(result.encrypted).toBe(true);
     expect(result.response).toEqual({ data: "secret" });
   });
 
   test("dependencies are passed to handler factories", async () => {
-    const method = defineMethod<"greet", { name: string }, { message: string }>("greet");
+    const method = defineMethod<{ name: string }, { message: string }>();
     const protocol = defineProtocol("test", { greet: method });
     const deps = { prefix: "Hello" };
 
@@ -293,13 +297,13 @@ describe("createHandlers", () => {
           ok({ message: `${prefix}, ${payload.name}!` }),
     });
 
-    const result = await registry["greet"].handler({ name: "World" }, mockContext());
+    const result = await registry["test.greet"].handler!({ name: "World" }, mockContext());
     expect(result.response).toEqual({ message: "Hello, World!" });
   });
 
   test("init callback is attached to the first handler", () => {
-    const a = defineMethod<"a", {}, {}>("a");
-    const b = defineMethod<"b", {}, {}>("b");
+    const a = defineMethod<{}, {}>();
+    const b = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { a, b });
 
     const cleanup = mock(() => {});
@@ -318,10 +322,20 @@ describe("createHandlers", () => {
     const firstKey = Object.keys(registry)[0];
     expect(registry[firstKey].init).toBeDefined();
 
-    const mockServer = {} as any;
+    const mockServer = { on: () => () => {} } as any;
     const result = registry[firstKey].init!(mockServer);
-    expect(initFn).toHaveBeenCalledWith(mockServer, {});
-    expect(result).toBe(cleanup);
+    expect(initFn).toHaveBeenCalledWith(
+      mockServer,
+      {},
+      expect.objectContaining({ get: expect.any(Function), sessions: expect.any(Function) }),
+    );
+
+    // The framework wraps the caller's cleanup so it can release session state alongside
+    // it, so this is no longer the same function reference — but calling it must still
+    // run the caller's cleanup.
+    expect(cleanup).not.toHaveBeenCalled();
+    result!();
+    expect(cleanup).toHaveBeenCalled();
   });
 
   test("schema validation rejects invalid payloads with 400", async () => {
@@ -333,7 +347,7 @@ describe("createHandlers", () => {
     });
     const resSchema = objectSchema<{ name: string }>();
 
-    const method = defineMethod("validated", { request: reqSchema, response: resSchema });
+    const method = defineMethod({ request: reqSchema, response: resSchema });
     const protocol = defineProtocol("test", { validated: method });
 
     const handlerFn = mock(async () => ok({ name: "test" }));
@@ -345,7 +359,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["validated"].handler({}, mockContext());
+    const result = await registry["test.validated"].handler!({}, mockContext());
     expect(handlerFn).not.toHaveBeenCalled();
     expect(result.response).toEqual({
       type: "error",
@@ -366,7 +380,7 @@ describe("createHandlers", () => {
     });
     const resSchema = objectSchema<{ name: string }>();
 
-    const method = defineMethod("validated", { request: reqSchema, response: resSchema });
+    const method = defineMethod({ request: reqSchema, response: resSchema });
     const protocol = defineProtocol("test", { validated: method });
 
     const registry = createHandlers(
@@ -377,7 +391,7 @@ describe("createHandlers", () => {
       },
     );
 
-    const result = await registry["validated"].handler({ id: "abc" }, mockContext());
+    const result = await registry["test.validated"].handler!({ id: "abc" }, mockContext());
     expect(result.response).toEqual({ name: "found: abc" });
   });
 
@@ -390,7 +404,7 @@ describe("createHandlers", () => {
     });
     const resSchema = objectSchema<{ result: boolean }>();
 
-    const method = defineMethod("coerce", { request: reqSchema, response: resSchema });
+    const method = defineMethod({ request: reqSchema, response: resSchema });
     const protocol = defineProtocol("test", { coerce: method });
 
     let receivedPayload: unknown;
@@ -405,17 +419,14 @@ describe("createHandlers", () => {
       },
     );
 
-    await registry["coerce"].handler({ id: "test" }, mockContext());
+    await registry["test.coerce"].handler!({ id: "test" }, mockContext());
     expect(receivedPayload).toEqual({ id: "test", normalized: true });
   });
 
   test("streaming handler registers both handler and streamHandler", async () => {
-    const method = defineMethod<
-      "upload",
-      { fileId: string },
-      { allowed: boolean },
-      { chunk: number }
-    >("upload", { kind: "multipart" });
+    const method = defineMethod<{ fileId: string }, { allowed: boolean }, { chunk: number }>({
+      kind: "multipart",
+    });
     const protocol = defineProtocol("test", { upload: method });
 
     const streamHandlerFn = mock(async () => {});
@@ -430,9 +441,15 @@ describe("createHandlers", () => {
       },
     );
 
-    expect(registry["upload"].handler).toBeDefined();
-    expect(registry["upload"].streamHandler).toBeDefined();
-    expect(registry["upload"].streamHandler).toBe(streamHandlerFn);
+    expect(registry["test.upload"].handler).toBeDefined();
+    expect(registry["test.upload"].streamHandler).toBeDefined();
+
+    // Wrapped rather than passed through by identity, so the stream handler gets the same
+    // scoped context as every other handler. It must still delegate.
+    const context = mockContext();
+    const send = async () => {};
+    await registry["test.upload"].streamHandler!({ chunk: 1 }, context, "msg-1", send);
+    expect(streamHandlerFn).toHaveBeenCalledWith({ chunk: 1 }, context, "msg-1", send);
   });
 
   test("codecs from defineMethod are passed through to registry entries", () => {
@@ -445,7 +462,7 @@ describe("createHandlers", () => {
       decode: (b: Uint8Array) => JSON.parse(new TextDecoder().decode(b)) as { name: string },
     };
 
-    const method = defineMethod<"binaryGet", { id: string }, { name: string }>("binaryGet", {
+    const method = defineMethod<{ id: string }, { name: string }>({
       requestCodec,
       responseCodec,
     });
@@ -459,13 +476,13 @@ describe("createHandlers", () => {
       },
     );
 
-    expect(registry["binaryGet"].request).toBeDefined();
-    expect(registry["binaryGet"].request!.encode).toBe(requestCodec.encode as any);
-    expect(registry["binaryGet"].request!.decode).toBe(requestCodec.decode as any);
-    expect(registry["binaryGet"].response).toBeDefined();
-    expect(registry["binaryGet"].response!.encode).toBe(responseCodec.encode as any);
-    expect(registry["binaryGet"].response!.decode).toBe(responseCodec.decode as any);
-    expect(registry["binaryGet"].stream).toBeUndefined();
+    expect(registry["test.get"].request).toBeDefined();
+    expect(registry["test.get"].request!.encode).toBe(requestCodec.encode as any);
+    expect(registry["test.get"].request!.decode).toBe(requestCodec.decode as any);
+    expect(registry["test.get"].response).toBeDefined();
+    expect(registry["test.get"].response!.encode).toBe(responseCodec.encode as any);
+    expect(registry["test.get"].response!.decode).toBe(responseCodec.decode as any);
+    expect(registry["test.get"].stream).toBeUndefined();
   });
 
   test("stream codec is passed through for streaming methods", () => {
@@ -474,7 +491,7 @@ describe("createHandlers", () => {
       decode: (b: Uint8Array) => JSON.parse(new TextDecoder().decode(b)) as { chunk: number },
     };
 
-    const method = defineMethod<"upload", {}, {}, { chunk: number }>("upload", {
+    const method = defineMethod<{}, {}, { chunk: number }>({
       kind: "multipart",
       streamCodec,
     });
@@ -492,9 +509,9 @@ describe("createHandlers", () => {
       },
     );
 
-    expect(registry["upload"].stream).toBeDefined();
-    expect(registry["upload"].stream!.encode).toBe(streamCodec.encode as any);
-    expect(registry["upload"].stream!.decode).toBe(streamCodec.decode as any);
+    expect(registry["test.upload"].stream).toBeDefined();
+    expect(registry["test.upload"].stream!.encode).toBe(streamCodec.encode as any);
+    expect(registry["test.upload"].stream!.decode).toBe(streamCodec.decode as any);
   });
 });
 
@@ -525,13 +542,13 @@ describe("createClientExtension", () => {
   }
 
   test("auto-generated client creates pass-through methods", async () => {
-    const list = defineMethod<"itemList", { cursor?: string }, { items: string[] }>("itemList");
-    const get = defineMethod<"itemGet", { id: string }, { item: string }>("itemGet");
+    const list = defineMethod<{ cursor?: string }, { items: string[] }>();
+    const get = defineMethod<{ id: string }, { item: string }>();
     const protocol = defineProtocol("items", { list, get });
 
     const sendRequest = mock(async (_doc: string, method: string, payload: any) => {
-      if (method === "itemList") return { items: ["a", "b"] };
-      if (method === "itemGet") return { item: payload.id };
+      if (method === "items.list") return { items: ["a", "b"] };
+      if (method === "items.get") return { item: payload.id };
       throw new Error("Unknown method");
     });
 
@@ -544,7 +561,7 @@ describe("createClientExtension", () => {
     expect(listResult).toEqual({ items: ["a", "b"] });
     expect(sendRequest).toHaveBeenCalledWith(
       "test-doc",
-      "itemList",
+      "items.list",
       { cursor: "abc" },
       {
         encrypted: undefined,
@@ -557,8 +574,8 @@ describe("createClientExtension", () => {
   });
 
   test("auto-generated client excludes streaming methods", () => {
-    const simple = defineMethod<"ping", {}, { pong: boolean }>("ping");
-    const streaming = defineMethod<"upload", {}, {}, { chunk: number }>("upload", {
+    const simple = defineMethod<{}, { pong: boolean }>();
+    const streaming = defineMethod<{}, {}, { chunk: number }>({
       kind: "multipart",
     });
     const protocol = defineProtocol("test", { simple, streaming });
@@ -573,7 +590,7 @@ describe("createClientExtension", () => {
   });
 
   test("custom build function receives typed methods", async () => {
-    const list = defineMethod<"itemList", {}, { items: string[] }>("itemList");
+    const list = defineMethod<{}, { items: string[] }>();
     const protocol = defineProtocol("test", { list });
 
     const sendRequest = mock(async () => ({ items: ["raw"] }));
@@ -598,7 +615,7 @@ describe("createClientExtension", () => {
   });
 
   test("handleMessage and handleAck are forwarded", () => {
-    const method = defineMethod<"test", {}, {}>("test");
+    const method = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { test: method });
 
     const handleMessage = mock(() => true);
@@ -616,7 +633,7 @@ describe("createClientExtension", () => {
   });
 
   test("factory returns a new extension instance each call", () => {
-    const method = defineMethod<"test", {}, {}>("test");
+    const method = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { test: method });
 
     const factory = createClientExtension(protocol);
@@ -626,7 +643,7 @@ describe("createClientExtension", () => {
   });
 
   test("encrypted and timeout options forwarded to sendRequest", async () => {
-    const method = defineMethod<"enc", {}, {}>("enc");
+    const method = defineMethod<{}, {}>();
     const protocol = defineProtocol("test", { enc: method });
 
     const sendRequest = mock(async () => ({}));
@@ -638,7 +655,7 @@ describe("createClientExtension", () => {
     await api.enc({}, { encrypted: true, timeout: 5000 });
     expect(sendRequest).toHaveBeenCalledWith(
       "test-doc",
-      "enc",
+      "test.enc",
       {},
       {
         encrypted: true,
@@ -648,7 +665,7 @@ describe("createClientExtension", () => {
   });
 
   test("auto-generated client wraps errors with RpcOperationError", async () => {
-    const method = defineMethod<"itemGet", { id: string }, { item: string }>("itemGet");
+    const method = defineMethod<{ id: string }, { item: string }>();
     const protocol = defineProtocol("items", { get: method });
 
     const sendRequest = mock(async () => {
@@ -674,7 +691,7 @@ describe("createClientExtension", () => {
   });
 
   test("custom wrapError overrides default RpcOperationError", async () => {
-    const method = defineMethod<"itemGet", { id: string }, { item: string }>("itemGet");
+    const method = defineMethod<{ id: string }, { item: string }>();
     const protocol = defineProtocol("items", { get: method });
 
     const sendRequest = mock(async () => {
@@ -710,5 +727,249 @@ describe("createClientExtension", () => {
       expect(error).toBeInstanceOf(CustomError);
       expect((error as CustomError).op).toBe("get");
     }
+  });
+});
+
+describe("createHandlers session scope", () => {
+  /** A Session/Server pair with just the event surface the scope machinery uses. */
+  function mockServerWithSessions() {
+    const sessionOpen: Array<(arg: { session: any }) => void> = [];
+    const server = {
+      on: (event: string, cb: any) => {
+        if (event === "session-open") sessionOpen.push(cb);
+        return () => {};
+      },
+    } as any;
+    const openSession = (id: string) => {
+      const disposeListeners: Array<() => void> = [];
+      const session = {
+        id,
+        on: (event: string, cb: () => void) => {
+          if (event === "dispose") disposeListeners.push(cb);
+          return () => {};
+        },
+        dispose: () => disposeListeners.forEach((fn) => fn()),
+      } as any;
+      sessionOpen.forEach((cb) => cb({ session }));
+      return session;
+    };
+    return { server, openSession };
+  }
+
+  const method = defineMethod<{}, { seen: number }>();
+  const protocol = defineProtocol("scoped", { ping: method });
+
+  function build(attach?: (state: { seen: number }, session: any) => () => void) {
+    return createHandlers<typeof protocol, {}, { seen: number }>(
+      protocol,
+      {},
+      {
+        ping: () => async (_payload, ctx) => {
+          ctx.state.seen++;
+          return ok({ seen: ctx.state.seen });
+        },
+      },
+      { scope: { create: () => ({ seen: 0 }), attach } },
+    );
+  }
+
+  test("gives each session its own state, reachable as ctx.state", async () => {
+    const registry = build();
+    const sessionA = { id: "a" } as any;
+    const sessionB = { id: "b" } as any;
+
+    await registry["scoped.ping"].handler!({}, mockContext({ session: sessionA }));
+    const secondA = await registry["scoped.ping"].handler!({}, mockContext({ session: sessionA }));
+    const firstB = await registry["scoped.ping"].handler!({}, mockContext({ session: sessionB }));
+
+    expect((secondA as any).response).toEqual({ seen: 2 });
+    expect((firstB as any).response).toEqual({ seen: 1 });
+  });
+
+  test("runs a session's teardown when the session disposes", () => {
+    // Milestone's hand-rolled version leaked here: its dispose handler dropped the session
+    // from the tracked set without running the per-session unsubscribers, and the
+    // server-level cleanup then iterated a set the session was no longer in.
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const { server, openSession } = mockServerWithSessions();
+    registry["scoped.ping"].init!(server);
+
+    const session = openSession("a");
+    expect(torn).toEqual([]);
+    session.dispose();
+    expect(torn).toEqual(["a"]);
+  });
+
+  test("runs teardown for still-live sessions when the server disposes", () => {
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const { server, openSession } = mockServerWithSessions();
+    const cleanup = registry["scoped.ping"].init!(server);
+
+    openSession("a");
+    openSession("b");
+    cleanup!();
+    expect(torn.sort()).toEqual(["a", "b"]);
+  });
+
+  test("tears a session down exactly once", () => {
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const { server, openSession } = mockServerWithSessions();
+    const cleanup = registry["scoped.ping"].init!(server);
+
+    const session = openSession("a");
+    session.dispose();
+    cleanup!();
+    expect(torn).toEqual(["a"]);
+  });
+
+  test("keeps two servers' session lifecycles independent", () => {
+    // The presence protocol used to hold its tracked-session Set in the factory closure,
+    // so one registry shared by two servers gave them one shared set — and the first
+    // server's dispose tore down the second server's sessions.
+    const torn: string[] = [];
+    const registry = build((_state, session) => () => torn.push(session.id));
+    const nodeA = mockServerWithSessions();
+    const nodeB = mockServerWithSessions();
+    const cleanupA = registry["scoped.ping"].init!(nodeA.server);
+    const cleanupB = registry["scoped.ping"].init!(nodeB.server);
+
+    nodeA.openSession("a");
+    nodeB.openSession("b");
+
+    cleanupA!();
+    expect(torn).toEqual(["a"]);
+
+    cleanupB!();
+    expect(torn).toEqual(["a", "b"]);
+  });
+
+  test("exposes live sessions to init for maintenance sweeps", () => {
+    let scope: any;
+    const registry = createHandlers<typeof protocol, {}, { seen: number }>(
+      protocol,
+      {},
+      { ping: () => async (_p, ctx) => ok({ seen: ctx.state.seen }) },
+      { scope: { create: () => ({ seen: 0 }) }, init: (_server, _deps, s) => void (scope = s) },
+    );
+    const { server, openSession } = mockServerWithSessions();
+    registry["scoped.ping"].init!(server);
+
+    expect(scope.sessions()).toEqual([]);
+    const session = openSession("a");
+    expect(scope.sessions()).toEqual([session]);
+    session.dispose();
+    expect(scope.sessions()).toEqual([]);
+  });
+});
+
+describe("wire-name collisions", () => {
+  test("two protocols claiming the same key produce distinct wire names", () => {
+    // The registry is one flat map shared by every session, and registries are merged by
+    // spreading — so before namespacing, two protocols with a `list` method silently left
+    // you with whichever was spread last.
+    const a = defineProtocol("comments", { list: defineMethod<{}, {}>() });
+    const b = defineProtocol("tasks", { list: defineMethod<{}, {}>() });
+
+    expect(a.methods.list.name).toBe("comments.list");
+    expect(b.methods.list.name).toBe("tasks.list");
+  });
+
+  test("mergeHandlers throws rather than letting one registry shadow another", () => {
+    const protocol = defineProtocol("dup", { list: defineMethod<{}, {}>() });
+    const registry = () => createHandlers(protocol, {}, { list: () => async () => ok({}) });
+
+    expect(() => mergeHandlers(registry(), registry())).toThrow(/Duplicate RPC method "dup.list"/);
+  });
+
+  test("mergeHandlers combines disjoint registries", () => {
+    const a = createHandlers(
+      defineProtocol("a", { list: defineMethod<{}, {}>() }),
+      {},
+      {
+        list: () => async () => ok({}),
+      },
+    );
+    const b = createHandlers(
+      defineProtocol("b", { list: defineMethod<{}, {}>() }),
+      {},
+      {
+        list: () => async () => ok({}),
+      },
+    );
+
+    expect(Object.keys(mergeHandlers(a, b)).sort()).toEqual(["a.list", "b.list"]);
+  });
+});
+
+describe("pushPayload", () => {
+  const proto = defineProtocol("demo", {
+    tick: definePush<{ n: number }>(),
+    other: definePush<{ n: number }>(),
+  });
+
+  /** A push exactly as the server authors it. */
+  function push(method: string, payload: unknown): RpcMessage<any> {
+    return new RpcMessage<any>(
+      "doc",
+      { type: "success", payload },
+      method,
+      "response",
+      undefined,
+      {} as any,
+      false,
+    );
+  }
+
+  test("returns the payload for a matching push", () => {
+    const result = pushPayload(proto.methods.tick, push("demo.tick", { n: 1 }));
+    expect(result).toEqual({ n: 1 });
+    // Typed, not `unknown` — this would not compile against a cast-free `unknown`.
+    expect(result?.n).toBe(1);
+  });
+
+  test("returns undefined for another method's push", () => {
+    expect(pushPayload(proto.methods.other, push("demo.tick", { n: 1 }))).toBeUndefined();
+  });
+
+  test("returns undefined for a request using the same method name", () => {
+    const request = new RpcMessage<any>(
+      "doc",
+      { type: "success", payload: { n: 1 } },
+      "demo.tick",
+      "request",
+      undefined,
+      {} as any,
+      false,
+    );
+    expect(pushPayload(proto.methods.tick, request)).toBeUndefined();
+  });
+
+  test("returns undefined for a response correlated to a request", () => {
+    const response = new RpcMessage<any>(
+      "doc",
+      { type: "success", payload: { n: 1 } },
+      "demo.tick",
+      "response",
+      "some-request-id",
+      {} as any,
+      false,
+    );
+    expect(pushPayload(proto.methods.tick, response)).toBeUndefined();
+  });
+
+  test("returns undefined for an error payload", () => {
+    const errored = new RpcMessage<any>(
+      "doc",
+      { type: "error", statusCode: 500, details: "boom" },
+      "demo.tick",
+      "response",
+      undefined,
+      {} as any,
+      false,
+    );
+    expect(pushPayload(proto.methods.tick, errored)).toBeUndefined();
   });
 });

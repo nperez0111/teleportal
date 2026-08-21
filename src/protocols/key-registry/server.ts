@@ -1,5 +1,4 @@
 import { createHandlers, ok, err, type RpcHandlerRegistry } from "teleportal/rpc";
-import { RpcMessage } from "teleportal/protocol";
 import type { KeyRegistryStorage } from "./storage";
 import { keyRegistryProtocol } from "./methods";
 
@@ -66,18 +65,23 @@ export function getKeyRegistryRpcHandlers(storage: KeyRegistryStorage): RpcHandl
           throw e;
         }
 
-        const notification = new RpcMessage(
-          context.documentId,
-          { type: "success" as const, payload: { generation } },
-          "keysRotated",
-          "request",
-          undefined,
-          {},
-          false,
+        // Tell the other clients on this document to re-fetch the key. Local-only: the new
+        // generation is already in the shared registry, so every node notifies its own.
+        await context.session.broadcastRpc(
+          keyRegistryProtocol.methods.rotated.name,
+          { generation },
+          { excludeClientId: context.clientId as string },
         );
-        await context.session.broadcast(notification as any, context.clientId as string);
 
         return ok({ generation });
       },
+
+    // The only legitimate `rotated` push is the one the `rotate` handler above sends via
+    // `broadcastRpc`, which reaches local clients directly and never routes through here.
+    // So anything arriving at this handler was authored by a client — and relaying it would
+    // let anyone on the document make every peer discard its key and re-fetch. Drop it.
+    // (`replicate: false` restates this method's QoS: the forgery must not reach the
+    // node-to-node plane, where other nodes would treat it as server-authored.)
+    rotated: () => () => ({ forwardToLocalClients: false, replicate: false }),
   });
 }

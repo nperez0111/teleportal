@@ -176,7 +176,12 @@ export function withAckTrackingSink<
     async write(message) {
       if (!subscriptionReady) await subscriptionPromise;
 
-      if (message.type !== "ack") {
+      // Only track what the receiver actually ACKs. The server acks a message
+      // iff `message.requiresAck`, so tracking best-effort traffic (awareness,
+      // acks themselves, rpc pushes with `qos.ack: false`) would guarantee a
+      // timeout: an HTTP POST whose batch carried awareness always blocked for
+      // the full `ackTimeout` and returned 504.
+      if (message.requiresAck) {
         const ackPromise = new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             pendingAcks.delete(message.id);

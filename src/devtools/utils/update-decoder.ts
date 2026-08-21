@@ -157,6 +157,67 @@ export function decodeUpdateOps(update: VersionedUpdate): DecodedUpdateOps {
   return { ops, insertCount, insertedLength, deleteCount, deletedLength };
 }
 
+/**
+ * Produces a concise, natural-language summary of what an update did,
+ * e.g. `Inserted "hello world", deleted 2 items`.
+ */
+export function summarizeUpdate(decoded: DecodedUpdateOps): string {
+  const parts: string[] = [];
+
+  const textOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "text");
+  const formatOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "format");
+  const typeOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "type");
+  const valueOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "value");
+  const embedOps = decoded.ops.filter((op) => op.kind === "insert" && op.contentType === "embed");
+  const deleteOps = decoded.ops.filter((op) => op.kind === "delete");
+  const gcOps = decoded.ops.filter((op) => op.kind === "gc");
+
+  if (textOps.length > 0) {
+    const totalLen = textOps.reduce((sum, op) => sum + op.length, 0);
+    if (textOps.length === 1 && textOps[0].preview && totalLen <= 40) {
+      const loc = textOps[0].parent ? ` in ${textOps[0].parent}` : "";
+      parts.push(`Inserted ${textOps[0].preview}${loc}`);
+    } else {
+      parts.push(`Inserted ${totalLen} character${totalLen !== 1 ? "s" : ""}`);
+    }
+  }
+
+  if (formatOps.length === 1 && formatOps[0].preview) {
+    parts.push(`Formatted ${formatOps[0].preview}`);
+  } else if (formatOps.length > 1) {
+    parts.push(`${formatOps.length} format changes`);
+  }
+
+  for (const op of typeOps) {
+    const loc = op.parent ? ` in ${op.parent}` : "";
+    parts.push(`Created ${op.preview || "type"}${op.key ? ` as ${op.key}` : ""}${loc}`);
+  }
+
+  if (valueOps.length === 1) {
+    const op = valueOps[0];
+    const loc = op.parent ? ` in ${op.parent}` : "";
+    parts.push(`Set ${op.key ? `${op.key} = ` : ""}${op.preview || "value"}${loc}`);
+  } else if (valueOps.length > 0) {
+    parts.push(`Set ${valueOps.length} values`);
+  }
+
+  if (embedOps.length > 0) {
+    parts.push(`${embedOps.length} embed${embedOps.length !== 1 ? "s" : ""}`);
+  }
+
+  if (deleteOps.length > 0) {
+    const totalDeleted = deleteOps.reduce((sum, op) => sum + op.length, 0);
+    parts.push(`Deleted ${totalDeleted} item${totalDeleted !== 1 ? "s" : ""}`);
+  }
+
+  if (gcOps.length > 0) {
+    const totalGc = gcOps.reduce((sum, op) => sum + op.length, 0);
+    parts.push(`GC'd ${totalGc} item${totalGc !== 1 ? "s" : ""}`);
+  }
+
+  return parts.join(", ") || "Empty update";
+}
+
 /** One-line rendering of an op, used by the inspector and copyable logs. */
 export function formatUpdateOp(op: UpdateOp): string {
   const id = `(${op.client}, ${op.clock})`;

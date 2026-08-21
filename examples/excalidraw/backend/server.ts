@@ -3,7 +3,7 @@ import { createStorage } from "unstorage";
 
 import { tokenAuthenticatedHTTPHandler } from "teleportal/http";
 import { Server, checkPermissionWithTokenManager } from "teleportal/server";
-import { UnstorageDocumentStorage, UnstorageEncryptedDocumentStorage } from "teleportal/storage";
+import { UnstorageDocumentStorage } from "teleportal/storage";
 import { createTokenManager } from "teleportal/token";
 import { tokenAuthenticatedWebsocketHandler } from "teleportal/websocket-server";
 
@@ -19,13 +19,9 @@ const tokenManager = createTokenManager({
 
 const server = new Server({
   storage: async (ctx) => {
-    if (ctx.documentId.includes("encrypted")) {
-      return new UnstorageEncryptedDocumentStorage(memoryStorage, {
-        keyPrefix: "document",
-      });
-    }
     return new UnstorageDocumentStorage(memoryStorage, {
       keyPrefix: "document",
+      encrypted: ctx.encrypted,
     });
   },
 
@@ -45,6 +41,7 @@ const httpHandlers = tokenAuthenticatedHTTPHandler({
 });
 
 const instance = Bun.serve({
+  port: Bun.env.PORT ? Number(Bun.env.PORT) : 3000,
   routes: {
     "/": homepage,
   },

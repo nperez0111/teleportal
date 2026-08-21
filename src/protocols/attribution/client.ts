@@ -19,8 +19,7 @@ import {
   type ContentIds,
   type ContentMap,
 } from "teleportal/attribution";
-import type { EncodedContentMap } from "teleportal/storage";
-import { createClientExtension, type RpcExtension } from "teleportal/rpc";
+import { createClientExtension, pushPayload, type RpcExtension } from "teleportal/rpc";
 import type { MilestoneGetResponse } from "../milestone/methods";
 import { resolveDeletedRangeAttribution, resolveRangeAttribution } from "./resolve";
 import {
@@ -120,7 +119,7 @@ const attributionExtension = createClientExtension(attributionProtocol, {
     async function milestoneContentIds(milestoneId: string): Promise<ContentIds> {
       const response = await ctx.rpcClient.sendRequest<MilestoneGetResponse>(
         ctx.document,
-        "milestoneGet",
+        "milestone.get",
         { milestoneId },
       );
 
@@ -268,46 +267,34 @@ const attributionExtension = createClientExtension(attributionProtocol, {
  * Per-provider attribution extension factory.
  *
  * Each Provider (i.e. each document) gets its own extension instance with its
- * own cache, captured in `create()`. `attributionPush` responses are merged
- * only into the instance whose document matches the message, so having several
- * documents open in the same context never cross-contaminates their attribution
- * caches and destroying one provider never disables pushes for the others.
+ * own cache, captured in `create()`. The Provider filters inbound RPC by document
+ * before dispatching, so `attributionPush` responses are merged only into the
+ * instance they belong to: having several documents open in the same context never
+ * cross-contaminates their attribution caches, and destroying one provider never
+ * disables pushes for the others.
  */
 export const createAttributionRpc = (): RpcExtension<AttributionRpc> => {
   const base = attributionExtension();
   let instance: AttributionRpc | undefined;
-  let document: string | undefined;
 
   return {
     create(ctx) {
-      document = ctx.document;
       instance = base.create(ctx) as AttributionRpc;
       return instance;
     },
 
     handleMessage(message) {
-      if (
-        message.rpcMethod === "attributionPush" &&
-        message.requestType === "response" &&
-        message.payload?.type === "success"
-      ) {
-        // Only merge pushes addressed to this instance's document; a shared
-        // connection can carry pushes belonging to other documents' extensions.
-        if (message.document !== document) return false;
-        const pushPayload = message.payload.payload as Record<string, unknown> | undefined;
-        const encoded = pushPayload?.contentMap as EncodedContentMap | undefined;
-        if (encoded && instance) {
-          instance.mergeIncremental(decodeContentMap(encoded));
-        }
-        return true;
+      const push = pushPayload(attributionProtocol.methods.push, message);
+      if (!push) return false;
+      if (push.contentMap && instance) {
+        instance.mergeIncremental(decodeContentMap(push.contentMap));
       }
-      return false;
+      return true;
     },
 
     destroy() {
       base.destroy?.();
       instance = undefined;
-      document = undefined;
     },
   };
 };

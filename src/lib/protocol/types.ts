@@ -149,90 +149,6 @@ export type DecodedAckMessage = {
 };
 
 /**
- * A presence message, signalling a client joining or leaving a session.
- * Always sent in cleartext (it carries no document content).
- */
-export type PresenceMessageBinary = Tag<Uint8Array, "presence">;
-
-/**
- * Sent by a client to announce the numeric awareness clientID it operates under.
- * This is the only way the server learns a client's awareness clientID for
- * end-to-end encrypted documents, where the awareness payload is opaque.
- */
-export type DecodedPresenceAnnounce = {
-  type: "presence-announce";
-  /** The y-awareness clientID (equals the client's Y.Doc clientID). */
-  awarenessId: number;
-};
-
-/**
- * Sent by a client to retract a previously announced awareness clientID.
- * The server removes that awarenessId from its roster and broadcasts a
- * presence-leave to peers. Used when a Provider is destroyed (e.g. switching
- * documents) so stale awareness entries are cleaned up eagerly.
- */
-export type DecodedPresenceUnannounce = {
-  type: "presence-unannounce";
-  /** The y-awareness clientID to retract. */
-  awarenessId: number;
-};
-
-/**
- * Broadcast by the server when a client joins (after it announces) or leaves a
- * session. `data` is an integrator-configurable bag (see `presenceConfig`).
- */
-export type DecodedPresenceJoin = {
-  type: "presence-join";
-  /** The y-awareness clientID of the client (used by peers to track/clear it). */
-  awarenessId: number;
-  /** The server-assigned session/connection clientId. */
-  clientId: string;
-  /** The user the client is authenticated as. */
-  userId: string;
-  /** Integrator-supplied context safe to share with peers. */
-  data: Record<string, unknown>;
-};
-
-export type DecodedPresenceLeave = Omit<DecodedPresenceJoin, "type"> & {
-  type: "presence-leave";
-};
-
-/** A single peer entry carried in a presence-heartbeat roster snapshot. */
-export type PresenceHeartbeatClient = {
-  /** The y-awareness clientID of the client. */
-  awarenessId: number;
-  /** The server-assigned session/connection clientId. */
-  clientId: string;
-  /** The user the client is authenticated as. */
-  userId: string;
-  /** Integrator-supplied context safe to share with peers. */
-  data: Record<string, unknown>;
-};
-
-/**
- * Published node-to-node (over pub/sub) at a fixed interval. Carries a snapshot
- * of the publishing node's own local clients so other nodes can keep a fresh,
- * crash-safe roster: receivers refresh the node's liveness and reconcile its
- * client set, and a node whose heartbeats stop is expired by TTL. The source
- * node id travels in the pub/sub envelope, not in the payload.
- */
-export type DecodedPresenceHeartbeat = {
-  type: "presence-heartbeat";
-  /** The publishing node's current local clients. */
-  clients: PresenceHeartbeatClient[];
-};
-
-/**
- * Any presence payload.
- */
-export type PresenceStep =
-  | DecodedPresenceAnnounce
-  | DecodedPresenceUnannounce
-  | DecodedPresenceJoin
-  | DecodedPresenceLeave
-  | DecodedPresenceHeartbeat;
-
-/**
  * Any Y.js update which concerns a document.
  */
 export type DocStep = SyncStep1 | SyncStep2 | SyncDone | UpdateStep | AuthMessage;
@@ -297,6 +213,7 @@ export type DecodedRpcMessage<OK = unknown, Error = unknown> = {
 import type { Message, RpcMessage, ServerContext } from "teleportal";
 import type { Server } from "../../server/server";
 import type { Session } from "../../server/session";
+import type { DeliveryResult } from "../../server/client";
 
 /**
  * Base context provided to all RPC handlers on the server.
@@ -317,13 +234,51 @@ export interface RpcServerContext<Context extends ServerContext = ServerContext>
   [key: string]: unknown;
 }
 
+/**
+ * Delivery QoS declared on an RPC method (see `definePush` in `teleportal/rpc`).
+ *
+ * - `durability`: which pub/sub lane the message rides when replicated (durable = persisted
+ *   and replayed after a blip).
+ * - `replicate`: whether the authoring node publishes it over pub/sub to other nodes at all.
+ * - `ack`: whether receivers ack it and senders retransmit on NACK (default delivery mode);
+ *   `false` = best-effort fire-and-forget, carried on the wire as the `bestEffort` header byte.
+ * - `dedupe`: whether the cross-node replication path runs TtlDedupe, which drops a message
+ *   whose id was already seen. Every authored `RpcMessage` carries a nonce, so this only ever
+ *   collapses genuine redeliveries of one message — repeating a payload is fine and needs no
+ *   opt-out. Turn it off only for a handler that must see even true duplicate deliveries.
+ */
+export type RpcMethodQos = {
+  durability: "durable" | "ephemeral";
+  replicate: boolean;
+  ack: boolean;
+  dedupe: boolean;
+};
+
+/**
+ * Context handed to an RPC push handler. A push is an unsolicited notification
+ * (`requestType: "response"` with no `originalRequestId`), authored either by a local client
+ * or by another node and delivered over pub/sub replication.
+ */
+export interface RpcPushContext<Context extends ServerContext = ServerContext> {
+  /** The Server instance */
+  server: Server<Context>;
+  /** The namespaced document ID */
+  documentId: string;
+  /** The Session instance for this document */
+  session: Session<Context>;
+  /** Node that authored the push; undefined when it came from a local client. */
+  sourceNodeId?: string;
+  /** Server-assigned id of the local client that sent the push; undefined when replicated. */
+  clientId?: string;
+}
+
 export interface RpcServerRequestHandler<
   Request,
   Response,
   Stream = never,
   Context extends RpcServerContext = RpcServerContext,
 > {
-  handler: (
+  handler?: (
     payload: Request,
     context: Context,
   ) => Promise<{
@@ -337,6 +292,11 @@ export interface RpcServerRequestHandler<
      * snapshot.
      */
     encrypted?: boolean;
+    /**
+     * Called once the response's delivery outcome is known — see `ok()` in
+     * `teleportal/rpc`, which is how handlers normally supply it.
+     */
+    onAck?: (result: DeliveryResult) => void;
   }>;
 
   /**
@@ -354,6 +314,31 @@ export interface RpcServerRequestHandler<
     messageId: string,
     sendMessage: (message: Message<any>) => Promise<void>,
   ) => Promise<void>;
+
+  /**
+   * Optional handler for pushes of this method — unsolicited notifications sent by a local
+   * client or replicated from another node over pub/sub. Return `forwardToLocalClients: false`
+   * to suppress the default re-broadcast to this node's local clients (e.g. when the handler
+   * consumes the push into server-side state and emits its own messages instead).
+   *
+   * Client-authored pushes are NEVER replicated to other nodes unless the handler returns
+   * `replicate: true` after inspecting the payload: replication is a trusted node-to-node
+   * plane (receiving nodes apply replicated pushes as server-authored), so entering it is
+   * an explicit per-payload vouch, not a QoS default.
+   */
+  pushHandler?: (
+    payload: Request,
+    context: RpcPushContext,
+  ) =>
+    | Promise<{ forwardToLocalClients?: boolean; replicate?: boolean } | void>
+    | { forwardToLocalClients?: boolean; replicate?: boolean }
+    | void;
+
+  /**
+   * Delivery QoS for this method's pushes; resolved from the method definition.
+   * Consulted by the session's push/broadcast primitives and the replication path.
+   */
+  qos?: RpcMethodQos;
 
   /**
    * Optional initialization function called when the handler is registered with a Server.

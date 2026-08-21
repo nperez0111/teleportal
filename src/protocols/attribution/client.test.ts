@@ -26,7 +26,7 @@ function mockCtx(document: string): RpcExtensionContext {
 
 function pushMessage(document: string, contentMap: Uint8Array) {
   return {
-    rpcMethod: "attributionPush",
+    rpcMethod: "attribution.push",
     requestType: "response",
     document,
     payload: { type: "success", payload: { contentMap } },
@@ -60,17 +60,9 @@ describe("attribution client push routing", () => {
     expect(bCalls).toBe(1);
   });
 
-  it("ignores a push addressed to a different document", () => {
-    const ext = createAttributionRpc();
-    const api = ext.create(mockCtx("doc-a"));
-    let calls = 0;
-    api.mergeIncremental = () => {
-      calls++;
-    };
-
-    expect(ext.handleMessage!(pushMessage("doc-b", encoded))).toBe(false);
-    expect(calls).toBe(0);
-  });
+  // Cross-document filtering is the Provider's job now (it owns the shared connection and
+  // knows which document each extension belongs to), so it is covered there rather than
+  // re-implemented in every extension. See provider.test.ts.
 
   it("destroying one instance does not disable pushes for another", () => {
     const extA = createAttributionRpc();

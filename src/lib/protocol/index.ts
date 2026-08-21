@@ -1,12 +1,13 @@
 /**
  * Binary encoding of the teleportal protocol.
  *
- * The wire format (version 1) is:
+ * The wire format (version 2) is:
  * - 3 bytes: magic number "YJS" (0x59, 0x4a, 0x53)
- * - 1 byte: version (0x01)
+ * - 1 byte: version (0x02)
  * - varString: document name
  * - 1 byte: encrypted flag (0 or 1)
- * - 1 byte: message type (0=doc, 1=awareness, 2=ack, 3=presence, 4=rpc)
+ * - 1 byte: best-effort flag (1 = receivers must not ack; senders do not retransmit)
+ * - 1 byte: message type (0=doc, 1=awareness, 2=ack, 4=rpc; 3 was presence, now an rpc protocol)
  * - type-specific payload
  */
 

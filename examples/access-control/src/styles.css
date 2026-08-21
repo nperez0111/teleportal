@@ -1,0 +1,317 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --font-family:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, sans-serif;
+  --mono-font-family:
+    "Fira Code", "Hack", Menlo, Monaco, "Lucida Console", "Liberation Mono", "Courier New",
+    monospace;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-family);
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+/* ── ProseMirror content area ────────────────────────── */
+
+.ProseMirror {
+  position: relative;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  font-variant-ligatures: none;
+  padding: 0.75rem 1rem;
+  line-height: 1.6;
+  outline: none;
+  min-height: 160px;
+  font-size: 0.875rem;
+  color: #1e293b;
+}
+
+.ProseMirror p {
+  margin: 0 0 0.5em;
+}
+
+.ProseMirror pre {
+  white-space: pre-wrap;
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--mono-font-family);
+  font-size: 0.8125rem;
+}
+
+.ProseMirror li {
+  position: relative;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5rem;
+}
+
+.ProseMirror blockquote {
+  padding-left: 0.75rem;
+  border-left: 3px solid #cbd5e1;
+  margin-left: 0;
+  margin-right: 0;
+  color: #475569;
+}
+
+.ProseMirror h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 1rem 0 0.5rem;
+}
+
+.ProseMirror h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.375rem;
+}
+
+.ProseMirror h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+}
+
+/* ── Menu bar ────────────────────────────────────────── */
+
+.ProseMirror-menubar {
+  position: relative;
+  min-height: 2rem;
+  color: #475569;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.125rem;
+}
+
+.ProseMirror-menubar-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.ProseMirror-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  vertical-align: middle;
+  padding: 0.25rem 0.375rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.ProseMirror-icon:hover {
+  background: #e2e8f0;
+}
+
+.ProseMirror-icon svg {
+  fill: currentColor;
+  height: 1em;
+}
+
+.ProseMirror-menu-active {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-radius: 4px;
+}
+
+.ProseMirror-menu-disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.ProseMirror-selectednode {
+  outline: 2px solid #3b82f6;
+  border-radius: 4px;
+}
+
+.ProseMirror-menuseparator {
+  display: inline-block;
+  width: 1px;
+  height: 1rem;
+  background: #e2e8f0;
+  margin: 0 0.125rem;
+  vertical-align: middle;
+}
+
+/* ── Dropdowns ───────────────────────────────────────── */
+
+.ProseMirror-menu-dropdown,
+.ProseMirror-menu-dropdown-menu {
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.ProseMirror-menu-dropdown {
+  vertical-align: middle;
+  cursor: pointer;
+  position: relative;
+  padding: 0.25rem 1.25rem 0.25rem 0.375rem;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.ProseMirror-menu-dropdown:hover {
+  background: #e2e8f0;
+}
+
+.ProseMirror-menu-dropdown:after {
+  content: "";
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid currentColor;
+  opacity: 0.5;
+  position: absolute;
+  right: 4px;
+  top: calc(50% - 2px);
+}
+
+.ProseMirror-menu-dropdown-menu,
+.ProseMirror-menu-submenu {
+  position: absolute;
+  background: #fff;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.25rem;
+  box-shadow:
+    0 4px 12px -2px rgb(0 0 0 / 0.1),
+    0 2px 4px -2px rgb(0 0 0 / 0.06);
+}
+
+.ProseMirror-menu-dropdown-menu {
+  z-index: 15;
+  min-width: 6rem;
+}
+
+.ProseMirror-menu-dropdown-item {
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.ProseMirror-menu-dropdown-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.ProseMirror-menu-submenu-wrap {
+  position: relative;
+  margin-right: -4px;
+}
+
+.ProseMirror-menu-submenu {
+  display: none;
+  min-width: 4rem;
+  left: 100%;
+  top: -3px;
+}
+
+.ProseMirror-menu-submenu-wrap:hover .ProseMirror-menu-submenu {
+  display: block;
+}
+
+/* ── Prompt dialogs ──────────────────────────────────── */
+
+.ProseMirror-prompt {
+  background: #fff;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  position: fixed;
+  border-radius: 8px;
+  z-index: 11;
+  box-shadow:
+    0 8px 24px -4px rgb(0 0 0 / 0.12),
+    0 2px 6px -2px rgb(0 0 0 / 0.06);
+}
+
+.ProseMirror-prompt h5 {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: #334155;
+}
+
+.ProseMirror-prompt input[type="text"],
+.ProseMirror-prompt textarea {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  outline: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8125rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.ProseMirror-prompt-close {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  color: #94a3b8;
+  border: none;
+  background: transparent;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.ProseMirror-prompt-close:after {
+  content: "\2715";
+  font-size: 12px;
+}
+
+.ProseMirror-prompt-buttons {
+  margin-top: 0.25rem;
+  display: none;
+}
+
+/* ── Collaboration cursors ───────────────────────────── */
+
+.ProseMirror-yjs-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid black;
+  border-right: 1px solid black;
+  border-color: orange;
+  word-break: normal;
+  pointer-events: none;
+}
+
+.ProseMirror-yjs-cursor > div {
+  position: absolute;
+  top: -1.05em;
+  left: -1px;
+  font-size: 11px;
+  background-color: rgb(250, 129, 0);
+  font-family: var(--font-family);
+  font-style: normal;
+  font-weight: 500;
+  line-height: normal;
+  user-select: none;
+  color: white;
+  padding: 1px 5px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+}
+
+.ProseMirror > .ProseMirror-yjs-cursor:first-child {
+  margin-top: 16px;
+}

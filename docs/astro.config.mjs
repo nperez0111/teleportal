@@ -1,15 +1,37 @@
 // @ts-check
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import react from "@astrojs/react";
 import starlightLlmsTxt from "starlight-llms-txt";
 import mermaid from "astro-mermaid";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = resolve(__dirname, "..");
+
+// Build Vite aliases from the root tsconfig paths so the docs site can
+// import from `teleportal/*` the same way the examples do.
+const rootTsConfig = JSON.parse(readFileSync(resolve(rootDir, "tsconfig.json"), "utf-8"));
+/** @type {Record<string, string>} */
+const teleportalAliases = {};
+for (const [key, value] of Object.entries(rootTsConfig.compilerOptions.paths)) {
+  if (key.startsWith("teleportal")) {
+    teleportalAliases[key] = resolve(rootDir, /** @type {string[]} */ (value)[0]);
+  }
+}
+
 // https://astro.build/config
 export default defineConfig({
   site: "https://teleportal.tools/",
   image: {
     service: { entrypoint: "astro/assets/services/noop" },
+  },
+  vite: {
+    resolve: {
+      alias: teleportalAliases,
+    },
   },
   integrations: [
     react(),
@@ -156,6 +178,9 @@ export default defineConfig({
           ],
         },
       ],
+      components: {
+        Head: "./src/components/Head.astro",
+      },
       customCss: [
         // Relative path to your custom CSS file
         "./src/styles/index.css",

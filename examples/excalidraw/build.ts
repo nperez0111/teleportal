@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { build, type BuildConfig } from "bun";
 import plugin from "bun-plugin-tailwind";
+import { picaPlugin } from "./pica-plugin";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";
 import path from "path";
@@ -146,10 +147,14 @@ console.info(
 const result = await build({
   entrypoints,
   outdir,
-  plugins: [plugin],
+  plugins: [plugin, picaPlugin],
   minify: true,
   target: "browser",
   sourcemap: "linked",
+  // `@excalidraw/excalidraw` only exposes its stylesheet under the
+  // `production`/`development` export conditions, so the bundler needs one of
+  // them set to resolve `@excalidraw/excalidraw/index.css`.
+  conditions: ["production"],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
   },

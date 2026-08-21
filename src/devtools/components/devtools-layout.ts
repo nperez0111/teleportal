@@ -85,13 +85,13 @@ export class DevtoolsLayout {
     spacer.className = "devtools-flex-1";
     headerBar.append(spacer);
 
-    this.connectionStatus = new ConnectionStatus(onTransportSwitch);
+    this.connectionStatus = new ConnectionStatus();
     headerBar.append(this.connectionStatus.getElement());
 
     this.element.append(headerBar);
 
     if (connectionInfoSource) {
-      this.connectionPopover = new ConnectionPopover(connectionInfoSource);
+      this.connectionPopover = new ConnectionPopover(connectionInfoSource, onTransportSwitch);
       this.element.append(this.connectionPopover.getElement());
       const statusEl = this.connectionStatus.getElement();
       statusEl.classList.add("devtools-connection-status-clickable");

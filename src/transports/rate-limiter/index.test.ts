@@ -559,7 +559,7 @@ describe("RateLimitedTransport", () => {
     expect(onRateLimitExceeded).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps awareness/presence chatter out of the sync budgets (default rules)", async () => {
+  it("keeps best-effort awareness/rpc chatter out of the sync budgets (default rules)", async () => {
     // Regression: awareness updates fire per keystroke UNBATCHED, so a fast
     // typist emits dozens/sec. Counting them against sync-per-document let
     // cursor chatter drain the budget doc updates need — sustained typing
@@ -579,16 +579,18 @@ describe("RateLimitedTransport", () => {
     });
 
     const ctx = { userId: "typist" };
+    // Best-effort (requiresAck: false) is what classifies a message as
+    // ephemeral metadata — awareness and best-effort rpc pushes carry it.
     const received = await pumpSource(rateLimited, transport.channel, [
-      // 3 awareness messages: must NOT consume sync tokens.
-      { type: "awareness", context: ctx, document: "doc1" },
-      { type: "awareness", context: ctx, document: "doc1" },
-      { type: "presence", context: ctx, document: "doc1" },
+      // 3 ephemeral messages: must NOT consume sync tokens.
+      { type: "awareness", requiresAck: false, context: ctx, document: "doc1" },
+      { type: "awareness", requiresAck: false, context: ctx, document: "doc1" },
+      { type: "rpc", requiresAck: false, context: ctx, document: "doc1" },
       // 2 doc updates: exactly the sync budget — all pass.
-      { type: "doc", context: ctx, document: "doc1" },
-      { type: "doc", context: ctx, document: "doc1" },
-      // 4th awareness message exceeds the awareness budget — dropped alone.
-      { type: "awareness", context: ctx, document: "doc1" },
+      { type: "doc", requiresAck: true, context: ctx, document: "doc1" },
+      { type: "doc", requiresAck: true, context: ctx, document: "doc1" },
+      // 4th ephemeral message exceeds the awareness budget — dropped alone.
+      { type: "awareness", requiresAck: false, context: ctx, document: "doc1" },
     ]);
 
     expect(received.length).toBe(5);

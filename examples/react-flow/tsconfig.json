@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["@types/bun", "@types/react", "@types/react-dom"],
+    "paths": {
+      "teleportal/encryption-key": ["../../src/encryption-key/index.ts"],
+      "teleportal/storage": ["../../src/storage/index.ts"],
+      "teleportal/http": ["../../src/http/index.ts"],
+      "teleportal/server": ["../../src/server/index.ts"],
+      "teleportal/providers": ["../../src/providers/index.ts"],
+      "teleportal/cursors": ["../../src/cursors/index.ts"],
+      "teleportal/devtools": ["../../src/devtools/index.ts"],
+      "teleportal/utils": ["../../src/utils/index.ts"],
+      "teleportal/attribution": ["../../src/lib/attribution/index.ts"],
+      "teleportal/websocket-server": ["../../src/websocket-server/index.ts"],
+      "teleportal/websocket-server/bun": ["../../src/websocket-server/bun.ts"],
+      "teleportal/token": ["../../src/token/index.ts"],
+      "teleportal": ["../../src/lib/index.ts"]
+    }
+  },
+  "include": ["./src/**/*", "./app.ts", "./server.ts"]
+}

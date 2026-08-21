@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { VersionedUpdate } from "teleportal";
 import * as Y from "yjs";
-import { decodeUpdateOps, formatUpdateOp } from "./update-decoder";
+import { decodeUpdateOps, formatUpdateOp, summarizeUpdate } from "./update-decoder";
 
 function v1(data: Uint8Array): VersionedUpdate {
   return { version: 1, data } as VersionedUpdate;
@@ -96,6 +96,78 @@ describe("decodeUpdateOps", () => {
     const decoded = decodeUpdateOps(v2(update));
     expect(decoded.insertCount).toBe(1);
     expect(decoded.ops[0].preview).toBe('"v2!"');
+  });
+});
+
+describe("summarizeUpdate", () => {
+  it("summarizes a short text insert with preview", () => {
+    const doc = new Y.Doc();
+    doc.getText("body").insert(0, "hello");
+    const update = Y.encodeStateAsUpdate(doc, Y.encodeStateVector(new Y.Doc()));
+
+    const decoded = decodeUpdateOps(v1(update));
+    const summary = summarizeUpdate(decoded);
+    expect(summary).toContain('Inserted "hello"');
+    expect(summary).toContain("in body");
+  });
+
+  it("summarizes a long text insert with character count", () => {
+    const doc = new Y.Doc();
+    doc.getText("body").insert(0, "a".repeat(50));
+    const update = Y.encodeStateAsUpdate(doc, Y.encodeStateVector(new Y.Doc()));
+
+    const decoded = decodeUpdateOps(v1(update));
+    const summary = summarizeUpdate(decoded);
+    expect(summary).toBe("Inserted 50 characters");
+  });
+
+  it("summarizes deletions", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("body");
+    text.insert(0, "hello world");
+    const before = Y.encodeStateVector(doc);
+    text.delete(0, 6);
+    const update = Y.encodeStateAsUpdate(doc, before);
+
+    const decoded = decodeUpdateOps(v1(update));
+    const summary = summarizeUpdate(decoded);
+    expect(summary).toContain("Deleted 6 items");
+  });
+
+  it("summarizes map sets", () => {
+    const doc = new Y.Doc();
+    doc.getMap("meta").set("title", "Draft");
+    const update = Y.encodeStateAsUpdate(doc);
+
+    const decoded = decodeUpdateOps(v1(update));
+    const summary = summarizeUpdate(decoded);
+    expect(summary).toContain('Set title = "Draft" in meta');
+  });
+
+  it("summarizes mixed inserts and deletes", () => {
+    const doc = new Y.Doc();
+    const text = doc.getText("body");
+    text.insert(0, "hello world");
+    const before = Y.encodeStateVector(doc);
+    text.delete(0, 5);
+    text.insert(0, "bye");
+    const update = Y.encodeStateAsUpdate(doc, before);
+
+    const decoded = decodeUpdateOps(v1(update));
+    const summary = summarizeUpdate(decoded);
+    expect(summary).toContain("Inserted");
+    expect(summary).toContain("Deleted");
+  });
+
+  it("returns 'Empty update' for an empty decoded result", () => {
+    const summary = summarizeUpdate({
+      ops: [],
+      insertCount: 0,
+      insertedLength: 0,
+      deleteCount: 0,
+      deletedLength: 0,
+    });
+    expect(summary).toBe("Empty update");
   });
 });
 

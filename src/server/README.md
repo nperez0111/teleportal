@@ -1,6 +1,6 @@
 # Server Module
 
-The server module provides the core `Server` class that manages real-time collaborative document synchronization, client connections, and RPC operations. It serves as the central orchestrator for handling Y.js document updates, presence messages, RPC methods (milestones, file transfers, etc.), and message routing.
+The server module provides the core `Server` class that manages real-time collaborative document synchronization, client connections, and RPC operations. It serves as the central orchestrator for handling Y.js document updates, RPC methods (presence, milestones, file transfers, etc.), and message routing.
 
 ## Overview
 
@@ -8,7 +8,7 @@ The `Server` class is the main entry point for the Teleportal server-side implem
 
 - **Document Sessions**: Creates and manages sessions for collaborative documents
 - **Client Connections**: Handles client connections via transports (WebSocket, HTTP, etc.)
-- **Message Processing**: Routes and processes all protocol messages (doc, presence, RPC, ACK)
+- **Message Processing**: Routes and processes all protocol messages (doc, awareness, RPC, ACK)
 - **Permission Checking**: Validates client permissions for document and RPC operations
 - **Multi-Node Support**: Uses PubSub for cross-node message fanout in distributed deployments
 - **Metrics & Monitoring**: Tracks server health, metrics, and operational status
@@ -46,8 +46,7 @@ A **Session** represents an active collaborative document. Each session:
 
 - Manages multiple clients connected to the same document
 - Handles Y.js document synchronization (sync-step-1, sync-step-2, updates)
-- Processes presence messages (join/leave/heartbeat for cross-node awareness)
-- Routes RPC messages (milestones, file transfers, custom handlers)
+- Routes RPC messages (presence, milestones, file transfers, custom handlers)
 - Automatically cleans up when all clients disconnect (after 60s timeout)
 - Uses PubSub to replicate messages across server nodes
 
@@ -78,7 +77,7 @@ Client → Transport → Server.createClient()
                     ┌─────┴─────┐
                     │           │
                     ▼           ▼
-              Doc/Presence   RPC Message
+              Doc/Awareness  RPC Message
                     │           │
                     ▼           ▼
               Storage API   RPC Handlers
@@ -104,7 +103,7 @@ Client → Transport → Server.createClient()
 | `checkPermissionWithTokenManager`                                                                   | fn      | Builds a `checkPermission` from a `TokenManager`.                                               |
 | `logger`, `emitWideEvent`, `envContext`, `WideEvent`                                                | logging | Single LogTape logger and the wide-event (canonical log line) emitter.                          |
 | `ServerOptions`, `ServerEvents`, `SessionEvents`                                                    | types   | Configuration and event maps.                                                                   |
-| `PresenceConfig`, `AttributionConfig`                                                               | types   | Presence and attribution projection config.                                                     |
+| `LivenessConfig`, `AttributionConfig`                                                               | types   | Client-liveness sweep and attribution projection config.                                        |
 | `ClientDisconnectReason`, `DocumentUnloadReason`, `ClientMessageDirection`, `DocumentMessageSource` | types   | Event enums.                                                                                    |
 
 `TtlDedupe` (`dedupe.ts`) is an **internal** helper owned by `Session` and is not part of
@@ -171,10 +170,22 @@ type ServerOptions<Context extends ServerContext> = {
   };
 
   /**
-   * Configuration for client presence (join/leave) notifications
-   * broadcast to a session's peers.
+   * Configuration for the built-in presence protocol (who is in a document),
+   * registered by default. Pass `false` to opt out — e.g. to register your
+   * own implementation via `rpcHandlers`.
+   * See `teleportal/protocols/presence` (getPresenceData, heartbeatIntervalMs,
+   * presenceTtlMs).
    */
-  presenceConfig?: PresenceConfig<Context>;
+  presence?: PresenceProtocolConfig<Context> | false;
+
+  /**
+   * Transport-level client liveness (the ping sweep): how long a local
+   * client's connection is trusted without inbound traffic before the server
+   * presumes it dead and disconnects it (`clientTtlMs`, default 60s, 0 to
+   * disable). This is a socket concern that stays in the server core; its
+   * `client-leave` event is what the presence protocol consumes.
+   */
+  livenessConfig?: LivenessConfig;
 
   /**
    * Configuration for custom attribution metadata on document updates.
@@ -184,6 +195,7 @@ type ServerOptions<Context extends ServerContext> = {
   /**
    * RPC handlers for the server.
    * Built-in handlers (milestone, file) should be merged with any custom handlers.
+   * User-supplied handlers win over default protocols (presence) on name collisions.
    */
   rpcHandlers?: RpcHandlerRegistry;
 
@@ -393,19 +405,18 @@ The server handles all Teleportal protocol message types:
 - **sync-done**: Synchronization completion signal
 - **auth-message**: Permission denied/granted responses
 
-### Presence Messages (`presence`)
-
-- **presence-announce**: Client announces its awareness client ID (triggers join broadcast and roster replay)
-- **presence-unannounce**: Client retracts a single awareness client ID (e.g. one tab in a SharedWorker closed)
-- **presence-join**: Server-authored notification that a peer joined
-- **presence-leave**: Server-authored notification that a peer left
-- **presence-heartbeat**: Periodic snapshot of a node's local clients (cross-node roster, self-healing)
-
 ### RPC Messages (`rpc`)
 
-- **request**: Client sends an RPC request (milestones, file operations, custom methods)
+- **request**: Client sends an RPC request (milestones, file operations, presence announces, custom methods)
 - **stream**: Streaming chunks (e.g., file upload parts)
-- **response**: Server response to an RPC request
+- **response**: Server response to an RPC request. A response with no
+  `originalRequestId` is a **push**: an unsolicited server-authored notification
+  (e.g. `presence.join`), fanned out to local clients and — per the method's QoS —
+  replicated to other nodes over pub/sub.
+
+Presence is not a native message type: it is a default-on RPC protocol
+(`teleportal/protocols/presence`) built on requests and pushes. The server core
+contains no presence logic.
 
 ### Awareness Messages (`awareness`)
 
@@ -421,6 +432,14 @@ The server handles all Teleportal protocol message types:
   emits it when a message fails to apply so the sender stops waiting/retransmitting.
   ACKs are published over PubSub (`ack/${clientId}`) so they still reach a client whose
   connection is homed on a different node.
+
+Acks flow in both directions. A client acks every server message with `requiresAck`, and
+`Client` correlates those back to the message they refer to, so a sender can learn whether
+its message actually landed — `ok(value, { onAck })` for an RPC response, or the `onAck`
+option on `session.sendRpcToClient` for a push. Only messages sent with a callback are
+tracked. Everything still in flight is reported as `disconnected` when the client goes
+away, so nothing waits out an ack timeout for a connection that is already gone. See the
+[RPC framework docs](../lib/rpc/README.md#knowing-whether-a-message-landed).
 
 ## Rate Limiting
 
@@ -598,8 +617,8 @@ Its rules:
 - `ack` and `awareness` messages are always allowed.
 - `doc` `sync-step-1` / `sync-done` require **read**; `sync-step-2` / `update` require **write**; `auth-message` is denied (server-authored, never client-originated).
 - `rpc` messages require **read**, **unless** the method is in a fixed write-methods set
-  (`milestoneCreate`, `milestoneUpdateName`, `milestoneDelete`, `milestoneRestore`,
-  `fileUpload`), which require **write**. An RPC without a `documentId` is allowed.
+  (`milestone.create`, `milestone.updateName`, `milestone.delete`, `milestone.restore`,
+  `file.upload`), which require **write**. An RPC without a `documentId` is allowed.
 
 > **Security note (fail-open default for write RPCs):** the write-methods set is an
 > explicit allow-list. Any RPC method _not_ in it — including custom write-capable
@@ -759,7 +778,7 @@ console.log(status);
 //   pendingSessions: 0,
 //   totalMessagesProcessed: 1000,
 //   totalDocumentsOpened: 50,
-//   messageTypeBreakdown: { doc: 500, presence: 200, rpc: 100 },
+//   messageTypeBreakdown: { doc: 500, awareness: 200, rpc: 100 },
 //   rateLimitExceededTotal: 5,
 //   rateLimitBreakdown: { ... },
 //   rateLimitTopOffenders: [ ... ],
@@ -824,6 +843,39 @@ const server = new Server({
   },
 });
 ```
+
+The presence protocol (`teleportal/protocols/presence`) is registered by default;
+user-supplied `rpcHandlers` win on name collisions, and `presence: false` opts
+out entirely.
+
+### RPC pushes
+
+A **push** is an unsolicited server-authored RPC notification (a `response`
+correlated to no request), defined via `definePush` in `teleportal/rpc` with
+per-method delivery QoS (`durability`, `replicate`, `ack`, `dedupe`). `Session`
+exposes the push primitives:
+
+- **`session.sendRpcToClient(clientOrId, method, payload, opts?)`** — push to a
+  single local client.
+- **`session.broadcastRpc(method, payload, { excludeClientId?, encrypted?, qos? })`** —
+  push to all local clients and, when the method's QoS says `replicate`, publish
+  it over the document pub/sub topic so other nodes' sessions receive it too.
+- **`session.publishRpc(method, payload, opts?)`** — node-to-node only, no local
+  broadcast (e.g. periodic snapshots whose local effect is produced by the
+  protocol itself).
+
+Registry entries can declare a **`pushHandler(payload, ctx)`** that consumes
+incoming pushes — authored by a local client or replicated from another node.
+Its context carries `server`, `session`, `documentId`, `sourceNodeId` (set for
+replicated pushes) and `clientId` (the server-assigned connection id, set for
+local-client pushes). Returning `{ forwardToLocalClients: false }` suppresses
+the default relay to local clients. Client-authored pushes never enter the
+node-to-node replication plane by default — receiving nodes apply replicated
+pushes as server-authored, so a registered `pushHandler` must explicitly vouch
+with `{ replicate: true }` after inspecting the payload; unregistered methods
+relay client pushes to same-node peers only. Note that
+`RpcServerContext.clientId` is the server-assigned connection id, not a
+client-supplied value.
 
 ## Error Handling
 
@@ -955,11 +1007,11 @@ Key features:
 
 - Session Management: Automatic session creation and cleanup
 - Client Handling: Multi-client support per document
-- Message Routing: Handles all protocol message types (doc, presence, RPC, ACK)
+- Message Routing: Handles all protocol message types (doc, awareness, RPC, ACK)
 - Permission Checking: Optional fine-grained access control with RPC method awareness
 - Multi-Node Support: PubSub integration for distributed deployments
 - Multi-Tenancy: Room-based document namespacing
-- Presence: Cross-node join/leave/heartbeat with TTL-based self-healing
+- Presence: Default-on RPC protocol with cross-node roster heartbeats and TTL-based self-healing (`teleportal/protocols/presence`)
 - Attribution: Automatic authorship tracking on document updates
 - Metrics & Monitoring: Prometheus metrics and health checks
 - RPC System: Extensible handler registry for milestones, files, and custom operations

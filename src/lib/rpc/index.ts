@@ -2,18 +2,23 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type {
   RpcError,
   RpcHandlerRegistry,
+  RpcMessage,
+  RpcMethodQos,
+  RpcPushContext,
   RpcServerContext,
   RpcServerRequestHandler,
   Message,
 } from "teleportal/protocol";
 import type { Server } from "../../server/server";
+import type { Session } from "../../server/session";
+import type { DeliveryCallback } from "../../server/client";
 import type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";
 
 // ---------------------------------------------------------------------------
 // MethodDef — method contract (single source of truth)
 // ---------------------------------------------------------------------------
 
-export type MethodKind = "request-response" | "multipart";
+export type MethodKind = "request-response" | "multipart" | "push";
 
 export interface Codec<T> {
   encode: (payload: T) => Uint8Array;
@@ -21,13 +26,17 @@ export interface Codec<T> {
 }
 
 export interface MethodDef<
-  Name extends string = string,
   Request = unknown,
   Response = unknown,
   Stream = never,
   Kind extends MethodKind = MethodKind,
 > {
-  readonly name: Name;
+  /**
+   * The wire name, assigned by {@link defineProtocol} as `<protocol>.<key>`. Methods are
+   * never named at the definition site: the registry is one flat map keyed by this string,
+   * so hand-written names put every protocol in one namespace where a collision is silent.
+   */
+  readonly name: string;
   readonly kind: Kind;
   /** Phantom — use `typeof method._request` for the inferred type. */
   readonly _request: Request;
@@ -41,6 +50,8 @@ export interface MethodDef<
   readonly requestCodec?: Codec<any>;
   readonly responseCodec?: Codec<any>;
   readonly streamCodec?: Codec<any>;
+  /** Delivery QoS, resolved with defaults at definition time. Only set for push methods. */
+  readonly qos?: RpcMethodQos;
 }
 
 interface CodecOptions<Req = unknown, Res = unknown, Stream = unknown> {
@@ -51,11 +62,9 @@ interface CodecOptions<Req = unknown, Res = unknown, Stream = unknown> {
 
 // Overload 1: schema-first (simple)
 export function defineMethod<
-  Name extends string,
   ReqSchema extends StandardSchemaV1,
   ResSchema extends StandardSchemaV1,
 >(
-  name: Name,
   options: {
     request: ReqSchema;
     response: ResSchema;
@@ -65,7 +74,6 @@ export function defineMethod<
     StandardSchemaV1.InferOutput<ResSchema>
   >,
 ): MethodDef<
-  Name,
   StandardSchemaV1.InferOutput<ReqSchema>,
   StandardSchemaV1.InferOutput<ResSchema>,
   never,
@@ -74,12 +82,10 @@ export function defineMethod<
 
 // Overload 2: schema-first + streaming
 export function defineMethod<
-  Name extends string,
   ReqSchema extends StandardSchemaV1,
   ResSchema extends StandardSchemaV1,
   StreamSchema extends StandardSchemaV1,
 >(
-  name: Name,
   options: {
     request: ReqSchema;
     response: ResSchema;
@@ -91,7 +97,6 @@ export function defineMethod<
     StandardSchemaV1.InferOutput<StreamSchema>
   >,
 ): MethodDef<
-  Name,
   StandardSchemaV1.InferOutput<ReqSchema>,
   StandardSchemaV1.InferOutput<ResSchema>,
   StandardSchemaV1.InferOutput<StreamSchema>,
@@ -99,32 +104,28 @@ export function defineMethod<
 >;
 
 // Overload 3: type-first (simple)
-export function defineMethod<Name extends string, Request, Response>(
-  name: Name,
+export function defineMethod<Request, Response>(
   options?: { kind?: "request-response" } & CodecOptions<Request, Response>,
-): MethodDef<Name, Request, Response, never, "request-response">;
+): MethodDef<Request, Response, never, "request-response">;
 
 // Overload 4: type-first + streaming
-export function defineMethod<Name extends string, Request, Response, Stream>(
-  name: Name,
+export function defineMethod<Request, Response, Stream>(
   options: { kind: "multipart" } & CodecOptions<Request, Response, Stream>,
-): MethodDef<Name, Request, Response, Stream, "multipart">;
+): MethodDef<Request, Response, Stream, "multipart">;
 
 // Implementation
-export function defineMethod(
-  name: string,
-  options?: {
-    request?: StandardSchemaV1;
-    response?: StandardSchemaV1;
-    stream?: StandardSchemaV1;
-    kind?: MethodKind;
-    requestCodec?: Codec<any>;
-    responseCodec?: Codec<any>;
-    streamCodec?: Codec<any>;
-  },
-): MethodDef<string, unknown, unknown, unknown, MethodKind> {
+export function defineMethod(options?: {
+  request?: StandardSchemaV1;
+  response?: StandardSchemaV1;
+  stream?: StandardSchemaV1;
+  kind?: MethodKind;
+  requestCodec?: Codec<any>;
+  responseCodec?: Codec<any>;
+  streamCodec?: Codec<any>;
+}): MethodDef<unknown, unknown, unknown, MethodKind> {
   return {
-    name,
+    // Replaced by `defineProtocol`, which is the only thing that knows the namespace.
+    name: "",
     kind: options?.kind ?? "request-response",
     _request: undefined as never,
     _response: undefined as never,
@@ -139,20 +140,79 @@ export function defineMethod(
 }
 
 // ---------------------------------------------------------------------------
+// definePush — unsolicited notification methods (server→client and node→node)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-push QoS overrides. Push defaults: ephemeral, replicated, acked, deduped —
+ * see {@link RpcMethodQos} for what each knob means.
+ */
+export type PushQosOptions = Partial<RpcMethodQos>;
+
+const PUSH_QOS_DEFAULTS: RpcMethodQos = {
+  durability: "ephemeral",
+  replicate: true,
+  ack: true,
+  dedupe: true,
+};
+
+// Overload 1: schema-first
+export function definePush<PayloadSchema extends StandardSchemaV1>(options: {
+  payload: PayloadSchema;
+  qos?: PushQosOptions;
+  payloadCodec?: Codec<StandardSchemaV1.InferOutput<PayloadSchema>>;
+}): MethodDef<StandardSchemaV1.InferOutput<PayloadSchema>, void, never, "push">;
+
+// Overload 2: type-first
+export function definePush<Payload>(options?: {
+  qos?: PushQosOptions;
+  payloadCodec?: Codec<Payload>;
+}): MethodDef<Payload, void, never, "push">;
+
+// Implementation
+export function definePush(options?: {
+  payload?: StandardSchemaV1;
+  qos?: PushQosOptions;
+  payloadCodec?: Codec<any>;
+}): MethodDef<unknown, void, never, "push"> {
+  return {
+    // Replaced by `defineProtocol`, which is the only thing that knows the namespace.
+    name: "",
+    kind: "push",
+    _request: undefined as never,
+    _response: undefined as never,
+    _stream: undefined as never,
+    requestSchema: options?.payload,
+    requestCodec: options?.payloadCodec,
+    qos: { ...PUSH_QOS_DEFAULTS, ...options?.qos },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // ProtocolDef — groups related methods under ergonomic keys
 // ---------------------------------------------------------------------------
 
-export interface ProtocolDef<
-  Methods extends Record<string, MethodDef<string, any, any, any, any>>,
-> {
+export interface ProtocolDef<Methods extends Record<string, MethodDef<any, any, any, any>>> {
   readonly name: string;
   readonly methods: Methods;
 }
 
-export function defineProtocol<
-  Methods extends Record<string, MethodDef<string, any, any, any, any>>,
->(name: string, methods: Methods): ProtocolDef<Methods> {
-  return { name, methods };
+/**
+ * Group methods under a protocol and give each one its wire name, `<protocol>.<key>`.
+ *
+ * The registry every server dispatches from is one flat `method -> handler` map, and
+ * registries are merged by spreading. Deriving the name here is what keeps two protocols
+ * from silently claiming the same key, and is why methods are not named individually.
+ */
+export function defineProtocol<Methods extends Record<string, MethodDef<any, any, any, any>>>(
+  name: string,
+  methods: Methods,
+): ProtocolDef<Methods> {
+  const named = {} as Record<string, MethodDef<any, any, any, any>>;
+  for (const [key, method] of Object.entries(methods)) {
+    named[key] = { ...method, name: `${name}.${key}` };
+  }
+  return { name, methods: named as Methods };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +225,7 @@ export type RpcResult<T> =
       readonly value: T;
       readonly encrypted?: boolean;
       readonly stream?: AsyncIterable<unknown>;
+      readonly onAck?: DeliveryCallback;
     }
   | {
       readonly ok: false;
@@ -177,9 +238,27 @@ export type RpcResult<T> =
 
 export function ok<T>(
   value: T,
-  opts?: { encrypted?: boolean; stream?: AsyncIterable<unknown> },
+  opts?: {
+    encrypted?: boolean;
+    stream?: AsyncIterable<unknown>;
+    /**
+     * Called once the response's fate is known — acknowledged by the client, or one of
+     * the reasons it never will be (see {@link DeliveryResult}).
+     *
+     * Returning from a handler only means the response was produced; the framework
+     * awaiting the send only means it reached the transport. Use this when the handler
+     * is holding something on the response's behalf and needs to know when to let go.
+     */
+    onAck?: DeliveryCallback;
+  },
 ): RpcResult<T> {
-  return { ok: true, value, encrypted: opts?.encrypted, stream: opts?.stream };
+  return {
+    ok: true,
+    value,
+    encrypted: opts?.encrypted,
+    stream: opts?.stream,
+    onAck: opts?.onAck,
+  };
 }
 
 export function err<T = never>(
@@ -214,47 +293,107 @@ export class RpcOperationError extends Error {
 // createHandlers — type-safe server handler registration
 // ---------------------------------------------------------------------------
 
-type HandlerFn<Request, Response> = (
+/** A handler context carrying the protocol's per-session state (see {@link SessionScope}). */
+type Scoped<Context, State> = Context & { state: State };
+
+type HandlerFn<Request, Response, State> = (
   payload: Request,
-  context: RpcServerContext,
+  context: Scoped<RpcServerContext, State>,
 ) => Promise<RpcResult<Response>> | RpcResult<Response>;
 
-type StreamingHandlerDef<Request, Response, Stream> = {
+type StreamingHandlerDef<Request, Response, Stream, State> = {
   handler: (
     payload: Request,
-    context: RpcServerContext,
+    context: Scoped<RpcServerContext, State>,
   ) => Promise<RpcResult<Response & { stream?: AsyncIterable<Stream> }>>;
   streamHandler: (
     payload: Stream,
-    context: RpcServerContext,
+    context: Scoped<RpcServerContext, State>,
     messageId: string,
     sendMessage: (message: Message<any>) => Promise<void>,
   ) => Promise<void>;
 };
 
-type HandlersFor<P extends ProtocolDef<any>, Deps> = {
+type PushHandlerFn<Payload, State> = (
+  payload: Payload,
+  context: Scoped<RpcPushContext, State>,
+) =>
+  | Promise<{ forwardToLocalClients?: boolean; replicate?: boolean } | void>
+  | { forwardToLocalClients?: boolean; replicate?: boolean }
+  | void;
+
+type HandlersFor<P extends ProtocolDef<any>, Deps, State> = {
   [K in keyof P["methods"]]: P["methods"][K]["kind"] extends "multipart"
     ? (
         deps: Deps,
       ) => StreamingHandlerDef<
         P["methods"][K]["_request"],
         P["methods"][K]["_response"],
-        P["methods"][K]["_stream"]
+        P["methods"][K]["_stream"],
+        State
       >
-    : (deps: Deps) => HandlerFn<P["methods"][K]["_request"], P["methods"][K]["_response"]>;
+    : P["methods"][K]["kind"] extends "push"
+      ? (deps: Deps) => PushHandlerFn<P["methods"][K]["_request"], State>
+      : (deps: Deps) => HandlerFn<P["methods"][K]["_request"], P["methods"][K]["_response"], State>;
 };
 
-interface CreateHandlersOptions<Deps> {
-  init?: (server: Server<any>, deps: Deps) => (() => void) | void;
+// ---------------------------------------------------------------------------
+// Per-session handler scope
+// ---------------------------------------------------------------------------
+
+/**
+ * The sessions one {@link Server} currently has open, and this protocol's state for them.
+ *
+ * A handler registry is built once and shared by every session on the node, so a "handler"
+ * is a node-wide function — anything per-document has to be keyed by session. Declaring a
+ * {@link SessionScopeOptions} makes the framework own that keying: handlers read
+ * `context.state`, and `init` gets this view for maintenance sweeps across sessions.
+ */
+export interface SessionScope<State> {
+  /** This protocol's state for `session`, created on first access. */
+  get(session: Session<any>): State;
+  /** Every session this server currently has open. */
+  sessions(): Session<any>[];
+}
+
+export interface SessionScopeOptions<Deps, State> {
+  /** Build a session's state. Called once per session, lazily. */
+  create: (session: Session<any>, deps: Deps) => State;
+  /**
+   * Wire up the session's listeners and timers.
+   *
+   * The returned teardown runs when the session disposes or when the server does,
+   * whichever comes first, and runs exactly once either way — so a session that closes
+   * under a long-lived server cannot leak its subscriptions.
+   */
+  attach?: (state: State, session: Session<any>, deps: Deps) => (() => void) | void;
+}
+
+interface CreateHandlersOptions<Deps, State> {
+  /**
+   * Per-session state owned by the framework rather than hand-rolled in a closure.
+   *
+   * The state map is keyed by session identity, so it is safe to share one registry
+   * across servers; the *lifecycle* (which sessions are live, and their listeners) is
+   * per-`init`, i.e. per-server.
+   */
+  scope?: SessionScopeOptions<Deps, State>;
+  init?: (server: Server<any>, deps: Deps, scope: SessionScope<State>) => (() => void) | void;
 }
 
 function translateResult(result: RpcResult<unknown>): {
   response: unknown | RpcError;
   encrypted?: boolean;
   stream?: AsyncIterable<unknown>;
+  onAck?: DeliveryCallback;
 } {
   if (result.ok) {
-    return { response: result.value, encrypted: result.encrypted, stream: result.stream };
+    return {
+      response: result.value,
+      encrypted: result.encrypted,
+      stream: result.stream,
+      onAck: result.onAck,
+    };
   }
   return {
     response: {
@@ -294,24 +433,142 @@ async function validatePayload(
   return { ok: true, value: result.value };
 }
 
-export function createHandlers<P extends ProtocolDef<any>, Deps>(
+export function createHandlers<P extends ProtocolDef<any>, Deps, State = undefined>(
   protocol: P,
   deps: Deps,
-  handlers: HandlersFor<P, Deps>,
-  options?: CreateHandlersOptions<Deps>,
+  handlers: HandlersFor<P, Deps, State>,
+  options?: CreateHandlersOptions<Deps, State>,
 ): RpcHandlerRegistry {
   const registry: RpcHandlerRegistry = {};
   let initAttached = false;
+
+  function register(
+    name: string,
+    entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext>,
+  ) {
+    // Within one protocol this can only fire if two keys somehow derive the same wire name.
+    // Across protocols the collision surfaces where registries are merged, in `Server`.
+    if (registry[name]) {
+      throw new Error(`Duplicate RPC method "${name}" in protocol "${protocol.name}"`);
+    }
+    registry[name] = entry;
+  }
+
+  // Keyed by session identity, so two servers sharing this registry never see each other's
+  // state. Only the *lifecycle* below is per-server.
+  const scopeOptions = options?.scope;
+  const states = new WeakMap<Session<any>, State>();
+
+  function stateFor(session: Session<any>): State {
+    if (!scopeOptions) return undefined as State;
+    let state = states.get(session);
+    if (state === undefined) {
+      state = scopeOptions.create(session, deps);
+      states.set(session, state);
+    }
+    return state;
+  }
+
+  /**
+   * Stamp the session's state onto the per-call context. The context is built fresh for
+   * every dispatch (see `Session`), so assigning in place is safe and allocation-free.
+   */
+  function scopeContext<C extends { session: unknown }>(context: C): Scoped<C, State> {
+    (context as { state?: State }).state = stateFor(context.session as Session<any>);
+    return context as Scoped<C, State>;
+  }
+
+  /**
+   * Wrap the caller's `init` so the framework owns session tracking: state is created when
+   * a session opens, and its teardown runs on session dispose or server dispose, whichever
+   * comes first.
+   */
+  function buildInit(): (server: Server<any>) => () => void {
+    return (server) => {
+      const cleanups: Array<() => void> = [];
+      const live = new Set<Session<any>>();
+      const detachers = new Map<Session<any>, () => void>();
+
+      const release = (session: Session<any>) => {
+        if (!live.delete(session)) return;
+        const detach = detachers.get(session);
+        detachers.delete(session);
+        detach?.();
+      };
+
+      if (scopeOptions) {
+        cleanups.push(
+          server.on("session-open", ({ session }: { session: Session<any> }) => {
+            if (live.has(session)) return;
+            live.add(session);
+            const detach = scopeOptions.attach?.(stateFor(session), session, deps);
+            const disposeUnsub = session.on("dispose", () => release(session));
+            detachers.set(session, () => {
+              disposeUnsub();
+              detach?.();
+            });
+          }),
+        );
+        cleanups.push(() => {
+          // Snapshot first: `release` deletes from `live` as it goes.
+          for (const session of Array.from(live)) release(session);
+        });
+      }
+
+      const scope: SessionScope<State> = {
+        get: stateFor,
+        sessions: () => [...live],
+      };
+      const userCleanup = options?.init?.(server, deps, scope);
+      if (userCleanup) cleanups.push(userCleanup);
+
+      // Reverse order: the caller's own teardown runs before the sessions it was using
+      // are released, and the `session-open` subscription is dropped last.
+      return () => {
+        for (const cleanup of cleanups.reverse()) cleanup();
+      };
+    };
+  }
+
+  const needsInit = Boolean(options?.init || scopeOptions);
 
   for (const key of Object.keys(protocol.methods) as Array<keyof P["methods"] & string>) {
     const methodDef: MethodDef = protocol.methods[key];
     const factory = handlers[key] as (deps: Deps) => any;
 
-    if (methodDef.kind === "multipart") {
+    if (methodDef.kind === "push") {
+      const pushHandlerFn = factory(deps) as PushHandlerFn<unknown, State>;
+
+      const entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext> = {
+        pushHandler: async (payload, context) => {
+          if (methodDef.requestSchema) {
+            const v = await validatePayload(methodDef.requestSchema, payload);
+            // A push has no reply channel — an invalid payload is dropped, not
+            // answered. `replicate: false` is explicit even though client pushes
+            // no longer replicate by default: an invalid payload must never be
+            // vouched into the node-to-node plane.
+            if (!v.ok) return { forwardToLocalClients: false, replicate: false };
+            payload = v.value;
+          }
+          return pushHandlerFn(payload, scopeContext(context));
+        },
+        qos: methodDef.qos,
+      };
+
+      if (methodDef.requestCodec) entry.request = methodDef.requestCodec;
+
+      if (!initAttached && needsInit) {
+        initAttached = true;
+        entry.init = buildInit();
+      }
+
+      register(methodDef.name, entry);
+    } else if (methodDef.kind === "multipart") {
       const { handler, streamHandler } = factory(deps) as StreamingHandlerDef<
         unknown,
         unknown,
-        unknown
+        unknown,
+        State
       >;
 
       const wrappedHandler: RpcServerRequestHandler<
@@ -326,7 +583,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
           payload = v.value;
         }
         try {
-          const result = await handler(payload, context);
+          const result = await handler(payload, scopeContext(context));
           if (result.ok) {
             const { stream, ...rest } = result.value as Record<string, unknown> & {
               stream?: AsyncIterable<unknown>;
@@ -335,6 +592,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
               response: rest,
               stream,
               encrypted: result.encrypted,
+              onAck: result.onAck,
             };
           }
           return translateResult(result);
@@ -351,21 +609,22 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
 
       const entry: RpcServerRequestHandler<unknown, unknown, unknown, RpcServerContext> = {
         handler: wrappedHandler,
-        streamHandler,
+        streamHandler: (payload, context, messageId, sendMessage) =>
+          streamHandler(payload, scopeContext(context), messageId, sendMessage),
       };
 
       if (methodDef.requestCodec) entry.request = methodDef.requestCodec;
       if (methodDef.responseCodec) entry.response = methodDef.responseCodec;
       if (methodDef.streamCodec) entry.stream = methodDef.streamCodec;
 
-      if (!initAttached && options?.init) {
+      if (!initAttached && needsInit) {
         initAttached = true;
-        entry.init = (server) => options.init!(server, deps);
+        entry.init = buildInit();
       }
 
-      registry[methodDef.name] = entry;
+      register(methodDef.name, entry);
     } else {
-      const handlerFn = factory(deps) as HandlerFn<unknown, unknown>;
+      const handlerFn = factory(deps) as HandlerFn<unknown, unknown, State>;
 
       const wrappedHandler: RpcServerRequestHandler<
         unknown,
@@ -379,7 +638,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
           payload = v.value;
         }
         try {
-          const result = await handlerFn(payload, context);
+          const result = await handlerFn(payload, scopeContext(context));
           return translateResult(result);
         } catch (error) {
           return {
@@ -400,16 +659,79 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
       if (methodDef.responseCodec) entry.response = methodDef.responseCodec;
       if (methodDef.streamCodec) entry.stream = methodDef.streamCodec;
 
-      if (!initAttached && options?.init) {
+      if (!initAttached && needsInit) {
         initAttached = true;
-        entry.init = (server) => options.init!(server, deps);
+        entry.init = buildInit();
       }
 
-      registry[methodDef.name] = entry;
+      register(methodDef.name, entry);
     }
   }
 
   return registry;
+}
+
+/**
+ * Combine handler registries, refusing to let one silently shadow another.
+ *
+ * Spreading registries together (`{ ...a, ...b }`) is last-write-wins, so two protocols
+ * claiming the same wire name leave you with whichever came last and no indication the
+ * other is gone. Namespaced names make that unlikely; this makes it impossible.
+ *
+ * `Server` deliberately does *not* use this for its own defaults — overriding the built-in
+ * presence handlers by passing your own is a supported swap, not a collision.
+ */
+export function mergeHandlers(...registries: RpcHandlerRegistry[]): RpcHandlerRegistry {
+  const merged: RpcHandlerRegistry = {};
+  for (const registry of registries) {
+    for (const [name, entry] of Object.entries(registry)) {
+      if (merged[name]) {
+        throw new Error(`Duplicate RPC method "${name}" across merged handler registries`);
+      }
+      merged[name] = entry;
+    }
+  }
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// pushPayload — typed access to an incoming push
+// ---------------------------------------------------------------------------
+
+/**
+ * The payload of `message` if it is a push for `method`, otherwise `undefined`.
+ *
+ * A push is an unsolicited notification: a `response` correlated to no request. Extensions
+ * receive them through `handleMessage`, where the wire shape has to be checked by hand —
+ * this does that check once, against the method definition, and hands back the payload at
+ * its declared type instead of a cast:
+ *
+ * ```typescript
+ * handleMessage(message) {
+ *   const rotated = pushPayload(keyRegistryProtocol.methods.rotated, message);
+ *   if (!rotated) return false;
+ *   instance?.notifyRotated(rotated.generation);
+ *   return true;
+ * }
+ * ```
+ *
+ * Checking `requestType`/`originalRequestId` is not optional: without them a *request* named
+ * `key-registry.rotated`, or a response correlated to some other request, would be handled as
+ * though the server had pushed it.
+ *
+ * Push payloads are records (they are `encodeAny`-encoded), so `undefined` unambiguously
+ * means "not this method's push" rather than "a push carrying nothing".
+ */
+export function pushPayload<M extends MethodDef<any, any, any, "push">>(
+  method: M,
+  message: RpcMessage<any>,
+): M["_request"] | undefined {
+  if (message.rpcMethod !== method.name) return undefined;
+  if (message.requestType !== "response" || message.originalRequestId !== undefined) {
+    return undefined;
+  }
+  if (message.payload?.type !== "success") return undefined;
+  return message.payload.payload as M["_request"];
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +739,7 @@ export function createHandlers<P extends ProtocolDef<any>, Deps>(
 // ---------------------------------------------------------------------------
 
 type ClientMethodsFor<P extends ProtocolDef<any>> = {
-  [K in keyof P["methods"] as P["methods"][K]["kind"] extends "multipart" ? never : K]: (
+  [K in keyof P["methods"] as P["methods"][K]["kind"] extends "multipart" | "push" ? never : K]: (
     payload: P["methods"][K]["_request"],
     options?: { encrypted?: boolean; timeout?: number },
   ) => Promise<P["methods"][K]["_response"]>;
@@ -428,6 +750,12 @@ interface ClientExtensionOptions<P extends ProtocolDef<any>, PublicApi> {
   build?: (methods: ClientMethodsFor<P>, ctx: RpcExtensionContext) => PublicApi;
   handleMessage?: (message: any) => boolean | Promise<boolean>;
   handleAck?: (message: any) => boolean | Promise<boolean>;
+  /**
+   * Invoked by the provider on every (re)connect, after the doc sync handshake has been
+   * started and before the awareness resync — the deterministic slot for announce-style
+   * traffic that must follow sync-step-1.
+   */
+  onConnect?: () => void | Promise<void>;
   destroy?: () => void;
 }
 
@@ -441,7 +769,7 @@ function buildTypedMethods<P extends ProtocolDef<any>>(
     wrapError ?? ((op: string, error: unknown) => new RpcOperationError(protocol.name, op, error));
   for (const key of Object.keys(protocol.methods)) {
     const methodDef: MethodDef = protocol.methods[key];
-    if (methodDef.kind === "multipart") continue;
+    if (methodDef.kind === "multipart" || methodDef.kind === "push") continue;
     methods[key] = async (
       payload: unknown,
       options?: { encrypted?: boolean; timeout?: number },
@@ -488,6 +816,7 @@ export function createClientExtension<P extends ProtocolDef<any>, PublicApi>(
     destroy: options?.destroy,
     handleMessage: options?.handleMessage,
     handleAck: options?.handleAck,
+    onConnect: options?.onConnect,
   });
 }
 
@@ -496,6 +825,8 @@ export type {
   RpcServerContext,
   RpcHandlerRegistry,
   RpcServerRequestHandler,
+  RpcMethodQos,
+  RpcPushContext,
   RpcError,
 } from "teleportal/protocol";
 export type { RpcExtension, RpcExtensionContext } from "../../providers/rpc-extension";

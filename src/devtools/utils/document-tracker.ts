@@ -27,9 +27,18 @@ export class DocumentTracker {
         lastActivity: Date.now(),
       };
       this.documents.set(id, doc);
-    } else if (options?.parentId && !doc.parentId) {
-      doc.parentId = options.parentId;
-      doc.isSubdoc = true;
+    } else {
+      if (options?.parentId && !doc.parentId) {
+        doc.parentId = options.parentId;
+        doc.isSubdoc = true;
+      }
+      // Prefer the provider whose document field matches this id — that
+      // provider owns the Y.Doc for this document. Without this, whichever
+      // provider's event fires first wins, and a root provider receiving
+      // subdoc messages would shadow the subdoc's own provider.
+      if (provider.document === id) {
+        doc.provider = provider;
+      }
     }
     return doc;
   }

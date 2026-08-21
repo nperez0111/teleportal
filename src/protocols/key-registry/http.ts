@@ -11,10 +11,12 @@ export function getKeyRegistryHandlers({
   storage,
   masterSecret,
   authorize,
+  onRotate,
 }: {
   storage: KeyRegistryStorage;
   masterSecret: Uint8Array;
   authorize?: (req: Request, documentId: string, action: string) => Promise<boolean> | boolean;
+  onRotate?: (documentId: string, generation: number) => void | Promise<void>;
 }) {
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -112,6 +114,7 @@ export function getKeyRegistryHandlers({
           );
 
           const generation = await storage.rotate(documentId, entries, meta.generation);
+          await onRotate?.(documentId, generation);
           return Response.json({ generation });
         }
 

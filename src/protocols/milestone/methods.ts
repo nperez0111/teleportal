@@ -25,40 +25,31 @@ export type MilestoneMetaFull = MilestoneMeta & {
 // ---------------------------------------------------------------------------
 
 export const milestoneList = defineMethod<
-  "milestoneList",
   { snapshotIds?: string[]; includeDeleted?: boolean },
   { milestones: MilestoneMetaFull[] }
->("milestoneList");
+>();
 
 export const milestoneGet = defineMethod<
-  "milestoneGet",
   { milestoneId: string },
   { milestoneId: string; snapshot: Uint8Array }
->("milestoneGet");
+>();
 
 export const milestoneCreate = defineMethod<
-  "milestoneCreate",
   { name?: string; snapshot: Uint8Array },
   { milestone: MilestoneMeta }
->("milestoneCreate");
+>();
 
 export const milestoneUpdateName = defineMethod<
-  "milestoneUpdateName",
   { milestoneId: string; name: string },
   { milestone: MilestoneMeta }
->("milestoneUpdateName");
+>();
 
-export const milestoneDelete = defineMethod<
-  "milestoneDelete",
-  { milestoneId: string },
-  { milestoneId: string }
->("milestoneDelete");
+export const milestoneDelete = defineMethod<{ milestoneId: string }, { milestoneId: string }>();
 
 export const milestoneRestore = defineMethod<
-  "milestoneRestore",
   { milestoneId: string },
   { milestone: MilestoneMetaFull }
->("milestoneRestore");
+>();
 
 // ---------------------------------------------------------------------------
 // Protocol

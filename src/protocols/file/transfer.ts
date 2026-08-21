@@ -246,7 +246,7 @@ class FileClientHandler implements ClientRpcHandler {
       try {
         response = await this.#rpcClient.sendRequest<FileUploadResponse>(
           document,
-          "fileUpload",
+          "file.upload",
           {
             fileId: contentId,
             filename: file.name,
@@ -425,12 +425,12 @@ class FileClientHandler implements ClientRpcHandler {
     this.#downloadCache.set(fileId, promise);
 
     const requestPayload: Record<string, unknown> = {
-      method: "fileDownload",
+      method: "file.download",
       fileId,
     };
 
     try {
-      await this.#rpcClient.sendRequest(document, "fileDownload", requestPayload, {
+      await this.#rpcClient.sendRequest(document, "file.download", requestPayload, {
         timeout,
         onStream: (_payload) => {
           // Stream messages are handled via handleStream
@@ -470,7 +470,7 @@ class FileClientHandler implements ClientRpcHandler {
 
     // Upload responses are consumed directly by the awaited sendRequest promise
     // in uploadFile(); only download responses are dispatched here.
-    if (message.rpcMethod !== "fileDownload") {
+    if (message.rpcMethod !== "file.download") {
       return false;
     }
 
@@ -607,7 +607,7 @@ class FileClientHandler implements ClientRpcHandler {
       const message = new RpcMessage<any>(
         uploadState.document,
         { type: "success", payload: filePart },
-        "fileUpload",
+        "file.upload",
         "stream",
         uploadState.originalRequestId!,
         uploadState.context,
@@ -665,7 +665,7 @@ class FileClientHandler implements ClientRpcHandler {
           const message = new RpcMessage<any>(
             handler.document,
             { type: "success", payload: filePart },
-            "fileUpload",
+            "file.upload",
             "stream",
             handler.originalRequestId ?? handler.uploadId,
             handler.context ?? { documentId: handler.document },

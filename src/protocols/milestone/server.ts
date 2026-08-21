@@ -250,29 +250,11 @@ export function getMilestoneRpcHandlers(
         },
     },
     {
-      init: (server, { milestoneStorage, triggers, onMilestoneCreated }) => {
-        const sessionStates = new WeakMap<
-          Session<ServerContext>,
-          Map<string, MilestoneTriggerState>
-        >();
-        const trackedSessions = new Set<Session<ServerContext>>();
-        const unsubscribers: (() => void)[] = [];
-
-        function setupSessionTriggers(session: Session<ServerContext>): void {
-          if (trackedSessions.has(session)) return;
-          trackedSessions.add(session);
-
-          const disposeUnsub = session.on("dispose", () => {
-            trackedSessions.delete(session);
-          });
-          unsubscribers.push(disposeUnsub);
-
-          let stateMap = sessionStates.get(session);
-          if (!stateMap) {
-            stateMap = new Map();
-            sessionStates.set(session, stateMap);
-          }
-
+      // Per-document trigger accounting, scoped to the session. The framework creates it on
+      // session-open and runs the teardown below when the session (or the server) disposes.
+      scope: {
+        create: () => new Map<string, MilestoneTriggerState>(),
+        attach: (stateMap, session, { milestoneStorage, triggers, onMilestoneCreated }) => {
           const writeUnsub = session.on("document-write", (data) => {
             const documentId = data.namespacedDocumentId;
             if (!documentId) return;
@@ -368,32 +350,16 @@ export function getMilestoneRpcHandlers(
               }
             }
           });
-          unsubscribers.push(writeUnsub);
-        }
 
-        const sessionOpenUnsub = server.on(
-          "session-open",
-          ({ session }: { session: Session<ServerContext> }) => {
-            setupSessionTriggers(session);
-          },
-        );
-        unsubscribers.push(sessionOpenUnsub);
-
-        return () => {
-          for (const session of trackedSessions) {
-            const stateMap = sessionStates.get(session);
-            if (stateMap) {
-              for (const state of stateMap.values()) {
-                for (const unsub of state.unsubscribers) {
-                  unsub();
-                }
-              }
+          return () => {
+            writeUnsub();
+            for (const state of stateMap.values()) {
+              for (const unsub of state.unsubscribers) unsub();
+              state.unsubscribers.length = 0;
             }
-          }
-          trackedSessions.clear();
-          unsubscribers.forEach((fn) => fn());
-          unsubscribers.length = 0;
-        };
+            stateMap.clear();
+          };
+        },
       },
     },
   );

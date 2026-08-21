@@ -3,12 +3,12 @@ import { formatRelativeTime } from "../utils/message-utils";
 
 /**
  * The always-visible connection readout in the header bar: status dot, state
- * text, hosting badge, transport selector, error, and a relative timestamp.
+ * text, hosting badge, transport label, error, and a relative timestamp.
+ * Transport switching and offline toggle live in the ConnectionPopover.
  */
 export class ConnectionStatus {
   private element: HTMLElement;
   private connectionState: ConnectionStateInfo | null = null;
-  private onTransportSwitch: ((name: string) => void) | null;
   private timestampInterval: ReturnType<typeof setInterval> | null = null;
 
   private statusDot!: HTMLElement;
@@ -18,9 +18,7 @@ export class ConnectionStatus {
   private errorContainer!: HTMLElement;
   private timestampSpan!: HTMLElement;
 
-  constructor(onTransportSwitch?: (name: string) => void) {
-    this.onTransportSwitch = onTransportSwitch ?? null;
-
+  constructor() {
     this.element = document.createElement("div");
     this.element.className =
       "devtools-connection-status devtools-flex devtools-items-center devtools-gap-1.5 devtools-text-xs";
@@ -92,36 +90,13 @@ export class ConnectionStatus {
       this.modeContainer.append(badge);
     }
 
-    // Transport
+    // Transport (read-only label — switching is in the popover)
     this.transportContainer.innerHTML = "";
-    if (this.connectionState?.transport || this.connectionState?.availableTransports?.length) {
-      const availableTransports = this.connectionState.availableTransports ?? [];
-
-      if (availableTransports.length > 1 && this.onTransportSwitch) {
-        const transportSelect = document.createElement("select");
-        transportSelect.className = "devtools-select devtools-transport-select";
-
-        for (const name of availableTransports) {
-          const option = document.createElement("option");
-          option.value = name;
-          option.textContent = name;
-          option.selected = name === this.connectionState.transport;
-          transportSelect.append(option);
-        }
-
-        transportSelect.disabled = this.connectionState.type !== "connected";
-        transportSelect.addEventListener("change", (e) => {
-          const selected = (e.target as HTMLSelectElement).value;
-          this.onTransportSwitch!(selected);
-        });
-        transportSelect.addEventListener("click", (e) => e.stopPropagation());
-        this.transportContainer.append(transportSelect);
-      } else if (this.connectionState.transport) {
-        const transportText = document.createElement("span");
-        transportText.className = "devtools-text-gray-500 devtools-ml-1";
-        transportText.textContent = `(${this.connectionState.transport})`;
-        this.transportContainer.append(transportText);
-      }
+    if (this.connectionState?.transport) {
+      const transportText = document.createElement("span");
+      transportText.className = "devtools-text-gray-500 devtools-ml-1";
+      transportText.textContent = `(${this.connectionState.transport})`;
+      this.transportContainer.append(transportText);
     }
 
     // Error

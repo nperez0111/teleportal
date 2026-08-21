@@ -1333,26 +1333,40 @@ describe("encrypted sync e2e: full WebSocket transport", () => {
     body.insert(0, "formatted text");
     body.format(0, 9, { bold: true });
 
-    await new Promise((r) => setTimeout(r, 1));
+    // Flush instead of sleeping: this returns once the server has applied and
+    // acked every edit above, so pB cannot sync a half-populated document.
+    await pA.flush(5000);
 
     // New client with same key receives all content types
     const { provider: pB } = await createProvider(docId, {
       encryptionKey: key,
     });
     await waitForSync(pB);
-    await waitForContent(pB.doc, "body", (t) => t === "formatted text");
+    // Gate on the formatted delta, not just the text. `format()` is a separate
+    // update that changes no text, so waiting on the text alone can resolve
+    // while the bold attribute is still in flight — and the attribute travels
+    // as its own encrypted sidecar, which can land after `synced` resolves.
+    //
+    // The deadline is only a failsafe against hanging, so it is deliberately
+    // generous: this converges in ~200ms, but under `bun test --parallel` the
+    // WebSocket round trips contend with seven other worker processes and a
+    // 3s bound tripped on a healthy transport.
+    const expectedDelta = [
+      { insert: "formatted", attributes: { bold: true } },
+      { insert: " text" },
+    ];
+    await waitUntil(
+      () => JSON.stringify(pB.doc.getText("body").toDelta()) === JSON.stringify(expectedDelta),
+      10_000,
+    );
 
     expect(pB.doc.getMap("settings").get("theme")).toBe("dark");
     expect(pB.doc.getMap("settings").get("fontSize")).toBe(14);
     expect((pB.doc.getMap("settings").get("nested") as Y.Map<string>).get("key")).toBe("value");
     expect(pB.doc.getArray("items").toArray()).toEqual(["item1", "item2", "item3"]);
 
-    const delta = pB.doc.getText("body").toDelta();
-    expect(delta).toEqual([
-      { insert: "formatted", attributes: { bold: true } },
-      { insert: " text" },
-    ]);
-  });
+    expect(pB.doc.getText("body").toDelta()).toEqual(expectedDelta);
+  }, 15_000);
 
   it("multiple incremental encrypted updates from multiple clients merge for late joiner", async () => {
     const docId = "doc-ws-enc-multi-incremental";

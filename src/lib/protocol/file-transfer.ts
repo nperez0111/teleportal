@@ -57,7 +57,7 @@ export namespace FileTransferProtocol {
       });
 
       const requestPayload: Record<string, unknown> = {
-        method: "fileUpload",
+        method: "file.upload",
         fileId,
         filename: file.name,
         size: file.size,
@@ -69,7 +69,7 @@ export namespace FileTransferProtocol {
         new RpcMessage(
           document,
           { type: "success", payload: requestPayload },
-          "fileUpload",
+          "file.upload",
           "request",
           undefined,
           context,
@@ -113,14 +113,14 @@ export namespace FileTransferProtocol {
       });
 
       const requestPayload: Record<string, unknown> = {
-        method: "fileDownload",
+        method: "file.download",
         fileId,
       };
       this.sendMessage(
         new RpcMessage(
           document,
           { type: "success", payload: requestPayload },
-          "fileDownload",
+          "file.download",
           "request",
           undefined,
           context,
@@ -254,7 +254,7 @@ export namespace FileTransferProtocol {
         const message = new RpcMessage<Context>(
           uploadState.document,
           { type: "success", payload: filePart },
-          "fileUpload",
+          "file.upload",
           "stream",
           originalRequestId ?? uploadState.uploadId,
           context ?? ({} as Context),
@@ -399,7 +399,7 @@ export namespace FileTransferProtocol {
         encrypted?: boolean;
       };
 
-      if (method === "fileUpload") {
+      if (method === "file.upload") {
         const allowed = await this.checkUploadPermission(payload, message.context);
         if (!allowed.allowed) {
           await sendMessage(
@@ -458,7 +458,7 @@ export namespace FileTransferProtocol {
             ),
           );
         }
-      } else if (method === "fileDownload") {
+      } else if (method === "file.download") {
         await this.onDownloadRequest(
           payload,
           message.context,

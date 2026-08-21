@@ -22,4 +22,6 @@ jobs:
           bun-version: latest
       - run: bun install
       - run: bun run build
-      - run: bun run test
+      # `test:all` is `test` plus the workerd integration suite, which is opt-in
+      # locally because spawning workerd dominates a `bun test` run.
+      - run: bun run test:all

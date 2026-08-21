@@ -125,12 +125,12 @@ The protocol contract is defined in `methods.ts` using `defineMethod`/`definePro
 import { milestoneProtocol } from "teleportal/protocols/milestone";
 
 // milestoneProtocol.methods:
-//   list       → wire name "milestoneList"
-//   get        → wire name "milestoneGet"
-//   create     → wire name "milestoneCreate"
-//   updateName → wire name "milestoneUpdateName"
-//   delete     → wire name "milestoneDelete"
-//   restore    → wire name "milestoneRestore"
+//   list       → wire name "milestone.list"
+//   get        → wire name "milestone.get"
+//   create     → wire name "milestone.create"
+//   updateName → wire name "milestone.updateName"
+//   delete     → wire name "milestone.delete"
+//   restore    → wire name "milestone.restore"
 ```
 
 ## Encryption (E2EE)

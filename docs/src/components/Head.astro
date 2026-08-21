@@ -1,0 +1,11 @@
+---
+import Default from "@astrojs/starlight/components/Head.astro";
+---
+<Default {...Astro.props}><slot /></Default>
+<script>
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => import("./cursors/index"));
+  } else {
+    setTimeout(() => import("./cursors/index"), 0);
+  }
+</script>

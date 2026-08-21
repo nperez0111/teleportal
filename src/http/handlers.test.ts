@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+  AwarenessMessage,
   DocMessage,
   InMemoryPubSub,
+  type AwarenessUpdateMessage,
   type ServerContext,
   type StateVector,
   type Update,
@@ -674,6 +676,49 @@ describe("HTTP Handlers", () => {
           if (decoder.decode(value).includes("event:message")) sawMessage = true;
         }
         expect(sawMessage).toBe(true);
+        await reader.cancel();
+      });
+
+      it("does not stall on a batch carrying best-effort awareness", async () => {
+        // Regression: the writer tracked EVERY non-ack message it forwarded, but
+        // the server only ACKs `requiresAck` messages. Awareness is best-effort,
+        // so a provider's first POST (which carries its initial awareness state)
+        // always burned the full ackTimeout and came back 504.
+        const clientId = "best-effort-client";
+
+        const readerEndpoint = getSSEReaderEndpoint({ server, getContext: mockGetContext });
+        const readerResponse = await readerEndpoint(
+          new Request(`http://example.com/sse?client-id=${clientId}`, { method: "GET" }),
+        );
+        const reader = readerResponse.body!.getReader();
+        await reader.read(); // drain the `client-id` frame
+
+        const context = { clientId, userId: "user-1", room: "room-1" };
+        const writerEndpoint = getSSEWriterEndpoint({
+          server,
+          getContext: mockGetContext,
+          // Short enough that a regression fails loudly instead of just being slow.
+          ackTimeout: 50,
+        });
+        const writerResponse = await writerEndpoint(
+          new Request("http://example.com/sse", {
+            method: "POST",
+            headers: { "x-teleportal-client-id": clientId },
+            body: encodeMessageArray([
+              new AwarenessMessage(
+                "best-effort-doc",
+                {
+                  type: "awareness-update",
+                  update: new Uint8Array([0x00, 0x01]) as AwarenessUpdateMessage,
+                },
+                context,
+              ),
+              new DocMessage("best-effort-doc", { type: "sync-done" }, context),
+            ]) as unknown as BodyInit,
+          }),
+        );
+
+        expect(writerResponse.status).toBe(200);
         await reader.cancel();
       });
     });

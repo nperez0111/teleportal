@@ -1,12 +1,21 @@
 import type { ServerOptions } from "./server";
 import type { TokenManager, TokenPayload } from "teleportal/token";
+import { milestoneProtocol } from "../protocols/milestone/methods";
+import { fileProtocol } from "../protocols/file/methods";
 
+/**
+ * RPC methods that mutate the document and therefore need `write`, not `read`.
+ *
+ * Built from the method definitions rather than string literals: this set failing open is
+ * silent — a mutation would just be authorized as a read — so it must not be possible for a
+ * method to be renamed out from under it.
+ */
 const WRITE_RPC_METHODS = new Set([
-  "milestoneCreate",
-  "milestoneUpdateName",
-  "milestoneDelete",
-  "milestoneRestore",
-  "fileUpload",
+  milestoneProtocol.methods.create.name,
+  milestoneProtocol.methods.updateName.name,
+  milestoneProtocol.methods.delete.name,
+  milestoneProtocol.methods.restore.name,
+  fileProtocol.methods.upload.name,
 ]);
 
 export function checkPermissionWithTokenManager(

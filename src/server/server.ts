@@ -21,9 +21,10 @@ import { Client } from "./client";
 import type {
   AttributionConfig,
   ClientDisconnectReason,
-  PresenceConfig,
+  LivenessConfig,
   ServerEvents,
 } from "./events";
+import { getPresenceRpcHandlers, type PresenceProtocolConfig } from "../protocols/presence/server";
 import { Session } from "./session";
 
 export type ServerOptions<Context extends ServerContext> = {
@@ -79,10 +80,17 @@ export type ServerOptions<Context extends ServerContext> = {
   };
 
   /**
-   * Configuration for client presence (join/leave) notifications broadcast to
-   * a session's peers.
+   * Configuration for the built-in presence protocol (who is in a document),
+   * registered by default as RPC handlers. Pass `false` to opt out — e.g. to
+   * register your own implementation via `rpcHandlers`.
    */
-  presenceConfig?: PresenceConfig<NoInfer<Context>>;
+  presence?: PresenceProtocolConfig<NoInfer<Context>> | false;
+
+  /**
+   * Configuration for transport-level client liveness (the ping sweep that
+   * kills half-open connections).
+   */
+  livenessConfig?: LivenessConfig;
 
   /**
    * Configuration for custom attribution metadata on document updates.
@@ -208,13 +216,44 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    */
   #sessions = new Map<string, Session<Context>>();
   /**
-   * IDs of clients currently connected to this node. A connection wires up both
-   * an abort listener and a stream-ended finally, either of which can call
-   * {@link disconnectClient}; membership here makes disconnect idempotent so the
-   * active-client gauge and `client-disconnect` event fire exactly once per
-   * client.
+   * Clients currently connected to this node, keyed by client id and holding the
+   * exact {@link Client} instance registered by that physical connection.
+   *
+   * A connection wires up both an abort listener and a stream-ended finally,
+   * either of which can call {@link disconnectClient}; membership here makes
+   * disconnect idempotent so the active-client gauge and `client-disconnect`
+   * event fire exactly once per client.
+   *
+   * Storing the instance (not just the id) is what makes reconnection with a
+   * reused client id safe: when a client disconnects and immediately reconnects,
+   * the OLD connection's consume-loop `finally` runs a microtask later and calls
+   * `disconnectClient` for that same id — by which point the NEW connection has
+   * already re-registered a different {@link Client} instance under it. Teardown
+   * only proceeds when the registered instance still matches the one being torn
+   * down, so a stale teardown can never evict the freshly reconnected client.
    */
-  #connectedClientIds = new Set<string>();
+  #connectedClients = new Map<string, Client<Context>>();
+  /**
+   * Per-connection teardown callbacks, keyed by the exact {@link Client}
+   * instance a physical connection registered. Each closure closes that
+   * connection's validated transport, which ends its consume loop and runs the
+   * loop's `finally` (disconnect + transport close). {@link Symbol.asyncDispose}
+   * uses this to actively hang up every connected client on shutdown — otherwise
+   * a loopback (`serverTransport`) client's consume loop would keep awaiting its
+   * still-open channel and the client would believe it is forever connected.
+   * Keyed by instance (not id) so it composes with reconnect-under-same-id.
+   */
+  #clientTeardowns = new Map<Client<Context>, () => void>();
+  /**
+   * Every {@link Client} instance this server has managed via
+   * {@link createClient}. Used by {@link #isClientActive} to distinguish a
+   * client whose connection lifecycle the server owns (must still be the
+   * registered instance to (re)join a session) from a client handed directly to
+   * {@link getOrOpenSession}/{@link Session.addClient} by an embedder or test
+   * harness (never tracked in {@link #connectedClients}, so it is always allowed
+   * to join). A {@link WeakSet} so disconnected clients can be GC'd.
+   */
+  #managedClients = new WeakSet<Client<Context>>();
   /**
    * Pending session creation promises to prevent race conditions.
    * Maps composite document ID to the promise that will resolve to the session.
@@ -239,6 +278,26 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * Cleanup functions returned by handler init() methods.
    */
   #handlerCleanups: (() => void)[] = [];
+  /** Effective handler registry: default protocols (presence) + user-supplied. */
+  #rpcHandlers: RpcHandlerRegistry;
+  /**
+   * Per-client liveness used to kill the presence of dead connections: a
+   * wedged (half-open) socket never emits a close event, so without this its
+   * presence entries would survive forever. `lastSeen` is refreshed by every
+   * decoded inbound message and by protocol pings (via {@link markClientAlive});
+   * `pingCapable` latches once the client demonstrates it heartbeats, and only
+   * ping-capable clients are ever presumed dead (see
+   * {@link LivenessConfig.clientTtlMs}). `close` tears down the transport so a
+   * client that was wrongly presumed dead reconnects cleanly instead of
+   * lingering on a connection the server no longer services.
+   */
+  #clientLiveness = new Map<
+    string,
+    { lastSeen: number; pingCapable: boolean; close: () => void }
+  >();
+  #clientLivenessTimer: ReturnType<typeof setInterval> | undefined;
+  #lastLivenessSweepAt = 0;
+  readonly #clientTtlMs: number;
 
   constructor(options: ServerOptions<Context>) {
     super();
@@ -247,15 +306,30 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     this.pubSub = options.pubSub ?? new InMemoryPubSub();
     this.#nodeId = options.nodeId ?? `node-${uuidv4()}`;
     this.#metrics = new MetricsCollector(register);
+    this.#clientTtlMs = options.livenessConfig?.clientTtlMs ?? 60_000;
+    if (this.#clientTtlMs > 0) {
+      this.#clientLivenessTimer = setInterval(
+        () => this.sweepDeadClients(),
+        Math.max(1, Math.floor(this.#clientTtlMs / 2)),
+      );
+      // Don't keep the process alive solely for the liveness sweep.
+      (this.#clientLivenessTimer as { unref?: () => void }).unref?.();
+    }
+
+    // Presence is a default-on RPC protocol: core contains zero presence
+    // logic, and swapping the implementation = `presence: false` plus your own
+    // handlers (user-supplied entries win on method-name collisions).
+    this.#rpcHandlers = {
+      ...(options.presence === false ? {} : getPresenceRpcHandlers(options.presence ?? {})),
+      ...options.rpcHandlers,
+    };
 
     // Initialize RPC handlers
-    if (options.rpcHandlers) {
-      for (const handler of Object.values(options.rpcHandlers)) {
-        if (handler.init) {
-          const cleanup = handler.init(this);
-          if (cleanup) {
-            this.#handlerCleanups.push(cleanup);
-          }
+    for (const handler of Object.values(this.#rpcHandlers)) {
+      if (handler.init) {
+        const cleanup = handler.init(this);
+        if (cleanup) {
+          this.#handlerCleanups.push(cleanup);
         }
       }
     }
@@ -278,6 +352,14 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       return `${context.room}/${document}`;
     }
     return document;
+  }
+
+  /**
+   * Look up an existing session by its (composite) document ID.
+   * Returns `undefined` when no session is open for the document.
+   */
+  getSession(documentId: string): Session<Context> | undefined {
+    return this.#sessions.get(documentId);
   }
 
   /**
@@ -342,7 +424,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
         if (encryptionAuthoritative) {
           this.#tentativeEncryptionSessions.delete(compositeDocumentId);
         }
-        if (client) {
+        if (client && this.#isClientActive(client)) {
           existing.addClient(client);
         }
         return existing;
@@ -351,7 +433,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       if (!encryptionAuthoritative) {
         // Metadata attaches to the session regardless of its mode and never
         // (re)defines it.
-        if (client) {
+        if (client && this.#isClientActive(client)) {
           existing.addClient(client);
         }
         return existing;
@@ -423,9 +505,8 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           onCleanupScheduled: this.#handleSessionCleanup.bind(this),
           metricsCollector: this.#metrics,
           documentSizeConfig: this.#options.documentSizeConfig,
-          presenceConfig: this.#options.presenceConfig,
           attributionConfig: this.#options.attributionConfig,
-          rpcHandlers: this.#options.rpcHandlers,
+          rpcHandlers: this.#rpcHandlers,
           server: this,
         });
 
@@ -506,11 +587,39 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
 
     const session = await sessionPromise;
 
-    if (client) {
+    if (client && this.#isClientActive(client)) {
       session.addClient(client);
     }
 
     return session;
+  }
+
+  /**
+   * Whether `client` is still the live connection registered under its id.
+   *
+   * A client's consume loop can drain a message that was already buffered in
+   * the transport at the moment the client disconnected. Processing that
+   * straggler calls {@link getOrOpenSession} with the client, which would
+   * otherwise re-`addClient` it to the session AFTER {@link disconnectClient}
+   * already removed it — resurrecting a ghost participant and preventing the
+   * session from ever becoming idle-cleanup eligible. Gating every session
+   * (re)join on current registration closes that teardown-vs-drain race. The
+   * instance check (not just the id) also means a stale straggler cannot attach
+   * itself to a session owned by a newer connection that reconnected under the
+   * same id.
+   */
+  #isClientActive(client: Client<Context>): boolean {
+    // Clients the server never managed (handed straight to getOrOpenSession by
+    // an embedder or test harness) have no connection lifecycle here, so they
+    // are always eligible to join a session.
+    if (!this.#managedClients.has(client)) {
+      return true;
+    }
+    // A server-managed client may only (re)join while it is still the live
+    // instance registered under its id — this rejects a straggler message
+    // draining after disconnect, or one belonging to a connection superseded by
+    // a reconnect under the same id.
+    return this.#connectedClients.get(client.id) === client;
   }
 
   /**
@@ -684,6 +793,11 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           config.onRateLimitDelay?.(details);
         },
         onRateLimitDrop: (message, exceeded, write) => {
+          // Best-effort traffic is never NACKed — being droppable under pressure without
+          // a retransmit round-trip is exactly what qos.ack: false buys.
+          if (!message.requiresAck) {
+            return;
+          }
           // resetAt is when the next token refills — retryAfter must never
           // fall back to the full window (10s for the default per-document
           // rule), which reads as a multi-second ack stall on the client.
@@ -816,12 +930,34 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       },
     });
 
+    // Track liveness from the moment the connection exists. The transport is
+    // closed when the client is presumed dead so it reconnects cleanly.
+    this.#clientLiveness.set(id, {
+      lastSeen: Date.now(),
+      pingCapable: false,
+      close: () => {
+        try {
+          validatedTransport.close();
+        } catch {
+          // ignore — the transport may already be closed
+        }
+      },
+    });
+
     // Consume validated transport source
     (async () => {
       try {
         await forEachMessage(validatedTransport.source, async (message) => {
+          const liveness = this.#clientLiveness.get(id);
+          if (liveness) {
+            liveness.lastSeen = Date.now();
+          }
           if (message.type === "ack") {
             this.#metrics.incrementMessage(message.type);
+            // Settle whatever this acks. Most server→client messages are sent without a
+            // delivery callback, in which case this is a no-op — but a sender that asked
+            // to know whether its message landed learns it here.
+            client.handleAck(message as AckMessage<Context>);
             return;
           }
 
@@ -874,9 +1010,9 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
               client,
               context: message.context,
               // Doc/awareness flags describe the document's content and may
-              // define the session's mode; rpc/presence flags describe only
-              // the message payload and may not.
-              encryptionAuthoritative: message.type !== "presence" && message.type !== "rpc",
+              // define the session's mode; rpc flags describe only the
+              // message payload and may not.
+              encryptionAuthoritative: message.type !== "rpc",
             });
             wideEvent.session_id = session.id;
 
@@ -892,19 +1028,23 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
               direction: "in",
             });
 
-            const ackMessage = new AckMessage(
-              {
-                type: "ack",
-                messageId: message.id,
-              },
-              message.context,
-            );
-            await client.send(ackMessage);
-            await this.pubSub.publish(
-              `ack/${client.id}` as const,
-              ackMessage.encoded,
-              `server-${client.id}`,
-            );
+            // Best-effort messages (awareness, rpc pushes with qos.ack: false) are never
+            // acked — the sender does not track them in flight.
+            if (message.requiresAck) {
+              const ackMessage = new AckMessage(
+                {
+                  type: "ack",
+                  messageId: message.id,
+                },
+                message.context,
+              );
+              await client.send(ackMessage);
+              await this.pubSub.publish(
+                `ack/${client.id}` as const,
+                ackMessage.encoded,
+                `server-${client.id}`,
+              );
+            }
 
             wideEvent.outcome = "success";
             wideEvent.status_code = 200;
@@ -930,27 +1070,50 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
           error: err,
         });
       } finally {
-        this.disconnectClient(client.id, "stream-ended");
-        // The consume loop is gone, so the connection can never be serviced
+        // This connection's loop is over; drop its shutdown teardown (keyed by
+        // instance, so this never removes a newer reconnection's entry).
+        this.#clientTeardowns.delete(client);
+        // Pass the client INSTANCE, not just the id: if the client already
+        // reconnected under the same id, this stale teardown must be a no-op and
+        // must not close the new connection's transport below.
+        const tornDown = this.disconnectClient(client, "stream-ended");
+        // The consume loop is gone, so this connection can never be serviced
         // again — close the transport so the client sees a disconnect and
         // reconnects immediately instead of waiting out its receive timeout.
-        try {
-          validatedTransport.close();
-        } catch {
-          // ignore
+        // Only when we actually tore THIS client down: if a newer connection has
+        // superseded us, its transport must stay open.
+        if (tornDown) {
+          try {
+            validatedTransport.close();
+          } catch {
+            // ignore
+          }
         }
       }
     })();
 
-    // Record client connect metric
-    this.#connectedClientIds.add(id);
+    // Record client connect metric. Registering the instance (not just the id)
+    // lets teardown distinguish this physical connection from a later one that
+    // reconnects under the same id.
+    this.#connectedClients.set(id, client);
+    this.#managedClients.add(client);
+    // Record how to hang up this specific connection on server shutdown. Closing
+    // the validated transport ends the consume loop above, whose `finally` then
+    // disconnects the client and notifies its transport.
+    this.#clientTeardowns.set(client, () => {
+      try {
+        validatedTransport.close();
+      } catch {
+        // ignore — best-effort shutdown
+      }
+    });
     this.#metrics.clientsActive.inc();
 
     this.call("client-connect", { clientId: id });
 
     if (abortSignal) {
       abortSignal.addEventListener("abort", () => {
-        this.disconnectClient(client.id, "abort");
+        this.disconnectClient(client, "abort");
       });
     }
 
@@ -966,6 +1129,10 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
    * loop's stream error handling closes the connection.
    */
   async #nackFailedMessage(client: Client<Context>, message: Message<Context>, error: unknown) {
+    // Best-effort senders track nothing in flight — a NACK would go nowhere.
+    if (!message.requiresAck) {
+      return;
+    }
     const nack = new AckMessage(
       {
         type: "ack",
@@ -983,23 +1150,123 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
   }
 
   /**
-   * Disconnect a client from all sessions.
-   * @param client - The client or client ID to disconnect.
-   * @param reason - The reason for disconnection.
+   * Record proof of life for a client's connection: called by transports when
+   * a protocol ping arrives (decoded messages refresh liveness in the consume
+   * loop directly). The first ping also marks the client ping-capable, opting
+   * it into dead-client sweeping — see {@link LivenessConfig.clientTtlMs}.
    */
-  disconnectClient(client: string | Client<Context>, reason: ClientDisconnectReason = "manual") {
+  markClientAlive(clientId: string): void {
+    const liveness = this.#clientLiveness.get(clientId);
+    if (liveness) {
+      liveness.lastSeen = Date.now();
+      liveness.pingCapable = true;
+    }
+  }
+
+  /**
+   * One dead-client sweep tick (driven by the interval): disconnect every
+   * ping-capable client whose last sign of life is older than
+   * {@link LivenessConfig.clientTtlMs}. Disconnecting removes the client from
+   * all sessions, which broadcasts presence-leave for its awareness entries —
+   * so peers stop seeing ghosts of dead connections. Public so it can be
+   * driven deterministically in tests.
+   */
+  sweepDeadClients(): void {
+    if (this.#clientTtlMs <= 0) {
+      return;
+    }
+    const now = Date.now();
+
+    // Stall guard: the sweep runs every ttl/2, so arriving a full TTL late
+    // means THIS process stalled (event-loop freeze, suspend, clock jump) —
+    // the silence is ours, not the clients'. Every lastSeen is uniformly
+    // stale, and sweeping now would mass-disconnect all ping-capable clients
+    // at once, a self-inflicted reconnect storm exactly when the server is
+    // already struggling. Grant a fresh window instead.
+    if (this.#lastLivenessSweepAt !== 0 && now - this.#lastLivenessSweepAt > this.#clientTtlMs) {
+      emitWideEvent("info", {
+        event_type: "client_liveness_sweep_stalled",
+        timestamp: new Date().toISOString(),
+        sweep_delay_ms: now - this.#lastLivenessSweepAt,
+        client_ttl_ms: this.#clientTtlMs,
+      });
+      for (const liveness of this.#clientLiveness.values()) {
+        liveness.lastSeen = now;
+      }
+      this.#lastLivenessSweepAt = now;
+      return;
+    }
+    this.#lastLivenessSweepAt = now;
+
+    for (const [clientId, liveness] of this.#clientLiveness) {
+      if (!liveness.pingCapable || now - liveness.lastSeen <= this.#clientTtlMs) {
+        continue;
+      }
+      emitWideEvent("info", {
+        event_type: "client_presumed_dead",
+        timestamp: new Date().toISOString(),
+        client_id: clientId,
+        last_seen_ms_ago: now - liveness.lastSeen,
+        client_ttl_ms: this.#clientTtlMs,
+      });
+      // disconnectClient deletes the liveness entry; closing the transport
+      // afterwards ends the consume loop (whose stream-ended path re-invoking
+      // disconnectClient is a no-op thanks to idempotency).
+      this.disconnectClient(clientId, "timeout");
+      liveness.close();
+    }
+  }
+
+  /**
+   * Disconnect a client from all sessions.
+   *
+   * @param client - The client instance or client ID to disconnect. Prefer the
+   *   instance: passing an id tears down whichever client is currently
+   *   registered under it, whereas passing the instance only tears down that
+   *   exact connection. The latter is required for reconnect safety — a stale
+   *   connection's deferred teardown passes its own {@link Client} object, which
+   *   no longer matches the instance a newer reconnection registered under the
+   *   same id, so it correctly becomes a no-op instead of evicting the new one.
+   * @param reason - The reason for disconnection.
+   * @returns `true` if this call actually disconnected the client, `false` if it
+   *   was a no-op (already disconnected, or superseded by a newer connection).
+   */
+  disconnectClient(
+    client: string | Client<Context>,
+    reason: ClientDisconnectReason = "manual",
+  ): boolean {
     const clientId = typeof client === "string" ? client : client.id;
+    const registered = this.#connectedClients.get(clientId);
 
     // Idempotent: a client that was never connected here, or was already
     // disconnected, must not remove sessions, decrement the gauge, or re-emit
     // the event. Both the abort listener and the stream-ended finally target
-    // the same client; only the first call does work.
-    if (!this.#connectedClientIds.delete(clientId)) {
-      return;
+    // the same client; only the first call does work. The liveness delete
+    // must sit BEHIND this guard: on an id-reusing transport, a stale
+    // connection's redundant disconnect would otherwise delete the liveness
+    // entry a reconnect just registered.
+    if (!registered) {
+      return false;
     }
 
+    // Instance mismatch: the id was re-registered by a NEWER connection since
+    // this (stale) teardown was scheduled. Leave the new client untouched.
+    if (typeof client !== "string" && registered !== client) {
+      return false;
+    }
+
+    this.#clientLiveness.delete(clientId);
+    this.#connectedClients.delete(clientId);
+
+    // Anything sent to this client that was still awaiting an ack will never get one.
+    // Reporting it now beats making every waiting sender sit out its ack timeout.
+    registered.destroy();
+
+    // Remove the exact registered instance from every session. Using `registered`
+    // rather than `client` matters when a bare id was passed: it guarantees we
+    // remove the client the server actually knows about.
     for (const s of this.#sessions.values()) {
-      s.removeClient(client);
+      s.removeClient(registered);
     }
 
     emitWideEvent("info", {
@@ -1014,6 +1281,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     this.#metrics.clientsActive.dec();
 
     this.call("client-disconnect", { clientId, reason });
+    return true;
   }
 
   /**
@@ -1076,6 +1344,12 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       pendingSessions: this.#pendingSessions.size,
     });
 
+    if (this.#clientLivenessTimer !== undefined) {
+      clearInterval(this.#clientLivenessTimer);
+      this.#clientLivenessTimer = undefined;
+    }
+    this.#clientLiveness.clear();
+
     // Call handler cleanup functions
     for (const cleanup of this.#handlerCleanups) {
       cleanup();
@@ -1096,6 +1370,18 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
       );
 
       this.#pendingSessions.clear();
+    }
+
+    // Actively hang up every connected client. Without this, a loopback
+    // (`serverTransport`) client's consume loop would keep awaiting its still-open
+    // channel and the client would believe it is connected forever. Closing each
+    // validated transport ends its consume loop, whose `finally` disconnects the
+    // client and notifies the transport (which surfaces as a disconnect on the
+    // client connection). Snapshot first: the teardowns mutate the map.
+    const teardowns = Array.from(this.#clientTeardowns.values());
+    this.#clientTeardowns.clear();
+    for (const teardown of teardowns) {
+      teardown();
     }
 
     for (const s of this.#sessions.values()) {
@@ -1179,7 +1465,7 @@ export class Server<Context extends ServerContext> extends Observable<ServerEven
     // Count distinct clients connected to this node. A single client may be
     // joined to several sessions; the connected-id registry counts it once,
     // whereas summing per-session client counts would double-count it.
-    const activeClients = this.#connectedClientIds.size;
+    const activeClients = this.#connectedClients.size;
 
     // Get total messages processed from metrics
     const totalMessagesProcessed = this.#metrics.totalMessagesProcessed.getValue();

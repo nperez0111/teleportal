@@ -584,7 +584,7 @@ describe("WorkerConnection", () => {
   });
 
   it("sends presence-unannounce for tracked awarenessIds when port is destroyed", async () => {
-    const { PresenceMessage } = await import("teleportal");
+    const { RpcMessage } = await import("teleportal");
 
     const [clientTransport] = createMemoryTransportPair();
     const manager = new ConnectionWorkerManager(() => [clientTransport], {
@@ -606,10 +606,13 @@ describe("WorkerConnection", () => {
     });
 
     // Send a presence-announce through the worker
-    const announce = new PresenceMessage("test-doc", {
-      type: "presence-announce",
-      awarenessId: 42,
-    });
+    const announce = new RpcMessage(
+      "test-doc",
+      { type: "success", payload: { awarenessId: 42 } },
+      "presence.announce",
+      "request",
+      undefined,
+    );
     await workerConn.send(announce);
     await tick();
     await tick();
@@ -626,14 +629,14 @@ describe("WorkerConnection", () => {
     unsub();
 
     const unannounces = sentMessages.filter(
-      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+      (m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce",
     );
     expect(unannounces).toHaveLength(1);
-    expect(unannounces[0].payload.awarenessId).toBe(42);
+    expect(unannounces[0].payload.payload.awarenessId).toBe(42);
   });
 
   it("releases the port and unannounces presence on the port close event", async () => {
-    const { PresenceMessage } = await import("teleportal");
+    const { RpcMessage } = await import("teleportal");
 
     const [clientTransport] = createMemoryTransportPair();
     const manager = new ConnectionWorkerManager(() => [clientTransport], {
@@ -652,7 +655,13 @@ describe("WorkerConnection", () => {
     });
 
     await workerConn.send(
-      new PresenceMessage("test-doc", { type: "presence-announce", awarenessId: 7 }),
+      new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { awarenessId: 7 } },
+        "presence.announce",
+        "request",
+        undefined,
+      ),
     );
     await tick();
     await tick();
@@ -666,10 +675,10 @@ describe("WorkerConnection", () => {
     unsub();
 
     const unannounces = sentMessages.filter(
-      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+      (m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce",
     );
     expect(unannounces).toHaveLength(1);
-    expect(unannounces[0].payload.awarenessId).toBe(7);
+    expect(unannounces[0].payload.payload.awarenessId).toBe(7);
 
     // With its last port gone, the connection is destroyed after the grace period.
     await tick(SHORT_GRACE_MS * 3);
@@ -677,7 +686,7 @@ describe("WorkerConnection", () => {
   });
 
   it("close event after an explicit destroy does not unannounce twice", async () => {
-    const { PresenceMessage } = await import("teleportal");
+    const { RpcMessage } = await import("teleportal");
 
     const [clientTransport] = createMemoryTransportPair();
     const manager = new ConnectionWorkerManager(() => [clientTransport], {
@@ -696,7 +705,13 @@ describe("WorkerConnection", () => {
     });
 
     await workerConn.send(
-      new PresenceMessage("test-doc", { type: "presence-announce", awarenessId: 9 }),
+      new RpcMessage(
+        "test-doc",
+        { type: "success", payload: { awarenessId: 9 } },
+        "presence.announce",
+        "request",
+        undefined,
+      ),
     );
     await tick();
     await tick();
@@ -710,7 +725,7 @@ describe("WorkerConnection", () => {
     unsub();
 
     const unannounces = sentMessages.filter(
-      (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
+      (m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce",
     );
     expect(unannounces).toHaveLength(1);
   });
@@ -786,7 +801,7 @@ describe("WorkerConnection", () => {
   });
 
   it("sweeps a port whose heartbeats stopped, but never a port that has not heartbeated", async () => {
-    const { PresenceMessage } = await import("teleportal");
+    const { RpcMessage } = await import("teleportal");
 
     const [clientTransport] = createMemoryTransportPair();
     const manager = new ConnectionWorkerManager(() => [clientTransport], {
@@ -812,18 +827,36 @@ describe("WorkerConnection", () => {
       sentMessages.push(msg);
     });
 
-    await connA.send(new PresenceMessage("doc-a", { type: "presence-announce", awarenessId: 1 }));
-    await connB.send(new PresenceMessage("doc-b", { type: "presence-announce", awarenessId: 2 }));
+    await connA.send(
+      new RpcMessage(
+        "doc-a",
+        { type: "success", payload: { awarenessId: 1 } },
+        "presence.announce",
+        "request",
+        undefined,
+      ),
+    );
+    await connB.send(
+      new RpcMessage(
+        "doc-b",
+        { type: "success", payload: { awarenessId: 2 } },
+        "presence.announce",
+        "request",
+        undefined,
+      ),
+    );
     // A single heartbeat from A makes it sweep-eligible once it goes silent.
     (channelA.port2 as MessagePort).postMessage({ type: "heartbeat" });
     await tick();
     await tick();
-    sentMessages.length = 0;
 
+    // Deliberately do NOT clear `sentMessages` here. The stale threshold is 5ms,
+    // so on a loaded machine the ticks above can outlast it and the sweep fires
+    // during setup — clearing would erase the retraction this test is waiting
+    // for, and port A, already retracted, never emits another one. Filtering by
+    // method is enough on its own: nothing has been retracted before this point.
     const unannounces = () =>
-      sentMessages.filter(
-        (m) => m.type === "presence" && m.payload?.type === "presence-unannounce",
-      );
+      sentMessages.filter((m) => m.type === "rpc" && m.rpcMethod === "presence.unannounce");
 
     // The stale-port sweep is a wall-clock setInterval, so poll for its effect
     // rather than guessing a fixed delay (which flakes under load): wait until
@@ -844,7 +877,7 @@ describe("WorkerConnection", () => {
     // Only port A's presence is retracted; the never-heartbeating port B is
     // left alone (it may be a custom WorkerConnection without startHeartbeat).
     expect(retracted).toHaveLength(1);
-    expect(retracted[0].payload.awarenessId).toBe(1);
+    expect(retracted[0].payload.payload.awarenessId).toBe(1);
     // The connection survives because port B is still attached.
     expect(manager.connectionCount).toBe(1);
 

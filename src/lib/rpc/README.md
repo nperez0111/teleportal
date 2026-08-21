@@ -4,10 +4,11 @@ Thin authoring layer for defining type-safe RPC protocols. Eliminates boilerplat
 
 ## Overview
 
-Every RPC protocol in Teleportal is defined by a **contract** (`defineMethod` + `defineProtocol`), implemented with **server handlers** (`createHandlers`), and consumed via a **client extension** (`createClientExtension`). The framework provides:
+Every RPC protocol in Teleportal is defined by a **contract** (`defineMethod` / `definePush` + `defineProtocol`), implemented with **server handlers** (`createHandlers`), and consumed via a **client extension** (`createClientExtension`). The framework provides:
 
-- **`defineMethod`** — single source of truth for a method's wire name, request/response types, and optional validation
-- **`defineProtocol`** — groups related methods under ergonomic keys
+- **`defineMethod`** — single source of truth for a method's request/response types and optional validation
+- **`definePush`** — unsolicited notification methods (server→client and node→node) with per-method delivery QoS
+- **`defineProtocol`** — groups related methods under ergonomic keys and assigns each its wire name, `<protocol>.<key>`
 - **`createHandlers`** — type-safe server handler registration with automatic validation, error wrapping, and codec pass-through
 - **`createClientExtension`** — type-safe client extension factory with auto-generated or custom client methods
 - **`ok` / `err`** — structured result constructors (discriminated union, can't collide with data payloads)
@@ -21,17 +22,16 @@ Every RPC protocol in Teleportal is defined by a **contract** (`defineMethod` + 
 import { defineMethod, defineProtocol } from "teleportal/rpc";
 
 export const commentList = defineMethod<
-  "commentList",
   { cursor?: string; limit?: number },
   { comments: Comment[]; nextCursor?: string }
->("commentList");
+>();
 
 export const commentCreate = defineMethod<
-  "commentCreate",
   { text: string; parentId?: string },
   { comment: Comment }
->("commentCreate");
+>();
 
+// Wire names come from here: "comments.list" and "comments.create".
 export const commentProtocol = defineProtocol("comments", {
   list: commentList,
   create: commentCreate,
@@ -133,6 +133,106 @@ await provider.rpc.comments.create({ text: "Hello" });
 
 - **`"request-response"`** (default) — simple request/response. Handler returns `ok(value)` or `err(status, details)`.
 - **`"multipart"`** — has both a `handler` (initiation) and a `streamHandler` (chunk processing). Used by the file protocol for chunked transfers.
+- **`"push"`** — an unsolicited notification, defined with `definePush`. On the wire it is a `response` with no `originalRequestId` — correlated to no request.
+
+## Push Methods (`definePush`)
+
+A push is fire-and-forget: it has a payload but no response. Define it with an optional payload schema/codec and per-method delivery **QoS**:
+
+```typescript
+import { definePush, defineProtocol } from "teleportal/rpc";
+
+const roster = definePush<PresenceRosterPayload>({ qos: { durability: "durable" } });
+
+export const presenceProtocol = defineProtocol("presence", { roster }); // "presence.roster"
+```
+
+### QoS knobs (`RpcMethodQos`)
+
+Push defaults: `{ durability: "ephemeral", replicate: true, ack: true, dedupe: true }`.
+
+- **`durability`** (`"durable" | "ephemeral"`) — which pub/sub lane the message rides when replicated (durable = persisted and replayed after a blip).
+- **`replicate`** — whether the authoring node publishes the push over pub/sub (the document topic) to other nodes at all.
+- **`ack`** — whether receivers ack it and senders retransmit on NACK. `false` = best-effort fire-and-forget, carried on the wire as the `bestEffort` header byte: never acked, never in-flight-tracked, droppable under rate-limit pressure.
+- **`dedupe`** — whether the cross-node replication path runs TTL dedup, which drops a message whose id was already seen. Every authored `RpcMessage` carries a nonce, so this only ever collapses genuine redeliveries of one message; repeating a payload (a periodic roster snapshot, an empty pull) is fine and needs no opt-out. Turn it off only for a handler that must observe even true duplicate deliveries.
+
+### Server side: `pushHandler` and the session primitives
+
+In `createHandlers`, a push method's handler is a **`pushHandler(payload, ctx)`**. It runs for pushes authored by a local client _and_ for pushes replicated from another node. Its `RpcPushContext` carries `server`, `session`, `documentId`, `sourceNodeId` (set for replicated pushes; `undefined` for local clients) and `clientId` (the server-assigned connection id of the local sender; `undefined` for replicated pushes). Return `{ forwardToLocalClients: false }` to suppress the default relay to this node's local clients. Client-authored pushes are **never replicated to other nodes by default** — replication is a trusted node-to-node plane (receiving nodes apply replicated pushes as server-authored), so a registered `pushHandler` must explicitly vouch with `{ replicate: true }` after inspecting the payload. Unregistered methods relay client pushes to same-node peers only. (`qos.replicate` governs server-authored pushes sent via the session primitives.)
+
+**A method only the server authors must say so.** `broadcastRpc` reaches local clients directly, so a push arriving at your `pushHandler` came from a client or from another node — never from your own `broadcastRpc` call. If only the server is supposed to author the method, drop the client-authored case explicitly:
+
+```typescript
+rotated: () => (_payload, ctx) =>
+  ctx.clientId !== undefined ? { forwardToLocalClients: false, replicate: false } : undefined,
+```
+
+Without that, `forwardToLocalClients` defaults to `true` and any client on the document can forge the notification to every peer. `presence` wraps this as a `replicatedOnly` helper.
+
+To author pushes, `Session` exposes:
+
+- **`session.sendRpcToClient(clientOrId, method, payload, { encrypted?, qos?, onAck? })`** — push to one local client.
+- **`session.broadcastRpc(method, payload, { excludeClientId?, encrypted?, qos? })`** — push to all local clients, plus a pub/sub publish when the method's QoS says `replicate`.
+- **`session.publishRpc(method, payload, opts?)`** — node-to-node only, no local broadcast.
+
+Each resolves the method's declared QoS from the handler registry (a per-call `qos` override is merged on top; unregistered methods get push defaults).
+
+## Knowing whether a message landed
+
+Returning from a handler means the response was _produced_; the framework awaiting the send means it reached the _transport_. Neither says the client got it. When a handler is holding something on the message's behalf and needs to know when to let go, pass **`onAck`**:
+
+```typescript
+create: ({ db }) =>
+  async (payload, ctx) => {
+    const draft = await db.drafts.stage(payload);
+    return ok(
+      { comment: draft.comment },
+      {
+        onAck: (result) => {
+          if (result.delivered) db.drafts.commit(draft.id);
+          else db.drafts.discard(draft.id, result.reason);
+        },
+      },
+    );
+  };
+```
+
+The callback fires **exactly once**, with either `{ delivered: true }` or a reason it never will be:
+
+| `reason`           | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `timeout`          | No ack within `ackTimeoutMs` (default 10s). The client may still have it. |
+| `disconnected`     | The connection went away first (or the target client was already gone).   |
+| `rejected`         | The client refused it — a NACK carrying an error.                         |
+| `not-acknowledged` | The message is best-effort (`qos.ack: false`), so no ack was ever coming. |
+
+`session.sendRpcToClient` takes the same `onAck`, and that is the more useful case: a push has no reply to infer arrival from. Only messages sent _with_ a callback are tracked, so the common path costs nothing.
+
+### Client side: extension hooks
+
+Pushes arrive at the provider as RPC responses with no request to correlate against; a client extension consumes them via the **`handleMessage(message)`** hook (return `true` when consumed). Use **`pushPayload`** to test the message against a method definition and get the payload at its declared type:
+
+```typescript
+import { pushPayload } from "teleportal/rpc";
+
+handleMessage(message) {
+  const rotated = pushPayload(keyRegistryProtocol.methods.rotated, message);
+  if (!rotated) return false;
+  instance?.notifyRotated(rotated.generation);
+  return true;
+}
+```
+
+It returns the payload only when the message really is that method's push — right `rpcMethod`, `requestType: "response"`, **no** `originalRequestId`, and a success payload — and `undefined` otherwise. The last two matter: without them a _request_ borrowing the push's method name, or a response correlated to some other request, would be handled as though the server had pushed it.
+
+Related hooks on `createClientExtension` / `RpcExtension`:
+
+- **`handleMessage(message)`** — route incoming RPC messages (pushes) to extension state.
+- **`handleAck(message)`** — observe ack/NACK messages.
+- **`onConnect()`** — invoked by the provider on every (re)connect, after the doc sync handshake has been started and before the awareness resync — the deterministic slot for announce-style traffic that must follow sync-step-1 (presence announces here).
+- **`destroy()`** — cleanup on provider destroy.
+
+See `teleportal/protocols/presence` for a complete protocol built on pushes.
 
 ## Schema Validation
 
@@ -159,7 +259,7 @@ Schemas are optional — methods without schemas (type-first mode) skip validati
 Methods can provide custom binary encode/decode for the wire format, overriding the default lib0 `encodeAny`/`decodeAny`:
 
 ```typescript
-const milestoneGet = defineMethod<"milestoneGet", GetRequest, GetResponse>("milestoneGet", {
+const milestoneGet = defineMethod<GetRequest, GetResponse>({
   responseCodec: {
     encode: (payload) => customBinaryEncode(payload),
     decode: (bytes) => customBinaryDecode(bytes),
@@ -201,6 +301,7 @@ Auto-generated and custom client methods both wrap errors automatically. The `wr
 import {
   // Contract
   defineMethod,
+  definePush,
   defineProtocol,
 
   // Server
@@ -210,6 +311,7 @@ import {
 
   // Client
   createClientExtension,
+  pushPayload,
 
   // Error
   RpcOperationError,
@@ -221,6 +323,8 @@ import {
   type RpcResult,
   type Codec,
   type RpcServerContext,
+  type RpcPushContext,
+  type RpcMethodQos,
   type RpcHandlerRegistry,
   type RpcExtension,
   type RpcExtensionContext,
@@ -229,6 +333,7 @@ import {
 
 ## See Also
 
+- [Presence Protocol](../../protocols/presence/README.md)
 - [Milestone Protocol](../../protocols/milestone/README.md)
 - [File Protocol](../../protocols/file/README.md)
 - [Key Registry Protocol](../../protocols/key-registry/README.md)

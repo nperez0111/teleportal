@@ -94,7 +94,7 @@ describe("checkPermissionWithTokenManager", () => {
       const rpcMessage = new RpcMessage(
         "test-doc",
         { type: "success", payload: { snapshotIds: [] } },
-        "milestoneList",
+        "milestone.list",
         "request",
         undefined,
         { ...context, ...payload.payload } as ServerContext,
@@ -106,7 +106,7 @@ describe("checkPermissionWithTokenManager", () => {
         fileId: undefined,
         message: rpcMessage,
         type: "read",
-        rpcMethod: "milestoneList",
+        rpcMethod: "milestone.list",
       });
 
       expect(result).toBe(true);
@@ -122,7 +122,7 @@ describe("checkPermissionWithTokenManager", () => {
       const rpcMessage = new RpcMessage(
         "test-doc",
         { type: "success", payload: {} },
-        "attributionActivity",
+        "attribution.activity",
         "request",
         undefined,
         { ...context, ...payload.payload } as ServerContext,
@@ -134,7 +134,7 @@ describe("checkPermissionWithTokenManager", () => {
         fileId: undefined,
         message: rpcMessage,
         type: "read",
-        rpcMethod: "attributionActivity",
+        rpcMethod: "attribution.activity",
       });
 
       expect(result).toBe(false);
@@ -160,7 +160,7 @@ describe("checkPermissionWithTokenManager", () => {
             encrypted: false,
           },
         },
-        "fileUpload",
+        "file.upload",
         "request",
         undefined,
         { ...context, ...payload.payload } as ServerContext,
@@ -172,7 +172,7 @@ describe("checkPermissionWithTokenManager", () => {
         fileId: "file-123",
         message: rpcMessage,
         type: "write",
-        rpcMethod: "fileUpload",
+        rpcMethod: "file.upload",
       });
 
       expect(result).toBe(true);
@@ -188,7 +188,7 @@ describe("checkPermissionWithTokenManager", () => {
       const rpcMessage = new RpcMessage(
         "test-doc",
         { type: "success", payload: {} },
-        "milestoneCreate",
+        "milestone.create",
         "request",
         undefined,
         { ...context, ...payload.payload } as ServerContext,
@@ -200,7 +200,7 @@ describe("checkPermissionWithTokenManager", () => {
         fileId: undefined,
         message: rpcMessage,
         type: "read",
-        rpcMethod: "milestoneCreate",
+        rpcMethod: "milestone.create",
       });
 
       expect(result).toBe(false);
@@ -455,7 +455,7 @@ describe("checkPermissionWithTokenManager", () => {
             encrypted: false,
           },
         },
-        "fileDownload",
+        "file.download",
         "stream",
         "original-request-id",
         { ...context, ...payload.payload } as ServerContext,
@@ -468,7 +468,7 @@ describe("checkPermissionWithTokenManager", () => {
         fileId: "file-123",
         message,
         type: "read",
-        rpcMethod: "fileDownload",
+        rpcMethod: "file.download",
       });
 
       expect(result).toBe(true);

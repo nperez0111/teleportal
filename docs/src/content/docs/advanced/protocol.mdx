@@ -7,15 +7,14 @@ This document provides a comprehensive specification of the Teleportal protocol,
 
 ## Protocol Overview
 
-The Teleportal protocol is designed for efficient transmission of Y.js collaborative editing messages over various transport layers. It defines five wire message types — document sync, awareness, ack, presence, and RPC — all with optional encryption and robust error handling. Higher-level features (file transfers, milestones, attribution, key distribution) are all built **on top of the RPC message type**, not as dedicated wire types.
+The Teleportal protocol is designed for efficient transmission of Y.js collaborative editing messages over various transport layers. It defines four wire message types — document sync, awareness, ack, and RPC — all with optional encryption and robust error handling. Higher-level features (presence, file transfers, milestones, attribution, key distribution) are all built **on top of the RPC message type**, not as dedicated wire types.
 
 The protocol is built around a flexible message structure that enables:
 
 - **Document Synchronization**: Bidirectional sync of Y.js documents between clients and server
 - **Awareness Updates**: Real-time user cursor/selection information
-- **Presence**: Client join/leave/heartbeat tracking
-- **RPC Operations**: Extensible custom operations (file transfer, milestones, attribution, key registry, and your own methods)
-- **Message Acknowledgment**: Delivery confirmation for reliable message handling
+- **RPC Operations**: Extensible custom operations (presence, file transfer, milestones, attribution, key registry, and your own methods)
+- **Message Acknowledgment**: Delivery confirmation for reliable message handling, with a per-message best-effort opt-out
 
 ## Message Format
 
@@ -30,18 +29,18 @@ graph LR
 
     subgraph Header["Message Header"]
         H1["Magic: YJS<br/>(3 bytes)"]
-        H2["Version: 0x01<br/>(1 byte)"]
+        H2["Version: 0x02<br/>(1 byte)"]
         H3["Doc Name Length<br/>(varint)"]
         H4["Doc Name<br/>(UTF-8 string)"]
         H5["Encrypted Flag<br/>(1 byte)"]
-        H1 --> H2 --> H3 --> H4 --> H5
+        H6["Best-Effort Flag<br/>(1 byte)"]
+        H1 --> H2 --> H3 --> H4 --> H5 --> H6
     end
 
     subgraph Type["Message Type (1 byte)"]
         T1["0x00: Document"]
         T2["0x01: Awareness"]
         T3["0x02: ACK"]
-        T4["0x03: Presence"]
         T5["0x04: RPC"]
     end
 
@@ -49,14 +48,15 @@ graph LR
     Type --> C
 ```
 
-| Field           | Size    | Value                     |
-| --------------- | ------- | ------------------------- |
-| Magic Number    | 3 bytes | `0x59 0x4A 0x53` ("YJS")  |
-| Version         | 1 byte  | `0x01`                    |
-| Doc Name Length | varint  | length                    |
-| Doc Name        | string  | UTF-8 string              |
-| Encrypted Flag  | 1 byte  | `0x00`=false, `0x01`=true |
-| Message Type    | 1 byte  | `0x00`–`0x04`             |
+| Field            | Size    | Value                                                      |
+| ---------------- | ------- | ---------------------------------------------------------- |
+| Magic Number     | 3 bytes | `0x59 0x4A 0x53` ("YJS")                                   |
+| Version          | 1 byte  | `0x02`                                                     |
+| Doc Name Length  | varint  | length                                                     |
+| Doc Name         | string  | UTF-8 string                                               |
+| Encrypted Flag   | 1 byte  | `0x00`=false, `0x01`=true                                  |
+| Best-Effort Flag | 1 byte  | `0x01` = receivers must not ack; senders do not retransmit |
+| Message Type     | 1 byte  | `0x00`, `0x01`, `0x02`, `0x04` (`0x03` deleted)            |
 
 **Note**: The document name is an empty string for ack messages (they are not tied to a specific document).
 
@@ -69,7 +69,6 @@ graph TD
     A[Teleportal Message] --> B[Document 0x00]
     A --> C[Awareness 0x01]
     A --> D[ACK 0x02]
-    A --> P[Presence 0x03]
     A --> F[RPC 0x04]
 
     B --> B1[Sync Step 1]
@@ -83,16 +82,13 @@ graph TD
 
     D --> D1[ACK / NACK]
 
-    P --> P1[Presence Announce/Unannounce]
-    P --> P2[Presence Join/Leave]
-    P --> P3[Presence Heartbeat]
-
     F --> F1[RPC Request]
     F --> F2[RPC Response]
     F --> F3[RPC Stream]
+    F --> F4[RPC Push]
 ```
 
-**Note**: Milestones, file transfers, attribution, and key distribution are **not** dedicated wire message types. They are all RPC methods carried by the RPC message (type `0x04`) — e.g. `milestoneList`/`milestoneCreate`, `fileUpload`/`fileDownload`, `attributionActivity`/`attributionGet`. Only the five wire types above (`0x00`–`0x04`) exist at the protocol level.
+**Note**: Presence, milestones, file transfers, attribution, and key distribution are **not** dedicated wire message types. They are all RPC methods carried by the RPC message (type `0x04`) — e.g. `presence.announce`/`presence.join`, `milestone.list`/`milestone.create`, `file.upload`/`file.download`, `attribution.activity`/`attribution.get`. Only the four wire types above exist at the protocol level (type `0x03`, formerly presence, is deleted).
 
 ## Document Messages (Type 0x00)
 
@@ -214,31 +210,23 @@ Awareness messages handle user presence and cursor information in collaborative 
 **Payload**: None  
 **Usage**: Client requests current user presence information when joining a document or when awareness state is needed.
 
-## Presence Messages (Type 0x03)
+## Presence (RPC methods)
 
-Presence messages track which clients are in a document (join/leave/heartbeat), distinct from Y.js awareness (cursor/selection state). Presence is a **dedicated wire type** (`0x03`).
-
-| Sub-type            | Code   | Payload                                                                                                            |
-| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| Presence Announce   | `0x00` | `[varUint: awarenessId]`                                                                                           |
-| Presence Join       | `0x01` | `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]`                                     |
-| Presence Leave      | `0x02` | (same shape as join)                                                                                               |
-| Presence Heartbeat  | `0x03` | `[varUint: count]` then per client: `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]` |
-| Presence Unannounce | `0x04` | `[varUint: awarenessId]`                                                                                           |
+Presence — which clients are in a document, distinct from Y.js awareness (cursor/selection state) — is **not** a dedicated wire type. Wire type `0x03` is deleted; presence is an RPC protocol (`teleportal/protocols/presence`) built on request-response methods (`presence.announce`/`presence.unannounce`) and server-authored pushes (`presence.join`/`presence.leave`/`presence.roster`) carried as RPC messages (type `0x04`).
 
 ## File Transfer (RPC methods)
 
-File transfer is **not** a dedicated wire message type. It is implemented entirely as RPC (type `0x04`) using two methods — `fileUpload` and `fileDownload` — with streamed chunks. `fileUpload` uses the RPC "multipart" method kind (an initiation request plus a chunk stream); `fileDownload` is a request-response whose response streams the file parts back. Files are chunked and verified with a Merkle tree so transfers are content-addressed, resumable, and deduplicated.
+File transfer is **not** a dedicated wire message type. It is implemented entirely as RPC (type `0x04`) using two methods — `file.upload` and `file.download` — with streamed chunks. `file.upload` uses the RPC "multipart" method kind (an initiation request plus a chunk stream); `file.download` is a request-response whose response streams the file parts back. Files are chunked and verified with a Merkle tree so transfers are content-addressed, resumable, and deduplicated.
 
 ### RPC method shapes
 
 The request/response/stream payloads (encoded inside the RPC envelope, see [RPC Messages](#rpc-messages-type-0x04)) are:
 
-- **`fileUpload` request** — `{ fileId, filename, size, mimeType, lastModified, encrypted, chunkSize? }`. Here `fileId` is the **content-addressed Merkle root** (the `contentId`), which the client computes by encrypting the whole file and folding its Merkle tree _before_ sending the request. This makes the id stable across retries — the basis for resume and dedup.
-- **`fileUpload` response** — `{ fileId, allowed, reason?, statusCode?, chunkSize?, existingChunks?, alreadyExists?, chunkSizeMismatch? }`. `alreadyExists: true` means the content already exists durably (dedup hit — the client streams nothing); `existingChunks` lists chunks the server already has (resume). `chunkSizeMismatch` asks the client to re-chunk at the server's size.
-- **`fileUpload` stream** (per chunk) — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }`. On **upload** the stream omits per-chunk proofs (`merkleProof: []`) — the server recomputes the tree from stored chunks and verifies it equals the client-claimed `contentId`. On **download** the server populates `merkleProof` and the client verifies each chunk.
-- **`fileDownload` request** — `{ fileId }` (the Merkle root / `contentId`).
-- **`fileDownload` response** — `{ fileId, filename, size, mimeType, lastModified, encrypted, allowed, reason?, statusCode?, totalChunks? }`, followed by a stream of file parts.
+- **`file.upload` request** — `{ fileId, filename, size, mimeType, lastModified, encrypted, chunkSize? }`. Here `fileId` is the **content-addressed Merkle root** (the `contentId`), which the client computes by encrypting the whole file and folding its Merkle tree _before_ sending the request. This makes the id stable across retries — the basis for resume and dedup.
+- **`file.upload` response** — `{ fileId, allowed, reason?, statusCode?, chunkSize?, existingChunks?, alreadyExists?, chunkSizeMismatch? }`. `alreadyExists: true` means the content already exists durably (dedup hit — the client streams nothing); `existingChunks` lists chunks the server already has (resume). `chunkSizeMismatch` asks the client to re-chunk at the server's size.
+- **`file.upload` stream** (per chunk) — `{ fileId, chunkIndex, chunkData, merkleProof, totalChunks, bytesUploaded, encrypted }`. On **upload** the stream omits per-chunk proofs (`merkleProof: []`) — the server recomputes the tree from stored chunks and verifies it equals the client-claimed `contentId`. On **download** the server populates `merkleProof` and the client verifies each chunk.
+- **`file.download` request** — `{ fileId }` (the Merkle root / `contentId`).
+- **`file.download` response** — `{ fileId, filename, size, mimeType, lastModified, encrypted, allowed, reason?, statusCode?, totalChunks? }`, followed by a stream of file parts.
 
 Errors (permission denied, not found, size limit) surface through the normal RPC error channel (status code + details), not through a dedicated wire message.
 
@@ -342,7 +330,7 @@ sequenceDiagram
 
 ## RPC Messages (Type 0x04)
 
-RPC messages provide extensible custom operations for application-specific needs. They enable the protocol to be extended without modifying the core message types. Built-in features (milestones, file transfer, attribution, key registry) are all RPC methods.
+RPC messages provide extensible custom operations for application-specific needs. They enable the protocol to be extended without modifying the core message types. Built-in features (presence, milestones, file transfer, attribution, key registry) are all RPC methods.
 
 ### RPC Message Structure
 
@@ -351,7 +339,8 @@ The RPC payload is:
 ```
 [varString: method]
 [uint8: requestType]              0=request, 1=stream, 2=response
-[varString: originalRequestId]?   present for stream/response only
+[uint8: hasOriginalRequestId]?    present for stream/response only
+[varString: originalRequestId]?   present if the flag byte is 1
 [uint8: isError]                  0=success, 1=error
 ```
 
@@ -377,6 +366,8 @@ Error payload: `[varUint: statusCode] [varString: details] [uint8: hasPayload] [
 **Purpose**: Server responds to an RPC request  
 **Payload**: Method name + `originalRequestId` + success or error payload  
 **Usage**: Returns the result of an RPC operation.
+
+A response with **no** `originalRequestId` (flag byte `0`) is a **push**: an unsolicited server-authored notification correlated to no request (e.g. `presence.join`). Push methods declare per-method delivery QoS (`durability`, `replicate`, `ack`, `dedupe`) via `definePush` in `teleportal/rpc`.
 
 A custom serializer/deserializer can override the default `writeAny`/`readAny` encoding for RPC payloads.
 
@@ -607,7 +598,7 @@ sequenceDiagram
 The protocol includes robust error handling:
 
 - **Magic Number Validation**: Ensures message is valid Teleportal format (must start with `0x59 0x4A 0x53` / "YJS")
-- **Version Checking**: Verifies protocol version compatibility (currently only version `0x01` is supported)
+- **Version Checking**: Verifies protocol version compatibility (currently only version `0x02` is supported)
 - **Type Validation**: Validates message and payload types
 - **Length Validation**: Ensures proper message boundaries using varint encoding
 - **Decoding Errors**: Invalid messages throw descriptive errors with context about the failure
@@ -634,15 +625,15 @@ graph TB
     end
 
     subgraph Protocol["Teleportal Protocol"]
-        subgraph Core["Wire Message Types (0x00–0x04)"]
+        subgraph Core["Wire Message Types"]
             DOC[Document 0x00]
             AWARE[Awareness 0x01]
             ACK[ACK 0x02]
-            PRESENCE[Presence 0x03]
             RPC[RPC 0x04]
         end
 
         subgraph Extended["RPC Methods (carried by 0x04)"]
+            PRESENCE[Presence]
             FILE[File Transfer]
             MILESTONE[Milestones]
             ATTR[Attribution]
@@ -695,9 +686,9 @@ graph TB
 
 2. **Awareness System**: Runs in parallel with document sync, providing real-time presence information. This enables collaborative features like showing cursors and selections without affecting document state.
 
-3. **File Transfer**: An RPC method (`fileUpload`/`fileDownload`) with chunked streaming and Merkle tree verification. Files are content-addressable (identified by Merkle root hash), enabling deduplication and integrity verification.
+3. **File Transfer**: An RPC method (`file.upload`/`file.download`) with chunked streaming and Merkle tree verification. Files are content-addressable (identified by Merkle root hash), enabling deduplication and integrity verification.
 
-4. **Milestone Management**: An RPC method group (`milestoneList`/`milestoneCreate`/…) that captures document snapshots at specific points. The lazy loading design (metadata first, snapshots on demand) enables efficient browsing of document history.
+4. **Milestone Management**: An RPC method group (`milestone.list`/`milestone.create`/…) that captures document snapshots at specific points. The lazy loading design (metadata first, snapshots on demand) enables efficient browsing of document history.
 
 5. **RPC System**: The single extension point (wire type `0x04`). File transfer, milestones, attribution, and key registry are all built on it, as are your own custom methods — no core protocol changes required.
 

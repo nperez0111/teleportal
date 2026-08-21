@@ -4,7 +4,6 @@ import {
   AwarenessMessage,
   type BinaryMessage,
   DocMessage,
-  PresenceMessage,
   RpcMessage,
   type RawReceivedMessage,
 } from "./message-types";
@@ -17,8 +16,6 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
-  PresenceMessageBinary,
-  PresenceStep,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -57,12 +54,17 @@ export function decodeMessage(
       throw new Error("Invalid magic number");
     }
     const version = decoding.readUint8(decoder);
-    if (version !== 0x01) {
+    if (version !== 0x02) {
       throw new Error("Invalid version");
     }
     const documentName = decoding.readVarString(decoder);
 
     const encrypted = decoding.readUint8(decoder) === 1;
+
+    // Best-effort flag. For native message types the class getter is authoritative (awareness
+    // and ack are best-effort by construction); only rpc carries a per-method policy that must
+    // survive the wire.
+    const bestEffort = decoding.readUint8(decoder) === 1;
 
     const targetType = decoding.readUint8(decoder);
 
@@ -88,19 +90,12 @@ export function decodeMessage(
       case 0x02: {
         return new AckMessage(decodeAckMessageWithDecoder(decoder), undefined);
       }
-      case 0x03: {
-        return new PresenceMessage(
-          documentName,
-          decodePresenceMessageWithDecoder(decoder),
-          undefined,
-          update as PresenceMessageBinary,
-        );
-      }
       case 0x04: {
         return decodeRpcMessageWithDecoder(
           documentName,
           decoder,
           encrypted,
+          bestEffort,
           update as EncodedRpcMessage,
           deserializer,
         );
@@ -251,59 +246,18 @@ function decodeAckMessageWithDecoder(decoder: decoding.Decoder): DecodedAckMessa
   return message;
 }
 
-function decodePresenceMessageWithDecoder(decoder: decoding.Decoder): PresenceStep {
-  const subType = decoding.readUint8(decoder);
-  if (subType === 0 || subType === 4) {
-    return {
-      type: subType === 0 ? "presence-announce" : "presence-unannounce",
-      awarenessId: decoding.readVarUint(decoder),
-    };
-  }
-  if (subType === 1 || subType === 2) {
-    const awarenessId = decoding.readVarUint(decoder);
-    const clientId = decoding.readVarString(decoder);
-    const userId = decoding.readVarString(decoder);
-    const data: unknown = decoding.readAny(decoder);
-    if (typeof data !== "object" || data === null || Array.isArray(data)) {
-      throw new Error("Invalid presence data: expected an object", {
-        cause: { data },
-      });
-    }
-    return {
-      type: subType === 1 ? "presence-join" : "presence-leave",
-      awarenessId,
-      clientId,
-      userId,
-      data: data as Record<string, unknown>,
-    };
-  }
-  if (subType === 3) {
-    const count = decoding.readVarUint(decoder);
-    const clients = [];
-    for (let i = 0; i < count; i++) {
-      const awarenessId = decoding.readVarUint(decoder);
-      const clientId = decoding.readVarString(decoder);
-      const userId = decoding.readVarString(decoder);
-      const data: unknown = decoding.readAny(decoder);
-      if (typeof data !== "object" || data === null || Array.isArray(data)) {
-        throw new Error("Invalid presence data: expected an object", {
-          cause: { data },
-        });
-      }
-      clients.push({ awarenessId, clientId, userId, data: data as Record<string, unknown> });
-    }
-    return { type: "presence-heartbeat", clients };
-  }
-  throw new Error("Invalid presence sub-type", { cause: { subType } });
-}
-
 function decodeRpcMessageWithDecoder(
   documentName: string,
   decoder: decoding.Decoder,
   encrypted: boolean,
+  bestEffort: boolean,
   encoded: EncodedRpcMessage,
   deserializer?: (context: DeserializerContext) => unknown | undefined,
 ): RpcMessage<any> {
+  // nonce — carried so a relayed message keeps the authoring node's value and therefore its
+  // id, which is what lets cross-node dedup still collapse genuine duplicate deliveries.
+  const nonce = decoding.readVarUint(decoder);
+
   // method name
   const rpcMethod = decoding.readVarString(decoder);
 
@@ -319,7 +273,10 @@ function decodeRpcMessageWithDecoder(
 
   let originalRequestId: string | undefined;
   if (requestType === "response" || requestType === "stream") {
-    originalRequestId = decoding.readVarString(decoder);
+    // Presence flag: pushes are "response" messages correlated to no request.
+    if (decoding.readUint8(decoder) === 1) {
+      originalRequestId = decoding.readVarString(decoder);
+    }
   }
 
   const isSuccess = decoding.readUint8(decoder) === 0;
@@ -368,5 +325,10 @@ function decodeRpcMessageWithDecoder(
     undefined,
     encrypted,
     encoded,
+    undefined,
+    // Durability is only consulted on the authoring node at publish time, so it does not
+    // travel the wire; the ack policy must, so receivers know not to ack best-effort pushes.
+    { ack: !bestEffort },
+    nonce,
   );
 }

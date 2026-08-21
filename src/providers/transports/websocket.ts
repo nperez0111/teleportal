@@ -1,7 +1,9 @@
 import {
   decodeMessage,
   encodePingMessage,
+  encodePongMessage,
   isBinaryMessage,
+  isPingMessage,
   isPongMessage,
   type Message,
 } from "teleportal";
@@ -128,6 +130,19 @@ export function websocketTransport(options?: WebSocketTransportOptions): Connect
               }
 
               if (isPongMessage(message)) {
+                ctx.onPing();
+                return;
+              }
+
+              // Answer server-initiated pings. Falling through would crash
+              // decodeMessage (ping frames aren't Messages) and tear the
+              // connection down. A ping is also proof the link is alive.
+              if (isPingMessage(message)) {
+                try {
+                  socket.send(encodePongMessage() as Uint8Array<ArrayBuffer>);
+                } catch {
+                  // no-op — a failed pong surfaces via the socket's own events
+                }
                 ctx.onPing();
                 return;
               }

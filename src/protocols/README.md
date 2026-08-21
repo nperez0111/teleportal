@@ -4,6 +4,7 @@ Built-in RPC protocol implementations for Teleportal's Y.js Sync Server.
 
 ## Packages
 
+- [`teleportal/protocols/presence`](./presence/README.md) - Who is in a document right now (announce, join/leave/roster pushes)
 - [`teleportal/protocols/milestone`](./milestone/README.md) - Document versioning (milestone CRUD)
 - [`teleportal/protocols/file`](./file/README.md) - Chunked file upload/download with Merkle proof verification
 - [`teleportal/protocols/key-registry`](./key-registry/README.md) - Server-mediated encryption key distribution
@@ -12,7 +13,7 @@ Built-in RPC protocol implementations for Teleportal's Y.js Sync Server.
 Each protocol follows the same core structure:
 
 ```
-methods.ts   — method contracts (defineMethod/defineProtocol)
+methods.ts   — method contracts (defineMethod/definePush/defineProtocol)
 server.ts    — server handlers (createHandlers)
 client.ts    — client extension (createClientExtension)
 index.ts     — public exports
@@ -46,9 +47,20 @@ const server = new Server({
 });
 ```
 
+The presence protocol is **registered by default** by the `Server` (configure it via the
+`presence` option, or pass `presence: false` to opt out); user-supplied `rpcHandlers` win on
+name collisions.
+
 Some factories register server lifecycle hooks through `createHandlers`' `init` callback — e.g.
-milestone triggers listen for `session-open`/`document-write`, and the file handler runs a periodic
+milestone triggers listen for `session-open`/`document-write`, presence maintains per-session
+roster state from `session-open`/`client-leave`, and the file handler runs a periodic
 expired-upload cleanup. These are torn down automatically when the server is disposed.
+
+Beyond request/response methods, a protocol can declare **push** methods with `definePush(name,
+{ payload?, qos })` — unsolicited notifications with per-method delivery QoS (`durability`,
+`replicate`, `ack`, `dedupe`). Server-side, a registry entry's `pushHandler(payload, ctx)`
+consumes client-authored or replicated pushes, and sessions emit pushes via `sendRpcToClient` /
+`broadcastRpc` / `publishRpc`. See [`teleportal/rpc`](../lib/rpc/README.md).
 
 ## Client
 
@@ -80,6 +92,9 @@ const fileId = await provider.rpc.file.upload(myFile);
 const meta = await provider.rpc.keys.meta();
 const activity = await provider.rpc.attribution.getActivity();
 ```
+
+The presence extension is **auto-registered** under `rpc.presence` (a user-supplied
+`"presence"` key wins); `provider.peers` and the `peer-join`/`peer-leave` events delegate to it.
 
 ## Adding a New Protocol
 

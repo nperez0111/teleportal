@@ -285,6 +285,14 @@ export function fromBinaryTransport<
 >(
   transport: BinaryTransport<AdditionalProperties>,
   context: Context,
+  options?: {
+    /**
+     * Called for every ping answered inline. Pings never surface to the
+     * decoded source, so this is the only place a consumer (e.g. the server's
+     * client-liveness tracking) can observe them.
+     */
+    onPing?: () => void;
+  },
 ): Transport<Context, AdditionalProperties> {
   return {
     ...transport,
@@ -292,6 +300,7 @@ export function fromBinaryTransport<
       // Answer pings inline; they never surface to the decoded source.
       if (isPingMessage(chunk)) {
         transport.write(encodePongMessage());
+        options?.onPing?.();
         return null;
       }
       const decoded = decodeMessage(chunk);

@@ -45,7 +45,7 @@ App Server                    Teleportal Server              Client
 
 1. **App server** calls `POST /keys/:docId/mint` — Teleportal generates a document key, wraps it for the user via HKDF + AES-KW, stores the wrapped blob, and returns the user's wrapping key.
 2. **App server** embeds the wrapping key in the user's JWT token (or delivers it via any secure channel).
-3. **Client** connects with `registryKey({ wrappingKey })` — the resolver automatically sends a `keysGet` RPC, unwraps the blob locally, and passes the plaintext `CryptoKey` to the Provider.
+3. **Client** connects with `registryKey({ wrappingKey })` — the resolver automatically sends a `key-registry.get` RPC, unwraps the blob locally, and passes the plaintext `CryptoKey` to the Provider.
 
 ## Three Tiers of Key Distribution
 
@@ -219,24 +219,24 @@ The optional `room` field constructs a composite document ID (`room/docId`) to m
 
 These are used internally by `registryKey()` and the `createKeyRegistryRpc` client extension. You don't normally call them directly.
 
-| Wire Name    | Request                               | Response                     | Purpose                          |
-| ------------ | ------------------------------------- | ---------------------------- | -------------------------------- |
-| `keysGet`    | `{}`                                  | `{ wrappedKey, generation }` | Fetch calling user's wrapped key |
-| `keysSet`    | `{ entries: [{userId, wrappedKey}] }` | `{ generation }`             | Upsert wrapped keys              |
-| `keysRevoke` | `{ userIds }`                         | `{ generation }`             | Remove wrapped keys              |
-| `keysMeta`   | `{}`                                  | `{ generation, userIds }`    | Generation + access list         |
-| `keysRotate` | `{ entries, expectedGeneration }`     | `{ generation }`             | Atomic replace + bump generation |
+| Wire Name             | Request                               | Response                     | Purpose                          |
+| --------------------- | ------------------------------------- | ---------------------------- | -------------------------------- |
+| `key-registry.get`    | `{}`                                  | `{ wrappedKey, generation }` | Fetch calling user's wrapped key |
+| `key-registry.set`    | `{ entries: [{userId, wrappedKey}] }` | `{ generation }`             | Upsert wrapped keys              |
+| `key-registry.revoke` | `{ userIds }`                         | `{ generation }`             | Remove wrapped keys              |
+| `key-registry.meta`   | `{}`                                  | `{ generation, userIds }`    | Generation + access list         |
+| `key-registry.rotate` | `{ entries, expectedGeneration }`     | `{ generation }`             | Atomic replace + bump generation |
 
 ## Key Rotation
 
 Key rotation uses optimistic concurrency via a monotonic generation counter — no lock flags or timeouts.
 
-1. Caller reads `keysMeta` to get the current `generation` and user list.
+1. Caller reads `key-registry.meta` to get the current `generation` and user list.
 2. Caller generates a new document key and wraps it for all remaining users.
-3. Caller calls `keysRotate` with `expectedGeneration` matching the current generation.
+3. Caller calls `key-registry.rotate` with `expectedGeneration` matching the current generation.
 4. Server validates the generation, atomically replaces all wrapped keys, bumps the generation.
 5. If the generation doesn't match (concurrent rotation), the server rejects with a conflict error. The caller retries.
-6. Server broadcasts a `keysRotated` notification to connected clients.
+6. Server broadcasts a `key-registry.rotated` notification to connected clients.
 7. Clients invalidate their cached key and re-fetch on the next operation.
 
 Old-generation keys are retained in storage so historical encrypted sidecars remain decryptable.
@@ -244,7 +244,7 @@ Old-generation keys are retained in storage so historical encrypted sidecars rem
 ### Rotation Notifications on the Client
 
 `createKeyRegistryRpc` is a **per-document** extension factory. Each `Provider` gets its own
-instance with its own set of rotation callbacks. When the server broadcasts a `keysRotated`
+instance with its own set of rotation callbacks. When the server broadcasts a `key-registry.rotated`
 notification, the client extension only dispatches it to the instance whose `document` matches the
 message — a single shared connection can carry rotations for several open documents without
 cross-talk, and destroying one provider clears only its own callbacks.

@@ -33,6 +33,13 @@ export interface RpcExtension<T> {
   destroy?(): void;
   handleMessage?(message: RpcMessage<any>): boolean | Promise<boolean>;
   handleAck?(message: AckMessage<any>): boolean | Promise<boolean>;
+  /**
+   * Invoked by the provider on every (re)connect, after the doc sync handshake has been
+   * started and before the awareness resync. Announce-style traffic that must follow
+   * sync-step-1 belongs here — not in an independent `connected` listener, whose ordering
+   * relative to the handshake is racy.
+   */
+  onConnect?(): void | Promise<void>;
 }
 
 /**

@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["@types/bun"],
+    "baseUrl": ".",
+    "paths": {
+      "teleportal/storage": ["../../src/storage/index.ts"],
+      "teleportal/transports": ["../../src/transports/index.ts"],
+      "teleportal/http": ["../../src/http/index.ts"],
+      "teleportal/server": ["../../src/server/index.ts"],
+      "teleportal/providers": ["../../src/providers/index.ts"],
+      "teleportal/websocket-server": ["../../src/websocket-server/index.ts"],
+      "teleportal/websocket-server/bun": ["../../src/websocket-server/bun.ts"],
+      "teleportal/token": ["../../src/token/index.ts"],
+      "teleportal/devtools": ["../../src/devtools/index.ts"],
+      "teleportal": ["../../src/lib/index.ts"]
+    }
+  },
+  "include": ["./src/**/*", "./app.ts", "./server.ts"]
+}

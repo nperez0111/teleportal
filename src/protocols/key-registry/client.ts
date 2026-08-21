@@ -1,4 +1,4 @@
-import { createClientExtension, type RpcExtension } from "teleportal/rpc";
+import { createClientExtension, pushPayload, type RpcExtension } from "teleportal/rpc";
 import { keyRegistryProtocol } from "./methods";
 
 export interface KeyRegistryRpc {
@@ -61,39 +61,32 @@ const keyRegistryExtension = createClientExtension(keyRegistryProtocol, {
  *
  * Each Provider (i.e. each document) gets its own extension instance with its
  * own rotation-callback set, captured in `create()`. A shared connection can
- * carry `keysRotated` notifications belonging to several documents, so
- * `handleMessage` only dispatches to the instance whose document matches the
- * message. Destroying one provider clears only its own callbacks and never
+ * carry `keysRotated` notifications belonging to several documents; the Provider
+ * filters those by document before dispatching, so `handleMessage` only ever
+ * sees its own. Destroying one provider clears only its own callbacks and never
  * disables notifications for the others.
  */
 export const createKeyRegistryRpc = (): RpcExtension<KeyRegistryRpc> => {
   const base = keyRegistryExtension();
   let instance: KeyRegistryInstance | undefined;
-  let document: string | undefined;
 
   return {
     create(ctx) {
-      document = ctx.document;
       instance = base.create(ctx) as KeyRegistryInstance;
       return instance;
     },
 
     handleMessage(message) {
-      if (message.rpcMethod !== "keysRotated") return false;
-      // Only dispatch notifications addressed to this instance's document; a
-      // shared connection can carry rotations belonging to other documents.
-      if (message.document !== document) return false;
-      const payload = message.payload?.payload as { generation?: number } | undefined;
-      const generation = payload?.generation;
-      if (generation === undefined) return true;
-      instance?.[notifyRotated](generation);
+      const rotated = pushPayload(keyRegistryProtocol.methods.rotated, message);
+      if (!rotated) return false;
+      if (rotated.generation === undefined) return true;
+      instance?.[notifyRotated](rotated.generation);
       return true;
     },
 
     destroy() {
       base.destroy?.();
       instance = undefined;
-      document = undefined;
     },
   };
 };

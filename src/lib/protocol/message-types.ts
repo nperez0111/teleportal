@@ -6,12 +6,6 @@ import type {
   DecodedAuthMessage,
   DecodedAwarenessRequest,
   DecodedAwarenessUpdateMessage,
-  DecodedPresenceAnnounce,
-  DecodedPresenceHeartbeat,
-  DecodedPresenceJoin,
-  DecodedPresenceLeave,
-  DecodedPresenceUnannounce,
-  PresenceMessageBinary,
   DecodedSyncDone,
   DecodedSyncStep1,
   DecodedSyncStep2,
@@ -33,7 +27,6 @@ export type BinaryMessage =
   | AwarenessUpdateMessage
   | AwarenessRequestMessage
   | EncodedAckMessage
-  | PresenceMessageBinary
   | EncodedRpcMessage;
 
 /**
@@ -44,7 +37,6 @@ export type Message<Context extends Record<string, unknown> = any> =
   | AwarenessMessage<Context>
   | DocMessage<Context>
   | AckMessage<Context>
-  | PresenceMessage<Context>
   | RpcMessage<Context>;
 
 /**
@@ -53,6 +45,33 @@ export type Message<Context extends Record<string, unknown> = any> =
  * This is an untrusted update at this point, as it has not been validated by the server for access control rights.
  */
 export type RawReceivedMessage = Message<any>;
+
+/**
+ * Monotonic source of {@link RpcMessage} nonces.
+ *
+ * `CustomMessage.id` is a hash of the encoded bytes, which is exactly right for asking
+ * "is this the same message?" (dedup, idempotency) but wrong for asking "which in-flight
+ * operation does this reply belong to?". An RPC frame carries no timestamp or counter, so
+ * two separately-authored requests with the same method and payload used to encode
+ * identically — and their pending-request entries collided, hanging one of the two callers
+ * until its timeout. Stamping a nonce into the frame makes each *authored* message unique,
+ * so the content hash can serve both roles.
+ *
+ * The nonce is assigned once, at authoring time, and travels with the message: a relayed or
+ * re-encoded copy keeps its original nonce and therefore its original id, so cross-node
+ * dedup still collapses genuine duplicate deliveries.
+ *
+ * Seeded randomly per process because the authoring node's identity is not part of the
+ * encoded bytes — two nodes starting at the same counter value would otherwise produce
+ * colliding ids for identical payloads.
+ */
+let nextNonce = Math.floor(Math.random() * 0x1_0000_0000);
+function allocateRpcNonce(): number {
+  // Wrap before the varUint encoding would widen past 5 bytes; ids only need to be unique
+  // against messages still inside a dedup/in-flight window, not for all time.
+  nextNonce = (nextNonce + 1) >>> 0;
+  return nextNonce;
+}
 
 /**
  * Base class for message types
@@ -101,6 +120,38 @@ export abstract class CustomMessage<
     this.#id = undefined;
   }
 
+  /**
+   * Whether this message must survive a durable pub/sub log (`"durable"`) or may travel over a
+   * fire-and-forget channel that is dropped after a brief disconnect (`"ephemeral"`).
+   *
+   * Defaults to `"durable"` — the safe choice for unknown/future message types, so a new type
+   * is persisted (and replayed after a blip) unless it explicitly opts out.
+   *
+   * INVARIANT: a message may return `"ephemeral"` only if its effect is **order-independent
+   * relative to durable traffic** AND it **self-heals if dropped**. This is what makes it safe
+   * for a durable backend to deliver ephemeral traffic over a separate, uncoordinated channel
+   * from the durable stream (the two paths have no mutual ordering guarantee). Awareness
+   * (client-side clock guards), acks (worthless after the sender's retry timeout), and
+   * ephemeral rpc pushes (e.g. presence, which self-heals via rosters + TTL) all satisfy this.
+   */
+  public get durability(): "durable" | "ephemeral" {
+    return "durable";
+  }
+
+  /**
+   * Whether receivers must acknowledge this message (and senders track it in-flight with NACK
+   * retransmit). Defaults to `true` — acking is the default delivery mode.
+   *
+   * `false` marks the message best-effort: receivers do not ack it, senders do not retransmit
+   * it, and the server may drop (rather than hold/NACK) it under rate-limit pressure. Carried
+   * on the wire as the `bestEffort` header byte so the policy is self-describing. Only safe
+   * for high-churn traffic that self-heals if dropped (e.g. awareness, which is clock-guarded
+   * and re-announced).
+   */
+  public get requiresAck(): boolean {
+    return true;
+  }
+
   public toJSON(): Record<string, unknown> {
     return {
       type: this.type,
@@ -144,6 +195,19 @@ export class AwarenessMessage<Context extends Record<string, unknown>> extends C
     super(encoded);
     this.context = context ?? ({} as Context);
   }
+
+  /** Awareness is idempotent and clock-guarded client-side → ephemeral. */
+  public override get durability(): "durable" | "ephemeral" {
+    return "ephemeral";
+  }
+
+  /**
+   * Awareness is the highest-frequency traffic (every cursor move) and self-heals via
+   * clock-guarded re-announcement → best-effort, never acked.
+   */
+  public override get requiresAck(): boolean {
+    return false;
+  }
 }
 
 /**
@@ -173,6 +237,24 @@ export class DocMessage<Context extends Record<string, unknown>> extends CustomM
     super(encoded);
     this.context = context ?? ({} as Context);
   }
+
+  /**
+   * The sync handshake (`sync-step-1`/`sync-done`/`auth-message`) is a request/response between a
+   * specific client and the node it is talking to — replaying it to a node that wasn't there is
+   * meaningless → ephemeral. Everything else that carries document state (`update`/`sync-step-2`
+   * and any future state-bearing payload) defaults to durable — the safe choice, so a new
+   * payload type is persisted unless it explicitly opts out here.
+   */
+  public override get durability(): "durable" | "ephemeral" {
+    switch (this.payload.type) {
+      case "sync-step-1":
+      case "sync-done":
+      case "auth-message":
+        return "ephemeral";
+      default:
+        return "durable";
+    }
+  }
 }
 
 /**
@@ -194,38 +276,27 @@ export class AckMessage<Context extends Record<string, unknown>> extends CustomM
     super();
     this.context = context ?? ({} as Context);
   }
+
+  /** An ack is worthless after the sender's retry timeout → ephemeral. */
+  public override get durability(): "durable" | "ephemeral" {
+    return "ephemeral";
+  }
+
+  /** Acks are never themselves acked. */
+  public override get requiresAck(): boolean {
+    return false;
+  }
 }
 
 /**
- * A presence message announcing that a client joined or left a session.
- *
- * Presence is always cleartext (it carries no document content), so it conveys a
- * client's awareness clientID to the server even for end-to-end encrypted
- * documents — where the awareness payload itself is opaque to the server.
+ * Per-message delivery QoS for an {@link RpcMessage}, resolved from the method definition by
+ * the sender. `durability` picks the pub/sub lane if the message is replicated; `ack: false`
+ * marks it best-effort (see {@link CustomMessage.requiresAck}).
  */
-export class PresenceMessage<Context extends Record<string, unknown>> extends CustomMessage<
-  Context,
-  PresenceMessageBinary
-> {
-  public type = "presence" as const;
-  public context: Context;
-  public encrypted: boolean = false;
-
-  constructor(
-    public document: string,
-    public payload:
-      | DecodedPresenceAnnounce
-      | DecodedPresenceUnannounce
-      | DecodedPresenceJoin
-      | DecodedPresenceLeave
-      | DecodedPresenceHeartbeat,
-    context?: Context,
-    encoded?: PresenceMessageBinary,
-  ) {
-    super(encoded);
-    this.context = context ?? ({} as Context);
-  }
-}
+export type RpcMessageQos = {
+  durability?: "durable" | "ephemeral";
+  ack?: boolean;
+};
 
 /**
  * An RPC message for remote procedure calls.
@@ -237,6 +308,7 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
   public type = "rpc" as const;
   public context: Context;
   #serializer?: (context: SerializerContext) => Uint8Array | undefined;
+  #qos?: RpcMessageQos;
 
   constructor(
     public document: string | undefined,
@@ -248,10 +320,32 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
     public encrypted: boolean = false,
     encoded?: EncodedRpcMessage,
     serializer?: (context: SerializerContext) => Uint8Array | undefined,
+    qos?: RpcMessageQos,
+    /**
+     * Uniquifies this message on the wire so its {@link CustomMessage.id} identifies *this*
+     * message rather than merely its content — see {@link allocateRpcNonce}. Decoding passes
+     * the value read off the wire so a relayed copy keeps the authoring node's nonce; every
+     * other caller lets it default and gets a fresh one.
+     */
+    public nonce: number = allocateRpcNonce(),
   ) {
     super(encoded);
     this.context = context ?? ({} as Context);
     this.#serializer = serializer;
+    this.#qos = qos;
+  }
+
+  /**
+   * RPC delivery QoS is declared per method (see `definePush`); the sender stamps it onto the
+   * message here. Defaults stay conservative: durable (only consulted if the message is ever
+   * published over pub/sub) and acked.
+   */
+  public override get durability(): "durable" | "ephemeral" {
+    return this.#qos?.durability ?? "durable";
+  }
+
+  public override get requiresAck(): boolean {
+    return this.#qos?.ack ?? true;
   }
 
   public override encode(): EncodedRpcMessage {
@@ -268,6 +362,7 @@ export class RpcMessage<Context extends Record<string, unknown>> extends CustomM
       rpcMethod: this.rpcMethod,
       requestType: this.requestType,
       originalRequestId: this.originalRequestId,
+      nonce: this.nonce,
       id: this.id,
       encoded: this.encoded,
     };

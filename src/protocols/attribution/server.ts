@@ -106,6 +106,14 @@ export function getAttributionRpcHandlers(): RpcHandlerRegistry {
         const diff = excludeContentMap(fullMap, knownIds);
         return ok({ contentMap: encodeContentMap(diff) });
       },
+
+      // Server-authored: `Session` sends this itself after an attributed write, via
+      // `broadcastRpc` — which reaches local clients directly and publishes to other nodes.
+      // So a push arriving *here* is either the replicated copy on another node (relay it,
+      // that is how those clients learn of a remote write) or a client's forgery (drop it —
+      // relaying would let anyone poison every peer's attribution cache).
+      push: () => (_payload, ctx) =>
+        ctx.clientId !== undefined ? { forwardToLocalClients: false, replicate: false } : undefined,
     },
   );
 }

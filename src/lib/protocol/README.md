@@ -2,15 +2,16 @@
 
 Binary wire format for the Teleportal sync protocol. Handles encoding/decoding of all message types between clients and the server, plus Y.js update utilities, milestone serialization, and file transfer orchestration.
 
-## Wire format (version 1)
+## Wire format (version 2)
 
 Every message starts with a fixed header:
 
 ```
 [0x59] [0x4a] [0x53]          3 bytes: magic "YJS"
-[0x01]                         1 byte:  version
+[0x02]                         1 byte:  version
 [varString]                    document name (empty for ack messages)
 [uint8]                        encrypted flag (0 or 1)
+[uint8]                        best-effort flag (1 = receivers must not ack; senders do not retransmit)
 [uint8]                        message type
 ```
 
@@ -21,8 +22,10 @@ Message types:
 | 0x00      | `doc`       | Y.js sync/update messages (sync-step-1/2, update, sync-done, auth) |
 | 0x01      | `awareness` | Y.js awareness updates and requests                                |
 | 0x02      | `ack`       | Acknowledgement / NACK with optional retry-after or error          |
-| 0x03      | `presence`  | Client join/leave/announce/unannounce/heartbeat                    |
 | 0x04      | `rpc`       | Remote procedure calls with request/stream/response patterns       |
+
+Type 0x03 (`presence`) was deleted: presence is no longer a native wire type
+but an RPC protocol module (`teleportal/protocols/presence`).
 
 ### Doc sub-types (type 0x00)
 
@@ -52,24 +55,30 @@ Updates carry a version byte (1 = V1, 2 = V2) so the receiver knows how to apply
 [varString: error]?          present if bit 1 set
 ```
 
-### Presence sub-types (type 0x03)
-
-| Sub-type | Name                | Payload                                                                                                     |
-| -------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 0x00     | presence-announce   | `[varUint: awarenessId]`                                                                                    |
-| 0x01     | presence-join       | `[varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]`                              |
-| 0x02     | presence-leave      | (same as join)                                                                                              |
-| 0x03     | presence-heartbeat  | `[varUint: count] per client: [varUint: awarenessId] [varString: clientId] [varString: userId] [any: data]` |
-| 0x04     | presence-unannounce | `[varUint: awarenessId]`                                                                                    |
-
 ### RPC message (type 0x04)
 
 ```
+[varUint: nonce]
 [varString: method]
-[uint8: requestType]         0=request, 1=stream, 2=response
-[varString: originalRequestId]?   present for stream/response only
-[uint8: isError]             0=success, 1=error
+[uint8: requestType]              0=request, 1=stream, 2=response
+[uint8: hasOriginalRequestId]?    present for stream/response only
+[varString: originalRequestId]?   present if the flag byte is 1
+[uint8: isError]                  0=success, 1=error
 ```
+
+The **nonce** makes each authored RPC message unique on the wire. Without it, two
+separately-authored requests with the same method and payload encode identically and
+therefore share an `id` — which collapses them in the pending-request map (one caller hangs
+until its timeout) and in cross-node dedup (a repeated roster snapshot is swallowed). It is
+stamped once, at authoring time, from a per-process monotonic counter with a random seed
+(the authoring node is not part of the encoded bytes, so two nodes starting at the same
+value would otherwise collide). Decoding carries it through, so a relayed or re-encoded copy
+keeps its original nonce and original `id` — which is what lets dedup still collapse genuine
+duplicate _deliveries_.
+
+A "response" with no `originalRequestId` (flag byte 0) is a **push**: an
+unsolicited notification authored by the server (or replicated from another
+node), correlated to no request. See `definePush` in `teleportal/rpc`.
 
 Success payload: `[varUint8Array: serialized payload]`
 Error payload: `[varUint: statusCode] [varString: details] [uint8: hasPayload] [any: payload]?`
@@ -79,15 +88,40 @@ Custom serializer/deserializer callbacks can override the default `writeAny`/`re
 ## Message identity
 
 Every decoded message (`DocMessage`, `AwarenessMessage`, `AckMessage`,
-`PresenceMessage`, `RpcMessage`) extends `CustomMessage`, which exposes:
+`RpcMessage`) extends `CustomMessage`, which exposes:
 
 - **`encoded`** — the `BinaryMessage`, encoded lazily on first access and cached.
 - **`id`** — a lazily-computed, cached 64-bit **FNV-1a-style hash of the encoded
   bytes**, rendered as 16 lowercase hex characters. This is a fast content
   fingerprint (not SHA-256, not base64) used for dedup, ack correlation, and
   idempotency. `valueOf()` returns `id`.
+  Because it hashes the bytes, two messages with identical content share an `id`.
+  For `doc` and `awareness` that is what you want — the payloads are idempotent, so
+  collapsing them is harmless. `RpcMessage` instead carries a per-message nonce in
+  its frame, because its `id` also has to answer "which in-flight call does this
+  reply belong to?", and two callers making the same request are two operations.
 - **`resetEncoded()`** — clears the cached `encoded`/`id` after mutating a
   message in place.
+- **`durability`** — `"durable" | "ephemeral"`, driving whether a durable
+  [`PubSub`](../../transports/README.md) backend persists the message (and replays
+  it after a reconnect) or routes it over a non-persistent channel. Default
+  `"durable"` (safe for unknown/future types). `DocMessage` is durable for
+  `update`/`sync-step-2` and ephemeral for the sync handshake
+  (`sync-step-1`/`sync-done`/`auth-message`); `Awareness`/`Ack` are
+  ephemeral; `Rpc` defaults to durable but takes a per-message override, stamped
+  by the sender from the method's declared QoS (see `definePush` in
+  `teleportal/rpc`). Server-authored RPC pushes fan out over pub/sub when their
+  method declares `replicate`; client-authored pushes never do unless a
+  registered `pushHandler` explicitly vouches with `replicate: true`.
+  **Invariant:** a type may be `"ephemeral"` only if its effect is
+  order-independent w.r.t. durable traffic _and_ self-heals if dropped, since the
+  durable and ephemeral delivery paths carry no mutual ordering guarantee.
+- **`requiresAck`** — whether receivers ack the message and senders track it
+  in flight with NACK retransmit. Default `true`. `false` (carried on the wire
+  as the `bestEffort` header byte) marks fire-and-forget best-effort traffic:
+  never acked, never retransmitted, droppable under rate-limit pressure.
+  `Awareness` (highest-frequency, clock-guarded, self-healing) and `Ack` itself
+  are best-effort; RPC methods opt out per method via `qos.ack: false`.
 
 `isBinaryMessage(bytes)` only checks the 3-byte magic, so it also returns `true`
 for ping/pong frames — discriminate those first with `isPingMessage` /

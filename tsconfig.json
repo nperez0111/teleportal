@@ -26,15 +26,19 @@
       "teleportal/protocols/file": ["./src/protocols/file/index.ts"],
       "teleportal/protocols/attribution": ["./src/protocols/attribution/index.ts"],
       "teleportal/protocols/key-registry": ["./src/protocols/key-registry/index.ts"],
+      "teleportal/protocols/presence": ["./src/protocols/presence/index.ts"],
       "teleportal/providers": ["./src/providers/index.ts"],
       "teleportal/providers/worker": ["./src/providers/worker/index.ts"],
       "teleportal/websocket-server": ["./src/websocket-server/index.ts"],
+      "teleportal/websocket-server/bun": ["./src/websocket-server/bun.ts"],
       "teleportal/cloudflare": ["./src/cloudflare/index.ts"],
       "teleportal/monitoring": ["./src/monitoring/index.ts"],
       "teleportal/token": ["./src/token/index.ts"],
       "teleportal/merkle-tree": ["./src/merkle-tree/index.ts"],
+      "teleportal/movable-tree": ["./src/movable-tree/index.ts"],
       "teleportal/devtools": ["./src/devtools/index.ts"],
       "teleportal/agent": ["./src/agent/index.ts"],
+      "teleportal/cursors": ["./src/cursors/index.ts"],
       "teleportal/attribution": ["./src/lib/attribution/index.ts"],
       "teleportal/rpc": ["./src/lib/rpc/index.ts"],
       "teleportal/utils": ["./src/utils/index.ts"],
@@ -42,5 +46,5 @@
     },
     "jsx": "react-jsx"
   },
-  "include": ["src", "playground", "examples", "guides", "benchmarks"]
+  "include": ["src", "examples", "showcase", "guides", "benchmarks"]
 }

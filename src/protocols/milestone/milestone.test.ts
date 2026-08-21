@@ -50,7 +50,7 @@ describe("Milestone RPC Methods", () => {
       const handlers = getMilestoneRpcHandlers(mockStorage);
       expect(typeof handlers).toBe("object");
       // The list handler should have an init that returns a cleanup function
-      const listHandler = handlers["milestoneList"];
+      const listHandler = handlers["milestone.list"];
       expect(listHandler).toBeDefined();
       expect(typeof listHandler.init).toBe("function");
     });
@@ -58,12 +58,12 @@ describe("Milestone RPC Methods", () => {
     it("should register all milestone methods in handlers", () => {
       const mockStorage = createMockStorage();
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      expect("milestoneList" in handlers).toBe(true);
-      expect("milestoneGet" in handlers).toBe(true);
-      expect("milestoneCreate" in handlers).toBe(true);
-      expect("milestoneUpdateName" in handlers).toBe(true);
-      expect("milestoneDelete" in handlers).toBe(true);
-      expect("milestoneRestore" in handlers).toBe(true);
+      expect("milestone.list" in handlers).toBe(true);
+      expect("milestone.get" in handlers).toBe(true);
+      expect("milestone.create" in handlers).toBe(true);
+      expect("milestone.updateName" in handlers).toBe(true);
+      expect("milestone.delete" in handlers).toBe(true);
+      expect("milestone.restore" in handlers).toBe(true);
     });
   });
 
@@ -90,11 +90,11 @@ describe("Milestone RPC Methods", () => {
       mockStorage.getMilestones = async () => mockMilestones as any;
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneList"];
+      const handler = handlers["milestone.list"];
 
       expect(handler).toBeDefined();
 
-      const result = await handler!.handler({ snapshotIds: [], includeDeleted: false }, context);
+      const result = await handler!.handler!({ snapshotIds: [], includeDeleted: false }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestones: unknown[] };
@@ -115,9 +115,9 @@ describe("Milestone RPC Methods", () => {
       mockStorage.getMilestone = async () => mockMilestone as any;
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneGet"];
+      const handler = handlers["milestone.get"];
 
-      const result = await handler!.handler({ milestoneId: "ms-123" }, context);
+      const result = await handler!.handler!({ milestoneId: "ms-123" }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as {
@@ -132,9 +132,9 @@ describe("Milestone RPC Methods", () => {
       mockStorage.getMilestone = async () => null;
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneGet"];
+      const handler = handlers["milestone.get"];
 
-      const result = await handler!.handler({ milestoneId: "ms-999" }, context);
+      const result = await handler!.handler!({ milestoneId: "ms-999" }, context);
 
       expect(result.response).toHaveProperty("type", "error");
       const response = result.response as { statusCode: number };
@@ -155,9 +155,9 @@ describe("Milestone RPC Methods", () => {
       mockStorage.getMilestone = async () => newMilestone as any;
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneCreate"];
+      const handler = handlers["milestone.create"];
 
-      const result = await handler!.handler({ name: "v1.0", snapshot }, context);
+      const result = await handler!.handler!({ name: "v1.0", snapshot }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestone: { id: string } };
@@ -177,9 +177,9 @@ describe("Milestone RPC Methods", () => {
       mockStorage.getMilestone = async () => updatedMilestone as any;
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneUpdateName"];
+      const handler = handlers["milestone.updateName"];
 
-      const result = await handler!.handler({ milestoneId: "ms-123", name: "v2.0" }, context);
+      const result = await handler!.handler!({ milestoneId: "ms-123", name: "v2.0" }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestone: { name: string } };
@@ -190,9 +190,9 @@ describe("Milestone RPC Methods", () => {
       mockStorage.deleteMilestone = async () => {};
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneDelete"];
+      const handler = handlers["milestone.delete"];
 
-      const result = await handler!.handler({ milestoneId: "ms-123" }, context);
+      const result = await handler!.handler!({ milestoneId: "ms-123" }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestoneId: string };
@@ -212,9 +212,9 @@ describe("Milestone RPC Methods", () => {
       mockStorage.getMilestone = async () => restoredMilestone as any;
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneRestore"];
+      const handler = handlers["milestone.restore"];
 
-      const result = await handler!.handler({ milestoneId: "ms-123" }, context);
+      const result = await handler!.handler!({ milestoneId: "ms-123" }, context);
 
       expect(result.response).not.toHaveProperty("type", "error");
       const response = result.response as { milestone: { id: string } };
@@ -227,9 +227,9 @@ describe("Milestone RPC Methods", () => {
       };
 
       const handlers = getMilestoneRpcHandlers(mockStorage);
-      const handler = handlers["milestoneList"];
+      const handler = handlers["milestone.list"];
 
-      const result = await handler!.handler({ snapshotIds: [], includeDeleted: false }, context);
+      const result = await handler!.handler!({ snapshotIds: [], includeDeleted: false }, context);
 
       expect(result.response).toHaveProperty("type", "error");
       const response = result.response as { statusCode: number };

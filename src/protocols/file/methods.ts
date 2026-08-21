@@ -99,16 +99,11 @@ export type FileDownloadResponse = {
 // Method contracts — type-first (binary payloads, no schema validation)
 // ---------------------------------------------------------------------------
 
-export const fileUpload = defineMethod<
-  "fileUpload",
-  FileUploadRequest,
-  FileUploadResponse,
-  FilePartStream
->("fileUpload", { kind: "multipart" });
+export const fileUpload = defineMethod<FileUploadRequest, FileUploadResponse, FilePartStream>({
+  kind: "multipart",
+});
 
-export const fileDownload = defineMethod<"fileDownload", FileDownloadRequest, FileDownloadResponse>(
-  "fileDownload",
-);
+export const fileDownload = defineMethod<FileDownloadRequest, FileDownloadResponse>();
 
 // ---------------------------------------------------------------------------
 // Protocol
