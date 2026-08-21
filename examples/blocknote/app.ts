@@ -47,21 +47,17 @@ const workerSrc = import.meta.dir + "/src/worker.ts";
 const workerBanner =
   'if(typeof globalThis.window==="undefined")globalThis.window=globalThis;' +
   'if(typeof globalThis.document==="undefined")globalThis.document={};';
-await Bun.spawn(
-  [
-    "bun",
-    "build",
-    workerSrc,
-    "--outdir",
-    workerOutDir,
-    "--target",
-    "browser",
-    "--format",
-    "esm",
-    `--banner=${workerBanner}`,
-  ],
-  { stdout: "inherit", stderr: "inherit" },
-).exited;
+const workerBuild = await Bun.build({
+  entrypoints: [workerSrc],
+  outdir: workerOutDir,
+  target: "browser",
+  format: "esm",
+  banner: workerBanner,
+});
+if (!workerBuild.success) {
+  console.error(...workerBuild.logs);
+  throw new Error("SharedWorker build failed");
+}
 
 const db = createDatabase(
   bunSqlite({

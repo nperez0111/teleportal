@@ -1,4 +1,4 @@
-// polyfill for bun?
+// Bun (still, as of 1.4) has no global EventSource, so this polyfill is required
 import { EventSource } from "eventsource";
 import { DocMessage, Message, Observable, StateVector } from "teleportal";
 import { decodeHTTPRequest } from "teleportal/http";
