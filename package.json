@@ -101,19 +101,19 @@
   },
   "devDependencies": {
     "@nats-io/transport-node": "3.4.0",
-    "@types/bun": "1.3.14",
+    "@types/bun": "1.4.0",
     "aws4fetch": "1.0.20",
     "bun-plugin-tailwind": "0.1.2",
     "changelogen": "0.6.2",
-    "crossws": "0.4.9",
-    "eventsource": "4.1.0",
-    "ioredis": "5.11.1",
-    "msw": "2.14.6",
+    "crossws": "0.4.12",
+    "eventsource": "5.1.1",
+    "ioredis": "6.0.0",
+    "msw": "2.15.0",
     "postgres": "3.4.9",
-    "srvx": "0.11.21",
-    "tinybench": "6.0.2",
+    "srvx": "0.12.7",
+    "tinybench": "6.1.3",
     "unstorage": "1.17.5",
-    "vite-plus": "0.2.2"
+    "vite-plus": "0.3.0"
   },
   "peerDependencies": {
     "@nats-io/transport-node": "^3.2.0",
